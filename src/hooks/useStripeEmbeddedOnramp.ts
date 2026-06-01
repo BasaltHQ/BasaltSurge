@@ -167,6 +167,40 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
 // ─── Base USDC contract address ───
 const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
+/**
+ * Formats a phone number string to E.164 standard format.
+ * E.164 format is: +[country_code][national_number] with no symbols, spaces, or dashes.
+ * Defaults to "+1" (US/CA) if no country code prefix is present and length is 10 digits.
+ */
+export function formatToE164(phone: string, defaultCountryCode = "1"): string {
+  if (!phone) return "";
+  // Strip all non-digit characters except "+"
+  let cleaned = phone.replace(/[^\d+]/g, "");
+
+  // If already starts with "+", keep it
+  if (cleaned.startsWith("+")) {
+    return cleaned;
+  }
+
+  // If starts with "00", replace with "+"
+  if (cleaned.startsWith("00")) {
+    return "+" + cleaned.slice(2);
+  }
+
+  // Handle standard 10-digit North American number
+  if (cleaned.length === 10) {
+    return `+${defaultCountryCode}${cleaned}`;
+  }
+
+  // Handle 11-digit starting with the default country code
+  if (cleaned.length === 11 && cleaned.startsWith(defaultCountryCode)) {
+    return `+${cleaned}`;
+  }
+
+  // Fallback: prepend "+"
+  return `+${cleaned}`;
+}
+
 export function useStripeEmbeddedOnramp({
   email,
   phone,
@@ -481,6 +515,7 @@ export function useStripeEmbeddedOnramp({
 
     const activeEmail = overrideEmail || email;
     const activePhone = overridePhone || phone || localPhone;
+    const formattedPhone = activePhone ? formatToE164(activePhone) : "";
 
     if (!enabled || !activeEmail || !splitAddress || !publishableKey) {
       handleError("Missing required fields (email, split address, or API key)");
@@ -520,7 +555,7 @@ export function useStripeEmbeddedOnramp({
 
       if (linkRes.status === 404) {
         // No Link account — register
-        if (!activePhone) {
+        if (!formattedPhone) {
           console.log("[EMBEDDED ONRAMP] Fresh Link account detected, but no phone number provided. Transitioning to collecting_phone.");
           isRunningRef.current = false;
           updateStep("collecting_phone");
@@ -530,9 +565,10 @@ export function useStripeEmbeddedOnramp({
         updateStep("registering_link");
 
         try {
+          console.log("[EMBEDDED ONRAMP] Registering Link user with formatted phone:", formattedPhone);
           const registerResult = await onramp.registerLinkUser(
             activeEmail,
-            activePhone,
+            formattedPhone,
             "US",
             ""
           );
@@ -988,9 +1024,10 @@ export function useStripeEmbeddedOnramp({
   ]);
 
   const submitPhone = useCallback((phoneNumber: string) => {
-    setLocalPhone(phoneNumber);
-    console.log("[EMBEDDED ONRAMP] Phone number submitted, resuming flow:", phoneNumber);
-    startOnramp(undefined, phoneNumber);
+    const formatted = formatToE164(phoneNumber);
+    setLocalPhone(formatted);
+    console.log("[EMBEDDED ONRAMP] Phone number submitted, resuming flow (original/formatted):", phoneNumber, "->", formatted);
+    startOnramp(undefined, formatted);
   }, [startOnramp]);
 
   const statusMessage = useMemo(() => STEP_MESSAGES[step], [step]);
