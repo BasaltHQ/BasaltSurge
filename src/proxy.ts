@@ -34,7 +34,7 @@ function isJwtExpired(token: string): boolean {
  * 2) Global security headers: CSP, frame-ancestors, HSTS, referrer-policy, etc.
  */
 
-import { isCandidateSlug } from "@/lib/routing";
+import { isCandidateSlug, isMainDomainHost } from "@/lib/routing";
 
 /**
  * Build a conservative CSP allowing:
@@ -167,16 +167,7 @@ function applySecurityHeaders(req: NextRequest, res: NextResponse) {
     // Custom Domain Detection for headers
     let headerHostname = req.headers.get("x-custom-host") || req.headers.get("x-forwarded-host") || req.headers.get("host") || req.nextUrl.hostname || "";
     headerHostname = headerHostname.split(":")[0].toLowerCase();
-    const isMainDomainHeader =
-        (headerHostname.endsWith("basalthq.com")) ||
-        headerHostname.endsWith("portalpay.io") ||
-        headerHostname.includes("localhost") ||
-        headerHostname === "127.0.0.1" ||
-        headerHostname === "0.0.0.0" ||
-        headerHostname.includes("azurewebsites.net") ||
-        headerHostname.includes("vercel.app") ||
-        headerHostname.includes("xpaypass.com") ||
-        headerHostname.includes("vps.ovh.us");
+    const isMainDomainHeader = isMainDomainHost(headerHostname);
 
     const isShopLike = req.nextUrl.pathname.startsWith("/shop/") || (!isMainDomainHeader && req.nextUrl.pathname === "/");
     const micPolicy = isShopLike ? "microphone=(self)" : "microphone=()";
@@ -275,15 +266,7 @@ export function proxy(req: NextRequest) {
     let faviconHostname = req.headers.get("x-custom-host") || req.headers.get("x-forwarded-host") || req.headers.get("host") || url.hostname || "";
     faviconHostname = faviconHostname.split(":")[0].toLowerCase();
 
-    const isFaviconMainDomain =
-        (faviconHostname.endsWith("basalthq.com")) ||
-        faviconHostname.endsWith("portalpay.io") ||
-        faviconHostname.includes("localhost") ||
-        faviconHostname === "127.0.0.1" ||
-        faviconHostname === "0.0.0.0" ||
-        faviconHostname.includes("azurewebsites.net") ||
-        faviconHostname.includes("vercel.app") ||
-        faviconHostname.includes("vps.ovh.us");
+    const isFaviconMainDomain = isMainDomainHost(faviconHostname);
 
     // Rewrite dynamic favicon to brand/merchant-aware API
     // For custom domains, pass the hostname as shop parameter to resolve merchant favicon
@@ -340,16 +323,7 @@ export function proxy(req: NextRequest) {
     // Strip port if present
     hostname = hostname.split(":")[0].toLowerCase();
 
-    const isMainDomain =
-        (hostname.endsWith("basalthq.com")) ||
-        hostname.endsWith("portalpay.io") ||
-        hostname.includes("localhost") ||
-        hostname === "127.0.0.1" ||
-        hostname === "0.0.0.0" ||
-        hostname.includes("azurewebsites.net") ||
-        hostname.includes("vercel.app") ||
-        hostname.includes("xpaypass.com") ||
-        hostname.includes("vps.ovh.us");
+    const isMainDomain = isMainDomainHost(hostname);
 
     if (!isMainDomain) {
         // It's a custom domain!

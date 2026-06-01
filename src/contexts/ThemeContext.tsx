@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useState, useMemo } from '
 import { useActiveAccount } from 'thirdweb/react';
 import { useBrand } from "@/contexts/BrandContext";
 import { getDefaultBrandSymbol, isBasaltSurge, resolveBrandAppLogo, resolveBrandSymbol } from "@/lib/branding";
+import { isMainDomainHost } from "@/lib/routing";
 
 // Blocked favicon URLs — match by path/UUID regardless of hostname (Azure, AFD, or S3)
 const BLOCKED_FAVICON_PATHS = [
@@ -492,17 +493,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       const path = url.pathname || "";
       const hostname = url.hostname.toLowerCase();
       
-      const isCustomDomain = !(
-        hostname.endsWith("basalthq.com") ||
-        hostname.endsWith("portalpay.io") ||
-        hostname.includes("localhost") ||
-        hostname === "127.0.0.1" ||
-        hostname === "0.0.0.0" ||
-        hostname.includes("azurewebsites.net") ||
-        hostname.includes("vercel.app") ||
-        hostname.includes("xpaypass.com") ||
-        hostname.includes("vps.ovh.us")
-      );
+      const isCustomDomain = !isMainDomainHost(hostname);
 
       if (path.startsWith("/portal") || path.startsWith("/shop") || isCustomDomain) {
         setIsLoading(false);
@@ -530,17 +521,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         const path = url.pathname || '';
         const hostname = url.hostname.toLowerCase();
         
-        const isCustomDomain = !(
-          hostname.endsWith("basalthq.com") ||
-          hostname.endsWith("portalpay.io") ||
-          hostname.includes("localhost") ||
-          hostname === "127.0.0.1" ||
-          hostname === "0.0.0.0" ||
-          hostname.includes("azurewebsites.net") ||
-          hostname.includes("vercel.app") ||
-          hostname.includes("xpaypass.com") ||
-          hostname.includes("vps.ovh.us")
-        );
+        const isCustomDomain = !isMainDomainHost(hostname);
 
         if (path.startsWith('/portal') || path.startsWith('/shop') || isCustomDomain) {
           return;

@@ -6,6 +6,7 @@ import createNextIntlPlugin from 'next-intl/plugin';
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
 const nextConfig = {
+  allowedDevOrigins: ['192.168.4.25'],
   experimental: {
     serverActions: {
       bodySizeLimit: '250mb',
@@ -50,7 +51,7 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   // Emit a minimal standalone server for Docker runtime stage
-  output: "standalone",
+  // output: "standalone",
   staticPageGenerationTimeout: 300,
   images: {
     // Allow loading product and profile images from Azure Blob or Front Door
