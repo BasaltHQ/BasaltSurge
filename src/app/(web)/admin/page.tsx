@@ -80,6 +80,7 @@ import NotificationsPanel from "@/app/(web)/admin/panels/NotificationsPanel";
 import TablesPanel from "@/app/(web)/admin/panels/TablesPanel";
 import SubscriptionsPanel from "@/app/(web)/admin/panels/SubscriptionsPanel";
 import ModulesPanel from "@/app/(web)/admin/panels/ModulesPanel";
+import CustomAuthWalletsPanel from "@/app/(web)/admin/panels/CustomAuthWalletsPanel";
 import { NodeOperatorsPanel } from "@/app/(web)/admin/panels/NodeOperatorsPanel";
 import { NodeDashboardPanel } from "@/app/(web)/admin/panels/NodeDashboardPanel";
 import { isPlatformCtx, isPartnerCtx, isPlatformSuperAdmin, canAccessPanel } from "@/lib/authz";
@@ -11235,6 +11236,9 @@ export default function AdminPage() {
         )}
         {activeTab === "modules" && (canBranding || isSuperadmin) && (
           <ModulesPanel />
+        )}
+        {activeTab === "customAuthWallets" && (canBranding || isSuperadmin) && (
+          <CustomAuthWalletsPanel />
         )}
         {activeTab === "support" && (
           <GetSupportPanel />

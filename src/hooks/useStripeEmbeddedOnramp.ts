@@ -244,62 +244,7 @@ export function useStripeEmbeddedOnramp({
     };
   }, []);
 
-  // ─── Document.createElement Patch for Secure Iframe URL Interception ───
-  // Intercepts iframe creation by Stripe's SDK *at creation time* before it is appended.
-  // Replaces the query hash `theme=stripe` with `theme=dark` synchronously to load Link natively
-  // in dark mode. This avoids cross-origin re-navigations, preventing browser same-origin/CORS blocks
-  // and Next.js asset 404s.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
 
-    const originalCreateElement = document.createElement;
-
-    try {
-      document.createElement = function patchedCreateElement(
-        tagName: string,
-        options?: ElementCreationOptions
-      ): HTMLElement {
-        const el = originalCreateElement.call(document, tagName, options);
-        if (tagName.toLowerCase() === "iframe") {
-          const originalSetAttribute = el.setAttribute;
-          
-          Object.defineProperty(el, "src", {
-            get() {
-              return this.getAttribute("src") || "";
-            },
-            set(val) {
-              let finalVal = val;
-              if (typeof val === "string" && val.includes("theme=stripe")) {
-                console.log("[STRIPE HEADLESS] Intercepted iframe src property and forced dark theme:", val.slice(0, 100) + "...");
-                finalVal = val.replace("theme=stripe", "theme=dark");
-              }
-              this.setAttribute("src", finalVal);
-            },
-            configurable: true,
-            enumerable: true
-          });
-
-          el.setAttribute = function patchedSetAttribute(name: string, value: string) {
-            let finalValue = value;
-            if (name.toLowerCase() === "src" && typeof value === "string" && value.includes("theme=stripe")) {
-              console.log("[STRIPE HEADLESS] Intercepted iframe src attribute and forced dark theme:", value.slice(0, 100) + "...");
-              finalValue = value.replace("theme=stripe", "theme=dark");
-            }
-            return originalSetAttribute.call(this, name, finalValue);
-          };
-        }
-        return el;
-      } as any;
-    } catch (e) {
-      console.warn("[STRIPE HEADLESS] Failed to patch document.createElement:", e);
-    }
-
-    return () => {
-      try {
-        document.createElement = originalCreateElement;
-      } catch {}
-    };
-  }, []);
 
   const updateStep = useCallback((newStep: OnrampStep) => {
     if (!mountedRef.current) return;
