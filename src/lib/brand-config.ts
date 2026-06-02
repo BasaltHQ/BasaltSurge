@@ -59,6 +59,11 @@ export type BrandConfigDoc = {
   // Access Control
   accessMode?: "open" | "request";
 
+  // Thirdweb Keys
+  thirdwebClientId?: string;
+  thirdwebSecretKey?: string;
+  thirdwebAuthEndpointSecret?: string;
+
   updatedAt?: number;
 };
 

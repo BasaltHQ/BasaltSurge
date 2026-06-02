@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 type ProvisionRequest = {
-  target?: "containerapps" | "appservice" | "k8s";
+  target?: "containerapps" | "appservice" | "k8s" | "plesk";
   image?: string; // e.g. myregistry.azurecr.io/portalpay:latest
   resourceGroup?: string;
   name?: string; // target app/container name (brand-specific)
@@ -37,14 +37,15 @@ type ProvisionRequest = {
 type ProvisionPlan = {
   brandKey: string;
   brandName: string;
-  target: "containerapps" | "appservice" | "k8s";
+  target: "containerapps" | "appservice" | "k8s" | "plesk";
   image: string;
   resourceGroup?: string;
   name: string;
   env: Record<string, string>;
   domains?: string[];
   steps: string[]; // human-readable steps
-  azExamples?: string[]; // sample Azure CLI commands (informational)
+  azExamples?: string[]; // sample Azure/Plesk CLI commands (informational)
+  sshPublicKey?: string; // public SSH key for Git deploy keys configuration
   artifacts?: {
     apk?: {
       container: string;
@@ -165,7 +166,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   }
 
   const action = String((body as any)?.action || "").toLowerCase();
-  const target = (body.target as any) === "appservice" ? "appservice" : (body.target === "k8s" ? "k8s" : "containerapps");
+  const target = (body.target as any) === "plesk" ? "plesk" : ((body.target as any) === "appservice" ? "appservice" : (body.target === "k8s" ? "k8s" : "containerapps"));
   // Default partner container registry: prefer AZURE_PARTNER_CONTAINER_REGISTRY
   const defaultRegistry = (process.env.AZURE_PARTNER_CONTAINER_REGISTRY || "").trim();
   const defaultImage = defaultRegistry
@@ -220,6 +221,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
       : (brandConfig?.appUrl || brandBase.appUrl || process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || ""))
   );
 
+  // Extract Thirdweb parameters
+  const thirdwebClientId = String(brandConfig?.thirdwebClientId || "");
+  const thirdwebSecretKey = String(brandConfig?.thirdwebSecretKey || "");
+  const thirdwebAuthEndpointSecret = String(brandConfig?.thirdwebAuthEndpointSecret || "");
+
   // For deployment, include env vars by allowlist and valid key pattern (avoid OS/reserved variables)
   const baseEnv: Record<string, string> = {};
   if (action === "deploy") {
@@ -248,6 +254,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
     CONTAINER_TYPE: key === "portalpay" ? "platform" : "partner",
     NEXT_PUBLIC_CONTAINER_TYPE: key === "portalpay" ? "platform" : "partner",
     NEXT_PUBLIC_APP_URL: brandAppUrl,
+    // Thirdweb Keys mapping
+    ...(thirdwebClientId ? {
+      NEXT_PUBLIC_THIRDWEB_CLIENT_ID: thirdwebClientId,
+      THIRDWEB_CLIENT_ID: thirdwebClientId
+    } : {}),
+    ...(thirdwebSecretKey ? { THIRDWEB_SECRET_KEY: thirdwebSecretKey } : {}),
+    ...(thirdwebAuthEndpointSecret ? { THIRDWEB_AUTH_ENDPOINT_SECRET: thirdwebAuthEndpointSecret } : {}),
     // Conditionally set PP_BRAND_* keys (do not overwrite with blanks)
     ...(brandNameOverride ? { PP_BRAND_NAME: brandNameOverride } : {}),
     ...(brandLogoOverride ? { PP_BRAND_LOGO: brandLogoOverride } : {}),
@@ -335,74 +348,134 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
     }
   }
 
-  const steps: string[] = [
-    "Ensure the target environment has network access to existing APIM/AFD instances (no new APIM/AFD will be created).",
-    `Deploy the container using the same image: ${image}.`,
-    `Set environment variables: BRAND_KEY=${brandKey}, NEXT_PUBLIC_APP_URL=${env.NEXT_PUBLIC_APP_URL}, PP_BRAND_NAME, PP_BRAND_LOGO, PP_BRAND_FAVICON.`,
-    "Bind the custom domain in Azure Front Door (existing profile). Ensure origin points to the new container endpoint.",
-    "Run the domain checker in Platform Admin to verify DNS CNAME/AFD binding and HTTPS health.",
-    "Populate Partner Developer catalog via /api/platform/brands/[brandKey]/catalog PATCH (aliasName/aliasDescription/visible/docsSlug).",
-    "Build brand-specific Android APK artifact as part of deploy pipeline:",
-    ` - Rebuild launcher sources under android/launcher/recovered/src-${key} with apktool`,
-    " - Zipalign and sign with keystore (keystore path/alias/pass from secure secrets)",
-    " - Upload signed APK to Azure Blob Storage container (e.g., 'apks') at blob path 'brands/<brandKey>-signed.apk'",
-    "Configure app settings for APK serving endpoint:",
-    " - PP_APK_CONTAINER=apks",
-    " - PP_APK_BLOB_PREFIX=brands",
-    " - AZURE_STORAGE_CONNECTION_STRING (or provide SAS-based proxy) — used server-side to read APK",
-    "Access policy: only Admin/Superadmin can stream APKs; partner containers see their own brand APK only; platform sees all.",
-    "Installer ZIP download: GET /api/admin/apk/zips/{app} (portalpay|paynex) — dynamic ZIP containing APK and Windows .bat installer; gated to Admin/Superadmin; partner containers limited to own brand.",
-  ];
+  let sshPublicKey: string | undefined = undefined;
+  if (target === "plesk") {
+    try {
+      const sshDir = "/var/www/vhosts/basalthq.com/.ssh";
+      const pubKeyPath = `${sshDir}/id_rsa.pub`;
+      const privKeyPath = `${sshDir}/id_rsa`;
 
-  const azExamples: string[] = [];
-  if (target === "containerapps") {
-    azExamples.push(
-      `az containerapp create --name ${name} --resource-group ${resourceGroup || "<rg>"} --image ${image} --environment <aca-env> --ingress external --target-port 3000 --cpu 0.5 --memory 1Gi`,
-      ...Object.entries(env).map(([k, v]) => `az containerapp env vars set --name ${name} --resource-group ${resourceGroup || "<rg>"} --environment-variables ${k}='${v}'`),
-      `# Bind custom domain in AFD (existing), then verify:`,
-      `curl -s '${env.NEXT_PUBLIC_APP_URL || "https://partner.example.com"}' -I`
-    );
-  } else if (target === "appservice") {
-    azExamples.push(
-      `az webapp create --name ${name} --resource-group ${resourceGroup || "<rg>"} --plan <appservice-plan> --runtime 'NODE:18-lts'`,
-      `az webapp config container set --name ${name} --resource-group ${resourceGroup || "<rg>"} --docker-custom-image-name ${image}`,
-      ...Object.entries(env).map(([k, v]) => `az webapp config appsettings set --name ${name} --resource-group ${resourceGroup || "<rg>"} --settings ${k}='${v}'`),
-      `# Bind custom domain with AFD route; confirm HTTPS health:`,
-      `curl -s '${env.NEXT_PUBLIC_APP_URL || "https://partner.example.com"}' -I`
-    );
-  } else {
-    // k8s illustrative snippet
-    azExamples.push(
-      `kubectl create deployment ${name} --image=${image}`,
-      `kubectl set env deployment/${name} ${Object.entries(env).map(([k, v]) => `${k}='${v}'`).join(" ")}`,
-      `kubectl expose deployment/${name} --type=LoadBalancer --port=80 --target-port=3000`,
-      `# Bind domain in AFD and verify:`,
-      `curl -s '${env.NEXT_PUBLIC_APP_URL || "https://partner.example.com"}' -I`
-    );
+      // Try reading the public key
+      try {
+        const pubKey = await fs.readFile(pubKeyPath, "utf8");
+        sshPublicKey = pubKey.trim();
+      } catch (err: any) {
+        if (err.code === "ENOENT") {
+          // If it doesn't exist, try to generate it
+          const { exec } = require("node:child_process");
+          const { promisify } = require("node:util");
+          const execAsync = promisify(exec);
+          
+          await fs.mkdir(sshDir, { recursive: true });
+          await execAsync(`ssh-keygen -t rsa -b 4096 -f "${privKeyPath}" -N "" -q`);
+          const pubKey = await fs.readFile(pubKeyPath, "utf8");
+          sshPublicKey = pubKey.trim();
+        } else {
+          throw err;
+        }
+      }
+    } catch (e: any) {
+      console.error("[Plesk] Failed to resolve SSH key:", e.message);
+      sshPublicKey = "Error: Could not read/generate SSH key. Ensure /var/www/vhosts/basalthq.com/.ssh is writeable.";
+    }
   }
 
-  // APK build and upload examples (run in CI/CD or operator workstation)
-  {
-    const apkContainer = String(process.env.PP_APK_CONTAINER || "apks");
-    const apkPrefix = String(process.env.PP_APK_BLOB_PREFIX || "brands");
-    const unsignedOut = `dist/${key}-unsigned.apk`;
-    const alignedOut = `dist/${key}-aligned.apk`;
-    const signedOut = `dist/${key}-signed.apk`;
-    const blobPath = `${apkPrefix}/${key}-signed.apk`;
+  let steps: string[] = [];
+  let azExamples: string[] = [];
 
-    azExamples.push(
-      `# --- Build brand APK (${key}) ---`,
-      `mkdir -p dist`,
-      `tools/apktool.bat b android/launcher/recovered/src-${key} -o ${unsignedOut}`,
-      `# If zipalign available in PATH:`,
-      `zipalign -v -p 4 ${unsignedOut} ${alignedOut}`,
-      `# Sign with apksigner (use secret keystore + alias + passwords):`,
-      `apksigner sign --ks %ANDROID_KEYSTORE% --ks-key-alias %ANDROID_KEY_ALIAS% --ks-pass pass:%ANDROID_KEY_PASS% --key-pass pass:%ANDROID_KEY_PASS% --out ${signedOut} ${alignedOut}`,
-      `# --- Upload to Azure Blob (using connection string) ---`,
-      `az storage blob upload --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --container-name ${apkContainer} --name ${blobPath} --file ${signedOut} --overwrite true`,
-      `# Set app settings so the runtime can stream from Blob:`,
-      `az webapp config appsettings set --name ${name} --resource-group ${resourceGroup || "<rg>"} --settings PP_APK_CONTAINER=${apkContainer} PP_APK_BLOB_PREFIX=${apkPrefix}`
-    );
+  if (target === "plesk") {
+    steps = [
+      "Ensure the domain CNAME is pointed to your Plesk server.",
+      "Verify the Plesk server API key and endpoint are set correctly in the environment.",
+      "Run the provision API with action=deploy to automatically create the domain and link the Git repository.",
+      "Copy the Plesk subscription SSH public key shown below and add it as a Deploy Key on the BasaltSurge GitHub repository (one-time setup).",
+      "Configure Next.js build-time variables in .env.production inside the domain root folder.",
+      "Configure Passenger runtime variables via Plesk panel or nodetool.",
+      "Run git pull to download the source, trigger npm install, and run npm run build.",
+      "Restart the passenger Node.js process by touching tmp/restart.txt inside the domain root."
+    ];
+
+    const cleanDomain = brandAppUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    azExamples = [
+      `# --- Plesk CLI Commands (Run via SSH on VPS or automated via deploy action) ---`,
+      `# 1. Create the domain under basalthq.com webspace`,
+      `plesk bin site --create ${cleanDomain} -webspace-name basalthq.com -service-plan "Default"`,
+      `# 2. Configure Git SSH deployment repository`,
+      `plesk bin extension git --create -domain ${cleanDomain} -url git@github.com:BasaltHQ/BasaltSurge.git -branch production -actions "export PATH=/opt/plesk/node/24/bin:$PATH && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"`,
+      `# 3. Inject Passenger Runtime Environment Variables`,
+      ...Object.entries(env).map(([k, v]) => `plesk bin extension nodejs --nodetool -s -domain ${cleanDomain} -env-val "${k}=${v}"`),
+      `# 4. Secure the domain with Let's Encrypt SSL`,
+      `plesk bin extension --exec letsencrypt cli.php -d ${cleanDomain}`
+    ];
+  } else {
+    steps = [
+      "Ensure the target environment has network access to existing APIM/AFD instances (no new APIM/AFD will be created).",
+      `Deploy the container using the same image: ${image}.`,
+      `Set environment variables: BRAND_KEY=${brandKey}, NEXT_PUBLIC_APP_URL=${env.NEXT_PUBLIC_APP_URL}, PP_BRAND_NAME, PP_BRAND_LOGO, PP_BRAND_FAVICON.`,
+      "Bind the custom domain in Azure Front Door (existing profile). Ensure origin points to the new container endpoint.",
+      "Run the domain checker in Platform Admin to verify DNS CNAME/AFD binding and HTTPS health.",
+      "Populate Partner Developer catalog via /api/platform/brands/[brandKey]/catalog PATCH (aliasName/aliasDescription/visible/docsSlug).",
+      "Build brand-specific Android APK artifact as part of deploy pipeline:",
+      ` - Rebuild launcher sources under android/launcher/recovered/src-${key} with apktool`,
+      " - Zipalign and sign with keystore (keystore path/alias/pass from secure secrets)",
+      " - Upload signed APK to Azure Blob Storage container (e.g., 'apks') at blob path 'brands/<brandKey>-signed.apk'",
+      "Configure app settings for APK serving endpoint:",
+      " - PP_APK_CONTAINER=apks",
+      " - PP_APK_BLOB_PREFIX=brands",
+      " - AZURE_STORAGE_CONNECTION_STRING (or provide SAS-based proxy) — used server-side to read APK",
+      "Access policy: only Admin/Superadmin can stream APKs; partner containers see their own brand APK only; platform sees all.",
+      "Installer ZIP download: GET /api/admin/apk/zips/{app} (portalpay|paynex) — dynamic ZIP containing APK and Windows .bat installer; gated to Admin/Superadmin; partner containers limited to own brand.",
+    ];
+
+    if (target === "containerapps") {
+      azExamples.push(
+        `az containerapp create --name ${name} --resource-group ${resourceGroup || "<rg>"} --image ${image} --environment <aca-env> --ingress external --target-port 3000 --cpu 0.5 --memory 1Gi`,
+        ...Object.entries(env).map(([k, v]) => `az containerapp env vars set --name ${name} --resource-group ${resourceGroup || "<rg>"} --environment-variables ${k}='${v}'`),
+        `# Bind custom domain in AFD (existing), then verify:`,
+        `curl -s '${env.NEXT_PUBLIC_APP_URL || "https://partner.example.com"}' -I`
+      );
+    } else if (target === "appservice") {
+      azExamples.push(
+        `az webapp create --name ${name} --resource-group ${resourceGroup || "<rg>"} --plan <appservice-plan> --runtime 'NODE:18-lts'`,
+        `az webapp config container set --name ${name} --resource-group ${resourceGroup || "<rg>"} --docker-custom-image-name ${image}`,
+        ...Object.entries(env).map(([k, v]) => `az webapp config appsettings set --name ${name} --resource-group ${resourceGroup || "<rg>"} --settings ${k}='${v}'`),
+        `# Bind custom domain with AFD route; confirm HTTPS health:`,
+        `curl -s '${env.NEXT_PUBLIC_APP_URL || "https://partner.example.com"}' -I`
+      );
+    } else {
+      // k8s illustrative snippet
+      azExamples.push(
+        `kubectl create deployment ${name} --image=${image}`,
+        `kubectl set env deployment/${name} ${Object.entries(env).map(([k, v]) => `${k}='${v}'`).join(" ")}`,
+        `kubectl expose deployment/${name} --type=LoadBalancer --port=80 --target-port=3000`,
+        `# Bind domain in AFD and verify:`,
+        `curl -s '${env.NEXT_PUBLIC_APP_URL || "https://partner.example.com"}' -I`
+      );
+    }
+
+    // APK build and upload examples (run in CI/CD or operator workstation)
+    {
+      const apkContainer = String(process.env.PP_APK_CONTAINER || "apks");
+      const apkPrefix = String(process.env.PP_APK_BLOB_PREFIX || "brands");
+      const unsignedOut = `dist/${key}-unsigned.apk`;
+      const alignedOut = `dist/${key}-aligned.apk`;
+      const signedOut = `dist/${key}-signed.apk`;
+      const blobPath = `${apkPrefix}/${key}-signed.apk`;
+
+      azExamples.push(
+        `# --- Build brand APK (${key}) ---`,
+        `mkdir -p dist`,
+        `tools/apktool.bat b android/launcher/recovered/src-${key} -o ${unsignedOut}`,
+        `# If zipalign available in PATH:`,
+        `zipalign -v -p 4 ${unsignedOut} ${alignedOut}`,
+        `# Sign with apksigner (use secret keystore + alias + passwords):`,
+        `apksigner sign --ks %ANDROID_KEYSTORE% --ks-key-alias %ANDROID_KEY_ALIAS% --ks-pass pass:%ANDROID_KEY_PASS% --key-pass pass:%ANDROID_KEY_PASS% --out ${signedOut} ${alignedOut}`,
+        `# --- Upload to Azure Blob (using connection string) ---`,
+        `az storage blob upload --connection-string "$AZURE_STORAGE_CONNECTION_STRING" --container-name ${apkContainer} --name ${blobPath} --file ${signedOut} --overwrite true`,
+        `# Set app settings so the runtime can stream from Blob:`,
+        `az webapp config appsettings set --name ${name} --resource-group ${resourceGroup || "<rg>"} --settings PP_APK_CONTAINER=${apkContainer} PP_APK_BLOB_PREFIX=${apkPrefix}`
+      );
+    }
   }
 
   const plan: ProvisionPlan = {
@@ -416,6 +489,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
     domains,
     steps,
     azExamples,
+    sshPublicKey,
     artifacts: {
       apk: {
         container: String(process.env.PP_APK_CONTAINER || "apks"),
@@ -451,6 +525,161 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   // action already parsed above
 
   if (action === "deploy") {
+    if (target === "plesk") {
+      const cleanDomain = brandAppUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+      if (!cleanDomain || cleanDomain.includes("localhost")) {
+        return json(
+          {
+            error: "invalid_domain",
+            correlationId,
+            message: `Plesk deployment requires a valid domain. Got: ${cleanDomain}`,
+            plan
+          },
+          { status: 400, headers: { "x-correlation-id": correlationId } }
+        );
+      }
+
+      const progress: Array<{ step: string; ok: boolean; info?: any }> = [];
+      try {
+        const { PleskClient } = require("@/lib/hosting/plesk/client");
+        const plesk = new PleskClient();
+        progress.push({ step: "auth", ok: true });
+        await persistProgress(key, correlationId, progress);
+
+        // Step 1: Create domain (site) under webspace basalthq.com
+        progress.push({ step: "creating_site", ok: true, info: { domain: cleanDomain } });
+        await persistProgress(key, correlationId, progress);
+        
+        const siteResult = await plesk.callCli("site", [
+          "--create", cleanDomain,
+          "-webspace-name", "basalthq.com",
+          "-service-plan", "Default"
+        ]);
+        
+        if (siteResult.code !== 0 && !siteResult.stderr.includes("already exists") && !siteResult.stdout.includes("already exists")) {
+          throw new Error(`Plesk site creation failed: ${siteResult.stderr || siteResult.stdout}`);
+        }
+        
+        progress.push({ step: "site_created", ok: true, info: { domain: cleanDomain } });
+        await persistProgress(key, correlationId, progress);
+
+        // Step 2: Configure Git SSH Repository
+        progress.push({ step: "configuring_git", ok: true });
+        await persistProgress(key, correlationId, progress);
+        
+        const gitResult = await plesk.callCli("extension", [
+          "--call", "git",
+          "--create",
+          "-domain", cleanDomain,
+          "-url", "git@github.com:BasaltHQ/BasaltSurge.git",
+          "-branch", "production",
+          "-actions", "export PATH=/opt/plesk/node/24/bin:$PATH && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"
+        ]);
+        
+        if (gitResult.code !== 0 && !gitResult.stderr.includes("already exists") && !gitResult.stdout.includes("already exists")) {
+          throw new Error(`Plesk Git configuration failed: ${gitResult.stderr || gitResult.stdout}`);
+        }
+        
+        progress.push({ step: "git_configured", ok: true });
+        await persistProgress(key, correlationId, progress);
+
+        // Step 3: Write Build-Time environment variables (.env.production)
+        progress.push({ step: "writing_env", ok: true });
+        await persistProgress(key, correlationId, progress);
+        
+        const envContent = Object.entries(env)
+          .map(([k, v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
+          .join("\n");
+          
+        const targetDir = `/var/www/vhosts/basalthq.com/${cleanDomain}`;
+        await fs.mkdir(targetDir, { recursive: true });
+        await fs.writeFile(`${targetDir}/.env.production`, envContent, "utf8");
+        
+        progress.push({ step: "env_written", ok: true });
+        await persistProgress(key, correlationId, progress);
+
+        // Step 4: Inject Runtime Passenger Variables
+        progress.push({ step: "injecting_runtime_env", ok: true });
+        await persistProgress(key, correlationId, progress);
+        
+        for (const [k, v] of Object.entries(env)) {
+          try {
+            await plesk.callCli("extension", [
+              "--call", "nodejs",
+              "--nodetool",
+              "-s",
+              "-domain", cleanDomain,
+              "-env-val", `${k}=${v}`
+            ]);
+          } catch (envErr: any) {
+            console.warn(`[Plesk] Warning: Failed to inject runtime variable ${k}:`, envErr.message);
+          }
+        }
+        
+        progress.push({ step: "runtime_env_injected", ok: true });
+        await persistProgress(key, correlationId, progress);
+
+        // Step 5: Secure domain with Let's Encrypt
+        progress.push({ step: "requesting_ssl", ok: true });
+        await persistProgress(key, correlationId, progress);
+        
+        try {
+          await plesk.callCli("extension", [
+            "--exec", "letsencrypt", "cli.php",
+            "-d", cleanDomain
+          ]);
+          progress.push({ step: "ssl_completed", ok: true });
+        } catch (sslErr: any) {
+          console.warn("[Plesk SSL] Best-effort SSL setup failed:", sslErr.message);
+          progress.push({ step: "ssl_completed", ok: false, info: { warning: sslErr.message } });
+        }
+        await persistProgress(key, correlationId, progress);
+
+        // Step 6: Restart Node.js application
+        progress.push({ step: "restarting_app", ok: true });
+        await persistProgress(key, correlationId, progress);
+        
+        await plesk.callCli("extension", [
+          "--call", "nodejs",
+          "--nodetool",
+          "-restart",
+          "-domain", cleanDomain
+        ]);
+        
+        progress.push({ step: "app_restarted", ok: true });
+        await persistProgress(key, correlationId, progress);
+
+        return json(
+          {
+            ok: true,
+            correlationId,
+            plan,
+            deployment: {
+              target: "plesk",
+              domain: cleanDomain,
+              url: `https://${cleanDomain}`,
+              sshPublicKey,
+              state: "active"
+            },
+            progress
+          },
+          { headers: { "x-correlation-id": correlationId } }
+        );
+
+      } catch (err: any) {
+        return json(
+          {
+            ok: false,
+            correlationId,
+            error: "deployment_failed",
+            message: err.message || "Failed to deploy Plesk site",
+            progress
+          },
+          { status: 500, headers: { "x-correlation-id": correlationId } }
+        );
+      }
+    }
+
     // Only support App Service deployment via Azure SDK (target=appservice)
     if (target !== "appservice") {
       return json(

@@ -106,4 +106,58 @@ export class PleskClient {
             id: idMatch ? idMatch[1] : undefined
         };
     }
+
+    /**
+     * Execute a Plesk CLI utility command via the REST API.
+     */
+    async callCli(utility: string, params: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+        const urlObj = new URL(this.apiUrl.replace("/enterprise/control/agent.php", `/api/v2/cli/${utility}/call`));
+        const postData = JSON.stringify({ params });
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Content-Length": String(Buffer.byteLength(postData, "utf-8")),
+        };
+
+        if (this.apiKey) {
+            headers["X-API-Key"] = this.apiKey;
+        } else if (this.login && this.password) {
+            const auth = Buffer.from(`${this.login}:${this.password}`).toString("base64");
+            headers["Authorization"] = `Basic ${auth}`;
+        }
+
+        return new Promise((resolve, reject) => {
+            const options: https.RequestOptions = {
+                hostname: urlObj.hostname,
+                port: urlObj.port || 8443,
+                path: urlObj.pathname + urlObj.search,
+                method: "POST",
+                headers,
+                rejectUnauthorized: false,
+                timeout: 30_000,
+            };
+
+            const req = https.request(options, (res) => {
+                const chunks: Buffer[] = [];
+                res.on("data", (chunk: Buffer) => chunks.push(chunk));
+                res.on("end", () => {
+                    const body = Buffer.concat(chunks).toString("utf-8");
+                    if (res.statusCode && res.statusCode >= 400) {
+                        reject(new Error(`Plesk REST API Error: ${res.statusCode} ${body}`));
+                    } else {
+                        try {
+                            resolve(JSON.parse(body));
+                        } catch {
+                            reject(new Error(`Failed to parse JSON response: ${body}`));
+                        }
+                    }
+                });
+            });
+
+            req.on("error", (err) => reject(new Error(`Plesk REST API request failed: ${err.message}`)));
+            req.on("timeout", () => { req.destroy(); reject(new Error("Plesk REST API request timed out")); });
+            req.write(postData);
+            req.end();
+        });
+    }
 }

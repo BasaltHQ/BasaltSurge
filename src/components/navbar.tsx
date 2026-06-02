@@ -521,6 +521,16 @@ export function Navbar() {
     const [mobileOpen, setMobileOpen] = useState(false);
     const [mobileSocialOpen, setMobileSocialOpen] = useState(false);
     const [socialOpen, setSocialOpen] = useState(false);
+    const [isMobileViewport, setIsMobileViewport] = useState(false);
+
+    useEffect(() => {
+        const handleResize = () => {
+            setIsMobileViewport(window.innerWidth < 1024); // lg breakpoint (1024px)
+        };
+        handleResize();
+        window.addEventListener("resize", handleResize);
+        return () => window.removeEventListener("resize", handleResize);
+    }, []);
     const socialHideRef = useRef<number | null>(null);
     const [defiOpen, setDefiOpen] = useState(false);
     const [mobileDefiOpen, setMobileDefiOpen] = useState(false);
@@ -1025,7 +1035,7 @@ export function Navbar() {
                                 </button>
                             )}
                             {/* Login / Account Button */}
-                            {wallets.length > 0 ? (
+                            {!isMobileViewport && wallets.length > 0 ? (
                                 <ConnectButton
                                     client={client}
                                     chain={chain}
@@ -1061,9 +1071,9 @@ export function Navbar() {
                                         try { window.location.href = '/'; } catch { }
                                     }}
                                 />
-                            ) : (
+                            ) : !isMobileViewport ? (
                                 <div className="w-[100px] h-[36px] bg-white/5 animate-pulse rounded-[10px]" />
-                            )}
+                            ) : null}
                         </div>
 
                         {/* Mobile Menu Button */}
