@@ -5,7 +5,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { useActiveAccount, useActiveWallet, useDisconnect, darkTheme, useConnectModal } from "thirdweb/react";
+import { useActiveAccount, useActiveWallet, useDisconnect, darkTheme, AutoConnect } from "thirdweb/react";
 import { signLoginPayload } from "thirdweb/auth";
 import { client, chain, getWallets, getPrivateWallets, getPrivateLoginWallets } from "@/lib/thirdweb/client";
 import { usePortalThirdwebTheme, getConnectButtonStyle, connectButtonClass } from "@/lib/thirdweb/theme";
@@ -36,7 +36,6 @@ export function Navbar() {
     const account = useActiveAccount();
     const activeWallet = useActiveWallet();
     const { disconnect } = useDisconnect();
-    const { connect } = useConnectModal();
     const [owner, setOwner] = useState("");
     useEffect(() => {
         try {
@@ -769,6 +768,7 @@ export function Navbar() {
 
     return (
         <>
+            <AutoConnect client={client} wallets={wallets} />
             <style>{`
                 .nav-item-custom-border {
                     border: 1px solid transparent;
@@ -1094,22 +1094,26 @@ export function Navbar() {
                 </div>
 
                 {/* Mobile Menu Overlay */}
+                {/* Backdrop — tap outside to close */}
                 {mobileOpen && (
-                    <>
-                        {/* Backdrop — tap outside to close */}
-                        <div
-                            className="lg:hidden fixed inset-0 z-[-1]"
-                            onClick={() => setMobileOpen(false)}
-                            aria-hidden
-                        />
-                        <div
-                            className="lg:hidden backdrop-blur-xl absolute top-[calc(100%+1px)] left-4 right-4 rounded-2xl p-4 shadow-2xl animate-in slide-in-from-top-2 max-h-[70vh] overflow-y-auto"
-                            style={{
-                                backgroundColor: 'rgba(0, 0, 0, 0.92)',
-                                border: `1px solid ${themeColor}30`,
-                                boxShadow: `0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px ${themeColor}15`
-                            }}
-                        >
+                    <div
+                        className="lg:hidden fixed inset-0 z-[-1]"
+                        onClick={() => setMobileOpen(false)}
+                        aria-hidden
+                    />
+                )}
+                <div
+                    className={`lg:hidden backdrop-blur-xl absolute top-[calc(100%+1px)] left-4 right-4 rounded-2xl p-4 shadow-2xl max-h-[70vh] overflow-y-auto transition-all duration-300 ease-in-out ${
+                        mobileOpen
+                            ? "opacity-100 translate-y-0 pointer-events-auto"
+                            : "opacity-0 -translate-y-2 pointer-events-none"
+                    }`}
+                    style={{
+                        backgroundColor: 'rgba(0, 0, 0, 0.92)',
+                        border: `1px solid ${themeColor}30`,
+                        boxShadow: `0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px ${themeColor}15`
+                    }}
+                >
                             {/* Themed top accent line */}
                             <div
                                 className="absolute top-0 left-4 right-4 h-[2px] rounded-full"
@@ -1240,32 +1244,49 @@ export function Navbar() {
                                             {!isPartnerContainer && <span className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 backdrop-blur-sm">FREE</span>}
                                         </button>
                                     )}
-                                    <button
-                                        onClick={() => {
-                                            setMobileOpen(false);
-                                            connect({
-                                                client,
-                                                chain,
-                                                wallets,
-                                                theme: twTheme,
-                                                connectModal: {
-                                                    title: tCommon("login"),
-                                                    titleIcon: modalTitleIcon,
-                                                    size: "compact",
-                                                    showThirdwebBranding: false,
-                                                }
-                                            } as any).catch(() => {});
-                                        }}
-                                        className="w-full py-3 rounded-lg text-white text-xs font-mono tracking-wider font-bold transition-all hover:opacity-90 text-center"
-                                        style={{ backgroundColor: secondaryColor }}
-                                    >
-                                        LOGIN
-                                    </button>
+                                    {wallets.length > 0 ? (
+                                        <ConnectButton
+                                            client={client}
+                                            chain={chain}
+                                            wallets={wallets}
+                                            connectButton={{
+                                                label: "LOGIN",
+                                                className: "!text-white !w-full !justify-center !rounded-lg !py-3 !font-mono !text-xs !tracking-wider !font-bold !border-none !ring-0 !shadow-none transition-all hover:opacity-80",
+                                                style: { backgroundColor: secondaryColor, color: '#ffffff', borderRadius: '8px' },
+                                            }}
+                                            signInButton={{
+                                                label: "SIGN IN",
+                                                className: "!text-white !w-full !justify-center !rounded-lg !py-3 !font-mono !text-xs !tracking-wider !font-bold !border-none transition-all hover:opacity-80",
+                                                style: { backgroundColor: secondaryColor, color: '#ffffff', borderRadius: '8px' },
+                                            }}
+                                            detailsButton={{
+                                                displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+                                                style: { borderRadius: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' },
+                                                className: "!rounded-lg !bg-white/5 !border-white/10 hover:!bg-white/10 !px-4 !w-full !justify-center !py-3 !h-auto"
+                                            }}
+                                            detailsModal={{
+                                                payOptions: {
+                                                    buyWithFiat: { prefillSource: { currency: "USD" } },
+                                                    prefillBuy: { chain: chain, token: { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", name: "USD Coin", symbol: "USDC" } },
+                                                },
+                                            }}
+                                            connectModal={{ title: tCommon("login"), titleIcon: modalTitleIcon, size: "compact", showThirdwebBranding: false }}
+                                            theme={twTheme}
+                                            onConnect={() => setMobileOpen(false)}
+                                            onDisconnect={async () => {
+                                                try {
+                                                    await fetch('/api/auth/logout', { method: 'POST' });
+                                                    window.dispatchEvent(new CustomEvent("pp:auth:logged_out"));
+                                                } catch { }
+                                                try { window.location.href = '/'; } catch { }
+                                            }}
+                                        />
+                                    ) : (
+                                        <div className="w-full h-[40px] bg-white/5 animate-pulse rounded-lg" />
+                                    )}
                                 </div>
                             </div>
                         </div>
-                    </>
-                )}
 
                 {/* HUD Decorative Lines */}
                 <div className={`absolute bottom-0 left-0 right-0 pointer-events-none z-40 transition-opacity duration-300 ${scrolled ? 'opacity-100' : 'opacity-0'}`}>
