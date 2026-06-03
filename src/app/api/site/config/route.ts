@@ -1025,15 +1025,27 @@ export async function GET(req: NextRequest) {
       }
     } catch { }
 
-    // If no query wallet, try authentication (for merchant's own console management)
-    if (!wallet) {
-      const authed = await getAuthenticatedWallet(req);
-      wallet = /^0x[a-f0-9]{40}$/.test(String(authed || "")) ? String(authed) : "";
-    }
-
-    // If still no wallet, try the x-wallet header (for client-side theme fetches)
+    // If no query wallet, try the x-wallet header (for client-side theme fetches)
     if (!wallet && /^0x[a-f0-9]{40}$/.test(headerWalletIn)) {
       wallet = headerWalletIn;
+    }
+
+    // If still no wallet, try authentication (only for console/management routes)
+    if (!wallet) {
+      const isPublicRef = (() => {
+        if (!refPath) return true; // default to public if referer is missing
+        if (refPath.startsWith("/portal") || 
+            refPath.startsWith("/admin") || 
+            refPath.startsWith("/developers/dashboard") || 
+            refPath.startsWith("/developers/products")) {
+          return false;
+        }
+        return true;
+      })();
+      if (!isPublicRef) {
+        const authed = await getAuthenticatedWallet(req);
+        wallet = /^0x[a-f0-9]{40}$/.test(String(authed || "")) ? String(authed) : "";
+      }
     }
 
     try {

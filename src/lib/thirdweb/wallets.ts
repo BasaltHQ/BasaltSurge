@@ -12,34 +12,57 @@ import type { Chain } from "thirdweb/chains";
  * alongside EIP-4337, so new users can opt in without breaking existing ones.
  */
 
+// Simple module-level cache to prevent re-creation of Thirdweb wallet instances.
+// Re-instantiating MetaMask/Coinbase adapters registers duplicate listeners on window.ethereum,
+// which triggers MetaMask's MaxListenersExceededWarning memory leak warnings.
+type WalletCache = {
+  getWallets?: any[];
+  getPrivateWallets?: any[];
+  getOwnerModeWallets?: any[];
+  getPrivateLoginWallets?: any[];
+  chainId?: number;
+};
+
+let walletCache: WalletCache = {};
+
+function clearCacheIfChainChanged(chain: Chain) {
+  if (walletCache.chainId !== chain.id) {
+    walletCache = { chainId: chain.id };
+  }
+}
+
 // Produce wallets lazily with a provided chain to avoid module-eval side effects on the server
 export function getWallets(chain: Chain) {
-  return [
-    inAppWallet({
-      auth: {
-        options: [
-          "x",
-          "google",
-          "apple",
-          "facebook",
-          "telegram",
-          "email",
-          "phone",
-          "passkey",
-          "tiktok",
-        ],
-      },
-      executionMode: {
-        mode: "EIP4337",
-        smartAccount: {
-          chain,
-          sponsorGas: true,
+  clearCacheIfChainChanged(chain);
+  if (!walletCache.getWallets) {
+    walletCache.getWallets = [
+      inAppWallet({
+        auth: {
+          options: [
+            "x",
+            "google",
+            "apple",
+            "facebook",
+            "telegram",
+            "email",
+            "phone",
+            "passkey",
+            "tiktok",
+          ],
         },
-      },
-    }),
-    createWallet("io.metamask"),
-    createWallet("com.coinbase.wallet"),
-  ];
+        executionMode: {
+          mode: "EIP4337",
+          smartAccount: {
+            chain,
+            sponsorGas: true,
+          },
+        },
+      }),
+      createWallet("io.metamask"),
+      createWallet("com.coinbase.wallet"),
+    ];
+  }
+  return walletCache.getWallets;
 }
 
 /**
@@ -48,41 +71,49 @@ export function getWallets(chain: Chain) {
  * Used for SIGNUP flow on private partner containers.
  */
 export function getPrivateWallets(chain: Chain) {
-  return [
-    inAppWallet({
-      auth: {
-        options: [
-          "email",
-          "phone",
-        ],
-      },
-      executionMode: {
-        mode: "EIP4337",
-        smartAccount: {
-          chain,
-          sponsorGas: true,
+  clearCacheIfChainChanged(chain);
+  if (!walletCache.getPrivateWallets) {
+    walletCache.getPrivateWallets = [
+      inAppWallet({
+        auth: {
+          options: [
+            "email",
+            "phone",
+          ],
         },
-      },
-    }),
-  ];
+        executionMode: {
+          mode: "EIP4337",
+          smartAccount: {
+            chain,
+            sponsorGas: true,
+          },
+        },
+      }),
+    ];
+  }
+  return walletCache.getPrivateWallets;
 }
 
 // Owner Mode restricted wallets - only email and phone for GeckoView compatibility
 export function getOwnerModeWallets(chain: Chain) {
-  return [
-    inAppWallet({
-      auth: {
-        options: ["email", "phone"],
-      },
-      executionMode: {
-        mode: "EIP4337",
-        smartAccount: {
-          chain,
-          sponsorGas: true,
+  clearCacheIfChainChanged(chain);
+  if (!walletCache.getOwnerModeWallets) {
+    walletCache.getOwnerModeWallets = [
+      inAppWallet({
+        auth: {
+          options: ["email", "phone"],
         },
-      },
-    }),
-  ];
+        executionMode: {
+          mode: "EIP4337",
+          smartAccount: {
+            chain,
+            sponsorGas: true,
+          },
+        },
+      }),
+    ];
+  }
+  return walletCache.getOwnerModeWallets;
 }
 
 /**
@@ -91,23 +122,27 @@ export function getOwnerModeWallets(chain: Chain) {
  * No social logins (Google, Apple, X, etc.)
  */
 export function getPrivateLoginWallets(chain: Chain) {
-  return [
-    inAppWallet({
-      auth: {
-        options: [
-          "email",
-          "phone",
-        ],
-      },
-      executionMode: {
-        mode: "EIP4337",
-        smartAccount: {
-          chain,
-          sponsorGas: true,
+  clearCacheIfChainChanged(chain);
+  if (!walletCache.getPrivateLoginWallets) {
+    walletCache.getPrivateLoginWallets = [
+      inAppWallet({
+        auth: {
+          options: [
+            "email",
+            "phone",
+          ],
         },
-      },
-    }),
-    createWallet("io.metamask"),
-    createWallet("com.coinbase.wallet"),
-  ];
+        executionMode: {
+          mode: "EIP4337",
+          smartAccount: {
+            chain,
+            sponsorGas: true,
+          },
+        },
+      }),
+      createWallet("io.metamask"),
+      createWallet("com.coinbase.wallet"),
+    ];
+  }
+  return walletCache.getPrivateLoginWallets;
 }

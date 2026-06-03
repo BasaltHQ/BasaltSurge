@@ -387,6 +387,7 @@ export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin =
                   client={client}
                   chain={chain}
                   wallets={wallets}
+                  connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                   connectButton={{
                     label: <span className="microtext text-xs font-bold uppercase">Login</span>,
                     className: connectButtonClass + " w-full h-11",

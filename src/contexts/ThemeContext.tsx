@@ -154,12 +154,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         }
         // Check URL for wallet/recipient param to override context
         let urlWallet = "";
+        let isDevOrDocs = false;
         try {
           const u = new URL(window.location.href);
           urlWallet = (u.searchParams.get("wallet") || u.searchParams.get("recipient") || "").trim();
+          const path = u.pathname || "";
+          isDevOrDocs = path.startsWith("/developers") || path.startsWith("/docs");
         } catch { }
 
-        const useWallet = wallet || urlWallet || (isPartner ? recipientEnv : '');
+        const useWallet = isDevOrDocs ? "" : (wallet || urlWallet || (isPartner ? recipientEnv : ''));
         if (useWallet) headers['x-wallet'] = useWallet;
         headers['x-theme-caller'] = 'ThemeContext:fetchTheme';
 
@@ -531,8 +534,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       // Check theme lock
       const lock = root.getAttribute('data-pp-theme-lock') || 'user';
       // Allow brand theme to override unless explicitly hardlocked for merchant,
-      // or hardlocked for portalpay default while the current brand IS portalpay
-      if (lock === 'merchant' || (lock === 'portalpay-default' && String(brand?.key || '').toLowerCase() === 'portalpay')) {
+      // or hardlocked for portalpay default while the current brand IS portalpay or basaltsurge
+      const brandKeyCheck = String(brand?.key || '').toLowerCase();
+      if (lock === 'merchant' || (lock === 'portalpay-default' && (brandKeyCheck === 'portalpay' || brandKeyCheck === 'basaltsurge'))) {
         return; // Don't override these locks in their legitimate scopes
       }
 
