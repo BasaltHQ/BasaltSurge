@@ -91,3 +91,48 @@ export async function PUT(req: NextRequest) {
         return NextResponse.json({ error: err?.message || "Internal server error" }, { status: 500 });
     }
 }
+
+export async function POST(req: NextRequest) {
+    try {
+        const adminWallet = (req.headers.get("x-wallet") || "").toLowerCase();
+        if (!adminWallet || !hex(adminWallet)) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
+        const brandKey = String(
+            process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
+        ).toLowerCase();
+
+        const body = await req.json();
+        const { wallet, name, email, phone, notes } = body;
+
+        if (!wallet || !hex(wallet) || !name) {
+            return NextResponse.json({ error: "wallet (0x...) and name are required fields" }, { status: 400 });
+        }
+
+        const container = await getContainer();
+
+        const id = `agent-req-${crypto.randomUUID()}`;
+        const doc = {
+            id,
+            type: "agent_request",
+            brandKey,
+            wallet: wallet.toLowerCase().trim(),
+            name: name.trim(),
+            email: (email || "").trim(),
+            phone: (phone || "").trim(),
+            notes: (notes || "Directly added by admin").trim(),
+            status: "approved",
+            createdAt: Date.now(),
+            reviewedBy: adminWallet,
+            reviewedAt: Date.now(),
+        };
+
+        await container.items.upsert(doc);
+
+        return NextResponse.json({ success: true, request: doc });
+    } catch (err: any) {
+        console.error("[admin/agent-requests] POST Error:", err);
+        return NextResponse.json({ error: err?.message || "Internal server error" }, { status: 500 });
+    }
+}

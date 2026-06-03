@@ -15,7 +15,9 @@ import {
     Phone,
     User,
     RefreshCcw,
+    Plus,
 } from "lucide-react";
+import { Modal } from "@/components/ui/modal";
 
 type AgentRequest = {
     id: string;
@@ -43,6 +45,16 @@ export default function AgentRequestsPanel() {
     const [statusFilter, setStatusFilter] = useState<"all" | AgentRequest["status"]>("all");
     const [updating, setUpdating] = useState<string | null>(null);
     const [expandedId, setExpandedId] = useState<string | null>(null);
+
+    // Modal state for direct agent creation
+    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [newName, setNewName] = useState("");
+    const [newWallet, setNewWallet] = useState("");
+    const [newEmail, setNewEmail] = useState("");
+    const [newPhone, setNewPhone] = useState("");
+    const [newNotes, setNewNotes] = useState("");
+    const [addError, setAddError] = useState("");
+    const [addLoading, setAddLoading] = useState(false);
 
     const load = useCallback(async () => {
         if (!adminWallet) return;
@@ -82,6 +94,49 @@ export default function AgentRequestsPanel() {
             setError(e.message);
         } finally {
             setUpdating(null);
+        }
+    }
+
+    async function handleAddAgent() {
+        if (!adminWallet) return;
+        if (!newName.trim() || !newWallet.trim()) {
+            setAddError("Name and Wallet Address are required.");
+            return;
+        }
+        if (!/^0x[a-fA-F0-9]{40}$/.test(newWallet.trim())) {
+            setAddError("Invalid wallet address. Must start with 0x and be 42 characters.");
+            return;
+        }
+        setAddLoading(true);
+        setAddError("");
+        try {
+            const res = await fetch("/api/admin/agent-requests", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-wallet": adminWallet },
+                body: JSON.stringify({
+                    name: newName,
+                    wallet: newWallet,
+                    email: newEmail,
+                    phone: newPhone,
+                    notes: newNotes
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to add agent");
+            
+            setInfo("Sales Agent added and approved successfully.");
+            setIsAddModalOpen(false);
+            // Clear inputs
+            setNewName("");
+            setNewWallet("");
+            setNewEmail("");
+            setNewPhone("");
+            setNewNotes("");
+            load();
+        } catch (e: any) {
+            setAddError(e.message);
+        } finally {
+            setAddLoading(false);
         }
     }
 
@@ -132,14 +187,23 @@ export default function AgentRequestsPanel() {
                             Manage agent applications for <span className="font-mono text-emerald-400">{brand?.key || "this brand"}</span>.
                         </p>
                     </div>
-                    <button
-                        className="h-10 px-4 rounded-lg border border-foreground/[0.05] bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors shadow-sm flex items-center gap-2"
-                        onClick={load}
-                        disabled={loading}
-                    >
-                        <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-                        {loading ? "Loading…" : "Refresh"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            className="h-10 px-4 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium transition-colors shadow-sm flex items-center gap-2"
+                            onClick={() => setIsAddModalOpen(true)}
+                        >
+                            <Plus className="h-4 w-4" />
+                            <span>Add Sales Agent</span>
+                        </button>
+                        <button
+                            className="h-10 px-4 rounded-lg border border-foreground/[0.05] bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors shadow-sm flex items-center gap-2"
+                            onClick={load}
+                            disabled={loading}
+                        >
+                            <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                            {loading ? "Loading…" : "Refresh"}
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -326,6 +390,91 @@ export default function AgentRequestsPanel() {
                     </tbody>
                 </table>
             </div>
+
+            <Modal
+                open={isAddModalOpen}
+                onClose={() => {
+                    setIsAddModalOpen(false);
+                    setAddError("");
+                }}
+                title="Add Sales Agent"
+                description="Register and approve a new sales agent directly."
+                actions={[
+                    {
+                        label: "Cancel",
+                        onClick: () => {
+                            setIsAddModalOpen(false);
+                            setAddError("");
+                        },
+                        variant: "secondary"
+                    },
+                    {
+                        label: addLoading ? "Adding..." : "Add Agent",
+                        onClick: handleAddAgent,
+                        variant: "primary"
+                    }
+                ]}
+            >
+                <div className="space-y-4 text-foreground">
+                    {addError && (
+                        <div className="text-xs text-red-500 bg-red-500/10 p-3 rounded-lg border border-red-500/20">
+                            {addError}
+                        </div>
+                    )}
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-muted-foreground block">Agent Name *</label>
+                        <input
+                            type="text"
+                            placeholder="e.g. John Doe"
+                            className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                            value={newName}
+                            onChange={(e) => setNewName(e.target.value)}
+                        />
+                    </div>
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-muted-foreground block">Wallet Address *</label>
+                        <input
+                            type="text"
+                            placeholder="0x..."
+                            className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                            value={newWallet}
+                            onChange={(e) => setNewWallet(e.target.value)}
+                        />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-semibold text-muted-foreground block">Email (optional)</label>
+                            <input
+                                type="email"
+                                placeholder="agent@example.com"
+                                className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                                value={newEmail}
+                                onChange={(e) => setNewEmail(e.target.value)}
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-semibold text-muted-foreground block">Phone (optional)</label>
+                            <input
+                                type="text"
+                                placeholder="+1..."
+                                className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                                value={newPhone}
+                                onChange={(e) => setNewPhone(e.target.value)}
+                            />
+                        </div>
+                    </div>
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-muted-foreground block">Notes / Description (optional)</label>
+                        <textarea
+                            placeholder="Brief details about the agent, referral sources, etc."
+                            rows={3}
+                            className="w-full px-3 py-2 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors resize-none"
+                            value={newNotes}
+                            onChange={(e) => setNewNotes(e.target.value)}
+                        />
+                    </div>
+                </div>
+            </Modal>
         </div>
     );
 }
