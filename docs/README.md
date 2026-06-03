@@ -40,6 +40,7 @@ Start here: [Quick Start Guide](./quickstart.md)
 ## How this documentation is organized
 
 - Getting Started: [Introduction](./README.md) · [Quick Start](./quickstart.md) · [Core Concepts](./concepts.md) · [Authentication](./auth.md)
+- User & Admin Manuals: [Merchant Manual](./merchant/README.md) · [Partner Manual](./partner/README.md)
 - API Reference: Endpoints for split, inventory, orders, receipts, billing, tax, users, health
 - Integration Guides: E‑commerce, payment gateway, POS, Shopify
 - Developer Resources: Examples, error handling, rate limits, pricing, changelog
@@ -98,6 +99,8 @@ See the full [Authentication & Security Guide](./auth.md).
 
 ## Quick Links
 
+- [Merchant User Manual](./merchant/README.md)
+- [Partner Admin Manual](./partner/README.md)
 - [Quick Start Guide](./quickstart.md)
 - [Authentication & Security](./auth.md)
 - [API Reference](./api/README.md)
