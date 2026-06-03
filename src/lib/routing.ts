@@ -27,6 +27,7 @@ export const EXCLUDE_PREFIXES = new Set<string>([
     "kiosk", // kiosk mode
     "msa", // Master Services Agreement signing page
     "msas", // Master Services Agreement with special terms
+    "msa-isa", // Introducer / Sales Agent MSA
     "portal",
     "pricing",
     "profile",
@@ -78,4 +79,29 @@ export function isCandidateSlug(pathname: string): string | null {
     } catch {
         return null;
     }
+}
+
+export function isMainDomainHost(host: string): boolean {
+    if (!host) return false;
+    const h = host.toLowerCase().split(":")[0].trim();
+    
+    // Check local/private IPs (e.g. 192.168.x.x, 10.x.x.x, 127.x.x.x, 172.16.x.x - 172.31.x.x)
+    const isPrivateIp = 
+        h.startsWith("192.168.") || 
+        h.startsWith("10.") || 
+        h.startsWith("127.") ||
+        h === "localhost" ||
+        h === "0.0.0.0" ||
+        /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h);
+        
+    if (isPrivateIp) return true;
+
+    return (
+        h.endsWith("basalthq.com") ||
+        h.endsWith("portalpay.io") ||
+        h.includes("azurewebsites.net") ||
+        h.includes("vercel.app") ||
+        h.includes("xpaypass.com") ||
+        h.includes("vps.ovh.us")
+    );
 }

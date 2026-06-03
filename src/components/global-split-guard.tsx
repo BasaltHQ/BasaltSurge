@@ -204,7 +204,9 @@ export default function GlobalSplitGuard() {
     // Fallback: sum brand partner + platform bps, clamped
     const rawPartner = (brand as any)?.partnerFeeBps;
     const partnerN = typeof rawPartner === "number" ? Math.floor(rawPartner) : 0;
-    return Math.max(0, Math.min(10000, partnerN + platformBps));
+    const agentsList = Array.isArray((brand as any)?.agents) ? (brand as any).agents : [];
+    const agentN = agentsList.reduce((sum: number, a: any) => sum + Math.max(0, Math.floor(Number(a?.bps || 0))), 0);
+    return Math.max(0, Math.min(10000, partnerN + platformBps + agentN));
   })();
 
   // Partner share actually used for split deployment (gated by partner wallet configuration)

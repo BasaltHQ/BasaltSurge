@@ -96,6 +96,7 @@ export type AdminTabKey =
   | 'applications'
   | 'partners'
   | 'contracts'
+  | 'customAuthWallets'
   | 'shopSetup'
   | 'profileSetup'
   | 'manualShop'
@@ -488,6 +489,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
             { title: 'Merchants', key: 'users' as AdminTabKey, icon: <Store className="w-4 h-4" /> },
             { title: 'SEO Pages', key: 'seoPages' as AdminTabKey, icon: <Search className="w-4 h-4" /> },
             { title: 'Plugins', key: 'plugins' as AdminTabKey, icon: <Puzzle className="w-4 h-4" /> },
+            ...((canBranding || isSuperadmin) ? [{ title: 'Custom Auth Wallets', key: 'customAuthWallets' as AdminTabKey, icon: <ShieldCheck className="w-4 h-4" /> }] : []),
             // Client Requests & Agent Requests: Show for all admins now that platform requires approval
             ...((canBranding || isSuperadmin) ? [{ title: 'Client Requests', key: 'clientRequests' as AdminTabKey, icon: <FileQuestion className="w-4 h-4" /> }] : []),
             ...((canBranding || isSuperadmin) ? [{ title: 'Agent Requests', key: 'agentRequests' as AdminTabKey, icon: <Bot className="w-4 h-4" /> }] : []),

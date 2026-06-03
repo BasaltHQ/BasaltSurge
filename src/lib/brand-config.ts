@@ -46,6 +46,7 @@ export type BrandConfigDoc = {
   defaultMerchantFeeBps?: number;
   // Partner Split config
   partnerWallet?: string;
+  agents?: { wallet: string; bps: number }[];
   // Contact information
   contactEmail?: string;
   // APIM product aliasing/curation
@@ -58,6 +59,11 @@ export type BrandConfigDoc = {
 
   // Access Control
   accessMode?: "open" | "request";
+
+  // Thirdweb Keys
+  thirdwebClientId?: string;
+  thirdwebSecretKey?: string;
+  thirdwebAuthEndpointSecret?: string;
 
   updatedAt?: number;
 };
@@ -284,6 +290,7 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     partnerFeeBps: typeof overrides.partnerFeeBps === "number" ? overrides.partnerFeeBps : withDefaults.partnerFeeBps,
     defaultMerchantFeeBps: typeof overrides.defaultMerchantFeeBps === "number" ? overrides.defaultMerchantFeeBps : withDefaults.defaultMerchantFeeBps,
     partnerWallet: typeof overrides.partnerWallet === "string" ? overrides.partnerWallet : (withDefaults as any).partnerWallet,
+    agents: Array.isArray(overrides.agents) ? overrides.agents : withDefaults.agents || [],
     apimCatalog: Array.isArray(overrides.apimCatalog) ? overrides.apimCatalog : withDefaults.apimCatalog,
     accessMode: (overrides.accessMode === "request" || overrides.accessMode === "open") ? overrides.accessMode : withDefaults.accessMode,
   });

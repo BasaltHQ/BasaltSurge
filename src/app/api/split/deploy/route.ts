@@ -209,12 +209,28 @@ export async function GET(req: NextRequest) {
           const mWallet = /^0x[a-f0-9]{40}$/i.test(queryWallet) ? queryWallet : "" as any;
           const split: any = { address: undefined, recipients: [] as any[] };
 
+          const agentsList = Array.isArray(brand?.agents) ? brand.agents : [];
+
           if (isPartnerBrand && /^0x[a-f0-9]{40}$/i.test(platformRecipient) && /^0x[a-f0-9]{40}$/i.test(partnerWallet) && partnerFeeBps > 0 && /^0x[a-f0-9]{40}$/i.test(mWallet)) {
             const partnerShares = Math.max(0, Math.min(10000 - platformSharesBps, partnerFeeBps));
-            const merchantShares = Math.max(0, 10000 - platformSharesBps - partnerShares);
+            let remainingBps = 10000 - platformSharesBps - partnerShares;
+            const mappedAgents: { address: `0x${string}`; sharesBps: number }[] = [];
+            for (const agent of agentsList) {
+              const aWallet = String(agent.wallet || "").toLowerCase().trim();
+              const aBps = clampBps(agent.bps);
+              if (isHexAddress(aWallet) && aBps > 0) {
+                const actualBps = Math.min(remainingBps, aBps);
+                if (actualBps > 0) {
+                  mappedAgents.push({ address: aWallet as `0x${string}`, sharesBps: actualBps });
+                  remainingBps -= actualBps;
+                }
+              }
+            }
+            const merchantShares = Math.max(0, remainingBps);
             split.recipients = [
               { address: mWallet as `0x${string}`, sharesBps: merchantShares },
               { address: partnerWallet as `0x${string}`, sharesBps: partnerShares },
+              ...mappedAgents,
               { address: platformRecipient as `0x${string}`, sharesBps: platformSharesBps },
             ];
             return jsonResponse({ split, brandKey: bKey, requiresDeploy: true, reason: "unauthenticated_preview" });
@@ -353,12 +369,28 @@ export async function GET(req: NextRequest) {
 
       if (isPartnerBrand) {
         // Partner Brand Preview
+        const agentsList = Array.isArray(brand?.agents) ? brand.agents : [];
+
         if (isHexAddress(platformRecipient) && isHexAddress(partnerWallet) && partnerFeeBps > 0) {
           const partnerShares = Math.max(0, Math.min(10000 - platformSharesBps, partnerFeeBps));
-          const merchantShares = Math.max(0, 10000 - platformSharesBps - partnerShares);
+          let remainingBps = 10000 - platformSharesBps - partnerShares;
+          const mappedAgents: { address: `0x${string}`; sharesBps: number }[] = [];
+          for (const agent of agentsList) {
+            const aWallet = String(agent.wallet || "").toLowerCase().trim();
+            const aBps = clampBps(agent.bps);
+            if (isHexAddress(aWallet) && aBps > 0) {
+              const actualBps = Math.min(remainingBps, aBps);
+              if (actualBps > 0) {
+                mappedAgents.push({ address: aWallet as `0x${string}`, sharesBps: actualBps });
+                remainingBps -= actualBps;
+              }
+            }
+          }
+          const merchantShares = Math.max(0, remainingBps);
           const recipients = [
             { address: wallet, sharesBps: merchantShares },
             { address: partnerWallet as `0x${string}`, sharesBps: partnerShares },
+            ...mappedAgents,
             { address: platformRecipient as `0x${string}`, sharesBps: platformSharesBps },
           ];
           return jsonResponse({

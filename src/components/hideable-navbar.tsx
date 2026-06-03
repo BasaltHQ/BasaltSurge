@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { isCandidateSlug } from "@/lib/routing";
+import { isCandidateSlug, isMainDomainHost } from "@/lib/routing";
 import { Navbar } from "@/components/navbar";
 import { LanguageSelectorBar } from "@/components/language-selector-bar";
 import { TerminalViewBar } from "@/components/terminal-view-bar";
@@ -11,17 +11,7 @@ import { TerminalViewBar } from "@/components/terminal-view-bar";
  * Check if the current hostname is a custom domain (not a main platform domain).
  */
 function isCustomDomainHostname(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  return !(
-    h.endsWith("basalthq.com") ||
-    h.endsWith("portalpay.io") ||
-    h.includes("localhost") ||
-    h === "127.0.0.1" ||
-    h === "0.0.0.0" ||
-    h.includes("azurewebsites.net") ||
-    h.includes("vercel.app") ||
-    h.includes("xpaypass.com")
-  );
+  return !isMainDomainHost(hostname);
 }
 
 /**
@@ -68,7 +58,7 @@ export function HideableNavbar({ isServerCustomDomain = false }: { isServerCusto
     pathname === "/apply" || pathname.startsWith("/apply/") ||
     pathname === "/kiosk" || pathname.startsWith("/kiosk/") ||
     pathname === "/kitchen" || pathname.startsWith("/kitchen/") ||
-    pathname === "/msa" || pathname === "/msas" ||
+    pathname === "/msa" || pathname === "/msas" || pathname === "/msa-isa" ||
     pathname.startsWith("/reader/") || pathname === "/reader" ||
     ((pathname === "/terminal" || pathname.startsWith("/terminal")) && isFullscreen) ||
     ((pathname === "/terminal" || pathname.startsWith("/terminal")) && isMobile && isTerminalView) ||

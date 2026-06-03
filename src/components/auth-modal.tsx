@@ -229,13 +229,13 @@ export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin =
     <>
       {/* Backdrop (lower z-index so thirdweb connect modal can appear above) */}
       <div
-        className="fixed inset-0 z-[900] bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 z-[12000] bg-black/60 backdrop-blur-sm"
         onClick={!signing ? onClose : undefined}
       />
 
       {/* Modal (lower z-index so thirdweb connect modal can appear above) */}
       <div
-        className="fixed z-[901] glass-float rounded-xl border p-6 shadow-2xl overflow-y-auto"
+        className="fixed z-[12001] glass-float rounded-xl border p-6 shadow-2xl overflow-y-auto"
         style={{
           left: '50%',
           top: '50%',

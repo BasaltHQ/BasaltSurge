@@ -295,9 +295,11 @@ export async function POST(req: NextRequest) {
       grossMinor,
       platformFeeBps: splits.platformFeeBps,
       partnerFeeBps: splits.partnerFeeBps,
+      agentFeeBps: splits.agentFeeBps,
       merchantFeeBps: splits.merchantFeeBps,
       amountPlatformMinor: splits.amountPlatformMinor,
       amountPartnerMinor: splits.amountPartnerMinor,
+      amountAgentMinor: splits.amountAgentMinor,
       amountMerchantMinor: splits.amountMerchantMinor,
       effectiveProcessingFeeBps,
     };

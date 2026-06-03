@@ -41,7 +41,7 @@ export default function PartnerManagementPanel() {
   const [info, setInfo] = useState("");
 
   // Container deployment (provision) state
-  const [provTarget, setProvTarget] = useState<"containerapps" | "appservice" | "k8s">("appservice");
+  const [provTarget, setProvTarget] = useState<"containerapps" | "appservice" | "k8s" | "plesk">("appservice");
   const [provImage, setProvImage] = useState<string>("theutilityco.azurecr.io/payportal:latest");
   const [provResourceGroup, setProvResourceGroup] = useState<string>("");
   const [provName, setProvName] = useState<string>("");
@@ -80,6 +80,7 @@ export default function PartnerManagementPanel() {
   const [containerAppName, setContainerAppName] = useState<string>("");
   const [containerFqdn, setContainerFqdn] = useState<string>("");
   const [containerState, setContainerState] = useState<string>("");
+  const [approvedAgents, setApprovedAgents] = useState<any[]>([]);
 
   // Persist current brand config to the Brand Config API to avoid timing issues during provisioning/deploy.
   async function persistBrandBeforeProvision(): Promise<boolean> {
@@ -98,6 +99,15 @@ export default function PartnerManagementPanel() {
         body.defaultMerchantFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.defaultMerchantFeeBps))));
       }
       if (config?.partnerWallet) body.partnerWallet = String(config.partnerWallet);
+      if (Array.isArray(config?.agents)) {
+        body.agents = config.agents.map((a: any) => ({
+          wallet: String(a.wallet || "").toLowerCase().trim(),
+          bps: Math.max(0, Math.min(10000, Math.floor(Number(a.bps || 0)))),
+        })).filter((a: any) => /^0x[a-fA-F0-9]{40}$/.test(a.wallet) && a.bps > 0);
+      }
+      if (config?.thirdwebClientId !== undefined) body.thirdwebClientId = String(config.thirdwebClientId);
+      if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
+      if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
       if (typeof config?.name === "string") body.name = config.name;
       if (config?.colors) body.colors = config.colors;
       if (config?.logos) body.logos = config.logos;
@@ -109,7 +119,7 @@ export default function PartnerManagementPanel() {
       }
 
       // If nothing to persist, skip
-      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos) {
+      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents) {
         return true;
       }
 
@@ -394,6 +404,17 @@ export default function PartnerManagementPanel() {
     })();
   }, []);
 
+  // Fetch approved agents for dropdown
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/agents/list", { headers: { "x-wallet": account?.address || "" } });
+        const data = await res.json();
+        setApprovedAgents(data.agents || []);
+      } catch { setApprovedAgents([]); }
+    })();
+  }, [account?.address]);
+
   // Autopopulate deployment fields and Azure params when brand changes (sane defaults + brand-based name)
   useEffect(() => {
     const key = String(brandKey || "").toLowerCase();
@@ -422,6 +443,7 @@ export default function PartnerManagementPanel() {
         });
         const j = await resp.json().catch(() => ({}));
         const p = j?.params || {};
+        if (p.target) setProvTarget(p.target);
         setProvImage(typeof p.image === "string" ? p.image : "");
         setProvResourceGroup(typeof p.resourceGroup === "string" ? p.resourceGroup : "");
         setProvName(typeof p.name === "string" ? p.name : "");
@@ -467,8 +489,8 @@ export default function PartnerManagementPanel() {
         .filter((s) => s.length > 0);
 
       const body: any = {
-        target: "appservice",
-        image: provImage,
+        target: provTarget,
+        image: provTarget === "plesk" ? "" : provImage,
         resourceGroup: provResourceGroup || undefined,
         name: provName || undefined,
         location: provLocation || undefined,
@@ -612,8 +634,8 @@ export default function PartnerManagementPanel() {
 
       const body: any = {
         action: "deploy",
-        target: "appservice",
-        image: provImage || undefined,
+        target: provTarget,
+        image: provTarget === "plesk" ? undefined : (provImage || undefined),
         resourceGroup: provResourceGroup || undefined,
         name: provName || undefined,
         location: provLocation || undefined,
@@ -691,8 +713,8 @@ export default function PartnerManagementPanel() {
       // Persist deployment input parameters for this brand to DB for future runs
       try {
         const payload = {
-          target: "appservice",
-          image: provImage || undefined,
+          target: provTarget,
+          image: provTarget === "plesk" ? undefined : (provImage || undefined),
           resourceGroup: provResourceGroup || undefined,
           name: provName || undefined,
           location: provLocation || undefined,
@@ -784,6 +806,15 @@ export default function PartnerManagementPanel() {
       if (typeof config?.defaultMerchantFeeBps === "number")
         body.defaultMerchantFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.defaultMerchantFeeBps))));
       if (config?.partnerWallet) body.partnerWallet = String(config.partnerWallet);
+      if (Array.isArray(config?.agents)) {
+        body.agents = config.agents.map((a: any) => ({
+          wallet: String(a.wallet || "").toLowerCase().trim(),
+          bps: Math.max(0, Math.min(10000, Math.floor(Number(a.bps || 0)))),
+        })).filter((a: any) => /^0x[a-fA-F0-9]{40}$/.test(a.wallet) && a.bps > 0);
+      }
+      if (config?.thirdwebClientId !== undefined) body.thirdwebClientId = String(config.thirdwebClientId);
+      if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
+      if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
 
       // Email Config
       if (config?.email) {
@@ -1623,11 +1654,137 @@ export default function PartnerManagementPanel() {
             <div className="p-5 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Platform Fee (bps)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={10000}
+                  step={1}
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                  value={Number(config?.platformFeeBps || 50)}
+                  onChange={(e) =>
+                    setConfig((prev: any) => ({ ...prev, platformFeeBps: Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0)))) }))
+                  }
+                  disabled={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState)}
+                  title={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? "Fees locked after partner container deploy" : undefined}
+                />
+                <div className="text-[11px] text-muted-foreground/70 mt-1.5">
+                  Platform share in basis points (e.g., 50 = 0.5%). Defaults to 50 bps unless overridden here.
+                  {Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? (
+                    <span className="text-amber-600"> • Locked after partner container deploy</span>
+                  ) : null}
+                </div>
+              </div>
+              <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">App URL</label>
                 <input
                   className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
                   value={String(config?.appUrl || "")}
                   onChange={(e) => setConfig((prev: any) => ({ ...prev, appUrl: e.target.value }))}
+                />
+              </div>
+              {/* Introducers / Agent Shares section (dynamic list editor) */}
+              <div className="col-span-1 md:col-span-2 space-y-3 border-t border-b border-foreground/5 py-4 my-2">
+                <div className="flex justify-between items-center text-xs uppercase tracking-wider font-mono text-zinc-500">
+                  <span>Introducers / Agent Shares</span>
+                  <button
+                    onClick={() => {
+                      const agents = Array.isArray(config?.agents) ? config.agents : [];
+                      setConfig((prev: any) => ({
+                        ...prev,
+                        agents: [...agents, { wallet: "", bps: 0 }]
+                      }));
+                    }}
+                    className="text-emerald-400 hover:text-emerald-300 transition-colors text-xs font-semibold"
+                  >
+                    + Add Agent
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {(Array.isArray(config?.agents) ? config.agents : []).map((agent: any, idx: number) => {
+                    const isRegistered = approvedAgents.some(a => a.wallet.toLowerCase() === agent.wallet.toLowerCase());
+                    const isCustomMode = !isRegistered && agent.wallet !== "";
+                    return (
+                      <div key={idx} className="space-y-1.5 animate-in fade-in-50 duration-150">
+                        <div className="flex gap-2">
+                          <select
+                            value={isRegistered ? agent.wallet.toLowerCase() : (agent.wallet ? "__custom__" : "")}
+                            onChange={(e) => {
+                              const newAgents = [...config.agents];
+                              if (e.target.value === "__custom__") {
+                                newAgents[idx].wallet = "";
+                              } else if (e.target.value === "") {
+                                newAgents[idx].wallet = "";
+                              } else {
+                                newAgents[idx].wallet = e.target.value;
+                              }
+                              setConfig((prev: any) => ({ ...prev, agents: newAgents }));
+                            }}
+                            className="flex-1 h-10 bg-foreground/[0.03] border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-foreground/20 outline-none"
+                          >
+                            <option value="" className="bg-background text-foreground">Select agent…</option>
+                            {approvedAgents.map(a => (
+                              <option key={a.wallet} value={a.wallet.toLowerCase()} className="bg-background text-foreground">
+                                {a.name || "Unknown"} ({a.wallet.slice(0, 6)}…{a.wallet.slice(-4)})
+                              </option>
+                            ))}
+                            <option value="__custom__" className="bg-background text-foreground">⌨ Custom wallet…</option>
+                          </select>
+                          <div className="flex items-center gap-1 bg-foreground/[0.03] border border-foreground/10 rounded-lg px-3 w-28 h-10">
+                            <input
+                              type="number"
+                              placeholder="0"
+                              value={agent.bps}
+                              onChange={(e) => {
+                                const newAgents = [...config.agents];
+                                newAgents[idx].bps = parseInt(e.target.value) || 0;
+                                setConfig((prev: any) => ({ ...prev, agents: newAgents }));
+                              }}
+                              className="w-full bg-transparent text-right font-mono text-sm text-foreground outline-none border-none p-0 focus:ring-0"
+                            />
+                            <span className="text-muted-foreground/60 text-xs">bps</span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              const newAgents = config.agents.filter((_: any, i: number) => i !== idx);
+                              setConfig((prev: any) => ({ ...prev, agents: newAgents }));
+                            }}
+                            className="p-2 hover:bg-red-500/20 text-muted-foreground hover:text-red-500 rounded-lg transition-colors flex items-center justify-center h-10 w-10 border border-foreground/10"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                        {isCustomMode && (
+                          <input
+                            type="text"
+                            placeholder="Agent Wallet (0x...)"
+                            value={agent.wallet}
+                            onChange={(e) => {
+                              const newAgents = [...config.agents];
+                              newAgents[idx].wallet = e.target.value;
+                              setConfig((prev: any) => ({ ...prev, agents: newAgents }));
+                            }}
+                            className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                  {(Array.isArray(config?.agents) ? config.agents : []).length === 0 && (
+                    <div className="text-xs text-muted-foreground/60 italic py-2">
+                      No agent shares configured. These are default agents pre-populated when setting up client request splits.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Swapped/Modified Partner controls: putting partner wallet and partner fee below the agents list */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Partner Wallet</label>
+                <input
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                  value={String(config?.partnerWallet || "")}
+                  onChange={(e) => setConfig((prev: any) => ({ ...prev, partnerWallet: e.target.value }))}
                 />
               </div>
               <div>
@@ -1653,28 +1810,6 @@ export default function PartnerManagementPanel() {
                 </div>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Platform Fee (bps)</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={10000}
-                  step={1}
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
-                  value={Number(config?.platformFeeBps || 50)}
-                  onChange={(e) =>
-                    setConfig((prev: any) => ({ ...prev, platformFeeBps: Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0)))) }))
-                  }
-                  disabled={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState)}
-                  title={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? "Fees locked after partner container deploy" : undefined}
-                />
-                <div className="text-[11px] text-muted-foreground/70 mt-1.5">
-                  Platform share in basis points (e.g., 50 = 0.5%). Defaults to 50 bps unless overridden here.
-                  {Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? (
-                    <span className="text-amber-600"> • Locked after partner container deploy</span>
-                  ) : null}
-                </div>
-              </div>
-              <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">Default Merchant Fee (bps)</label>
                 <input
                   type="number"
@@ -1689,11 +1824,32 @@ export default function PartnerManagementPanel() {
                 />
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Partner Wallet</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Thirdweb Client ID</label>
                 <input
                   className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
-                  value={String(config?.partnerWallet || "")}
-                  onChange={(e) => setConfig((prev: any) => ({ ...prev, partnerWallet: e.target.value }))}
+                  placeholder="Thirdweb Client ID"
+                  value={String(config?.thirdwebClientId || "")}
+                  onChange={(e) => setConfig((prev: any) => ({ ...prev, thirdwebClientId: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Thirdweb Secret Key</label>
+                <input
+                  type="password"
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                  placeholder="Thirdweb Secret Key"
+                  value={String(config?.thirdwebSecretKey || "")}
+                  onChange={(e) => setConfig((prev: any) => ({ ...prev, thirdwebSecretKey: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Thirdweb Auth Endpoint Secret</label>
+                <input
+                  type="password"
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                  placeholder="Thirdweb Auth Endpoint Secret"
+                  value={String(config?.thirdwebAuthEndpointSecret || "")}
+                  onChange={(e) => setConfig((prev: any) => ({ ...prev, thirdwebAuthEndpointSecret: e.target.value }))}
                 />
               </div>
 
@@ -1996,46 +2152,60 @@ export default function PartnerManagementPanel() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">Target</label>
-                <div className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors flex items-center">
-                  Azure App Service (locked)
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Image</label>
-                <input
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
-                  placeholder="myregistry.azurecr.io/portalpay:latest"
-                  value={provImage}
-                  onChange={(e) => setProvImage(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Resource Group</label>
-                <input
+                <select
                   className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
-                  placeholder="rg-portalpay"
-                  value={provResourceGroup}
-                  onChange={(e) => setProvResourceGroup(e.target.value)}
-                />
+                  value={provTarget}
+                  onChange={(e: any) => setProvTarget(e.target.value)}
+                  title="Select deployment target platform"
+                >
+                  <option className="bg-background text-foreground" value="appservice">Azure App Service</option>
+                  <option className="bg-background text-foreground" value="plesk">Plesk VPS Server</option>
+                  <option className="bg-background text-foreground" value="containerapps">Azure Container Apps</option>
+                  <option className="bg-background text-foreground" value="k8s">Kubernetes</option>
+                </select>
               </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">App/Container Name</label>
-                <input
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
-                  placeholder={`pp-${brandKey}`}
-                  value={provName}
-                  onChange={(e) => setProvName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Location (optional)</label>
-                <input
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
-                  placeholder="westus2"
-                  value={provLocation}
-                  onChange={(e) => setProvLocation(e.target.value)}
-                />
-              </div>
+
+              {provTarget !== "plesk" && (
+                <>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">Image</label>
+                    <input
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                      placeholder="myregistry.azurecr.io/portalpay:latest"
+                      value={provImage}
+                      onChange={(e) => setProvImage(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">Resource Group</label>
+                    <input
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                      placeholder="rg-portalpay"
+                      value={provResourceGroup}
+                      onChange={(e) => setProvResourceGroup(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">App/Container Name</label>
+                    <input
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                      placeholder={`pp-${brandKey}`}
+                      value={provName}
+                      onChange={(e) => setProvName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">Location (optional)</label>
+                    <input
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                      placeholder="westus2"
+                      value={provLocation}
+                      onChange={(e) => setProvLocation(e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
+
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">Domains (comma‑separated)</label>
                 <input
@@ -2064,9 +2234,6 @@ export default function PartnerManagementPanel() {
                   onChange={(e) => setPortalpayApiBase(e.target.value)}
                 />
               </div>
-
-
-
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">APIM Subscription Key</label>
                 <input
@@ -2077,73 +2244,77 @@ export default function PartnerManagementPanel() {
                 />
               </div>
 
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Azure Subscription ID</label>
-                <input
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
-                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  value={azureSubscriptionId}
-                  onChange={(e) => setAzureSubscriptionId(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Azure Resource Group (APIM/AFD/App)</label>
-                <input
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
-                  placeholder="rg-portalpay-prod"
-                  value={azureResourceGroup}
-                  onChange={(e) => setAzureResourceGroup(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Azure APIM Name</label>
-                <input
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
-                  placeholder="apim-portalpay-prod"
-                  value={azureApimName}
-                  onChange={(e) => setAzureApimName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Azure AFD Profile Name</label>
-                <input
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
-                  placeholder="afd-portalpay-prod"
-                  value={azureAfdProfileName}
-                  onChange={(e) => setAzureAfdProfileName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Azure Container Apps Env ID (optional)</label>
-                <input
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
-                  placeholder="/subscriptions/.../resourceGroups/.../providers/Microsoft.App/managedEnvironments/..."
-                  value={azureContainerAppsEnvId}
-                  onChange={(e) => setAzureContainerAppsEnvId(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">ACR Username (optional)</label>
-                <input
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
-                  placeholder="azurecr username"
-                  value={acrUsername}
-                  onChange={(e) => setAcrUsername(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">ACR Password (optional)</label>
-                <input
-                  type="password"
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
-                  placeholder="********"
-                  value={acrPassword}
-                  onChange={(e) => setAcrPassword(e.target.value)}
-                />
-                <div className="text-[11px] text-muted-foreground/70 mt-1.5">
-                  If using theutilityco.azurecr.io, provide ACR credentials or grant AcrPull to the web app's managed identity.
-                </div>
-              </div>
+              {provTarget !== "plesk" && (
+                <>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">Azure Subscription ID</label>
+                    <input
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                      placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                      value={azureSubscriptionId}
+                      onChange={(e) => setAzureSubscriptionId(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">Azure Resource Group (APIM/AFD/App)</label>
+                    <input
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                      placeholder="rg-portalpay-prod"
+                      value={azureResourceGroup}
+                      onChange={(e) => setAzureResourceGroup(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">Azure APIM Name</label>
+                    <input
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                      placeholder="apim-portalpay-prod"
+                      value={azureApimName}
+                      onChange={(e) => setAzureApimName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">Azure AFD Profile Name</label>
+                    <input
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                      placeholder="afd-portalpay-prod"
+                      value={azureAfdProfileName}
+                      onChange={(e) => setAzureAfdProfileName(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">Azure Container Apps Env ID (optional)</label>
+                    <input
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                      placeholder="/subscriptions/.../resourceGroups/.../providers/Microsoft.App/managedEnvironments/..."
+                      value={azureContainerAppsEnvId}
+                      onChange={(e) => setAzureContainerAppsEnvId(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">ACR Username (optional)</label>
+                    <input
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                      placeholder="azurecr username"
+                      value={acrUsername}
+                      onChange={(e) => setAcrUsername(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">ACR Password (optional)</label>
+                    <input
+                      type="password"
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                      placeholder="********"
+                      value={acrPassword}
+                      onChange={(e) => setAcrPassword(e.target.value)}
+                    />
+                    <div className="text-[11px] text-muted-foreground/70 mt-1.5">
+                      If using theutilityco.azurecr.io, provide ACR credentials or grant AcrPull to the web app's managed identity.
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
             {provError && <div className="text-xs text-red-500">{provError}</div>}
             <div className="flex items-center justify-end gap-2">
@@ -2167,6 +2338,45 @@ export default function PartnerManagementPanel() {
                 {retryLoading ? "Retrying…" : "Retry AFD"}
               </button>
             </div>
+            {provTarget === "plesk" && (provPlan?.sshPublicKey || deploymentInfo?.sshPublicKey) ? (
+              <div className="mt-4 rounded-xl border border-blue-500/20 bg-blue-500/[0.02] p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                  <span className="text-sm font-semibold text-blue-400">GitHub Deploy Key Required</span>
+                </div>
+                <p className="text-xs text-muted-foreground/90">
+                  This Plesk VPS instance deploys by cloning from GitHub via SSH. Add the following public key as a <strong>Deploy Key</strong> with read access on the <code>BasaltHQ/BasaltSurge</code> repository.
+                </p>
+                <div className="relative group">
+                  <textarea
+                    readOnly
+                    className="w-full h-24 p-3 rounded-lg border border-foreground/10 bg-foreground/[0.02] text-xs font-mono focus:outline-none resize-none cursor-text selection:bg-blue-500/20"
+                    value={provPlan?.sshPublicKey || deploymentInfo?.sshPublicKey || ""}
+                    onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                    title="Click to select all"
+                  />
+                  <button
+                    className="absolute top-2 right-2 px-2.5 py-1.5 rounded bg-background border hover:bg-foreground/5 text-[10px] font-medium transition-colors"
+                    onClick={() => {
+                      navigator.clipboard.writeText(provPlan?.sshPublicKey || deploymentInfo?.sshPublicKey || "");
+                      alert("SSH Public Key copied to clipboard!");
+                    }}
+                  >
+                    Copy Key
+                  </button>
+                </div>
+                <div className="text-[11px] text-muted-foreground/75 leading-relaxed bg-foreground/[0.01] p-3 rounded-lg border">
+                  <strong>Instructions:</strong>
+                  <ol className="list-decimal pl-4 mt-1 space-y-1">
+                    <li>Go to your GitHub repository: <code>https://github.com/BasaltHQ/BasaltSurge</code></li>
+                    <li>Navigate to <strong>Settings</strong> &gt; <strong>Deploy keys</strong></li>
+                    <li>Click <strong>Add deploy key</strong>, paste this key, and name it (e.g. <code>Plesk-basalthq.com-VPS</code>)</li>
+                    <li>(Optional) Leave "Allow write access" unchecked (read-only is sufficient)</li>
+                    <li>Save the key. Future updates and Git actions on the VPS will work automatically.</li>
+                  </ol>
+                </div>
+              </div>
+            ) : null}
             {provPlan ? (
               <div className="mt-3 rounded-md border p-3">
                 <div className="text-xs text-muted-foreground/70">

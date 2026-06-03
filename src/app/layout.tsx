@@ -23,6 +23,7 @@ import { getBrandConfig, getBrandKey } from "@/config/brands";
 import { BrandProvider } from "@/contexts/BrandContext";
 import { getContainer } from "@/lib/cosmos";
 import { getEnv } from "@/lib/env";
+import { isMainDomainHost } from "@/lib/routing";
 import { getBrandConfigFromCosmos, getContainerIdentity } from "@/lib/brand-config";
 import { normalizeBrandName, resolveBrandAppLogo, resolveBrandSymbol, getDefaultBrandName } from "@/lib/branding";
 import { printBanner, isDebug } from "@/lib/logger";
@@ -679,17 +680,7 @@ export default async function RootLayout({
     }
   } catch { }
 
-  const isCustomDomainServer = !!hostForNavbar && !(
-    hostForNavbar.endsWith("basalthq.com") ||
-    hostForNavbar.endsWith("portalpay.io") ||
-    hostForNavbar.includes("localhost") ||
-    hostForNavbar === "127.0.0.1" ||
-    hostForNavbar === "0.0.0.0" ||
-    hostForNavbar.includes("azurewebsites.net") ||
-    hostForNavbar.includes("vercel.app") ||
-    hostForNavbar.includes("xpaypass.com") ||
-    hostForNavbar.includes("vps.ovh.us")
-  );
+  const isCustomDomainServer = !!hostForNavbar && !isMainDomainHost(hostForNavbar);
 
   return (
     <html

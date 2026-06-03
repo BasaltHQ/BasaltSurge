@@ -29,8 +29,8 @@ const DEFAULT_CONFIG: ContractConfig = {
     },
     msas: {
         widgetId: "CBFCIBAA3AAABLblqZhAHRCQTck4tBTVuSFpOBUyzpaX3Pwfl4C7LnOMuF3NAsQix9gPj1Ei-619ikHBIyTI*",
-        title: "Financing Partner Agreement",
-        description: "MSA with 50% down financing option",
+        title: "Referred Partner Agreement",
+        description: "Standard MSA for Partners onboarding from Referred Introducers/Sales Agents",
         lastUpdated: new Date().toISOString(),
     },
 };

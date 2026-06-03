@@ -43,8 +43,33 @@ export async function ensureSplitForWallet(
 
     if (!isValidHexAddress(merchant)) return undefined;
 
+    // Fetch effective brand config (with Cosmos overrides) to get current partnerFeeBps and partnerWallet
+    let brand: any;
+    if (brandKey) {
+      try {
+        const apiUrl = buildApiUrl(`/api/platform/brands/${encodeURIComponent(brandKey as string)}/config`);
+        const r = await fetch(apiUrl, { cache: 'no-store', credentials: "include" });
+        const j = await r.json().catch(() => ({}));
+        brand = j?.brand ? j.brand : getBrandConfig(brandKey as string);
+      } catch (e) {
+        console.error("[ensureSplitForWallet] Failed to fetch brand config:", e);
+        brand = getBrandConfig(brandKey as string);
+      }
+    } else {
+      brand = {};
+    }
+
     // Agent calculation helpers
-    const agents = Array.isArray(extraAgents) ? extraAgents : [];
+    let agents = Array.isArray(extraAgents) ? extraAgents : [];
+    if (extraAgents === undefined) {
+      if (Array.isArray(brand?.agents) && brand.agents.length > 0) {
+        agents = brand.agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps }));
+      } else if (brand?.agentWallet && brand?.agentFeeBps && brand?.agentFeeBps > 0) {
+        if (isValidHexAddress(brand.agentWallet)) {
+          agents = [{ wallet: brand.agentWallet, bps: brand.agentFeeBps }];
+        }
+      }
+    }
     const agentSharesBps = agents.reduce((sum, a) => sum + Math.max(0, Math.min(10000, a.bps)), 0);
 
     if (!brandKey) {
@@ -98,20 +123,6 @@ export async function ensureSplitForWallet(
         });
       } catch { }
       return undefined;
-    }
-
-    // Deploy Split contract via thirdweb (sponsored gas via AA)
-    // Fetch effective brand config (with Cosmos overrides) to get current partnerFeeBps and partnerWallet
-    let brand: any;
-    try {
-      const apiUrl = buildApiUrl(`/api/platform/brands/${encodeURIComponent(brandKey as string)}/config`);
-      // console.log("[ensureSplitForWallet] Fetching brand config from:", apiUrl);
-      const r = await fetch(apiUrl, { cache: 'no-store', credentials: "include" });
-      const j = await r.json().catch(() => ({}));
-      brand = j?.brand ? j.brand : getBrandConfig(brandKey as string);
-    } catch (e) {
-      console.error("[ensureSplitForWallet] Failed to fetch brand config:", e);
-      brand = getBrandConfig(brandKey as string);
     }
 
     // Resolve partner wallet: prefer override, then brand config

@@ -421,7 +421,18 @@ export default function ClientRequestsPanel() {
         } else {
             setPartnerBps(isPlatformContainer ? 0 : 50); // Reset to default
             if (isPlatformContainer) setPlatformBps(100);
-            setAgents([]);
+            
+            if (Array.isArray((brand as any)?.agents) && (brand as any).agents.length > 0) {
+                setAgents((brand as any).agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps })));
+            } else {
+                const defAgentWallet = (brand as any)?.agentWallet || "";
+                const defAgentFee = (brand as any)?.agentFeeBps || 0;
+                if (defAgentWallet && defAgentFee > 0) {
+                    setAgents([{ wallet: defAgentWallet, bps: defAgentFee }]);
+                } else {
+                    setAgents([]);
+                }
+            }
             setLastVerifiedConfig(null); // No verified config for new splits
         }
         // Fetch approved agents for dropdown

@@ -31,6 +31,7 @@ type BrandConfigDoc = {
   defaultMerchantFeeBps?: number;
   // Partner Split config
   partnerWallet?: string;
+  agents?: { wallet: string; bps: number }[];
   // Access control for partner containers
   accessMode?: "open" | "request"; // "open" = anyone can use, "request" = requires approval
   // Email Configuration
@@ -76,6 +77,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     appUrl: undefined,
     platformFeeBps: 50,
     partnerFeeBps: 0,
+    agents: [],
     defaultMerchantFeeBps: 0,
     partnerWallet: "",
     apimCatalog: [],
@@ -118,6 +120,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     partnerFeeBps: typeof overrides.partnerFeeBps === "number" ? overrides.partnerFeeBps : withDefaults.partnerFeeBps,
     defaultMerchantFeeBps: typeof overrides.defaultMerchantFeeBps === "number" ? overrides.defaultMerchantFeeBps : withDefaults.defaultMerchantFeeBps,
     partnerWallet: typeof overrides.partnerWallet === "string" ? overrides.partnerWallet : (withDefaults as any).partnerWallet,
+    agents: Array.isArray(overrides.agents) ? overrides.agents : withDefaults.agents || [],
     apimCatalog: Array.isArray(overrides.apimCatalog) ? overrides.apimCatalog : withDefaults.apimCatalog,
   });
 
@@ -157,6 +160,19 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
 
   if (typeof raw?.partnerWallet === "string" && isHexAddress(raw.partnerWallet)) {
     out.partnerWallet = raw.partnerWallet;
+  }
+
+  if (Array.isArray(raw?.agents)) {
+    const list: { wallet: string; bps: number }[] = [];
+    for (const a of raw.agents) {
+      if (!a || typeof a !== "object") continue;
+      const w = String(a.wallet || "").toLowerCase().trim();
+      const b = clampBps(a.bps);
+      if (isHexAddress(w) && typeof b === "number" && b > 0) {
+        list.push({ wallet: w, bps: b });
+      }
+    }
+    out.agents = list;
   }
 
   // Email settings for reports
