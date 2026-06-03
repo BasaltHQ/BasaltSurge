@@ -196,29 +196,37 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   })();
 
   // Load saved brand config (name, logos, appUrl, partnerWallet) to prefer over static defaults
+  // Direct Cosmos DB lookup to bypass multi-worker loopback fetch caching issues
   let brandConfig: any = null;
   try {
-    const baseUrl = new URL(req.url).origin;
-    const r = await fetch(`${baseUrl}/api/platform/brands/${encodeURIComponent(key)}/config`, {
-      method: "GET",
-      cache: "no-store",
-      headers: { "Accept": "application/json" },
-    });
-    const j = await r.json().catch(() => ({}));
-    brandConfig = j?.brand || null;
-  } catch { }
+    const { readBrandOverridesFromCosmos, toEffectiveBrand } = require("@/lib/brand-config");
+    const dbOverrides = await readBrandOverridesFromCosmos(key);
+    brandConfig = toEffectiveBrand(key, dbOverrides);
+  } catch (e) {
+    console.error("[provision] Failed to load brand config directly from DB:", e);
+  }
 
-  // Compute final branding overrides
-  const brandNameOverride = String(brandConfig?.name || brandBase.name || key);
-  const brandLogoOverride = String(brandConfig?.logos?.app || "");
-  const brandFaviconOverride = String(brandConfig?.logos?.favicon || "");
-  const brandSymbolOverride = String(brandConfig?.logos?.symbol || brandLogoOverride || "");
+  // Compute final branding overrides, falling back to body.env overrides if provided
+  const brandNameOverride = String(
+    extras.BRAND_NAME || extras.NEXT_PUBLIC_BRAND_NAME || brandConfig?.name || brandBase.name || key
+  );
+  const brandLogoOverride = String(
+    extras.BRAND_LOGO_URL || extras.NEXT_PUBLIC_BRAND_LOGO_URL || brandConfig?.logos?.app || ""
+  );
+  const brandFaviconOverride = String(
+    extras.BRAND_FAVICON_URL || extras.NEXT_PUBLIC_BRAND_FAVICON_URL || brandConfig?.logos?.favicon || ""
+  );
+  const brandSymbolOverride = String(
+    extras.PP_BRAND_SYMBOL || brandConfig?.logos?.symbol || brandLogoOverride || ""
+  );
   const computedSymbol = String(brandSymbolOverride || brandLogoOverride || "");
-  const brandPartnerWallet = String(brandConfig?.partnerWallet || "");
+  const brandPartnerWallet = String(
+    extras.PARTNER_WALLET || extras.NEXT_PUBLIC_PARTNER_WALLET || brandConfig?.partnerWallet || ""
+  );
   const brandAppUrl = String(
     (domains && domains.length > 0
       ? domains[0]
-      : (brandConfig?.appUrl || brandBase.appUrl || process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || ""))
+      : (extras.BRAND_APP_URL || extras.NEXT_PUBLIC_BRAND_APP_URL || brandConfig?.appUrl || brandBase.appUrl || process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || ""))
   );
 
   // Extract Thirdweb parameters
@@ -417,7 +425,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
     azExamples = [
       `# --- Plesk CLI Commands (Run via SSH on VPS or automated via deploy action) ---`,
       `# 1. Create the domain under basalthq.com webspace`,
-      `plesk bin site --create ${cleanDomain} -webspace-name basalthq.com -service-plan "Default"`,
+      `plesk bin site --create ${cleanDomain} -webspace-name basalthq.com`,
       `# 2. Configure Git SSH deployment repository`,
       `plesk bin extension git --create -domain ${cleanDomain} -url git@github.com:BasaltHQ/BasaltSurge.git -branch production -actions "export PATH=/opt/plesk/node/24/bin:$PATH && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"`,
       `# 3. Inject Passenger Runtime Environment Variables`,
@@ -570,8 +578,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         
         const siteResult = await plesk.callCli("site", [
           "--create", cleanDomain,
-          "-webspace-name", "basalthq.com",
-          "-service-plan", "Default"
+          "-webspace-name", "basalthq.com"
         ]);
         
         if (siteResult.code !== 0 && !siteResult.stderr.includes("already exists") && !siteResult.stdout.includes("already exists")) {
