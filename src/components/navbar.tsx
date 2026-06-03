@@ -768,7 +768,7 @@ export function Navbar() {
 
     return (
         <>
-            <AutoConnect client={client} wallets={wallets} />
+            <AutoConnect client={client} wallets={wallets} accountAbstraction={{ chain, sponsorGas: true }} />
             <style>{`
                 .nav-item-custom-border {
                     border: 1px solid transparent;
@@ -1040,6 +1040,7 @@ export function Navbar() {
                                     client={client}
                                     chain={chain}
                                     wallets={wallets}
+                                    connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                     connectButton={{
                                         label: "LOGIN",
                                         className: "!text-white !rounded-[10px] !px-5 !py-2.5 !h-auto !min-w-[100px] !font-mono !text-xs !tracking-wider !font-bold !border-none !ring-0 !shadow-none transition-all hover:opacity-80 hover:scale-[1.02] active:scale-95",
@@ -1249,6 +1250,7 @@ export function Navbar() {
                                             client={client}
                                             chain={chain}
                                             wallets={wallets}
+                                            connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                             connectButton={{
                                                 label: "LOGIN",
                                                 className: "!text-white !w-full !justify-center !rounded-lg !py-3 !font-mono !text-xs !tracking-wider !font-bold !border-none !ring-0 !shadow-none transition-all hover:opacity-80",

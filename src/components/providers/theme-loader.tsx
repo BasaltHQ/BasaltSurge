@@ -110,14 +110,10 @@ export function ThemeLoader() {
             lock = forcePortal ? "portalpay-default" : (hasRecipient ? "merchant" : lock);
           } else if (path.startsWith("/shop")) {
             lock = "merchant";
-          } else if (path.startsWith("/developers/dashboard")) {
-            const ct = (root.getAttribute("data-pp-container-type") || "platform").toLowerCase();
-            lock = ct === "platform" ? "portalpay-default" : lock;
+          } else if (path.startsWith("/developers") || path.startsWith("/docs")) {
+            lock = "portalpay-default";
           } else if (path.startsWith("/terminal")) {
             lock = "user";
-          } else if (path.startsWith("/developers/products")) {
-            const ct = (root.getAttribute("data-pp-container-type") || "platform").toLowerCase();
-            lock = ct === "platform" ? "portalpay-default" : lock;
           }
           root.setAttribute("data-pp-theme-lock", lock);
         } catch { }
@@ -701,17 +697,25 @@ export function ThemeLoader() {
 
         // Double-check URL for recipient or wallet to avoid overriding merchant portals
         let urlHasMerchant = false;
+        let isDevOrDocs = false;
         try {
           const url = new URL(window.location.href);
           const r = String(url.searchParams.get("recipient") || "").trim();
           const w = String(url.searchParams.get("wallet") || "").trim();
           urlHasMerchant = /^0x[a-fA-F0-9]{40}$/i.test(r) || /^0x[a-fA-F0-9]{40}$/i.test(w);
+          const path = url.pathname || "";
+          isDevOrDocs = path.startsWith("/developers") || path.startsWith("/docs");
         } catch { }
 
-        if (lock === "merchant" || urlHasMerchant) {
+        let effectiveLock = lock;
+        if (isDevOrDocs) {
+          effectiveLock = "portalpay-default";
+        }
+
+        if (effectiveLock === "merchant" || (urlHasMerchant && !isDevOrDocs)) {
           return;
         }
-        if (lock === "portalpay-default") {
+        if (effectiveLock === "portalpay-default") {
           const defaultPrimary = root.dataset.ppBrandPrimary || "#1f2937";
           const defaultSecondary = root.dataset.ppBrandAccent || "#F54029";
           const defaultHeader = root.dataset.ppBrandHeader || "#ffffff";

@@ -814,8 +814,14 @@ export default async function RootLayout({
           else if (path.startsWith("/shop")) { lock="merchant"; }
           else if (path.startsWith("/terminal")) { lock="user"; }
           else if (path.startsWith("/pricing")) { lock = hasRecipient ? "merchant" : "user"; }
-          else if (path.startsWith("/developers/dashboard")) { var ct=d.getAttribute("data-pp-container-type")||"platform"; lock = ct==="platform" ? "portalpay-default" : lock; }
-          else if (path.startsWith("/developers/products")) { var ct=d.getAttribute("data-pp-container-type")||"platform"; lock = ct==="platform" ? "portalpay-default" : lock; }
+          else if (path.startsWith("/developers") || path.startsWith("/docs")) {
+            var ct = d.getAttribute("data-pp-container-type") || "platform";
+            if (path.startsWith("/developers/dashboard") || path.startsWith("/developers/products")) {
+              lock = ct === "platform" ? "portalpay-default" : lock;
+            } else {
+              lock = "portalpay-default";
+            }
+          }
           d.setAttribute("data-pp-theme-lock", lock);
           // mark merchant expected state for readiness gate
           var isPricing = path.startsWith("/pricing");

@@ -24,6 +24,8 @@ const sectionIcons: Record<string, React.ReactNode> = {
   'Getting Started': <BookOpen className="w-4 h-4" />,
   'API Reference': <Code className="w-4 h-4" />,
   'Integration Guides': <Zap className="w-4 h-4" />,
+  'Merchant Manual': <BookOpen className="w-4 h-4" />,
+  'Partner Manual': <Code className="w-4 h-4" />,
   'Resources': <FileText className="w-4 h-4" />,
 };
 

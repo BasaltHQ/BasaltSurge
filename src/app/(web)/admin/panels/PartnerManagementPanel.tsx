@@ -1703,20 +1703,23 @@ export default function PartnerManagementPanel() {
                 <div className="space-y-2">
                   {(Array.isArray(config?.agents) ? config.agents : []).map((agent: any, idx: number) => {
                     const isRegistered = approvedAgents.some(a => a.wallet.toLowerCase() === agent.wallet.toLowerCase());
-                    const isCustomMode = !isRegistered && agent.wallet !== "";
+                    const isCustomMode = agent.isCustom || (!isRegistered && agent.wallet !== "");
                     return (
                       <div key={idx} className="space-y-1.5 animate-in fade-in-50 duration-150">
                         <div className="flex gap-2">
                           <select
-                            value={isRegistered ? agent.wallet.toLowerCase() : (agent.wallet ? "__custom__" : "")}
+                            value={isRegistered ? agent.wallet.toLowerCase() : (agent.isCustom ? "__custom__" : (agent.wallet ? "__custom__" : ""))}
                             onChange={(e) => {
                               const newAgents = [...config.agents];
                               if (e.target.value === "__custom__") {
                                 newAgents[idx].wallet = "";
+                                newAgents[idx].isCustom = true;
                               } else if (e.target.value === "") {
                                 newAgents[idx].wallet = "";
+                                newAgents[idx].isCustom = false;
                               } else {
                                 newAgents[idx].wallet = e.target.value;
+                                newAgents[idx].isCustom = false;
                               }
                               setConfig((prev: any) => ({ ...prev, agents: newAgents }));
                             }}
@@ -1762,6 +1765,7 @@ export default function PartnerManagementPanel() {
                             onChange={(e) => {
                               const newAgents = [...config.agents];
                               newAgents[idx].wallet = e.target.value;
+                              newAgents[idx].isCustom = true;
                               setConfig((prev: any) => ({ ...prev, agents: newAgents }));
                             }}
                             className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"

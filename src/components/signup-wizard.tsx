@@ -1175,6 +1175,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                         client={client}
                                                         chain={chain}
                                                         wallets={wallets}
+                                                        connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                                         connectButton={{
                                                             label: <span className="text-xs font-mono font-bold uppercase tracking-wider">{isPrivate ? "Connect to Apply" : "Connect Wallet"}</span>,
                                                             className: "!w-full !h-12 !rounded-xl !font-mono !text-xs !tracking-wider !font-bold !border-none transition-all hover:opacity-90",

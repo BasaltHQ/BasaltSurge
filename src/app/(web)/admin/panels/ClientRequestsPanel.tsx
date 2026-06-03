@@ -1285,20 +1285,23 @@ export default function ClientRequestsPanel() {
                                             <div className="space-y-2">
                                                 {agents.map((agent, idx) => {
                                                     const isRegistered = approvedAgents.some(a => a.wallet.toLowerCase() === agent.wallet.toLowerCase());
-                                                    const isCustomMode = !isRegistered && agent.wallet !== "";
+                                                    const isCustomMode = agent.isCustom || (!isRegistered && agent.wallet !== "");
                                                     return (
                                                         <div key={idx} className="space-y-1.5">
                                                             <div className="flex gap-2">
                                                                 <select
-                                                                    value={isRegistered ? agent.wallet.toLowerCase() : (agent.wallet ? "__custom__" : "")}
+                                                                    value={isRegistered ? agent.wallet.toLowerCase() : (agent.isCustom ? "__custom__" : (agent.wallet ? "__custom__" : ""))}
                                                                     onChange={(e) => {
                                                                         const newAgents = [...agents];
                                                                         if (e.target.value === "__custom__") {
                                                                             newAgents[idx].wallet = "";
+                                                                            newAgents[idx].isCustom = true;
                                                                         } else if (e.target.value === "") {
                                                                             newAgents[idx].wallet = "";
+                                                                            newAgents[idx].isCustom = false;
                                                                         } else {
                                                                             newAgents[idx].wallet = e.target.value;
+                                                                            newAgents[idx].isCustom = false;
                                                                         }
                                                                         setAgents(newAgents);
                                                                     }}
@@ -1341,6 +1344,7 @@ export default function ClientRequestsPanel() {
                                                                     onChange={(e) => {
                                                                         const newAgents = [...agents];
                                                                         newAgents[idx].wallet = e.target.value;
+                                                                        newAgents[idx].isCustom = true;
                                                                         setAgents(newAgents);
                                                                     }}
                                                                     className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white focus:border-emerald-500 outline-none font-mono"
