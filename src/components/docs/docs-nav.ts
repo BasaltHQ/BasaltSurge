@@ -49,6 +49,29 @@ export const docsNavigation: DocNavSection[] = [
     ],
   },
   {
+    title: 'Merchant Manual',
+    items: [
+      { title: 'Overview', href: '/developers/docs/merchant' },
+      { title: 'Shop & Modifiers', href: '/developers/docs/merchant/shop-setup' },
+      { title: 'Reserve & Offramping', href: '/developers/docs/merchant/reserve-management' },
+      { title: 'Tax Management', href: '/developers/docs/merchant/tax-management' },
+      { title: 'POS Terminal Use', href: '/developers/docs/merchant/terminal-use' },
+      { title: 'Portal & Receipts', href: '/developers/docs/merchant/portal-receipts' },
+      { title: 'Industry Apps', href: '/developers/docs/merchant/industry-packs' },
+    ],
+  },
+  {
+    title: 'Partner Manual',
+    items: [
+      { title: 'Overview', href: '/developers/docs/partner' },
+      { title: 'Branding & Whitelabel', href: '/developers/docs/partner/branding-whitelabel' },
+      { title: 'Merchant Management', href: '/developers/docs/partner/merchant-management' },
+      { title: 'Touchpoint Devices', href: '/developers/docs/partner/touchpoints-devices' },
+      { title: 'Splits & Immutability', href: '/developers/docs/partner/split-config' },
+      { title: 'Plugins & Modules', href: '/developers/docs/partner/plugins-modules' },
+    ],
+  },
+  {
     title: 'Resources',
     items: [
       { title: 'Examples', href: '/developers/docs/examples' },

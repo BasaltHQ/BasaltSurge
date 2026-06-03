@@ -38,6 +38,19 @@ export async function generateStaticParams() {
     { slug: ['guides', 'payment-gateway'] },
     { slug: ['guides', 'pos'] },
     { slug: ['guides', 'shopify'] },
+    { slug: ['merchant'] },
+    { slug: ['merchant', 'shop-setup'] },
+    { slug: ['merchant', 'reserve-management'] },
+    { slug: ['merchant', 'tax-management'] },
+    { slug: ['merchant', 'terminal-use'] },
+    { slug: ['merchant', 'portal-receipts'] },
+    { slug: ['merchant', 'industry-packs'] },
+    { slug: ['partner'] },
+    { slug: ['partner', 'branding-whitelabel'] },
+    { slug: ['partner', 'merchant-management'] },
+    { slug: ['partner', 'touchpoints-devices'] },
+    { slug: ['partner', 'split-config'] },
+    { slug: ['partner', 'plugins-modules'] },
   ];
 }
 
