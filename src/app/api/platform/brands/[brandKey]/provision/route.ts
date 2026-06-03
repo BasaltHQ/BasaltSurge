@@ -226,11 +226,18 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   const thirdwebSecretKey = String(brandConfig?.thirdwebSecretKey || "");
   const thirdwebAuthEndpointSecret = String(brandConfig?.thirdwebAuthEndpointSecret || "");
 
+  // Extract default agent settings
+  const agentsList = Array.isArray(brandConfig?.agents) ? brandConfig.agents : [];
+  const firstAgent = agentsList[0];
+  const agentWallet = firstAgent ? String(firstAgent.wallet || "") : "";
+  const agentFeeBps = firstAgent && typeof firstAgent.bps === "number" ? firstAgent.bps : 0;
+  const agentsJson = JSON.stringify(agentsList);
+
   // For deployment, include env vars by allowlist and valid key pattern (avoid OS/reserved variables)
   const baseEnv: Record<string, string> = {};
   if (action === "deploy") {
-    const allowPrefixes = ["NEXT_PUBLIC_", "AZURE_", "COSMOS_", "THIRDWEB_", "PORTALPAY_", "MONGODB_", "APIM_", "AFD_", "UNISWAP_", "ETHERSCAN_", "BLOCKSCOUT_", "SEVENSHIFTS_", "TOAST_", "VARUNI_", "JWT_", "RESERVE_", "DEFAULT_", "PP_BRAND_"];
-    const allowExact = ["JWT_SECRET", "NODE_ENV", "PORT", "WEBSITES_PORT", "BRAND_NAME", "BACKOFFICE_NAME", "DEMO_MODE", "DEMO_STUBS", "NEXT_PUBLIC_DEMO_MODE", "ADMIN_WALLETS", "PARTNER_WALLET", "NEXT_PUBLIC_PARTNER_WALLET", "NEXT_PUBLIC_APP_URL", "BRAND_KEY", "NEXT_PUBLIC_BRAND_KEY", "NEXT_PUBLIC_BRAND_NAME", "BRAND_APP_URL", "NEXT_PUBLIC_BRAND_APP_URL", "PP_BRAND_NAME", "PP_BRAND_LOGO", "PP_BRAND_FAVICON", "PP_BRAND_SYMBOL"];
+    const allowPrefixes = ["NEXT_PUBLIC_", "AZURE_", "COSMOS_", "THIRDWEB_", "PORTALPAY_", "MONGODB_", "APIM_", "AFD_", "UNISWAP_", "ETHERSCAN_", "BLOCKSCOUT_", "SEVENSHIFTS_", "TOAST_", "VARUNI_", "JWT_", "RESERVE_", "DEFAULT_", "PP_BRAND_", "AGENT_"];
+    const allowExact = ["JWT_SECRET", "NODE_ENV", "PORT", "WEBSITES_PORT", "BRAND_NAME", "BACKOFFICE_NAME", "DEMO_MODE", "DEMO_STUBS", "NEXT_PUBLIC_DEMO_MODE", "ADMIN_WALLETS", "PARTNER_WALLET", "NEXT_PUBLIC_PARTNER_WALLET", "NEXT_PUBLIC_APP_URL", "BRAND_KEY", "NEXT_PUBLIC_BRAND_KEY", "NEXT_PUBLIC_BRAND_NAME", "BRAND_APP_URL", "NEXT_PUBLIC_BRAND_APP_URL", "PP_BRAND_NAME", "PP_BRAND_LOGO", "PP_BRAND_FAVICON", "PP_BRAND_SYMBOL", "AGENT_WALLETS_JSON", "NEXT_PUBLIC_AGENT_WALLETS_JSON"];
     const denyKeys = new Set([
       "Path", "ComSpec", "PATHEXT", "ProgramFiles", "ProgramData", "CommonProgramFiles", "CommonProgramFiles(x86)",
       "SystemRoot", "WINDIR", "USERPROFILE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "NUMBER_OF_PROCESSORS", "PROCESSOR_IDENTIFIER"
@@ -261,6 +268,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
     } : {}),
     ...(thirdwebSecretKey ? { THIRDWEB_SECRET_KEY: thirdwebSecretKey } : {}),
     ...(thirdwebAuthEndpointSecret ? { THIRDWEB_AUTH_ENDPOINT_SECRET: thirdwebAuthEndpointSecret } : {}),
+    // Agent mapping
+    ...(agentWallet ? {
+      AGENT_WALLET: agentWallet,
+      NEXT_PUBLIC_AGENT_WALLET: agentWallet
+    } : {}),
+    ...(agentFeeBps ? {
+      AGENT_SPLIT_BPS: String(agentFeeBps),
+      NEXT_PUBLIC_AGENT_SPLIT_BPS: String(agentFeeBps)
+    } : {}),
+    AGENT_WALLETS_JSON: agentsJson,
+    NEXT_PUBLIC_AGENT_WALLETS_JSON: agentsJson,
     // Conditionally set PP_BRAND_* keys (do not overwrite with blanks)
     ...(brandNameOverride ? { PP_BRAND_NAME: brandNameOverride } : {}),
     ...(brandLogoOverride ? { PP_BRAND_LOGO: brandLogoOverride } : {}),

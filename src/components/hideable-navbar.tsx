@@ -58,7 +58,7 @@ export function HideableNavbar({ isServerCustomDomain = false }: { isServerCusto
     pathname === "/apply" || pathname.startsWith("/apply/") ||
     pathname === "/kiosk" || pathname.startsWith("/kiosk/") ||
     pathname === "/kitchen" || pathname.startsWith("/kitchen/") ||
-    pathname === "/msa" || pathname === "/msas" ||
+    pathname === "/msa" || pathname === "/msas" || pathname === "/msa-isa" ||
     pathname.startsWith("/reader/") || pathname === "/reader" ||
     ((pathname === "/terminal" || pathname.startsWith("/terminal")) && isFullscreen) ||
     ((pathname === "/terminal" || pathname.startsWith("/terminal")) && isMobile && isTerminalView) ||

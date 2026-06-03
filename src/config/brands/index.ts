@@ -42,6 +42,7 @@ export type BrandConfig = {
   partnerFeeBps?: number; // per-brand partner fee bps
   defaultMerchantFeeBps?: number; // optional default merchant add-on bps
   partnerWallet?: string; // optional wallet for partner recipient in split
+  agents?: { wallet: string; bps: number }[]; // optional default agent recipients in split
 
   // Contact information
   contactEmail?: string; // support/contact email for the brand
@@ -227,6 +228,15 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     },
     appUrl: raw.appUrl || appUrlEnv, // prefer brand-specific appUrl; fall back to env
     partnerWallet: raw.partnerWallet || envPartnerWallet,
+    agents: (() => {
+      if (Array.isArray(raw.agents)) return raw.agents;
+      const envW = (process.env.AGENT_WALLET || "").trim();
+      const envBps = process.env.AGENT_SPLIT_BPS ? Math.max(0, Math.min(10000, Math.floor(Number(process.env.AGENT_SPLIT_BPS)))) : 0;
+      if (envW && envBps > 0) {
+        return [{ wallet: envW, bps: envBps }];
+      }
+      return [];
+    })(),
     platformFeeBps,
     partnerFeeBps,
     defaultMerchantFeeBps,
@@ -260,6 +270,7 @@ export function getBrandConfig(envKey?: string): BrandConfig {
       meta: {},
       platformFeeBps: 50,
       partnerFeeBps: 0,
+      agents: [],
       defaultMerchantFeeBps: 0,
       partnerWallet: "",
       apimCatalog: [],
@@ -290,6 +301,10 @@ export function getBrandConfig(envKey?: string): BrandConfig {
       if ((typeof configured.partnerFeeBps !== "number" || configured.partnerFeeBps <= 0) && typeof staticBrand.partnerFeeBps === "number" && staticBrand.partnerFeeBps > 0) {
         configured.partnerFeeBps = staticBrand.partnerFeeBps;
       }
+      // Agent array fallback
+      if ((!configured.agents || configured.agents.length === 0) && Array.isArray(staticBrand.agents) && staticBrand.agents.length > 0) {
+        configured.agents = staticBrand.agents;
+      }
       // Platform fee bps fallback
       if (typeof configured.platformFeeBps !== "number" && typeof staticBrand.platformFeeBps === "number") {
         configured.platformFeeBps = staticBrand.platformFeeBps;
@@ -305,7 +320,7 @@ export function getBrandConfig(envKey?: string): BrandConfig {
 
 /**
  * Compute effective processing fee (bps) shown to merchants:
- * platform (default 80) + partner (brand) + merchant add-on.
+ * platform (default 80) + partner (brand) + agent + merchant add-on.
  */
 export function getEffectiveProcessingFeeBps(
   brand: BrandConfig,
@@ -313,8 +328,9 @@ export function getEffectiveProcessingFeeBps(
 ): number {
   const platform = typeof brand.platformFeeBps === "number" ? brand.platformFeeBps : 50;
   const partner = typeof brand.partnerFeeBps === "number" ? brand.partnerFeeBps : 0;
+  const agentBps = Array.isArray(brand.agents) ? brand.agents.reduce((sum, a) => sum + (a.bps || 0), 0) : 0;
   const merchant = typeof merchantFeeBps === "number" ? merchantFeeBps : (brand.defaultMerchantFeeBps ?? 0);
-  return platform + partner + merchant;
+  return platform + partner + agentBps + merchant;
 }
 
 /**
@@ -328,25 +344,32 @@ export function computeSplitAmounts(
 ): {
   platformFeeBps: number;
   partnerFeeBps: number;
+  agentFeeBps: number;
   merchantFeeBps: number;
   amountPlatformMinor: number;
   amountPartnerMinor: number;
+  amountAgentMinor: number;
   amountMerchantMinor: number;
 } {
   const platformFeeBps = typeof brand.platformFeeBps === "number" ? brand.platformFeeBps : 50;
   const partnerFeeBps = typeof brand.partnerFeeBps === "number" ? brand.partnerFeeBps : 0;
+  const agents = Array.isArray(brand.agents) ? brand.agents : [];
+  const agentFeeBps = agents.reduce((sum, a) => sum + (a.bps || 0), 0);
   const merchantBps = typeof merchantFeeBps === "number" ? merchantFeeBps : (brand.defaultMerchantFeeBps ?? 0);
 
   const amountPlatformMinor = Math.floor((grossMinor * platformFeeBps) / 10000);
   const amountPartnerMinor = Math.floor((grossMinor * partnerFeeBps) / 10000);
-  const amountMerchantMinor = grossMinor - amountPlatformMinor - amountPartnerMinor - Math.floor((grossMinor * merchantBps) / 10000);
+  const amountAgentMinor = agents.reduce((sum, a) => sum + Math.floor((grossMinor * (a.bps || 0)) / 10000), 0);
+  const amountMerchantMinor = grossMinor - amountPlatformMinor - amountPartnerMinor - amountAgentMinor - Math.floor((grossMinor * merchantBps) / 10000);
 
   return {
     platformFeeBps,
     partnerFeeBps,
+    agentFeeBps,
     merchantFeeBps: merchantBps,
     amountPlatformMinor,
     amountPartnerMinor,
+    amountAgentMinor,
     amountMerchantMinor,
   };
 }

@@ -17,6 +17,7 @@ type SplitVersion = {
   platformFeeBps: number;
   partnerFeeBps: number;
   defaultMerchantFeeBps?: number;
+  agents?: { wallet: string; bps: number }[];
   effectiveAt: number;
   published: boolean;
 };
@@ -62,6 +63,7 @@ async function readBrandEffectiveConfig(brandKey: string): Promise<{
   platformFeeBps: number;
   partnerFeeBps: number;
   defaultMerchantFeeBps?: number;
+  agents?: { wallet: string; bps: number }[];
 } | null> {
   try {
     const origin = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "";
@@ -74,7 +76,8 @@ async function readBrandEffectiveConfig(brandKey: string): Promise<{
     const plat = typeof eff?.platformFeeBps === "number" ? clampBps(eff.platformFeeBps) : 50;
     const part = typeof eff?.partnerFeeBps === "number" ? clampBps(eff.partnerFeeBps) : 0;
     const defm = typeof eff?.defaultMerchantFeeBps === "number" ? clampBps(eff.defaultMerchantFeeBps) : undefined;
-    return { partnerWallet: pw, platformFeeBps: plat, partnerFeeBps: part, defaultMerchantFeeBps: defm };
+    const agents = Array.isArray(eff?.agents) ? eff.agents : [];
+    return { partnerWallet: pw, platformFeeBps: plat, partnerFeeBps: part, defaultMerchantFeeBps: defm, agents };
   } catch {
     return null;
   }
@@ -102,6 +105,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ brandKey: 
         platformFeeBps: eff?.platformFeeBps ?? 50,
         partnerFeeBps: eff?.partnerFeeBps ?? 0,
         defaultMerchantFeeBps: eff?.defaultMerchantFeeBps,
+        agents: eff?.agents || [],
         effectiveAt: Date.now(),
         published: true,
       };
@@ -216,6 +220,21 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
       platformFeeBps: (typeof platBps === "number") ? platBps : (eff?.platformFeeBps ?? 50),
       partnerFeeBps: (partBps > 0 || partBps === 0) ? partBps : (eff?.partnerFeeBps ?? 0),
       defaultMerchantFeeBps: (defmBps !== undefined) ? defmBps : (eff?.defaultMerchantFeeBps),
+      agents: (() => {
+        if (Array.isArray(body?.agents)) {
+          const list: { wallet: string; bps: number }[] = [];
+          for (const a of body.agents) {
+            if (!a || typeof a !== "object") continue;
+            const w = String(a.wallet || "").toLowerCase().trim();
+            const b = clampBps(a.bps);
+            if (isHexAddress(w) && b > 0) {
+              list.push({ wallet: w, bps: b });
+            }
+          }
+          return list;
+        }
+        return eff?.agents || [];
+      })(),
       effectiveAt: Date.now(),
       published: !!publish,
     };

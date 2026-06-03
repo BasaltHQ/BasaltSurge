@@ -27,6 +27,7 @@ export const EXCLUDE_PREFIXES = new Set<string>([
     "kiosk", // kiosk mode
     "msa", // Master Services Agreement signing page
     "msas", // Master Services Agreement with special terms
+    "msa-isa", // Introducer / Sales Agent MSA
     "portal",
     "pricing",
     "profile",

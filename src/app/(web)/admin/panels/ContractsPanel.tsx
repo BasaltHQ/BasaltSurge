@@ -43,8 +43,8 @@ const DEFAULT_CONFIG: ContractConfig = {
     },
     msas: {
         widgetId: "CBFCIBAA3AAABLblqZhAHRCQTck4tBTVuSFpOBUyzpaX3Pwfl4C7LnOMuF3NAsQix9gPj1Ei-619ikHBIyTI*",
-        title: "Financing Partner Agreement",
-        description: "MSA with 50% down financing option",
+        title: "Referred Partner Agreement",
+        description: "Standard MSA for Partners onboarding from Referred Introducers/Sales Agents",
         lastUpdated: new Date().toISOString(),
     },
 };
@@ -164,7 +164,7 @@ export default function ContractsPanel() {
                             Contract Management
                         </h2>
                         <p className="text-muted-foreground text-sm mt-1">
-                            Manage Adobe Sign widget IDs for /msa and /msas pages
+                            Manage Adobe Sign widget IDs for /msa and /msa-isa pages
                         </p>
                     </div>
                     <Button onClick={saveConfig} disabled={saving}>
@@ -284,19 +284,19 @@ export default function ContractsPanel() {
                     </div>
                 </div>
 
-                {/* Financing MSA (/msas) */}
+                {/* Introducer / Sales Agent MSA (/msa-isa) */}
                 <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md overflow-hidden">
                     <div className="p-6 border-b border-foreground/[0.05]">
                         <div className="flex items-center justify-between">
                             <div>
                                 <h3 className="text-lg font-semibold flex items-center gap-2">
-                                    Financing MSA
-                                    <span className="text-xs font-mono px-2 py-0.5 rounded-full border border-foreground/[0.1] bg-foreground/[0.02]">/msas</span>
+                                    Introducer / Sales Agent MSA
+                                    <span className="text-xs font-mono px-2 py-0.5 rounded-full border border-foreground/[0.1] bg-foreground/[0.02]">/msa-isa</span>
                                 </h3>
-                                <p className="text-sm text-muted-foreground mt-1">Agreement with financing options for setup fees</p>
+                                <p className="text-sm text-muted-foreground mt-1">Standard MSA for Partners onboarding from Referred Introducers/Sales Agents</p>
                             </div>
                             <Button variant="outline" size="sm" asChild>
-                                <a href="/msas" target="_blank" rel="noopener noreferrer">
+                                <a href="/msa-isa" target="_blank" rel="noopener noreferrer">
                                     <ExternalLink className="h-4 w-4 mr-1" />
                                     Preview
                                 </a>
@@ -310,7 +310,7 @@ export default function ContractsPanel() {
                                 id="msas-title"
                                 value={config.msas.title}
                                 onChange={(e) => updateMsas("title", e.target.value)}
-                                placeholder="Financing Partner Agreement"
+                                placeholder="Referred Partner Agreement"
                             />
                         </div>
                         <div className="space-y-2">

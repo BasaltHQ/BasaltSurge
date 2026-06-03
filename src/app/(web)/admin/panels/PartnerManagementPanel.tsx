@@ -80,6 +80,7 @@ export default function PartnerManagementPanel() {
   const [containerAppName, setContainerAppName] = useState<string>("");
   const [containerFqdn, setContainerFqdn] = useState<string>("");
   const [containerState, setContainerState] = useState<string>("");
+  const [approvedAgents, setApprovedAgents] = useState<any[]>([]);
 
   // Persist current brand config to the Brand Config API to avoid timing issues during provisioning/deploy.
   async function persistBrandBeforeProvision(): Promise<boolean> {
@@ -98,6 +99,12 @@ export default function PartnerManagementPanel() {
         body.defaultMerchantFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.defaultMerchantFeeBps))));
       }
       if (config?.partnerWallet) body.partnerWallet = String(config.partnerWallet);
+      if (Array.isArray(config?.agents)) {
+        body.agents = config.agents.map((a: any) => ({
+          wallet: String(a.wallet || "").toLowerCase().trim(),
+          bps: Math.max(0, Math.min(10000, Math.floor(Number(a.bps || 0)))),
+        })).filter((a: any) => /^0x[a-fA-F0-9]{40}$/.test(a.wallet) && a.bps > 0);
+      }
       if (config?.thirdwebClientId !== undefined) body.thirdwebClientId = String(config.thirdwebClientId);
       if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
@@ -112,7 +119,7 @@ export default function PartnerManagementPanel() {
       }
 
       // If nothing to persist, skip
-      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret) {
+      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents) {
         return true;
       }
 
@@ -396,6 +403,17 @@ export default function PartnerManagementPanel() {
       }
     })();
   }, []);
+
+  // Fetch approved agents for dropdown
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/agents/list", { headers: { "x-wallet": account?.address || "" } });
+        const data = await res.json();
+        setApprovedAgents(data.agents || []);
+      } catch { setApprovedAgents([]); }
+    })();
+  }, [account?.address]);
 
   // Autopopulate deployment fields and Azure params when brand changes (sane defaults + brand-based name)
   useEffect(() => {
@@ -788,6 +806,12 @@ export default function PartnerManagementPanel() {
       if (typeof config?.defaultMerchantFeeBps === "number")
         body.defaultMerchantFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.defaultMerchantFeeBps))));
       if (config?.partnerWallet) body.partnerWallet = String(config.partnerWallet);
+      if (Array.isArray(config?.agents)) {
+        body.agents = config.agents.map((a: any) => ({
+          wallet: String(a.wallet || "").toLowerCase().trim(),
+          bps: Math.max(0, Math.min(10000, Math.floor(Number(a.bps || 0)))),
+        })).filter((a: any) => /^0x[a-fA-F0-9]{40}$/.test(a.wallet) && a.bps > 0);
+      }
       if (config?.thirdwebClientId !== undefined) body.thirdwebClientId = String(config.thirdwebClientId);
       if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
@@ -1630,11 +1654,137 @@ export default function PartnerManagementPanel() {
             <div className="p-5 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Platform Fee (bps)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={10000}
+                  step={1}
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                  value={Number(config?.platformFeeBps || 50)}
+                  onChange={(e) =>
+                    setConfig((prev: any) => ({ ...prev, platformFeeBps: Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0)))) }))
+                  }
+                  disabled={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState)}
+                  title={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? "Fees locked after partner container deploy" : undefined}
+                />
+                <div className="text-[11px] text-muted-foreground/70 mt-1.5">
+                  Platform share in basis points (e.g., 50 = 0.5%). Defaults to 50 bps unless overridden here.
+                  {Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? (
+                    <span className="text-amber-600"> • Locked after partner container deploy</span>
+                  ) : null}
+                </div>
+              </div>
+              <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">App URL</label>
                 <input
                   className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
                   value={String(config?.appUrl || "")}
                   onChange={(e) => setConfig((prev: any) => ({ ...prev, appUrl: e.target.value }))}
+                />
+              </div>
+              {/* Introducers / Agent Shares section (dynamic list editor) */}
+              <div className="col-span-1 md:col-span-2 space-y-3 border-t border-b border-foreground/5 py-4 my-2">
+                <div className="flex justify-between items-center text-xs uppercase tracking-wider font-mono text-zinc-500">
+                  <span>Introducers / Agent Shares</span>
+                  <button
+                    onClick={() => {
+                      const agents = Array.isArray(config?.agents) ? config.agents : [];
+                      setConfig((prev: any) => ({
+                        ...prev,
+                        agents: [...agents, { wallet: "", bps: 0 }]
+                      }));
+                    }}
+                    className="text-emerald-400 hover:text-emerald-300 transition-colors text-xs font-semibold"
+                  >
+                    + Add Agent
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {(Array.isArray(config?.agents) ? config.agents : []).map((agent: any, idx: number) => {
+                    const isRegistered = approvedAgents.some(a => a.wallet.toLowerCase() === agent.wallet.toLowerCase());
+                    const isCustomMode = !isRegistered && agent.wallet !== "";
+                    return (
+                      <div key={idx} className="space-y-1.5 animate-in fade-in-50 duration-150">
+                        <div className="flex gap-2">
+                          <select
+                            value={isRegistered ? agent.wallet.toLowerCase() : (agent.wallet ? "__custom__" : "")}
+                            onChange={(e) => {
+                              const newAgents = [...config.agents];
+                              if (e.target.value === "__custom__") {
+                                newAgents[idx].wallet = "";
+                              } else if (e.target.value === "") {
+                                newAgents[idx].wallet = "";
+                              } else {
+                                newAgents[idx].wallet = e.target.value;
+                              }
+                              setConfig((prev: any) => ({ ...prev, agents: newAgents }));
+                            }}
+                            className="flex-1 h-10 bg-foreground/[0.03] border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-foreground/20 outline-none"
+                          >
+                            <option value="" className="bg-background text-foreground">Select agent…</option>
+                            {approvedAgents.map(a => (
+                              <option key={a.wallet} value={a.wallet.toLowerCase()} className="bg-background text-foreground">
+                                {a.name || "Unknown"} ({a.wallet.slice(0, 6)}…{a.wallet.slice(-4)})
+                              </option>
+                            ))}
+                            <option value="__custom__" className="bg-background text-foreground">⌨ Custom wallet…</option>
+                          </select>
+                          <div className="flex items-center gap-1 bg-foreground/[0.03] border border-foreground/10 rounded-lg px-3 w-28 h-10">
+                            <input
+                              type="number"
+                              placeholder="0"
+                              value={agent.bps}
+                              onChange={(e) => {
+                                const newAgents = [...config.agents];
+                                newAgents[idx].bps = parseInt(e.target.value) || 0;
+                                setConfig((prev: any) => ({ ...prev, agents: newAgents }));
+                              }}
+                              className="w-full bg-transparent text-right font-mono text-sm text-foreground outline-none border-none p-0 focus:ring-0"
+                            />
+                            <span className="text-muted-foreground/60 text-xs">bps</span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              const newAgents = config.agents.filter((_: any, i: number) => i !== idx);
+                              setConfig((prev: any) => ({ ...prev, agents: newAgents }));
+                            }}
+                            className="p-2 hover:bg-red-500/20 text-muted-foreground hover:text-red-500 rounded-lg transition-colors flex items-center justify-center h-10 w-10 border border-foreground/10"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                        {isCustomMode && (
+                          <input
+                            type="text"
+                            placeholder="Agent Wallet (0x...)"
+                            value={agent.wallet}
+                            onChange={(e) => {
+                              const newAgents = [...config.agents];
+                              newAgents[idx].wallet = e.target.value;
+                              setConfig((prev: any) => ({ ...prev, agents: newAgents }));
+                            }}
+                            className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                  {(Array.isArray(config?.agents) ? config.agents : []).length === 0 && (
+                    <div className="text-xs text-muted-foreground/60 italic py-2">
+                      No agent shares configured. These are default agents pre-populated when setting up client request splits.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Swapped/Modified Partner controls: putting partner wallet and partner fee below the agents list */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Partner Wallet</label>
+                <input
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                  value={String(config?.partnerWallet || "")}
+                  onChange={(e) => setConfig((prev: any) => ({ ...prev, partnerWallet: e.target.value }))}
                 />
               </div>
               <div>
@@ -1660,28 +1810,6 @@ export default function PartnerManagementPanel() {
                 </div>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Platform Fee (bps)</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={10000}
-                  step={1}
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
-                  value={Number(config?.platformFeeBps || 50)}
-                  onChange={(e) =>
-                    setConfig((prev: any) => ({ ...prev, platformFeeBps: Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0)))) }))
-                  }
-                  disabled={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState)}
-                  title={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? "Fees locked after partner container deploy" : undefined}
-                />
-                <div className="text-[11px] text-muted-foreground/70 mt-1.5">
-                  Platform share in basis points (e.g., 50 = 0.5%). Defaults to 50 bps unless overridden here.
-                  {Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? (
-                    <span className="text-amber-600"> • Locked after partner container deploy</span>
-                  ) : null}
-                </div>
-              </div>
-              <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">Default Merchant Fee (bps)</label>
                 <input
                   type="number"
@@ -1693,14 +1821,6 @@ export default function PartnerManagementPanel() {
                   onChange={(e) =>
                     setConfig((prev: any) => ({ ...prev, defaultMerchantFeeBps: Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0)))) }))
                   }
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Partner Wallet</label>
-                <input
-                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
-                  value={String(config?.partnerWallet || "")}
-                  onChange={(e) => setConfig((prev: any) => ({ ...prev, partnerWallet: e.target.value }))}
                 />
               </div>
               <div>

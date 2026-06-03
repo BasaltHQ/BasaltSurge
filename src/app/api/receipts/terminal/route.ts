@@ -293,7 +293,10 @@ export async function POST(req: NextRequest) {
             : (typeof (fb as any)?.platformFeeBps === "number" ? (fb as any).platformFeeBps : 50);
           const partnerBps = typeof ov?.partnerFeeBps === "number" ? ov.partnerFeeBps
             : (typeof (fb as any)?.partnerFeeBps === "number" ? (fb as any).partnerFeeBps : 0);
-          basePlatformFeePct = (platformBps + partnerBps) / 100;
+          const agentsList = Array.isArray(ov?.agents) ? ov.agents
+            : (Array.isArray((fb as any)?.agents) ? (fb as any).agents : []);
+          const agentBps = agentsList.reduce((sum: number, a: any) => sum + clampBps(a?.bps || 0), 0);
+          basePlatformFeePct = (platformBps + partnerBps + agentBps) / 100;
         } else {
           basePlatformFeePct = 0.5; // 0.5% default
         }

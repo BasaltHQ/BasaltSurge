@@ -5,29 +5,29 @@ const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "https://portalpay.app";
 const DEFAULT_WIDGET_ID = "CBFCIBAA3AAABLblqZhAHRCQTck4tBTVuSFpOBUyzpaX3Pwfl4C7LnOMuF3NAsQix9gPj1Ei-619ikHBIyTI*";
 
 export const metadata: Metadata = {
-  title: "Custom Partner Agreement | BasaltSurge",
-  description: "Sign your custom BasaltSurge Partner Services Agreement with negotiated terms. Enterprise partnership with tailored pricing and features.",
+  title: "Referred Partner Agreement | BasaltSurge",
+  description: "Standard MSA for Partners onboarding from Referred Introducers/Sales Agents",
   openGraph: {
     type: "website",
-    url: `${BASE_URL}/msas`,
-    title: "Custom Partner Agreement | BasaltSurge",
+    url: `${BASE_URL}/msa-isa`,
+    title: "Referred Partner Agreement | BasaltSurge",
     siteName: "BasaltSurge",
-    description: "Sign your custom BasaltSurge Partner Services Agreement with negotiated terms. Enterprise partnership with tailored pricing and features.",
+    description: "Standard MSA for Partners onboarding from Referred Introducers/Sales Agents",
     locale: "en_US",
     images: [
       {
         url: `${BASE_URL}/BasaltSurgeWideD.png`,
         width: 1200,
         height: 630,
-        alt: "BasaltSurge Custom Partner Agreement",
+        alt: "BasaltSurge Referred Partner Agreement",
         type: "image/png",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Custom Partner Agreement | BasaltSurge",
-    description: "Sign your custom BasaltSurge Partner Services Agreement with negotiated terms. Enterprise partnership with tailored pricing and features.",
+    title: "Referred Partner Agreement | BasaltSurge",
+    description: "Standard MSA for Partners onboarding from Referred Introducers/Sales Agents",
     images: [`${BASE_URL}/BasaltSurgeWideD.png`],
   },
 };
@@ -45,7 +45,7 @@ async function getWidgetId(): Promise<string> {
   return DEFAULT_WIDGET_ID;
 }
 
-export default async function MSASpecialPage() {
+export default async function MSAIntroducerSalesAgentPage() {
   const widgetId = await getWidgetId();
 
   return (
