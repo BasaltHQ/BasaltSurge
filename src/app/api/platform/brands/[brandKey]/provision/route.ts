@@ -450,6 +450,92 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   let steps: string[] = [];
   let azExamples: string[] = [];
 
+  const nextPublicThirdwebClientId = thirdwebClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || process.env.THIRDWEB_CLIENT_ID || "";
+  const nextPublicAppUrl = brandAppUrl || "";
+  const nextPublicChainId = process.env.NEXT_PUBLIC_CHAIN_ID || "8453";
+  const nextPublicBrandKey = key || "";
+  const nextPublicOwnerWallet = brandPartnerWallet || process.env.NEXT_PUBLIC_OWNER_WALLET || "";
+  const nextPublicDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE || "true";
+  const nextPublicRecipientAddress = brandPartnerWallet || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "";
+  const nextPublicPlatformWallet = process.env.NEXT_PUBLIC_PLATFORM_WALLET || "";
+  const nextPublicSpawncampFactoryAddress = process.env.NEXT_PUBLIC_SPAWNCAMP_FACTORY_ADDRESS || "";
+  const nextPublicDiscordUrl = process.env.NEXT_PUBLIC_DISCORD_URL || "";
+  const nextPublicGraphqlUrl = process.env.NEXT_PUBLIC_GRAPHQL_URL || "";
+  const nextPublicBaseUsdcAddress = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "";
+  const nextPublicBaseUsdcDecimals = process.env.NEXT_PUBLIC_BASE_USDC_DECIMALS || "";
+  const nextPublicBaseUsdtAddress = process.env.NEXT_PUBLIC_BASE_USDT_ADDRESS || "";
+  const nextPublicBaseUsdtDecimals = process.env.NEXT_PUBLIC_BASE_USDT_DECIMALS || "";
+  const nextPublicBaseCbbtcAddress = process.env.NEXT_PUBLIC_BASE_CBBTC_ADDRESS || "";
+  const nextPublicBaseCbbtcDecimals = process.env.NEXT_PUBLIC_BASE_CBBTC_DECIMALS || "";
+  const nextPublicBaseCbxrpAddress = process.env.NEXT_PUBLIC_BASE_CBXRP_ADDRESS || "";
+  const nextPublicBaseCbxrpDecimals = process.env.NEXT_PUBLIC_BASE_CBXRP_DECIMALS || "";
+  const nextPublicBaseSolAddress = process.env.NEXT_PUBLIC_BASE_SOL_ADDRESS || "";
+  const nextPublicBaseSolDecimals = process.env.NEXT_PUBLIC_BASE_SOL_DECIMALS || "";
+  const nextPublicBearCloudApiUrl = process.env.NEXT_PUBLIC_BEAR_CLOUD_API_URL || "";
+  const nextPublicBearCloudAuthUrl = process.env.NEXT_PUBLIC_BEAR_CLOUD_AUTH_URL || "";
+  const nextPublicBearCloudApiKey = process.env.NEXT_PUBLIC_BEAR_CLOUD_API_KEY || "";
+  const nextPublicBearCloudSecret = process.env.NEXT_PUBLIC_BEAR_CLOUD_SECRET || "";
+  const nextPublicBearCloudScope = process.env.NEXT_PUBLIC_BEAR_CLOUD_SCOPE || "";
+  const nextPublicDemoFreezeTime = process.env.NEXT_PUBLIC_DEMO_FREEZE_TIME || "";
+  const nextPublicBearCloudTimeout = process.env.NEXT_PUBLIC_BEAR_CLOUD_TIMEOUT || "";
+  const nextPublicRoboticsEnabled = process.env.NEXT_PUBLIC_ROBOTICS_ENABLED || "true";
+  const nextPublicRoboticsUseMockFallback = process.env.NEXT_PUBLIC_ROBOTICS_USE_MOCK_FALLBACK || "true";
+  const nextPublicThirdwebEngineWallet = process.env.NEXT_PUBLIC_THIRDWEB_ENGINE_WALLET || "";
+  const nextPublicStripePublishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
+ 
+  const cloudflareApiToken = process.env.CLOUDFLARE_API_TOKEN || "";
+  const cloudflareZoneId = process.env.CLOUDFLARE_ZONE_ID || "";
+  const cloudflareAccountId = process.env.CLOUDFLARE_ACCOUNT_ID || "";
+  const serverThirdwebSecretKey = thirdwebSecretKey || process.env.THIRDWEB_SECRET_KEY || "";
+  const stripeApiKey = process.env.STRIPE_API_KEY || "";
+  const nextPublicStripeHeadless = process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "TRUE";
+
+  const envLines = [
+    "# Export the critical NEXT_PUBLIC vars so next build can inline them",
+    `export NEXT_PUBLIC_THIRDWEB_CLIENT_ID="${nextPublicThirdwebClientId}"`,
+    `export NEXT_PUBLIC_APP_URL="${nextPublicAppUrl}"`,
+    `export NEXT_PUBLIC_CHAIN_ID="${nextPublicChainId}"`,
+    `export NEXT_PUBLIC_BRAND_KEY="${nextPublicBrandKey}"`,
+    `export NEXT_PUBLIC_OWNER_WALLET="${nextPublicOwnerWallet}"`,
+    `export NEXT_PUBLIC_DEMO_MODE="${nextPublicDemoMode}"`,
+    `export NEXT_PUBLIC_RECIPIENT_ADDRESS="${nextPublicRecipientAddress}"`,
+    `export NEXT_PUBLIC_PLATFORM_WALLET="${nextPublicPlatformWallet}"`,
+    `export NEXT_PUBLIC_SPAWNCAMP_FACTORY_ADDRESS="${nextPublicSpawncampFactoryAddress}"`,
+    `export NEXT_PUBLIC_DISCORD_URL="${nextPublicDiscordUrl}"`,
+    `export NEXT_PUBLIC_GRAPHQL_URL="${nextPublicGraphqlUrl}"`,
+    `export NEXT_PUBLIC_BASE_USDC_ADDRESS="${nextPublicBaseUsdcAddress}"`,
+    `export NEXT_PUBLIC_BASE_USDC_DECIMALS="${nextPublicBaseUsdcDecimals}"`,
+    `export NEXT_PUBLIC_BASE_USDT_ADDRESS="${nextPublicBaseUsdtAddress}"`,
+    `export NEXT_PUBLIC_BASE_USDT_DECIMALS="${nextPublicBaseUsdtDecimals}"`,
+    `export NEXT_PUBLIC_BASE_CBBTC_ADDRESS="${nextPublicBaseCbbtcAddress}"`,
+    `export NEXT_PUBLIC_BASE_CBBTC_DECIMALS="${nextPublicBaseCbbtcDecimals}"`,
+    `export NEXT_PUBLIC_BASE_CBXRP_ADDRESS="${nextPublicBaseCbxrpAddress}"`,
+    `export NEXT_PUBLIC_BASE_CBXRP_DECIMALS="${nextPublicBaseCbxrpDecimals}"`,
+    `export NEXT_PUBLIC_BASE_SOL_ADDRESS="${nextPublicBaseSolAddress}"`,
+    `export NEXT_PUBLIC_BASE_SOL_DECIMALS="${nextPublicBaseSolDecimals}"`,
+    `export NEXT_PUBLIC_BEAR_CLOUD_API_URL="${nextPublicBearCloudApiUrl}"`,
+    `export NEXT_PUBLIC_BEAR_CLOUD_AUTH_URL="${nextPublicBearCloudAuthUrl}"`,
+    `export NEXT_PUBLIC_BEAR_CLOUD_API_KEY="${nextPublicBearCloudApiKey}"`,
+    `export NEXT_PUBLIC_BEAR_CLOUD_SECRET="${nextPublicBearCloudSecret}"`,
+    `export NEXT_PUBLIC_BEAR_CLOUD_SCOPE="${nextPublicBearCloudScope}"`,
+    `export NEXT_PUBLIC_DEMO_FREEZE_TIME="${nextPublicDemoFreezeTime}"`,
+    `export NEXT_PUBLIC_BEAR_CLOUD_TIMEOUT="${nextPublicBearCloudTimeout}"`,
+    `export NEXT_PUBLIC_ROBOTICS_ENABLED="${nextPublicRoboticsEnabled}"`,
+    `export NEXT_PUBLIC_ROBOTICS_USE_MOCK_FALLBACK="${nextPublicRoboticsUseMockFallback}"`,
+    `export NEXT_PUBLIC_THIRDWEB_ENGINE_WALLET="${nextPublicThirdwebEngineWallet}"`,
+    `export NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="${nextPublicStripePublishableKey}"`,
+    "",
+    "# Also export server-side vars needed during build",
+    `export CLOUDFLARE_API_TOKEN="${cloudflareApiToken}"`,
+    `export CLOUDFLARE_ZONE_ID="${cloudflareZoneId}"`,
+    `export CLOUDFLARE_ACCOUNT_ID="${cloudflareAccountId}"`,
+    `export THIRDWEB_SECRET_KEY="${serverThirdwebSecretKey}"`,
+    `export NODE_ENV="production"`,
+    `export STRIPE_API_KEY="${stripeApiKey}"`,
+    `export NEXT_PUBLIC_STRIPE_HEADLESS="${nextPublicStripeHeadless}"`
+  ];
+  const envContent = envLines.join("\n");
+
   if (target === "plesk") {
     steps = [
       "Ensure the domain CNAME is pointed to your Plesk server.",
@@ -461,10 +547,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
       "Run git pull to download the source, trigger npm install, and run npm run build.",
       "Restart the passenger Node.js process by touching tmp/restart.txt inside the domain root."
     ];
-
-    const envContent = Object.entries(env)
-      .map(([k, v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
-      .join("\n");
 
     azExamples = [
       `# --- Plesk CLI Commands (Run via SSH on VPS or automated via deploy action) ---`,
@@ -661,10 +743,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         progress.push({ step: "writing_env", ok: true });
         await persistProgress(key, correlationId, progress);
         
-        const envContent = Object.entries(env)
-          .map(([k, v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
-          .join("\n");
-          
         const targetDir = `/var/www/vhosts/basalthq.com/${cleanDomain}`;
         await fs.mkdir(targetDir, { recursive: true });
         await fs.writeFile(`${targetDir}/.env.production`, envContent, "utf8");
