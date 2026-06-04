@@ -2413,7 +2413,7 @@ export default function PartnerManagementPanel() {
                   if (!deployLoading && !deployError && steps.length > 0) {
                     pct = 100;
                   } else {
-                    const totalExpected = provTarget === "plesk" ? 14 : 17;
+                    const totalExpected = provTarget === "plesk" ? 10 : 17;
                     pct = Math.min(Math.round((completed / totalExpected) * 100), 99);
                   }
                   return (

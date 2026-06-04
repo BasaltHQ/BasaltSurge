@@ -679,43 +679,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         progress.push({ step: "site_created", ok: true, info: { domain: cleanDomain } });
         await persistProgress(key, correlationId, progress);
 
-        // Step 2: Set Document Root to public/ for security (Option A)
-        progress.push({ step: "setting_docroot", ok: true });
-        await persistProgress(key, correlationId, progress);
-        
-        const docrootResult = await plesk.callCli("domain", [
-          "-u", cleanDomain,
-          "-www-root", `${cleanDomain}/public`
-        ]);
-        
-        if (docrootResult.code !== 0) {
-          throw new Error(`Plesk Document Root configuration failed: ${docrootResult.stderr || docrootResult.stdout}`);
-        }
-        
-        progress.push({ step: "docroot_set", ok: true });
-        await persistProgress(key, correlationId, progress);
-
-        // Step 3: Enable Node.js Support
-        progress.push({ step: "enabling_nodejs", ok: true });
-        await persistProgress(key, correlationId, progress);
-        
-        try {
-          const nodeEnableResult = await plesk.callCli("extension", [
-            "--call", "nodejs",
-            "--enable",
-            "-domain", cleanDomain
-          ]);
-          if (nodeEnableResult.code !== 0) {
-            console.warn("[Plesk Node.js] Enabling Node.js returned non-zero code:", nodeEnableResult.stderr || nodeEnableResult.stdout);
-          }
-          progress.push({ step: "nodejs_enabled", ok: true });
-        } catch (nodeErr: any) {
-          console.warn("[Plesk Node.js] Failed to enable Node.js:", nodeErr.message);
-          progress.push({ step: "nodejs_enabled", ok: false, info: { warning: nodeErr.message } });
-        }
-        await persistProgress(key, correlationId, progress);
-
-        // Step 4: Configure Git SSH Repository (Create with actions disabled to prevent request timeouts)
+        // Step 2: Configure Git SSH Repository (Using original simple parameters to prevent timeouts)
         progress.push({ step: "configuring_git", ok: true });
         await persistProgress(key, correlationId, progress);
         
@@ -723,35 +687,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
           "--call", "git",
           "--create",
           "-domain", cleanDomain,
-          "-name", key,
-          "-remote-url", "git@github.com:BasaltHQ/BasaltSurge.git",
-          "-active-branch", "production",
-          "-deployment-path", cleanDomain,
-          "-run-actions", "false"
+          "-url", "git@github.com:BasaltHQ/BasaltSurge.git",
+          "-branch", "production",
+          "-actions", `export PATH=/opt/plesk/node/24/bin:$PATH && set -a && [ -f .env.production ] && . .env.production && set +a && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt`
         ]);
         
         if (gitResult.code !== 0 && !gitResult.stderr.includes("already exists") && !gitResult.stdout.includes("already exists")) {
           throw new Error(`Plesk Git configuration failed: ${gitResult.stderr || gitResult.stdout}`);
         }
-
-        // Step 4b: Update Git Repository Settings to attach build and deploy actions
-        const gitUpdateResult = await plesk.callCli("extension", [
-          "--call", "git",
-          "--update",
-          "-domain", cleanDomain,
-          "-name", key,
-          "-run-actions", "true",
-          "-actions", `export PATH=/opt/plesk/node/24/bin:$PATH && cd /var/www/vhosts/basalthq.com/${cleanDomain} && set -a && [ -f .env.production ] && . .env.production && set +a && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt`
-        ]);
-
-        if (gitUpdateResult.code !== 0) {
-          throw new Error(`Plesk Git settings update failed: ${gitUpdateResult.stderr || gitUpdateResult.stdout}`);
-        }
         
         progress.push({ step: "git_configured", ok: true });
         await persistProgress(key, correlationId, progress);
 
-        // Step 5: Write Build-Time environment variables (.env.production)
+        // Step 3: Write Build-Time environment variables (.env.production)
         progress.push({ step: "writing_env", ok: true });
         await persistProgress(key, correlationId, progress);
         
@@ -762,7 +710,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         progress.push({ step: "env_written", ok: true });
         await persistProgress(key, correlationId, progress);
 
-        // Step 6: Secure domain with Let's Encrypt (run in background, best-effort)
+        // Step 4: Secure domain with Let's Encrypt (run in background, best-effort)
         progress.push({ step: "requesting_ssl", ok: true });
         await persistProgress(key, correlationId, progress);
         
@@ -778,7 +726,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
           persistProgress(key, correlationId, progress);
         });
 
-        // Step 7: Restart Node.js application (Touch tmp/restart.txt)
+        // Step 5: Restart Node.js application (Touch tmp/restart.txt)
         progress.push({ step: "restarting_app", ok: true });
         await persistProgress(key, correlationId, progress);
         
@@ -806,10 +754,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
               state: "active",
               checklist: [
                 "1. Login to Plesk panel.",
-                `2. Go to Websites & Domains > ${cleanDomain} > Node.js.`,
-                "3. Ensure Node.js is Enabled.",
-                "4. Verify 'Application Startup File' is set to server.js.",
-                "5. Go to Git, select the repository, and click 'Pull Updates' to trigger the initial build."
+                `2. Go to Websites & Domains > ${cleanDomain} > Node.js:`,
+                "   - Ensure Node.js is Enabled.",
+                `   - Set Document Root to /${cleanDomain}/public`,
+                `   - Set Application Root to /${cleanDomain}`,
+                "   - Set Application Startup File to server.js.",
+                `3. Go to Websites & Domains > ${cleanDomain} > Git > Repository Settings:`,
+                `   - Ensure Server path is set to /${cleanDomain}`,
+                "   - Ensure the checkbox 'Enable additional deployments actions' is checked.",
+                "4. Go to Git and click 'Pull Updates' to trigger the initial build."
               ]
             },
             progress
