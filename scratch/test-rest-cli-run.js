@@ -2,7 +2,7 @@ const https = require("https");
 const { URL } = require("url");
 
 const apiKey = "b66cb256-2178-3b5e-678c-37b501de2bf3";
-const apiUrl = "https://vps-276db2b3.vps.ovh.us:8443/api/v2/cli/extension/call";
+const apiUrl = "https://vps-276db2b3.vps.ovh.us:8443/api/v2/cli/site/call";
 
 const postData = JSON.stringify({
     params: ["--list"]
