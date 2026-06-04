@@ -154,10 +154,17 @@ export function Navbar() {
         const checkForModal = () => {
             // Thirdweb uses various selectors for its modals
             const modal = document.querySelector('[data-rk], [role="dialog"], [class*="ConnectModal"], [class*="tw-modal"]');
-            if (modal && !document.body.hasAttribute('data-modal-locked')) {
-                document.body.setAttribute('data-modal-locked', 'true');
-                lockScroll();
-            } else if (!modal && document.body.hasAttribute('data-modal-locked')) {
+            if (modal) {
+                // Close the mobile menu to prevent overlapping layout conflicts
+                setMobileOpen(prev => {
+                    if (prev) return false;
+                    return prev;
+                });
+                if (!document.body.hasAttribute('data-modal-locked')) {
+                    document.body.setAttribute('data-modal-locked', 'true');
+                    lockScroll();
+                }
+            } else if (document.body.hasAttribute('data-modal-locked')) {
                 document.body.removeAttribute('data-modal-locked');
                 unlockScroll();
             }
@@ -909,7 +916,7 @@ export function Navbar() {
                         </div>
 
                         {/* Search & Filters */}
-                        <div className="relative flex items-center gap-2" ref={dropdownRef}>
+                        <div className="static md:relative flex items-center gap-2" ref={dropdownRef}>
                             <button
                                 onClick={() => setOpen(o => !o)}
                                 className="hidden md:flex items-center gap-2 px-3 py-2 rounded-[10px] bg-black/20 hover:bg-white/5 border border-white/10 hover:border-white/20 transition-all group"
@@ -928,7 +935,7 @@ export function Navbar() {
 
                             {open && (
                                 <div
-                                    className="absolute top-full right-0 mt-2 w-[min(520px,calc(100vw-24px))] max-h-[75vh] rounded-xl border p-4 text-sm z-50 animate-in fade-in zoom-in-95 duration-200 origin-top-right shadow-2xl backdrop-blur-2xl bg-black/80"
+                                    className="absolute top-full left-4 right-4 md:left-auto md:right-0 mt-2 md:w-[520px] max-h-[75vh] rounded-xl border p-4 text-sm z-50 animate-in fade-in zoom-in-95 duration-200 origin-top-right shadow-2xl backdrop-blur-2xl bg-black/80"
                                     style={{ borderColor: secondaryColor }}
                                 >
                                     <div className="mb-3">

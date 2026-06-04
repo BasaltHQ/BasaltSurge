@@ -46,6 +46,10 @@ type BrandConfigDoc = {
   containerFqdn?: string;
   containerResourceId?: string;
   containerState?: string;
+  // Thirdweb Keys
+  thirdwebClientId?: string;
+  thirdwebSecretKey?: string;
+  thirdwebAuthEndpointSecret?: string;
   updatedAt?: number;
 };
 
@@ -245,6 +249,17 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
   // Access Mode for partner containers (open or request-based)
   if (raw?.accessMode === "open" || raw?.accessMode === "request") {
     out.accessMode = raw.accessMode;
+  }
+
+  // Thirdweb Keys
+  if (typeof raw?.thirdwebClientId === "string") {
+    out.thirdwebClientId = raw.thirdwebClientId.trim();
+  }
+  if (typeof raw?.thirdwebSecretKey === "string") {
+    out.thirdwebSecretKey = raw.thirdwebSecretKey.trim();
+  }
+  if (typeof raw?.thirdwebAuthEndpointSecret === "string") {
+    out.thirdwebAuthEndpointSecret = raw.thirdwebAuthEndpointSecret.trim();
   }
 
   return out;
