@@ -20,14 +20,11 @@ export class PleskClient {
     private password?: string;
 
     constructor() {
-        let base = process.env.PLESK_API_URL || "https://localhost:8443";
-        // If the URL points to localhost or 127.0.0.1, check if we have PLESK_MAIN_DOMAIN configured
-        // to hit the VPS URL directly.
-        if (base.includes("localhost") || base.includes("127.0.0.1")) {
-            const mainDomain = process.env.PLESK_MAIN_DOMAIN;
-            if (mainDomain && !mainDomain.includes("localhost") && !mainDomain.includes("127.0.0.1")) {
-                base = `https://${mainDomain}:8443`;
-            }
+        let base = process.env.PLESK_API_URL || "https://127.0.0.1:8443";
+        // Map localhost explicitly to 127.0.0.1 to force IPv4 connection.
+        // Node 18+ resolves localhost to IPv6 ::1 loopback by default, which can hang or timeout.
+        if (base.includes("localhost")) {
+            base = base.replace("localhost", "127.0.0.1");
         }
         // Ensure we always hit the XML-RPC agent endpoint
         this.apiUrl = base.replace(/\/+$/, "") + "/enterprise/control/agent.php";
