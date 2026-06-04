@@ -714,7 +714,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         }
         await persistProgress(key, correlationId, progress);
 
-        // Step 4: Configure Git SSH Repository with deployment path and actions
+        // Step 4: Configure Git SSH Repository (Create with actions disabled to prevent request timeouts)
         progress.push({ step: "configuring_git", ok: true });
         await persistProgress(key, correlationId, progress);
         
@@ -726,12 +726,25 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
           "-remote-url", "git@github.com:BasaltHQ/BasaltSurge.git",
           "-active-branch", "production",
           "-deployment-path", cleanDomain,
-          "-run-actions", "true",
-          "-actions", `export PATH=/opt/plesk/node/24/bin:$PATH && cd /var/www/vhosts/basalthq.com/${cleanDomain} && set -a && [ -f .env.production ] && . .env.production && set +a && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt`
+          "-run-actions", "false"
         ]);
         
         if (gitResult.code !== 0 && !gitResult.stderr.includes("already exists") && !gitResult.stdout.includes("already exists")) {
           throw new Error(`Plesk Git configuration failed: ${gitResult.stderr || gitResult.stdout}`);
+        }
+
+        // Step 4b: Update Git Repository Settings to attach build and deploy actions
+        const gitUpdateResult = await plesk.callCli("extension", [
+          "--call", "git",
+          "--update",
+          "-domain", cleanDomain,
+          "-name", key,
+          "-run-actions", "true",
+          "-actions", `export PATH=/opt/plesk/node/24/bin:$PATH && cd /var/www/vhosts/basalthq.com/${cleanDomain} && set -a && [ -f .env.production ] && . .env.production && set +a && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt`
+        ]);
+
+        if (gitUpdateResult.code !== 0) {
+          throw new Error(`Plesk Git settings update failed: ${gitUpdateResult.stderr || gitUpdateResult.stdout}`);
         }
         
         progress.push({ step: "git_configured", ok: true });
@@ -795,7 +808,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
                 `2. Go to Websites & Domains > ${cleanDomain} > Node.js.`,
                 "3. Ensure Node.js is Enabled.",
                 "4. Verify 'Application Startup File' is set to server.js.",
-                "5. Ensure the Git repository settings page has 'Enable additional deployment actions' checked."
+                "5. Go to Git, select the repository, and click 'Pull Updates' to trigger the initial build."
               ]
             },
             progress
