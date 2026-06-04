@@ -762,21 +762,21 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         progress.push({ step: "env_written", ok: true });
         await persistProgress(key, correlationId, progress);
 
-        // Step 6: Secure domain with Let's Encrypt
+        // Step 6: Secure domain with Let's Encrypt (run in background, best-effort)
         progress.push({ step: "requesting_ssl", ok: true });
         await persistProgress(key, correlationId, progress);
         
-        try {
-          await plesk.callCli("extension", [
-            "--exec", "letsencrypt", "cli.php",
-            "-d", cleanDomain
-          ]);
+        plesk.callCli("extension", [
+          "--exec", "letsencrypt", "cli.php",
+          "-d", cleanDomain
+        ]).then(() => {
           progress.push({ step: "ssl_completed", ok: true });
-        } catch (sslErr: any) {
+          persistProgress(key, correlationId, progress);
+        }).catch((sslErr: any) => {
           console.warn("[Plesk SSL] Best-effort SSL setup failed:", sslErr.message);
           progress.push({ step: "ssl_completed", ok: false, info: { warning: sslErr.message } });
-        }
-        await persistProgress(key, correlationId, progress);
+          persistProgress(key, correlationId, progress);
+        });
 
         // Step 7: Restart Node.js application (Touch tmp/restart.txt)
         progress.push({ step: "restarting_app", ok: true });
