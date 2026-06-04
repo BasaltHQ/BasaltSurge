@@ -20,7 +20,15 @@ export class PleskClient {
     private password?: string;
 
     constructor() {
-        const base = process.env.PLESK_API_URL || "https://localhost:8443";
+        let base = process.env.PLESK_API_URL || "https://localhost:8443";
+        // If the URL points to localhost or 127.0.0.1, check if we have PLESK_MAIN_DOMAIN configured
+        // to hit the VPS URL directly.
+        if (base.includes("localhost") || base.includes("127.0.0.1")) {
+            const mainDomain = process.env.PLESK_MAIN_DOMAIN;
+            if (mainDomain && !mainDomain.includes("localhost") && !mainDomain.includes("127.0.0.1")) {
+                base = `https://${mainDomain}:8443`;
+            }
+        }
         // Ensure we always hit the XML-RPC agent endpoint
         this.apiUrl = base.replace(/\/+$/, "") + "/enterprise/control/agent.php";
         this.apiKey = process.env.PLESK_API_KEY;
@@ -73,15 +81,15 @@ export class PleskClient {
                 res.on("end", () => {
                     const body = Buffer.concat(chunks).toString("utf-8");
                     if (res.statusCode && res.statusCode >= 400) {
-                        reject(new Error(`Plesk API HTTP Error: ${res.statusCode} ${res.statusMessage}`));
+                        reject(new Error(`Plesk API XML-RPC HTTP Error from ${parsed.hostname}:${parsed.port || 8443}: ${res.statusCode} ${res.statusMessage}`));
                     } else {
                         resolve(body);
                     }
                 });
             });
 
-            req.on("error", (err) => reject(new Error(`Plesk API request failed: ${err.message}`)));
-            req.on("timeout", () => { req.destroy(); reject(new Error("Plesk API request timed out")); });
+            req.on("error", (err) => reject(new Error(`Plesk API XML-RPC request failed to ${parsed.hostname}:${parsed.port || 8443}: ${err.message}`)));
+            req.on("timeout", () => { req.destroy(); reject(new Error(`Plesk API XML-RPC request timed out (15s limit) trying to reach ${parsed.hostname}:${parsed.port || 8443}`)); });
             req.write(xml);
             req.end();
         });
@@ -143,19 +151,19 @@ export class PleskClient {
                 res.on("end", () => {
                     const body = Buffer.concat(chunks).toString("utf-8");
                     if (res.statusCode && res.statusCode >= 400) {
-                        reject(new Error(`Plesk REST API Error: ${res.statusCode} ${body}`));
+                        reject(new Error(`Plesk REST API Error from ${urlObj.hostname}:${urlObj.port || 8443}: ${res.statusCode} ${body}`));
                     } else {
                         try {
                             resolve(JSON.parse(body));
                         } catch {
-                            reject(new Error(`Failed to parse JSON response: ${body}`));
+                            reject(new Error(`Failed to parse JSON response from ${urlObj.hostname}:${urlObj.port || 8443}: ${body}`));
                         }
                     }
                 });
             });
 
-            req.on("error", (err) => reject(new Error(`Plesk REST API request failed: ${err.message}`)));
-            req.on("timeout", () => { req.destroy(); reject(new Error("Plesk REST API request timed out")); });
+            req.on("error", (err) => reject(new Error(`Plesk REST API request failed to ${urlObj.hostname}:${urlObj.port || 8443}: ${err.message}`)));
+            req.on("timeout", () => { req.destroy(); reject(new Error(`Plesk REST API request timed out (30s limit) trying to reach ${urlObj.hostname}:${urlObj.port || 8443}`)); });
             req.write(postData);
             req.end();
         });

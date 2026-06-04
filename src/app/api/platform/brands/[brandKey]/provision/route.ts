@@ -490,9 +490,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   const stripeApiKey = process.env.STRIPE_API_KEY || "";
   const nextPublicStripeHeadless = process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "TRUE";
 
+  const sortedEnv = Object.entries(env).sort(([a], [b]) => a.localeCompare(b));
   const envLines = [
     "# Environment variables for the brand (build-time and runtime)",
-    ...Object.entries(env).map(([k, v]) => `${k}="${String(v || "").replace(/"/g, '\\"')}"`)
+    ...sortedEnv.map(([k, v]) => `${k}="${String(v || "").replace(/"/g, '\\"')}"`)
   ];
   const envContent = envLines.join("\n");
 
