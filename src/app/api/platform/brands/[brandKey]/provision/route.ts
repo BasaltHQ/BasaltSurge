@@ -198,9 +198,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   // Load saved brand config (name, logos, appUrl, partnerWallet) to prefer over static defaults
   // Direct Cosmos DB lookup to bypass multi-worker loopback fetch caching issues
   let brandConfig: any = null;
+  let dbOverrides: any = null;
   try {
     const { readBrandOverridesFromCosmos, toEffectiveBrand } = require("@/lib/brand-config");
-    const dbOverrides = await readBrandOverridesFromCosmos(key);
+    dbOverrides = await readBrandOverridesFromCosmos(key);
     brandConfig = toEffectiveBrand(key, dbOverrides);
   } catch (e) {
     console.error("[provision] Failed to load brand config directly from DB:", e);
@@ -228,11 +229,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
       ? domains[0]
       : (extras.BRAND_APP_URL || extras.NEXT_PUBLIC_BRAND_APP_URL || brandConfig?.appUrl || brandBase.appUrl || process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || ""))
   );
+  const cleanDomain = brandAppUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 
-  // Extract Thirdweb parameters
-  const thirdwebClientId = String(brandConfig?.thirdwebClientId || "");
-  const thirdwebSecretKey = String(brandConfig?.thirdwebSecretKey || "");
-  const thirdwebAuthEndpointSecret = String(brandConfig?.thirdwebAuthEndpointSecret || "");
+  // Extract brand colors
+  const brandPrimaryColor = String(
+    extras.BRAND_PRIMARY_COLOR || extras.NEXT_PUBLIC_BRAND_PRIMARY_COLOR || brandConfig?.colors?.primary || brandBase.colors?.primary || ""
+  ).trim();
+  const brandAccentColor = String(
+    extras.BRAND_ACCENT_COLOR || extras.NEXT_PUBLIC_BRAND_ACCENT_COLOR || brandConfig?.colors?.accent || brandBase.colors?.accent || ""
+  ).trim();
+
+  // Extract Thirdweb parameters directly from raw Cosmos DB overrides
+  const thirdwebClientId = String(dbOverrides?.thirdwebClientId || "");
+  const thirdwebSecretKey = String(dbOverrides?.thirdwebSecretKey || "");
+  const thirdwebAuthEndpointSecret = String(dbOverrides?.thirdwebAuthEndpointSecret || "");
 
   // Extract default agent settings
   const agentsList = Array.isArray(brandConfig?.agents) ? brandConfig.agents : [];
@@ -243,9 +253,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
 
   // For deployment, include env vars by allowlist and valid key pattern (avoid OS/reserved variables)
   const baseEnv: Record<string, string> = {};
-  if (action === "deploy") {
-    const allowPrefixes = ["NEXT_PUBLIC_", "AZURE_", "COSMOS_", "THIRDWEB_", "PORTALPAY_", "MONGODB_", "APIM_", "AFD_", "UNISWAP_", "ETHERSCAN_", "BLOCKSCOUT_", "SEVENSHIFTS_", "TOAST_", "VARUNI_", "JWT_", "RESERVE_", "DEFAULT_", "PP_BRAND_", "AGENT_"];
-    const allowExact = ["JWT_SECRET", "NODE_ENV", "PORT", "WEBSITES_PORT", "BRAND_NAME", "BACKOFFICE_NAME", "DEMO_MODE", "DEMO_STUBS", "NEXT_PUBLIC_DEMO_MODE", "ADMIN_WALLETS", "PARTNER_WALLET", "NEXT_PUBLIC_PARTNER_WALLET", "NEXT_PUBLIC_APP_URL", "BRAND_KEY", "NEXT_PUBLIC_BRAND_KEY", "NEXT_PUBLIC_BRAND_NAME", "BRAND_APP_URL", "NEXT_PUBLIC_BRAND_APP_URL", "PP_BRAND_NAME", "PP_BRAND_LOGO", "PP_BRAND_FAVICON", "PP_BRAND_SYMBOL", "AGENT_WALLETS_JSON", "NEXT_PUBLIC_AGENT_WALLETS_JSON"];
+  // Always include env vars by allowlist for both planning preview and deployment
+  {
+    const allowPrefixes = [
+      "NEXT_PUBLIC_", "AZURE_", "COSMOS_", "THIRDWEB_", "PORTALPAY_", "MONGODB_",
+      "APIM_", "AFD_", "UNISWAP_", "ETHERSCAN_", "BLOCKSCOUT_", "SEVENSHIFTS_",
+      "TOAST_", "VARUNI_", "JWT_", "RESERVE_", "DEFAULT_", "PP_BRAND_", "AGENT_",
+      "DB_", "S3_", "CLOUDFLARE_", "STRIPE_", "LINK_", "ELEVENLABS_", "PLESK_"
+    ];
+    const allowExact = [
+      "JWT_SECRET", "NODE_ENV", "PORT", "WEBSITES_PORT", "BRAND_NAME", "BACKOFFICE_NAME",
+      "DEMO_MODE", "DEMO_STUBS", "NEXT_PUBLIC_DEMO_MODE", "ADMIN_WALLETS", "PARTNER_WALLET",
+      "NEXT_PUBLIC_PARTNER_WALLET", "NEXT_PUBLIC_APP_URL", "BRAND_KEY", "NEXT_PUBLIC_BRAND_KEY",
+      "NEXT_PUBLIC_BRAND_NAME", "BRAND_APP_URL", "NEXT_PUBLIC_BRAND_APP_URL", "PP_BRAND_NAME",
+      "PP_BRAND_LOGO", "PP_BRAND_FAVICON", "PP_BRAND_SYMBOL", "AGENT_WALLETS_JSON",
+      "NEXT_PUBLIC_AGENT_WALLETS_JSON", "embedded", "DEBUG", "HOSTING_PROVIDER",
+      "STORAGE_PROVIDER", "WEBSITES_ENABLE_APP_SERVICE_STORAGE"
+    ];
     const denyKeys = new Set([
       "Path", "ComSpec", "PATHEXT", "ProgramFiles", "ProgramData", "CommonProgramFiles", "CommonProgramFiles(x86)",
       "SystemRoot", "WINDIR", "USERPROFILE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "NUMBER_OF_PROCESSORS", "PROCESSOR_IDENTIFIER"
@@ -269,13 +293,43 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
     CONTAINER_TYPE: key === "portalpay" ? "platform" : "partner",
     NEXT_PUBLIC_CONTAINER_TYPE: key === "portalpay" ? "platform" : "partner",
     NEXT_PUBLIC_APP_URL: brandAppUrl,
-    // Thirdweb Keys mapping
-    ...(thirdwebClientId ? {
-      NEXT_PUBLIC_THIRDWEB_CLIENT_ID: thirdwebClientId,
-      THIRDWEB_CLIENT_ID: thirdwebClientId
-    } : {}),
-    ...(thirdwebSecretKey ? { THIRDWEB_SECRET_KEY: thirdwebSecretKey } : {}),
-    ...(thirdwebAuthEndpointSecret ? { THIRDWEB_AUTH_ENDPOINT_SECRET: thirdwebAuthEndpointSecret } : {}),
+
+    // Branding identity overrides (supporting current, legacy, and theme patterns)
+    BRAND_NAME: brandNameOverride,
+    NEXT_PUBLIC_BRAND_NAME: brandNameOverride,
+    PP_BRAND_NAME: brandNameOverride,
+
+    BRAND_APP_URL: brandAppUrl,
+    NEXT_PUBLIC_BRAND_APP_URL: brandAppUrl,
+
+    BRAND_PRIMARY_COLOR: brandPrimaryColor,
+    NEXT_PUBLIC_BRAND_PRIMARY_COLOR: brandPrimaryColor,
+    BRAND_ACCENT_COLOR: brandAccentColor,
+    NEXT_PUBLIC_BRAND_ACCENT_COLOR: brandAccentColor,
+
+    BRAND_LOGO_URL: brandLogoOverride,
+    NEXT_PUBLIC_BRAND_LOGO_URL: brandLogoOverride,
+    PP_BRAND_LOGO: brandLogoOverride,
+
+    BRAND_FAVICON_URL: brandFaviconOverride,
+    NEXT_PUBLIC_BRAND_FAVICON_URL: brandFaviconOverride,
+    PP_BRAND_FAVICON: brandFaviconOverride,
+
+    PP_BRAND_SYMBOL: computedSymbol,
+
+    // Plesk Main Domain override (same as app URL origin)
+    PLESK_MAIN_DOMAIN: cleanDomain,
+
+    // Thirdweb Keys mapping (guaranteeing fallback to parent environment variables if brand overrides are empty)
+    THIRDWEB_CLIENT_ID: thirdwebClientId || process.env.THIRDWEB_CLIENT_ID || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "",
+    NEXT_PUBLIC_THIRDWEB_CLIENT_ID: thirdwebClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || process.env.THIRDWEB_CLIENT_ID || "",
+    THIRDWEB_SECRET_KEY: thirdwebSecretKey || process.env.THIRDWEB_SECRET_KEY || "",
+    THIRDWEB_AUTH_ENDPOINT_SECRET: thirdwebAuthEndpointSecret || process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "",
+    THIRDWEB_ADMIN_PRIVATE_KEY: process.env.THIRDWEB_ADMIN_PRIVATE_KEY || "",
+    THIRDWEB_SERVER_WALLET_ADDRESS: process.env.THIRDWEB_SERVER_WALLET_ADDRESS || "",
+    THIRDWEB_WAIT_UNTIL: process.env.THIRDWEB_WAIT_UNTIL || "confirmed",
+    THIRDWEB_ENGINE_WALLET: process.env.THIRDWEB_ENGINE_WALLET || "",
+    NEXT_PUBLIC_THIRDWEB_ENGINE_WALLET: process.env.NEXT_PUBLIC_THIRDWEB_ENGINE_WALLET || "",
     // Agent mapping
     ...(agentWallet ? {
       AGENT_WALLET: agentWallet,
@@ -287,29 +341,16 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
     } : {}),
     AGENT_WALLETS_JSON: agentsJson,
     NEXT_PUBLIC_AGENT_WALLETS_JSON: agentsJson,
-    // Conditionally set PP_BRAND_* keys (do not overwrite with blanks)
-    ...(brandNameOverride ? { PP_BRAND_NAME: brandNameOverride } : {}),
-    ...(brandLogoOverride ? { PP_BRAND_LOGO: brandLogoOverride } : {}),
-    ...(brandFaviconOverride ? { PP_BRAND_FAVICON: brandFaviconOverride } : {}),
-    ...(computedSymbol ? { PP_BRAND_SYMBOL: computedSymbol } : {}),
+    // Wallets configuration
     ADMIN_WALLETS: brandPartnerWallet,
     PARTNER_WALLET: brandPartnerWallet,
-    // Required partner envs (include only when provided)
-    ...(typeof (extras as any)?.NEXT_PUBLIC_OWNER_WALLET === "string" && (extras as any).NEXT_PUBLIC_OWNER_WALLET
-      ? { NEXT_PUBLIC_OWNER_WALLET: (extras as any).NEXT_PUBLIC_OWNER_WALLET }
-      : (typeof process.env.NEXT_PUBLIC_OWNER_WALLET === "string" && process.env.NEXT_PUBLIC_OWNER_WALLET
-        ? { NEXT_PUBLIC_OWNER_WALLET: String(process.env.NEXT_PUBLIC_OWNER_WALLET) }
-        : {})),
-    ...(typeof (extras as any)?.NEXT_PUBLIC_PLATFORM_WALLET === "string" && (extras as any).NEXT_PUBLIC_PLATFORM_WALLET
-      ? { NEXT_PUBLIC_PLATFORM_WALLET: (extras as any).NEXT_PUBLIC_PLATFORM_WALLET }
-      : (typeof process.env.NEXT_PUBLIC_PLATFORM_WALLET === "string" && process.env.NEXT_PUBLIC_PLATFORM_WALLET
-        ? { NEXT_PUBLIC_PLATFORM_WALLET: String(process.env.NEXT_PUBLIC_PLATFORM_WALLET) }
-        : {})),
-    ...(typeof (extras as any)?.NEXT_PUBLIC_RECIPIENT_ADDRESS === "string" && (extras as any).NEXT_PUBLIC_RECIPIENT_ADDRESS
-      ? { NEXT_PUBLIC_RECIPIENT_ADDRESS: (extras as any).NEXT_PUBLIC_RECIPIENT_ADDRESS }
-      : (typeof process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS === "string" && process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS
-        ? { NEXT_PUBLIC_RECIPIENT_ADDRESS: String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS) }
-        : {})),
+    NEXT_PUBLIC_PARTNER_WALLET: brandPartnerWallet,
+    NEXT_PUBLIC_OWNER_WALLET: brandPartnerWallet,
+    NEXT_PUBLIC_RECIPIENT_ADDRESS: brandPartnerWallet,
+    NEXT_PUBLIC_PLATFORM_WALLET: String(
+      (extras as any)?.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_PLATFORM_WALLET || ""
+    ),
+
     // App Service container defaults
     PORT: String((extras as any)?.PORT || process.env.PORT || "3000"),
     WEBSITES_PORT: String((extras as any)?.WEBSITES_PORT || process.env.WEBSITES_PORT || "3000"),
@@ -421,16 +462,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
       "Restart the passenger Node.js process by touching tmp/restart.txt inside the domain root."
     ];
 
-    const cleanDomain = brandAppUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    const envContent = Object.entries(env)
+      .map(([k, v]) => `${k}="${v.replace(/"/g, '\\"')}"`)
+      .join("\n");
+
     azExamples = [
       `# --- Plesk CLI Commands (Run via SSH on VPS or automated via deploy action) ---`,
       `# 1. Create the domain under basalthq.com webspace`,
       `plesk bin site --create ${cleanDomain} -webspace-name basalthq.com`,
       `# 2. Configure Git SSH deployment repository`,
-      `plesk bin extension git --create -domain ${cleanDomain} -url git@github.com:BasaltHQ/BasaltSurge.git -branch production -actions "export PATH=/opt/plesk/node/24/bin:$PATH && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"`,
-      `# 3. Inject Passenger Runtime Environment Variables`,
+      `plesk bin extension --call git --create -domain ${cleanDomain} -name BasaltSurge -remote-url git@github.com:BasaltHQ/BasaltSurge.git -active-branch production -run-actions true -actions "export PATH=/opt/plesk/node/24/bin:$PATH && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"`,
+      `# 3. Create build-time .env.production file inside domain root`,
+      `mkdir -p /var/www/vhosts/basalthq.com/${cleanDomain}`,
+      `cat << 'EOF' > /var/www/vhosts/basalthq.com/${cleanDomain}/.env.production\n${envContent}\nEOF`,
+      `# 4. Inject Passenger Runtime Environment Variables`,
       ...Object.entries(env).map(([k, v]) => `plesk bin extension nodejs --nodetool -s -domain ${cleanDomain} -env-val "${k}=${v}"`),
-      `# 4. Secure the domain with Let's Encrypt SSL`,
+      `# 5. Secure the domain with Let's Encrypt SSL`,
       `plesk bin extension --exec letsencrypt cli.php -d ${cleanDomain}`
     ];
   } else {
@@ -596,8 +643,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
           "--call", "git",
           "--create",
           "-domain", cleanDomain,
-          "-url", "git@github.com:BasaltHQ/BasaltSurge.git",
-          "-branch", "production",
+          "-name", "BasaltSurge",
+          "-remote-url", "git@github.com:BasaltHQ/BasaltSurge.git",
+          "-active-branch", "production",
+          "-run-actions", "true",
           "-actions", "export PATH=/opt/plesk/node/24/bin:$PATH && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"
         ]);
         
