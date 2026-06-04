@@ -12,6 +12,10 @@ import { ApiManagementClient } from "@azure/arm-apimanagement";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+import { PleskClient } from "@/lib/hosting/plesk/client";
+import { readBrandOverridesFromCosmos, toEffectiveBrand } from "@/lib/brand-config";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -167,6 +171,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
 
   const action = String((body as any)?.action || "").toLowerCase();
   const target = (body.target as any) === "plesk" ? "plesk" : ((body.target as any) === "appservice" ? "appservice" : (body.target === "k8s" ? "k8s" : "containerapps"));
+  const branch = process.env.PLESK_GIT_BRANCH || "main";
   // Default partner container registry: prefer AZURE_PARTNER_CONTAINER_REGISTRY
   const defaultRegistry = (process.env.AZURE_PARTNER_CONTAINER_REGISTRY || "").trim();
   const defaultImage = defaultRegistry
@@ -200,7 +205,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   let brandConfig: any = null;
   let dbOverrides: any = null;
   try {
-    const { readBrandOverridesFromCosmos, toEffectiveBrand } = require("@/lib/brand-config");
     dbOverrides = await readBrandOverridesFromCosmos(key);
     brandConfig = toEffectiveBrand(key, dbOverrides);
   } catch (e) {
@@ -429,8 +433,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
       } catch (err: any) {
         if (err.code === "ENOENT") {
           // If it doesn't exist, try to generate it
-          const { exec } = require("node:child_process");
-          const { promisify } = require("node:util");
           const execAsync = promisify(exec);
           
           await fs.mkdir(sshDir, { recursive: true });
@@ -497,6 +499,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   ];
   const envContent = envLines.join("\n");
 
+  const echoCommands = [
+    `echo '# Generated .env.production' > .env.production`,
+    ...sortedEnv.map(([k, v]) => `echo '${k}="${String(v || "").replace(/'/g, "'\\''")}"' >> .env.production`)
+  ];
+  const writeEnvCommand = echoCommands.join(" && ");
+
   if (target === "plesk") {
     steps = [
       "Ensure the domain CNAME is pointed to your Plesk server.",
@@ -513,7 +521,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
       `# 1. Create the domain under basalthq.com webspace`,
       `plesk bin site --create ${cleanDomain} -webspace-name basalthq.com`,
       `# 2. Configure Git SSH deployment repository (with server path and additional actions enabled)`,
-      `plesk bin extension --call git --create -domain ${cleanDomain} -name ${key} -remote-url git@github.com:BasaltHQ/BasaltSurge.git -active-branch production -deployment-path ${cleanDomain} -run-actions true -actions "export PATH=/opt/plesk/node/24/bin:$PATH && cd /var/www/vhosts/basalthq.com/${cleanDomain} && set -a && [ -f .env.production ] && . .env.production && set +a && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"`,
+      `plesk bin extension --call git --create -domain ${cleanDomain} -name ${key} -remote-url git@github.com:BasaltHQ/BasaltSurge.git -active-branch ${branch} -deployment-path ${cleanDomain} -run-actions true -actions "export PATH=/opt/plesk/node/24/bin:$PATH && cd /var/www/vhosts/basalthq.com/${cleanDomain} && ${writeEnvCommand.replace(/"/g, '\\"')} && set -a && . .env.production && set +a && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"`,
       `# 3. Create .env.production file inside domain root (Option A)`,
       `mkdir -p /var/www/vhosts/basalthq.com/${cleanDomain}`,
       `cat << 'EOF' > /var/www/vhosts/basalthq.com/${cleanDomain}/.env.production\n${envContent}\nEOF`,
@@ -641,6 +649,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   // - AZURE_CONTAINERAPPS_ENV_ID (managed environment resource ID for Azure Container Apps)
   // action already parsed above
 
+  if (action === "read_env") {
+    if (target === "plesk") {
+      const cleanDomain = brandAppUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+      try {
+        const targetDir = `/var/www/vhosts/basalthq.com/${cleanDomain}`;
+        const content = await fs.readFile(`${targetDir}/.env.production`, "utf8");
+        return json({ ok: true, exists: true, content, length: content.length, correlationId });
+      } catch (err: any) {
+        return json({ ok: false, exists: false, error: err.message, correlationId });
+      }
+    }
+  }
+
   if (action === "deploy") {
     if (target === "plesk") {
       const cleanDomain = brandAppUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
@@ -658,7 +679,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
 
       const progress: Array<{ step: string; ok: boolean; info?: any }> = [];
       try {
-        const { PleskClient } = require("@/lib/hosting/plesk/client");
         const plesk = new PleskClient();
         progress.push({ step: "auth", ok: true });
         await persistProgress(key, correlationId, progress);
@@ -669,30 +689,66 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         
         const siteResult = await plesk.callCli("site", [
           "--create", cleanDomain,
-          "-webspace-name", "basalthq.com"
+          "-webspace-name", "basalthq.com",
+          "-www-root", cleanDomain
         ]);
         
         if (siteResult.code !== 0 && !siteResult.stderr.includes("already exists") && !siteResult.stdout.includes("already exists")) {
           throw new Error(`Plesk site creation failed: ${siteResult.stderr || siteResult.stdout}`);
         }
+
+        if (siteResult.code !== 0 && (siteResult.stderr.includes("already exists") || siteResult.stdout.includes("already exists"))) {
+          // If the site already exists, run an update to set the correct www-root
+          const updateResult = await plesk.callCli("site", [
+            "--update", cleanDomain,
+            "-www-root", cleanDomain
+          ]);
+          if (updateResult.code !== 0) {
+            throw new Error(`Plesk site update failed: ${updateResult.stderr || updateResult.stdout}`);
+          }
+        }
         
         progress.push({ step: "site_created", ok: true, info: { domain: cleanDomain } });
         await persistProgress(key, correlationId, progress);
 
-        // Step 2: Configure Git SSH Repository (Using original simple parameters to prevent timeouts)
+        // Step 2: Configure Git SSH Repository
         progress.push({ step: "configuring_git", ok: true });
         await persistProgress(key, correlationId, progress);
+        
+        const gitActions = `export PATH=/opt/plesk/node/24/bin:$PATH && cd /var/www/vhosts/basalthq.com/${cleanDomain} && ${writeEnvCommand} && set -a && . .env.production && set +a && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt`;
         
         const gitResult = await plesk.callCli("extension", [
           "--call", "git",
           "--create",
           "-domain", cleanDomain,
-          "-url", "git@github.com:BasaltHQ/BasaltSurge.git",
-          "-branch", "production",
-          "-actions", `export PATH=/opt/plesk/node/24/bin:$PATH && set -a && [ -f .env.production ] && . .env.production && set +a && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt`
+          "-name", key,
+          "-remote-url", "git@github.com:BasaltHQ/BasaltSurge.git",
+          "-active-branch", branch,
+          "-deployment-path", cleanDomain,
+          "-run-actions", "true",
+          "-actions", gitActions
         ]);
         
-        if (gitResult.code !== 0 && !gitResult.stderr.includes("already exists") && !gitResult.stdout.includes("already exists")) {
+        const gitAlreadyExists = gitResult.code !== 0 && 
+          (gitResult.stderr.includes("already exists") || gitResult.stdout.includes("already exists"));
+          
+        if (gitAlreadyExists) {
+          // If the Git repo already exists, update its settings to ensure correct branch and path
+          const gitUpdateResult = await plesk.callCli("extension", [
+            "--call", "git",
+            "--update",
+            "-domain", cleanDomain,
+            "-name", key,
+            "-remote-url", "git@github.com:BasaltHQ/BasaltSurge.git",
+            "-active-branch", branch,
+            "-deployment-path", cleanDomain,
+            "-run-actions", "true",
+            "-actions", gitActions
+          ]);
+          if (gitUpdateResult.code !== 0) {
+            throw new Error(`Plesk Git configuration update failed: ${gitUpdateResult.stderr || gitUpdateResult.stdout}`);
+          }
+        } else if (gitResult.code !== 0) {
           throw new Error(`Plesk Git configuration failed: ${gitResult.stderr || gitResult.stdout}`);
         }
         
@@ -709,6 +765,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         
         progress.push({ step: "env_written", ok: true });
         await persistProgress(key, correlationId, progress);
+
+        // Step 3b: Toggle Node.js extension to sync updated Document/Application Root settings
+        try {
+          await plesk.callCli("extension", [
+            "--call", "nodejs",
+            "--disable",
+            "-domain", cleanDomain
+          ]);
+          await plesk.callCli("extension", [
+            "--call", "nodejs",
+            "--enable",
+            "-domain", cleanDomain
+          ]);
+        } catch (nodeErr: any) {
+          console.warn("[Plesk Node.js Sync] Failed to toggle Node.js:", nodeErr.message);
+        }
 
         // Step 4: Secure domain with Let's Encrypt (run in background, best-effort)
         progress.push({ step: "requesting_ssl", ok: true });
@@ -756,7 +828,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
                 "1. Login to Plesk panel.",
                 `2. Go to Websites & Domains > ${cleanDomain} > Node.js:`,
                 "   - Ensure Node.js is Enabled.",
-                `   - Set Document Root to /${cleanDomain}/public`,
+                `   - Set Document Root to /${cleanDomain}`,
                 `   - Set Application Root to /${cleanDomain}`,
                 "   - Set Application Startup File to server.js.",
                 `3. Go to Websites & Domains > ${cleanDomain} > Git > Repository Settings:`,

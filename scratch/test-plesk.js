@@ -1,55 +1,23 @@
-const https = require("https");
-const { URL } = require("url");
+require('dotenv').config({ path: '.env.local' });
+const { PleskClient } = require('../src/lib/hosting/plesk/client');
 
-const apiKey = "b66cb256-2178-3b5e-678c-37b501de2bf3";
-const apiUrl = "https://vps-276db2b3.vps.ovh.us:8443/enterprise/control/agent.php";
+async function main() {
+    console.log("Testing Plesk REST API Connection...");
+    console.log("PLESK_API_URL:", process.env.PLESK_API_URL);
+    console.log("PLESK_MAIN_DOMAIN:", process.env.PLESK_MAIN_DOMAIN);
+    console.log("PLESK_API_KEY:", process.env.PLESK_API_KEY ? "CONFIGURED (Ends with " + process.env.PLESK_API_KEY.slice(-4) + ")" : "MISSING");
 
-const xmlPacket = `<?xml version="1.0" encoding="UTF-8"?>
-<packet>
-  <server>
-    <get/>
-  </server>
-</packet>`;
+    const plesk = new PleskClient();
+    try {
+        console.log("Attempting to list domains using Plesk CLI via REST API...");
+        const result = await plesk.callCli("domain", ["--list"]);
+        console.log("Connection successful!");
+        console.log("Status code:", result.code);
+        console.log("Output (first 200 chars):", (result.stdout || result.stderr || "").slice(0, 200));
+    } catch (err) {
+        console.error("Connection failed with error:");
+        console.error(err.message);
+    }
+}
 
-const parsed = new URL(apiUrl);
-const headers = {
-    "Content-Type": "text/xml",
-    "HTTP_PRETTY_PRINT": "TRUE",
-    "KEY": apiKey,
-    "Content-Length": String(Buffer.byteLength(xmlPacket, "utf-8")),
-};
-
-const options = {
-    hostname: parsed.hostname,
-    port: parsed.port || 8443,
-    path: parsed.pathname + parsed.search,
-    method: "POST",
-    headers,
-    rejectUnauthorized: false, // Accept self-signed certs
-    timeout: 10000,
-};
-
-console.log("Testing connection to Plesk API...");
-console.log("URL:", apiUrl);
-
-const req = https.request(options, (res) => {
-    const chunks = [];
-    res.on("data", (chunk) => chunks.push(chunk));
-    res.on("end", () => {
-        const body = Buffer.concat(chunks).toString("utf-8");
-        console.log(`HTTP Status: ${res.statusCode} ${res.statusMessage}`);
-        console.log("Response Body:\n", body);
-    });
-});
-
-req.on("error", (err) => {
-    console.error("Request Failed:", err.message);
-});
-
-req.on("timeout", () => {
-    console.error("Request timed out");
-    req.destroy();
-});
-
-req.write(xmlPacket);
-req.end();
+main();
