@@ -491,75 +491,36 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   const nextPublicStripeHeadless = process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "TRUE";
 
   const envLines = [
-    "# Export the critical NEXT_PUBLIC vars so next build can inline them",
-    `export NEXT_PUBLIC_THIRDWEB_CLIENT_ID="${nextPublicThirdwebClientId}"`,
-    `export NEXT_PUBLIC_APP_URL="${nextPublicAppUrl}"`,
-    `export NEXT_PUBLIC_CHAIN_ID="${nextPublicChainId}"`,
-    `export NEXT_PUBLIC_BRAND_KEY="${nextPublicBrandKey}"`,
-    `export NEXT_PUBLIC_OWNER_WALLET="${nextPublicOwnerWallet}"`,
-    `export NEXT_PUBLIC_DEMO_MODE="${nextPublicDemoMode}"`,
-    `export NEXT_PUBLIC_RECIPIENT_ADDRESS="${nextPublicRecipientAddress}"`,
-    `export NEXT_PUBLIC_PLATFORM_WALLET="${nextPublicPlatformWallet}"`,
-    `export NEXT_PUBLIC_SPAWNCAMP_FACTORY_ADDRESS="${nextPublicSpawncampFactoryAddress}"`,
-    `export NEXT_PUBLIC_DISCORD_URL="${nextPublicDiscordUrl}"`,
-    `export NEXT_PUBLIC_GRAPHQL_URL="${nextPublicGraphqlUrl}"`,
-    `export NEXT_PUBLIC_BASE_USDC_ADDRESS="${nextPublicBaseUsdcAddress}"`,
-    `export NEXT_PUBLIC_BASE_USDC_DECIMALS="${nextPublicBaseUsdcDecimals}"`,
-    `export NEXT_PUBLIC_BASE_USDT_ADDRESS="${nextPublicBaseUsdtAddress}"`,
-    `export NEXT_PUBLIC_BASE_USDT_DECIMALS="${nextPublicBaseUsdtDecimals}"`,
-    `export NEXT_PUBLIC_BASE_CBBTC_ADDRESS="${nextPublicBaseCbbtcAddress}"`,
-    `export NEXT_PUBLIC_BASE_CBBTC_DECIMALS="${nextPublicBaseCbbtcDecimals}"`,
-    `export NEXT_PUBLIC_BASE_CBXRP_ADDRESS="${nextPublicBaseCbxrpAddress}"`,
-    `export NEXT_PUBLIC_BASE_CBXRP_DECIMALS="${nextPublicBaseCbxrpDecimals}"`,
-    `export NEXT_PUBLIC_BASE_SOL_ADDRESS="${nextPublicBaseSolAddress}"`,
-    `export NEXT_PUBLIC_BASE_SOL_DECIMALS="${nextPublicBaseSolDecimals}"`,
-    `export NEXT_PUBLIC_BEAR_CLOUD_API_URL="${nextPublicBearCloudApiUrl}"`,
-    `export NEXT_PUBLIC_BEAR_CLOUD_AUTH_URL="${nextPublicBearCloudAuthUrl}"`,
-    `export NEXT_PUBLIC_BEAR_CLOUD_API_KEY="${nextPublicBearCloudApiKey}"`,
-    `export NEXT_PUBLIC_BEAR_CLOUD_SECRET="${nextPublicBearCloudSecret}"`,
-    `export NEXT_PUBLIC_BEAR_CLOUD_SCOPE="${nextPublicBearCloudScope}"`,
-    `export NEXT_PUBLIC_DEMO_FREEZE_TIME="${nextPublicDemoFreezeTime}"`,
-    `export NEXT_PUBLIC_BEAR_CLOUD_TIMEOUT="${nextPublicBearCloudTimeout}"`,
-    `export NEXT_PUBLIC_ROBOTICS_ENABLED="${nextPublicRoboticsEnabled}"`,
-    `export NEXT_PUBLIC_ROBOTICS_USE_MOCK_FALLBACK="${nextPublicRoboticsUseMockFallback}"`,
-    `export NEXT_PUBLIC_THIRDWEB_ENGINE_WALLET="${nextPublicThirdwebEngineWallet}"`,
-    `export NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="${nextPublicStripePublishableKey}"`,
-    "",
-    "# Also export server-side vars needed during build",
-    `export CLOUDFLARE_API_TOKEN="${cloudflareApiToken}"`,
-    `export CLOUDFLARE_ZONE_ID="${cloudflareZoneId}"`,
-    `export CLOUDFLARE_ACCOUNT_ID="${cloudflareAccountId}"`,
-    `export THIRDWEB_SECRET_KEY="${serverThirdwebSecretKey}"`,
-    `export NODE_ENV="production"`,
-    `export STRIPE_API_KEY="${stripeApiKey}"`,
-    `export NEXT_PUBLIC_STRIPE_HEADLESS="${nextPublicStripeHeadless}"`
+    "# Environment variables for the brand (build-time and runtime)",
+    ...Object.entries(env).map(([k, v]) => `${k}="${String(v || "").replace(/"/g, '\\"')}"`)
   ];
   const envContent = envLines.join("\n");
 
   if (target === "plesk") {
     steps = [
       "Ensure the domain CNAME is pointed to your Plesk server.",
-      "Verify the Plesk server API key and endpoint are set correctly in the environment.",
-      "Run the provision API with action=deploy to automatically create the domain and link the Git repository.",
+      "Verify the Plesk server API key and credentials are set in the environment.",
+      "Run the provision API with action=deploy to create the domain, set document root to /public, and link the Git repository.",
       "Copy the Plesk subscription SSH public key shown below and add it as a Deploy Key on the BasaltSurge GitHub repository (one-time setup).",
-      "Configure Next.js build-time variables in .env.production inside the domain root folder.",
-      "Configure Passenger runtime variables via Plesk panel or nodetool.",
-      "Run git pull to download the source, trigger npm install, and run npm run build.",
-      "Restart the passenger Node.js process by touching tmp/restart.txt inside the domain root."
+      "Next.js build-time and runtime variables are written to .env.production inside the domain root folder (loaded automatically).",
+      "Manual GUI Action: Ensure 'Application Startup File' is set to server.js and Node.js is Enabled in the Plesk Node.js panel.",
+      "Run Git deployment actions to trigger npm install, build, and Passenger restart."
     ];
 
     azExamples = [
       `# --- Plesk CLI Commands (Run via SSH on VPS or automated via deploy action) ---`,
       `# 1. Create the domain under basalthq.com webspace`,
       `plesk bin site --create ${cleanDomain} -webspace-name basalthq.com`,
-      `# 2. Configure Git SSH deployment repository`,
-      `plesk bin extension --call git --create -domain ${cleanDomain} -name BasaltSurge -remote-url git@github.com:BasaltHQ/BasaltSurge.git -active-branch production -run-actions true -actions "export PATH=/opt/plesk/node/24/bin:$PATH && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"`,
-      `# 3. Create build-time .env.production file inside domain root`,
+      `# 2. Configure Git SSH deployment repository (with server path and additional actions enabled)`,
+      `plesk bin extension --call git --create -domain ${cleanDomain} -name ${key} -remote-url git@github.com:BasaltHQ/BasaltSurge.git -active-branch production -deployment-path ${cleanDomain} -run-actions true -actions "export PATH=/opt/plesk/node/24/bin:$PATH && cd /var/www/vhosts/basalthq.com/${cleanDomain} && set -a && [ -f .env.production ] && . .env.production && set +a && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"`,
+      `# 3. Create .env.production file inside domain root (Option A)`,
       `mkdir -p /var/www/vhosts/basalthq.com/${cleanDomain}`,
       `cat << 'EOF' > /var/www/vhosts/basalthq.com/${cleanDomain}/.env.production\n${envContent}\nEOF`,
-      `# 4. Inject Passenger Runtime Environment Variables`,
-      ...Object.entries(env).map(([k, v]) => `plesk bin extension nodejs --nodetool -s -domain ${cleanDomain} -env-val "${k}=${v}"`),
-      `# 5. Secure the domain with Let's Encrypt SSL`,
+      `# 4. Enable Node.js support on the domain`,
+      `plesk bin extension --call nodejs --enable -domain ${cleanDomain}`,
+      `# 5. Set Document Root to public/ for security`,
+      `plesk bin domain -u ${cleanDomain} -www-root ${cleanDomain}/public`,
+      `# 6. Secure the domain with Let's Encrypt SSL`,
       `plesk bin extension --exec letsencrypt cli.php -d ${cleanDomain}`
     ];
   } else {
@@ -717,7 +678,43 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         progress.push({ step: "site_created", ok: true, info: { domain: cleanDomain } });
         await persistProgress(key, correlationId, progress);
 
-        // Step 2: Configure Git SSH Repository
+        // Step 2: Set Document Root to public/ for security (Option A)
+        progress.push({ step: "setting_docroot", ok: true });
+        await persistProgress(key, correlationId, progress);
+        
+        const docrootResult = await plesk.callCli("domain", [
+          "-u", cleanDomain,
+          "-www-root", `${cleanDomain}/public`
+        ]);
+        
+        if (docrootResult.code !== 0) {
+          throw new Error(`Plesk Document Root configuration failed: ${docrootResult.stderr || docrootResult.stdout}`);
+        }
+        
+        progress.push({ step: "docroot_set", ok: true });
+        await persistProgress(key, correlationId, progress);
+
+        // Step 3: Enable Node.js Support
+        progress.push({ step: "enabling_nodejs", ok: true });
+        await persistProgress(key, correlationId, progress);
+        
+        try {
+          const nodeEnableResult = await plesk.callCli("extension", [
+            "--call", "nodejs",
+            "--enable",
+            "-domain", cleanDomain
+          ]);
+          if (nodeEnableResult.code !== 0) {
+            console.warn("[Plesk Node.js] Enabling Node.js returned non-zero code:", nodeEnableResult.stderr || nodeEnableResult.stdout);
+          }
+          progress.push({ step: "nodejs_enabled", ok: true });
+        } catch (nodeErr: any) {
+          console.warn("[Plesk Node.js] Failed to enable Node.js:", nodeErr.message);
+          progress.push({ step: "nodejs_enabled", ok: false, info: { warning: nodeErr.message } });
+        }
+        await persistProgress(key, correlationId, progress);
+
+        // Step 4: Configure Git SSH Repository with deployment path and actions
         progress.push({ step: "configuring_git", ok: true });
         await persistProgress(key, correlationId, progress);
         
@@ -725,11 +722,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
           "--call", "git",
           "--create",
           "-domain", cleanDomain,
-          "-name", "BasaltSurge",
+          "-name", key,
           "-remote-url", "git@github.com:BasaltHQ/BasaltSurge.git",
           "-active-branch", "production",
+          "-deployment-path", cleanDomain,
           "-run-actions", "true",
-          "-actions", "export PATH=/opt/plesk/node/24/bin:$PATH && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt"
+          "-actions", `export PATH=/opt/plesk/node/24/bin:$PATH && cd /var/www/vhosts/basalthq.com/${cleanDomain} && set -a && [ -f .env.production ] && . .env.production && set +a && npm install && npm run build && mkdir -p tmp && touch tmp/restart.txt`
         ]);
         
         if (gitResult.code !== 0 && !gitResult.stderr.includes("already exists") && !gitResult.stdout.includes("already exists")) {
@@ -739,7 +737,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         progress.push({ step: "git_configured", ok: true });
         await persistProgress(key, correlationId, progress);
 
-        // Step 3: Write Build-Time environment variables (.env.production)
+        // Step 5: Write Build-Time environment variables (.env.production)
         progress.push({ step: "writing_env", ok: true });
         await persistProgress(key, correlationId, progress);
         
@@ -750,28 +748,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         progress.push({ step: "env_written", ok: true });
         await persistProgress(key, correlationId, progress);
 
-        // Step 4: Inject Runtime Passenger Variables
-        progress.push({ step: "injecting_runtime_env", ok: true });
-        await persistProgress(key, correlationId, progress);
-        
-        for (const [k, v] of Object.entries(env)) {
-          try {
-            await plesk.callCli("extension", [
-              "--call", "nodejs",
-              "--nodetool",
-              "-s",
-              "-domain", cleanDomain,
-              "-env-val", `${k}=${v}`
-            ]);
-          } catch (envErr: any) {
-            console.warn(`[Plesk] Warning: Failed to inject runtime variable ${k}:`, envErr.message);
-          }
-        }
-        
-        progress.push({ step: "runtime_env_injected", ok: true });
-        await persistProgress(key, correlationId, progress);
-
-        // Step 5: Secure domain with Let's Encrypt
+        // Step 6: Secure domain with Let's Encrypt
         progress.push({ step: "requesting_ssl", ok: true });
         await persistProgress(key, correlationId, progress);
         
@@ -787,18 +764,19 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
         }
         await persistProgress(key, correlationId, progress);
 
-        // Step 6: Restart Node.js application
+        // Step 7: Restart Node.js application (Touch tmp/restart.txt)
         progress.push({ step: "restarting_app", ok: true });
         await persistProgress(key, correlationId, progress);
         
-        await plesk.callCli("extension", [
-          "--call", "nodejs",
-          "--nodetool",
-          "-restart",
-          "-domain", cleanDomain
-        ]);
-        
-        progress.push({ step: "app_restarted", ok: true });
+        try {
+          const restartDir = `/var/www/vhosts/basalthq.com/${cleanDomain}/tmp`;
+          await fs.mkdir(restartDir, { recursive: true });
+          await fs.writeFile(`${restartDir}/restart.txt`, String(Date.now()), "utf8");
+          progress.push({ step: "app_restarted", ok: true });
+        } catch (restartErr: any) {
+          console.warn("[Plesk Restart] Failed to touch restart.txt:", restartErr.message);
+          progress.push({ step: "app_restarted", ok: false, info: { warning: restartErr.message } });
+        }
         await persistProgress(key, correlationId, progress);
 
         return json(
@@ -811,7 +789,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
               domain: cleanDomain,
               url: `https://${cleanDomain}`,
               sshPublicKey,
-              state: "active"
+              state: "active",
+              checklist: [
+                "1. Login to Plesk panel.",
+                `2. Go to Websites & Domains > ${cleanDomain} > Node.js.`,
+                "3. Ensure Node.js is Enabled.",
+                "4. Verify 'Application Startup File' is set to server.js.",
+                "5. Ensure the Git repository settings page has 'Enable additional deployment actions' checked."
+              ]
             },
             progress
           },

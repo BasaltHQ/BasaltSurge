@@ -2409,10 +2409,12 @@ export default function PartnerManagementPanel() {
                 {(() => {
                   const steps = deployProgress;
                   const completed = steps.filter((s) => s.ok).length;
-                  let pct = Math.round((completed / Math.max(steps.length, 1)) * 100);
-                  // Only mark 100% if AFD was actually deferred (server reported ok=true for afd_deferred)
-                  if (steps.some((s) => s.step === "afd_deferred" && s.ok)) {
+                  let pct = 0;
+                  if (!deployLoading && !deployError && steps.length > 0) {
                     pct = 100;
+                  } else {
+                    const totalExpected = provTarget === "plesk" ? 14 : 17;
+                    pct = Math.min(Math.round((completed / totalExpected) * 100), 99);
                   }
                   return (
                     <div className="mt-2">
