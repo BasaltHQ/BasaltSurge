@@ -102,6 +102,7 @@ export function isMainDomainHost(host: string): boolean {
         h.endsWith("aipowerpay.com") ||
         h.endsWith("ledger1.ai") ||
         h.includes("azurewebsites.net") ||
+        h.includes("azurecontainerapps.io") ||
         h.includes("vercel.app") ||
         h.includes("xpaypass.com") ||
         h.includes("vps.ovh.us")

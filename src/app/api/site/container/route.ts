@@ -17,7 +17,18 @@ export const revalidate = 0;
 const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   paynex: "paynex",
   xoinpay: "xoinpay",
+  aipowerpay: "aipowerpay",
   // Add more partner brands here as needed
+};
+
+// Custom partner domains - full hostnames that map to partner brand keys
+const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
+  "paynex.azurewebsites.net": "paynex",
+  "xoinpay.azurewebsites.net": "xoinpay",
+  "xpaypass.com": "xoinpay",
+  "www.xpaypass.com": "xoinpay",
+  "bt-checkout.aipowerpay.com": "aipowerpay",
+  "www.bt-checkout.aipowerpay.com": "aipowerpay"
 };
 
 // Main platform hostnames that should NOT be treated as partner containers (without subdomains)
@@ -34,6 +45,11 @@ function deriveBrandKeyFromHostname(host: string): { brandKey: string; container
 
   // Remove port number if present (e.g., localhost:3001 -> localhost)
   const hostLower = host.toLowerCase().split(":")[0];
+
+  // Check custom partner domains first (exact match)
+  if (KNOWN_PARTNER_DOMAINS[hostLower]) {
+    return { brandKey: KNOWN_PARTNER_DOMAINS[hostLower], containerType: "partner" };
+  }
 
   // Check if this is a main platform hostname (exact match or subdomain)
   for (const platformHost of PLATFORM_HOSTNAMES) {

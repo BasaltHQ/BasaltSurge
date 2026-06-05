@@ -49,6 +49,7 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   paynex: "paynex",
   xoinpay: "xoinpay",
   icunow: "icunow-store",
+  aipowerpay: "aipowerpay",
   // Add more partner brands here as needed
 };
 
@@ -58,7 +59,9 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "xoinpay.azurewebsites.net": "xoinpay",
   "icunow.azurewebsites.net": "icunow-store",
   "xpaypass.com": "xoinpay",
-  "www.xpaypass.com": "xoinpay"
+  "www.xpaypass.com": "xoinpay",
+  "bt-checkout.aipowerpay.com": "aipowerpay",
+  "www.bt-checkout.aipowerpay.com": "aipowerpay"
   // Add more custom partner domains here as needed
 };
 
