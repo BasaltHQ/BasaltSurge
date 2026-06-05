@@ -99,6 +99,8 @@ export function isMainDomainHost(host: string): boolean {
     return (
         h.endsWith("basalthq.com") ||
         h.endsWith("portalpay.io") ||
+        h.endsWith("aipowerpay.com") ||
+        h.endsWith("ledger1.ai") ||
         h.includes("azurewebsites.net") ||
         h.includes("vercel.app") ||
         h.includes("xpaypass.com") ||
