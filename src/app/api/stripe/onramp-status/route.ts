@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
       sessionId: data.id,
       status: data.status,
       transactionDetails: data.transaction_details || null,
+      paymentDetails: data.payment_details || null,
       metadata: data.metadata || null,
     });
   } catch (e: any) {

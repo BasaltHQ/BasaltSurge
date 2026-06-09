@@ -22,7 +22,7 @@ import messages from "../../messages/en.json";
 import { getBrandConfig, getBrandKey } from "@/config/brands";
 import { BrandProvider } from "@/contexts/BrandContext";
 import { getContainer } from "@/lib/cosmos";
-import { getEnv } from "@/lib/env";
+import { getEnv, isDualSplitEnabled } from "@/lib/env";
 import { isMainDomainHost } from "@/lib/routing";
 import { getBrandConfigFromCosmos, getContainerIdentity } from "@/lib/brand-config";
 import { normalizeBrandName, resolveBrandAppLogo, resolveBrandSymbol, getDefaultBrandName } from "@/lib/branding";
@@ -148,32 +148,32 @@ function deriveBrandKeyFromHostname(host: string): { brandKey: string; container
  * Falls back to hostname-based detection when env vars are not set
  */
 async function getContainerIdentityDirect(): Promise<{ brandKey: string; containerType: string }> {
+  // 1. Try to derive from hostname first (via headers)
+  try {
+    const { headers } = require("next/headers");
+    const headersList = await headers();
+    const host = headersList.get("x-forwarded-host") || headersList.get("host") || "";
+    const derived = deriveBrandKeyFromHostname(host);
+
+    if (derived) {
+      return derived;
+    }
+  } catch {
+    // headers() may fail in some contexts (e.g., static generation)
+  }
+
+  // 2. Fall back to env variables
   let containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || process.env.CONTAINER_TYPE || "").toLowerCase();
   let brandKey = String(process.env.NEXT_PUBLIC_BRAND_KEY || process.env.BRAND_KEY || "").toLowerCase();
-
-  // If brandKey is empty, try to derive from hostname
-  if (!brandKey) {
-    try {
-      const { headers } = require("next/headers");
-      const headersList = await headers();
-      const host = headersList.get("x-forwarded-host") || headersList.get("host") || "";
-      const derived = deriveBrandKeyFromHostname(host);
-
-      if (derived) {
-        brandKey = derived.brandKey;
-        // Only override containerType if it wasn't explicitly set in env
-        if (!containerType) {
-          containerType = derived.containerType;
-        }
-      }
-    } catch {
-      // headers() may fail in some contexts; continue with env values
-    }
-  }
 
   // Default containerType to "platform" if still empty
   if (!containerType) {
     containerType = "platform";
+  }
+
+  // Default brandKey to environment variable or basaltsurge if still empty
+  if (!brandKey) {
+    brandKey = String(process.env.NEXT_PUBLIC_BRAND_KEY || process.env.BRAND_KEY || "basaltsurge").toLowerCase();
   }
 
   return { containerType, brandKey };
@@ -697,6 +697,7 @@ export default async function RootLayout({
       data-pp-brand-primary={brand.colors.primary}
       data-pp-brand-accent={brand.colors.accent}
       data-pp-brand-body="#e5e7eb"
+      data-pp-dual-split={isDualSplitEnabled() ? "1" : "0"}
       suppressHydrationWarning
     >
       <head>

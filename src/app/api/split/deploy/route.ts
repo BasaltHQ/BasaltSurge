@@ -5,7 +5,7 @@ import { requireApimOrJwt } from "@/lib/gateway-auth";
 import { requireThirdwebAuth } from "@/lib/auth";
 import { requireCsrf } from "@/lib/security";
 import { getBrandKey, applyBrandDefaults } from "@/config/brands";
-import { isPartnerContext, getSanitizedSplitBps } from "@/lib/env";
+import { isPartnerContext, getSanitizedSplitBps, isDualSplitEnabled, getSanitizedCreditSplitBps, getEnv } from "@/lib/env";
 import { getPlatformAdminWallets, resolveAdminRole } from "@/lib/authz-server";
 
 /**
@@ -88,6 +88,7 @@ function clampBps(v: any): number {
 /** Read the brand split-versions registry from Cosmos (for force-redeploy checks) */
 async function readBrandSplitVersions(brandKey: string): Promise<{
   currentVersion?: number;
+  currentVersionCredit?: number;
   forceRedeployOlder?: boolean;
   requireRedeployOnWalletChange?: boolean;
 } | null> {
@@ -97,6 +98,7 @@ async function readBrandSplitVersions(brandKey: string): Promise<{
     if (!resource) return null;
     return {
       currentVersion: typeof resource.currentVersion === "number" ? resource.currentVersion : undefined,
+      currentVersionCredit: typeof resource.currentVersionCredit === "number" ? resource.currentVersionCredit : undefined,
       forceRedeployOlder: !!resource.forceRedeployOlder,
       requireRedeployOnWalletChange: !!resource.requireRedeployOnWalletChange,
     };
@@ -284,8 +286,15 @@ export async function GET(req: NextRequest) {
     // PRIMARY: Use getSiteConfigForWallet
     try {
       const cfg = await getSiteConfigForWallet(wallet, docBrandKey);
-      let splitAddr = (cfg as any)?.splitAddress || (cfg as any)?.split?.address;
-      let split: any = (cfg as any)?.split;
+      const isCreditQuery = url.searchParams.get("isCredit") === "true";
+      const isDual = isDualSplitEnabled() || isCreditQuery;
+
+      let splitAddr = isCreditQuery && isDual
+        ? (cfg as any)?.splitAddressCredit || (cfg as any)?.splitCredit?.address
+        : (cfg as any)?.splitAddress || (cfg as any)?.split?.address;
+      let split: any = isCreditQuery && isDual
+        ? (cfg as any)?.splitCredit
+        : (cfg as any)?.split;
 
       // If no valid split address found via standard lookup, and the brand is platform (portalpay/basaltsurge),
       // attempt to fetch the global platform default configuration explicitly.
@@ -295,10 +304,14 @@ export async function GET(req: NextRequest) {
         try {
           const { resource: globalRes } = await c.item("site:config", "site:config").read<any>();
           if (globalRes) {
-            const gAddress = globalRes.splitAddress || globalRes.split?.address;
+            const gAddress = isCreditQuery && isDual
+              ? (globalRes.splitAddressCredit || globalRes.splitCredit?.address)
+              : (globalRes.splitAddress || globalRes.split?.address);
             if (gAddress && /^0x[a-f0-9]{40}$/i.test(gAddress)) {
               splitAddr = gAddress;
-              split = globalRes.split || { address: splitAddr, recipients: [] };
+              split = isCreditQuery && isDual
+                ? (globalRes.splitCredit || { address: splitAddr, recipients: [] })
+                : (globalRes.split || { address: splitAddr, recipients: [] });
             }
           }
         } catch { /* proceed without global fallback if fetch fails */ }
@@ -314,10 +327,17 @@ export async function GET(req: NextRequest) {
         try {
           const versionKey = String(responseBrandKey || "basaltsurge").toLowerCase();
           const reg = await readBrandSplitVersions(versionKey);
-          if (reg && reg.forceRedeployOlder && typeof reg.currentVersion === "number") {
-            const merchantVersion = Number((cfg as any)?.splitVersion || 0);
-            if (merchantVersion < reg.currentVersion) {
-              misconfiguredSplit = { needsRedeploy: true, reason: "version_outdated", merchantVersion, currentVersion: reg.currentVersion };
+          if (reg && reg.forceRedeployOlder) {
+            const targetVersion = isCreditQuery && isDual
+              ? (typeof reg.currentVersionCredit === "number" ? reg.currentVersionCredit : reg.currentVersion)
+              : reg.currentVersion;
+            if (typeof targetVersion === "number") {
+              const merchantVersion = isCreditQuery && isDual
+                ? Number((cfg as any)?.splitVersionCredit || 0)
+                : Number((cfg as any)?.splitVersion || 0);
+              if (merchantVersion < targetVersion) {
+                misconfiguredSplit = { needsRedeploy: true, reason: "version_outdated", merchantVersion, currentVersion: targetVersion };
+              }
             }
           }
         } catch { /* version check is best-effort */ }
@@ -326,6 +346,7 @@ export async function GET(req: NextRequest) {
           split: { ...split, address: splitAddr, brandKey: String(responseBrandKey).toLowerCase() },
           brandKey: responseBrandKey,
           legacy: true,
+          isCredit: isCreditQuery && isDual,
           ...(misconfiguredSplit ? { misconfiguredSplit } : {}),
         });
       }
@@ -349,8 +370,11 @@ export async function GET(req: NextRequest) {
         } catch { }
       }
 
+      const isCreditQuery = url.searchParams.get("isCredit") === "true";
+      const isDual = isDualSplitEnabled() || isCreditQuery;
+
       const platformRecipient = String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.PLATFORM_WALLET || "").toLowerCase();
-      const platformSharesBps = resolvePlatformBpsFromBrand(resolvedBrand, brand, overrides);
+      let platformSharesBps = resolvePlatformBpsFromBrand(resolvedBrand, brand, overrides);
       const envPartnerWallet = String(process.env.PARTNER_WALLET || "").toLowerCase();
       const partnerWallet = String(brand?.partnerWallet || envPartnerWallet || "").toLowerCase();
 
@@ -361,9 +385,27 @@ export async function GET(req: NextRequest) {
         : (typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0);
 
       const defaultPartnerBps = 50;
-      const partnerFeeBps = basePartnerBps > 0
+      let partnerFeeBps = basePartnerBps > 0
         ? basePartnerBps
         : (envPartnerBps > 0 ? envPartnerBps : defaultPartnerBps);
+
+      if (isDual) {
+        if (!isCreditQuery) {
+          // Credit & Crypto component
+          const creditBps = getSanitizedCreditSplitBps();
+          if (creditBps) {
+            platformSharesBps = creditBps.platform;
+          } else {
+            platformSharesBps = 150;
+          }
+          partnerFeeBps = 0;
+        } else {
+          // Debit component
+          const env = getEnv();
+          platformSharesBps = env.PLATFORM_BPS ?? 100;
+          partnerFeeBps = 0;
+        }
+      }
 
       const isPartnerBrand = !!resolvedBrand && !isPlatformBrand(resolvedBrand);
 
@@ -397,6 +439,7 @@ export async function GET(req: NextRequest) {
             split: { address: undefined, recipients },
             brandKey: originalBrandKey,
             requiresDeploy: true,
+            isCredit: isCreditQuery && isDual,
             reason: "no_split_for_partner_brand"
           });
         } else {
@@ -404,6 +447,7 @@ export async function GET(req: NextRequest) {
             split: { address: undefined, recipients: [] },
             brandKey: originalBrandKey,
             requiresDeploy: true,
+            isCredit: isCreditQuery && isDual,
             reason: "partner_config_missing"
           });
         }
@@ -421,6 +465,7 @@ export async function GET(req: NextRequest) {
           split: { address: undefined, recipients },
           brandKey: originalBrandKey,
           requiresDeploy: true,
+          isCredit: isCreditQuery && isDual,
           reason: "no_split_address"
         });
       }
@@ -598,9 +643,12 @@ export async function POST(req: NextRequest) {
       return jsonResponse({ error: "platform_recipient_not_configured" }, { status: 400 });
     }
     // Platform share derived from brand config/env/static defaults; allow body override (client-asserted)
-    const platformSharesBps = resolvePlatformBpsFromBrand(brandKey, brand, body);
+    let platformSharesBps = resolvePlatformBpsFromBrand(brandKey, brand, body);
     // Partner recipient present when brandKey !== 'portalpay' and partner is configured
     const isPartnerBrand = !isPlatformBrand(String(brandKey || "").toLowerCase());
+
+    const isCredit = body.isCredit === true;
+    const isDual = isDualSplitEnabled() || isCredit;
 
     // Prepare container and read existing site config to allow partner fallback
     const c = await getContainer();
@@ -625,6 +673,7 @@ export async function POST(req: NextRequest) {
     if (legacyPrev && prev) {
       if (!prev.splitHistory && legacyPrev.splitHistory) prev.splitHistory = legacyPrev.splitHistory;
       if (!prev.splitVersion && legacyPrev.splitVersion) prev.splitVersion = legacyPrev.splitVersion;
+      if (!prev.splitVersionCredit && legacyPrev.splitVersionCredit) prev.splitVersionCredit = legacyPrev.splitVersionCredit;
       if (!prev.createdAt && legacyPrev.createdAt) prev.createdAt = legacyPrev.createdAt;
       if (!prev.status && legacyPrev.status) prev.status = legacyPrev.status;
       if (!prev.approvedAt && legacyPrev.approvedAt) prev.approvedAt = legacyPrev.approvedAt;
@@ -640,17 +689,44 @@ export async function POST(req: NextRequest) {
         ? (partnerWalletBrand as `0x${string}`)
         : (isHexAddress(partnerWalletPrev) ? (partnerWalletPrev as `0x${string}`) : ("" as any)));
 
-    const sanitizedPost = getSanitizedSplitBps();
-    const envPartnerBpsPost = typeof sanitizedPost?.partner === "number" ? Math.max(0, Math.min(10000, sanitizedPost.partner)) : 0;
-    const basePartnerBpsPost = typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0;
-    const defaultPartnerBpsPost = 50;
-    const partnerFeeBpsPost = basePartnerBpsPost > 0 ? basePartnerBpsPost : (envPartnerBpsPost > 0 ? envPartnerBpsPost : defaultPartnerBpsPost);
+    let partnerFeeBpsPost = 50;
+    // Check if dual split is enabled (cleared duplicate declaration)
+    if (isDual) {
+      if (!isCredit) {
+        // Credit & Crypto component (standard split)
+        const creditBps = getSanitizedCreditSplitBps();
+        platformSharesBps = creditBps?.platform ?? 150;
+        partnerFeeBpsPost = 0;
+      } else {
+        // Debit component (alternate split)
+        const env = getEnv();
+        platformSharesBps = env.PLATFORM_BPS ?? 100;
+        partnerFeeBpsPost = 0;
+      }
+    } else {
+      if (isCredit) {
+        const creditBps = getSanitizedCreditSplitBps();
+        if (creditBps) {
+          platformSharesBps = creditBps.platform;
+          partnerFeeBpsPost = creditBps.partner;
+        } else {
+          platformSharesBps = 150;
+          partnerFeeBpsPost = 0;
+        }
+      } else {
+        const sanitizedPost = getSanitizedSplitBps();
+        const envPartnerBpsPost = typeof sanitizedPost?.partner === "number" ? Math.max(0, Math.min(10000, sanitizedPost.partner)) : 0;
+        const basePartnerBpsPost = typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0;
+        const defaultPartnerBpsPost = 50;
+        partnerFeeBpsPost = basePartnerBpsPost > 0 ? basePartnerBpsPost : (envPartnerBpsPost > 0 ? envPartnerBpsPost : defaultPartnerBpsPost);
+      }
+    }
 
     const partnerSharesBps = !isPartnerBrand ? 0 : (isHexAddress(partnerWallet) && partnerFeeBpsPost > 0)
       ? Math.max(0, Math.min(10000 - platformSharesBps, partnerFeeBpsPost))
       : 0;
     try {
-      console.log("[split/deploy:POST] synth", { brandKey, partnerWallet, partnerFeeBps: partnerFeeBpsPost, platformRecipient });
+      console.log("[split/deploy:POST] synth", { brandKey, partnerWallet, partnerFeeBps: partnerFeeBpsPost, platformRecipient, isCredit });
     } catch { }
     const agents = Array.isArray(body.agents) ? body.agents : [];
     const agentSharesBps = agents.reduce((sum: number, a: any) => sum + clampBps(a?.bps || 0), 0);
@@ -665,45 +741,45 @@ export async function POST(req: NextRequest) {
       ...agents.map((a: any) => ({ address: String(a.wallet || "").toLowerCase(), sharesBps: clampBps(a.bps) }))
     ].filter(r => isHexAddress(r.address) && r.sharesBps > 0);
 
-    /* Optional override: splitAddress provided by caller (e.g., from a deployment pipeline)
-      In partner container, ignore caller-provided address (immutability); platform binds addresses. */
-    const providedSplitAddress = String(body.splitAddress || "").toLowerCase();
+    /* Optional override: splitAddress provided by caller (e.g., from a deployment pipeline) */
+    const providedSplitAddress = String(body.splitAddress || body.splitAddressCredit || "").toLowerCase();
     const splitAddress = isHexAddress(providedSplitAddress) ? providedSplitAddress : undefined;
-    const isPartner = isPartnerContext();
-    // Allow partner containers to bind provided splitAddress (was previously immutable)
     const effectiveSplitAddress = splitAddress;
 
+    const currentSplitAddress = isCredit ? (prev as any)?.splitAddressCredit : (prev as any)?.splitAddress;
+    const currentSplit = isCredit ? (prev as any)?.splitCredit : (prev as any)?.split;
 
     // Idempotency with partner remediation:
-    // If a valid splitAddress exists, allow override when:
-    // - A new splitAddress is provided (redeploy), or
-    // - Recipients are misconfigured for the partner brand (e.g., only 2 recipients)
-    if (prev && isHexAddress(prev.splitAddress)) {
-      const prevRecipients = Array.isArray(prev.split?.recipients) ? prev.split.recipients : [];
-      const expectedBase = (isHexAddress(partnerWallet) && typeof brand.partnerFeeBps === "number") ? 3 : 2;
+    if (prev && isHexAddress(currentSplitAddress)) {
+      const prevRecipients = Array.isArray(currentSplit?.recipients) ? currentSplit.recipients : [];
+      const expectedBase = (isHexAddress(partnerWallet) && (isCredit ? true : typeof brand.partnerFeeBps === "number")) ? 3 : 2;
       const expectedRecipients = isPartnerBrand ? Math.max(expectedBase, 3) : expectedBase;
       const misconfiguredPrev = prevRecipients.length > 0 && prevRecipients.length < expectedRecipients;
       const platformPrevRec = prevRecipients.find((r: any) => String(r?.address || "").toLowerCase() === String(platformRecipient));
       const actualPlatformBpsPrev = clampBps(Number(platformPrevRec?.sharesBps || 0));
       const platformBpsMismatchPrev = !platformPrevRec || actualPlatformBpsPrev !== platformSharesBps;
-      const providedIsNew = !!(splitAddress && splitAddress !== String(prev.splitAddress || "").toLowerCase());
+      const providedIsNew = !!(splitAddress && splitAddress !== String(currentSplitAddress || "").toLowerCase());
 
       if (providedIsNew) {
         // Archive: Add current split to history
         const historyEntry = {
-          address: prev.splitAddress,
-          recipients: prev.split?.recipients || prev.recipients || [],
+          address: currentSplitAddress,
+          recipients: currentSplit?.recipients || prev.recipients || [],
           deployedAt: prev.updatedAt || Date.now(),
-          archivedAt: Date.now()
+          archivedAt: Date.now(),
+          isCredit,
         };
         const splitHistory = Array.isArray(prev.splitHistory) ? [historyEntry, ...prev.splitHistory] : [historyEntry];
 
-        // IMPORTANT: Explicitly preserve theme and other merchant-specific data when updating split
         // Read current version from split registry for stamping
         let deployVersion: number | undefined;
         try {
           const reg = await readBrandSplitVersions(brandKey);
-          if (reg && typeof reg.currentVersion === "number") deployVersion = reg.currentVersion;
+          if (reg) {
+            deployVersion = isCredit
+              ? (typeof reg.currentVersionCredit === "number" ? reg.currentVersionCredit : reg.currentVersion)
+              : reg.currentVersion;
+          }
         } catch { /* best-effort */ }
 
         const nextConfigOverride: any = {
@@ -715,24 +791,8 @@ export async function POST(req: NextRequest) {
           type: "site_config",
           createdAt: (prev as any)?.createdAt || Date.now(),
           updatedAt: Date.now(),
-          splitAddress: splitAddress || prev.splitAddress,
           partnerWallet: partnerWallet || undefined,
-          ...(typeof deployVersion === "number" ? { splitVersion: deployVersion } : {}),
-          split: {
-            address: splitAddress || prev.splitAddress,
-            recipients,
-            brandKey,
-          },
-          // Persist splitConfig for site/config route logic (fees)
-          splitConfig: {
-            merchantBps: merchantSharesBps,
-            partnerBps: partnerSharesBps,
-            platformBps: platformSharesBps,
-            agents: agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps })),
-          },
-          // Explicitly preserve theme to prevent data loss when updating split config
           theme: (prev as any)?.theme || undefined,
-          // Preserve other merchant-specific fields
           story: (prev as any)?.story || undefined,
           storyHtml: (prev as any)?.storyHtml || undefined,
           defiEnabled: (prev as any)?.defiEnabled,
@@ -744,101 +804,128 @@ export async function POST(req: NextRequest) {
           taxConfig: (prev as any)?.taxConfig,
           appUrl: (prev as any)?.appUrl,
         };
+
+        if (isCredit) {
+          nextConfigOverride.splitAddressCredit = splitAddress || prev.splitAddressCredit;
+          if (typeof deployVersion === "number") {
+            nextConfigOverride.splitVersionCredit = deployVersion;
+          }
+          nextConfigOverride.splitCredit = {
+            address: splitAddress || prev.splitAddressCredit,
+            recipients,
+            brandKey,
+          };
+          nextConfigOverride.splitConfigCredit = {
+            merchantBps: merchantSharesBps,
+            partnerBps: partnerSharesBps,
+            platformBps: platformSharesBps,
+            agents: agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps })),
+          };
+        } else {
+          nextConfigOverride.splitAddress = splitAddress || prev.splitAddress;
+          if (typeof deployVersion === "number") {
+            nextConfigOverride.splitVersion = deployVersion;
+          }
+          nextConfigOverride.split = {
+            address: splitAddress || prev.splitAddress,
+            recipients,
+            brandKey,
+          };
+          nextConfigOverride.splitConfig = {
+            merchantBps: merchantSharesBps,
+            partnerBps: partnerSharesBps,
+            platformBps: platformSharesBps,
+            agents: agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps })),
+          };
+        }
+
         // Write brand-scoped doc
-        // Mirror nested config.* fields for robust readers
         nextConfigOverride.config = {
           ...(nextConfigOverride.config || {}),
           splitAddress: nextConfigOverride.splitAddress,
-          split: { address: nextConfigOverride.split.address, recipients },
-          recipients,
+          splitAddressCredit: nextConfigOverride.splitAddressCredit,
+          split: nextConfigOverride.split ? { address: nextConfigOverride.split.address, recipients: nextConfigOverride.split.recipients } : undefined,
+          splitCredit: nextConfigOverride.splitCredit ? { address: nextConfigOverride.splitCredit.address, recipients: nextConfigOverride.splitCredit.recipients } : undefined,
+          recipients: nextConfigOverride.split?.recipients || recipients,
         };
         await c.items.upsert(nextConfigOverride);
-        // Also write legacy mirror (site:config) to prevent latest-doc selection mismatches
+        
+        // Also write legacy mirror (site:config)
         const legacyMirrorOverride: any = {
           ...nextConfigOverride,
           id: "site:config",
-          brandKey, // persist brand
+          brandKey,
           type: "site_config",
           updatedAt: nextConfigOverride.updatedAt,
         };
         legacyMirrorOverride.config = {
           ...(legacyMirrorOverride.config || {}),
           splitAddress: legacyMirrorOverride.splitAddress,
-          split: { address: legacyMirrorOverride.split.address, recipients },
-          recipients,
+          splitAddressCredit: legacyMirrorOverride.splitAddressCredit,
+          split: legacyMirrorOverride.split ? { address: legacyMirrorOverride.split.address, recipients: legacyMirrorOverride.split.recipients } : undefined,
+          splitCredit: legacyMirrorOverride.splitCredit ? { address: legacyMirrorOverride.splitCredit.address, recipients: legacyMirrorOverride.splitCredit.recipients } : undefined,
+          recipients: legacyMirrorOverride.split?.recipients || recipients,
         };
         await c.items.upsert(legacyMirrorOverride);
 
         return jsonResponse({
           ok: true,
           split: {
-            address: nextConfigOverride.split.address,
-            recipients: nextConfigOverride.split.recipients,
+            address: isCredit ? nextConfigOverride.splitCredit.address : nextConfigOverride.split.address,
+            recipients: isCredit ? nextConfigOverride.splitCredit.recipients : nextConfigOverride.split.recipients,
           },
           updated: true,
+          isCredit,
         });
       }
+      
       if (misconfiguredPrev || platformBpsMismatchPrev) {
-        // Do NOT rewrite recipients on a legacy/misconfigured address without a new address.
-        // Signal the client to redeploy a new split with correct recipients and platform bps.
         return jsonResponse({
           ok: true,
           requiresRedeploy: true,
           split: {
-            address: prev.splitAddress,
+            address: currentSplitAddress,
             recipients: prevRecipients,
           },
           brandKey,
           idempotent: false,
+          isCredit,
         });
       }
 
       return jsonResponse({
         ok: true,
         split: {
-          address: prev.splitAddress,
+          address: currentSplitAddress,
           recipients: prevRecipients.length ? prevRecipients : recipients,
         },
         brandKey: prev.brandKey,
         idempotent: true,
+        isCredit,
       });
     }
 
     // Build updated config document
-    // IMPORTANT: Explicitly preserve theme and other merchant-specific data to prevent data loss
-    // Read current version from split registry for stamping
     let deployVersionNew: number | undefined;
     try {
       const reg = await readBrandSplitVersions(brandKey);
-      if (reg && typeof reg.currentVersion === "number") deployVersionNew = reg.currentVersion;
+      if (reg) {
+        deployVersionNew = isCredit
+          ? (typeof reg.currentVersionCredit === "number" ? reg.currentVersionCredit : reg.currentVersion)
+          : reg.currentVersion;
+      }
     } catch { /* best-effort */ }
 
     const nextConfig: any = {
       ...(prev || {}),
       id: docId,
       wallet,
-      brandKey, // persist brand scoping for isolation/indexers
+      brandKey,
       type: "site_config",
       createdAt: (prev as any)?.createdAt || Date.now(),
       updatedAt: Date.now(),
-      splitAddress: effectiveSplitAddress || undefined,
       partnerWallet: partnerWallet || undefined,
-      ...(typeof deployVersionNew === "number" ? { splitVersion: deployVersionNew } : {}),
-      split: {
-        address: effectiveSplitAddress || "",
-        recipients,
-        brandKey, // duplicate inside split for split_index generators
-      },
-      // Persist splitConfig for site/config route logic (fees)
-      splitConfig: {
-        merchantBps: merchantSharesBps,
-        partnerBps: partnerSharesBps,
-        platformBps: platformSharesBps,
-        agents: agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps })),
-      },
-      // Explicitly preserve theme to prevent data loss when updating split config
       theme: (prev as any)?.theme || undefined,
-      // Preserve other merchant-specific fields
       story: (prev as any)?.story || undefined,
       storyHtml: (prev as any)?.storyHtml || undefined,
       defiEnabled: (prev as any)?.defiEnabled,
@@ -851,17 +938,50 @@ export async function POST(req: NextRequest) {
       appUrl: (prev as any)?.appUrl,
     };
 
-    // Persist the updated document (even if splitAddress is undefined; recipients saved for later address binding)
-    // Write brand-scoped doc (site:config:<brandKey>) and mirror nested config fields
+    if (isCredit) {
+      nextConfig.splitAddressCredit = effectiveSplitAddress || undefined;
+      if (typeof deployVersionNew === "number") {
+        nextConfig.splitVersionCredit = deployVersionNew;
+      }
+      nextConfig.splitCredit = {
+        address: effectiveSplitAddress || "",
+        recipients,
+        brandKey,
+      };
+      nextConfig.splitConfigCredit = {
+        merchantBps: merchantSharesBps,
+        partnerBps: partnerSharesBps,
+        platformBps: platformSharesBps,
+        agents: agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps })),
+      };
+    } else {
+      nextConfig.splitAddress = effectiveSplitAddress || undefined;
+      if (typeof deployVersionNew === "number") {
+        nextConfig.splitVersion = deployVersionNew;
+      }
+      nextConfig.split = {
+        address: effectiveSplitAddress || "",
+        recipients,
+        brandKey,
+      };
+      nextConfig.splitConfig = {
+        merchantBps: merchantSharesBps,
+        partnerBps: partnerSharesBps,
+        platformBps: platformSharesBps,
+        agents: agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps })),
+      };
+    }
+
     nextConfig.config = {
       ...(nextConfig.config || {}),
       splitAddress: nextConfig.splitAddress,
-      split: { address: nextConfig.split.address, recipients },
-      recipients,
+      splitAddressCredit: nextConfig.config?.splitAddressCredit || nextConfig.splitAddressCredit,
+      split: nextConfig.split ? { address: nextConfig.split.address, recipients: nextConfig.split.recipients } : undefined,
+      splitCredit: nextConfig.splitCredit ? { address: nextConfig.splitCredit.address, recipients: nextConfig.splitCredit.recipients } : undefined,
+      recipients: nextConfig.split?.recipients || recipients,
     };
     await c.items.upsert(nextConfig);
 
-    // Also write legacy mirror (site:config) with identical split fields and timestamps
     const legacyMirror: any = {
       ...nextConfig,
       id: "site:config",
@@ -872,8 +992,10 @@ export async function POST(req: NextRequest) {
     legacyMirror.config = {
       ...(legacyMirror.config || {}),
       splitAddress: legacyMirror.splitAddress,
-      split: { address: legacyMirror.split.address, recipients },
-      recipients,
+      splitAddressCredit: legacyMirror.splitAddressCredit,
+      split: legacyMirror.split ? { address: legacyMirror.split.address, recipients: legacyMirror.split.recipients } : undefined,
+      splitCredit: legacyMirror.splitCredit ? { address: legacyMirror.splitCredit.address, recipients: legacyMirror.splitCredit.recipients } : undefined,
+      recipients: legacyMirror.split?.recipients || recipients,
     };
     await c.items.upsert(legacyMirror);
 
@@ -882,22 +1004,21 @@ export async function POST(req: NextRequest) {
         ok: true,
         split: {
           address: effectiveSplitAddress,
-          recipients: nextConfig.split.recipients,
+          recipients,
         },
+        isCredit,
       });
     }
 
-    // If we don't have an address, report degraded.
-    // Partner container: immutable_partner_container (address must be bound by platform)
-    // Platform/local: deployment_not_configured (no on-chain deploy in this route)
     return jsonResponse({
       ok: true,
       degraded: true,
       reason: "deployment_not_configured",
       split: {
         address: undefined,
-        recipients: nextConfig.split.recipients,
+        recipients,
       },
+      isCredit,
     });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "failed" }, { status: 500 });

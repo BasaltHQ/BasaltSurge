@@ -81,31 +81,50 @@ export async function POST(req: NextRequest) {
     const container = await getContainer();
 
     // ── GATHER ALL SPLIT ADDRESSES (current + historical) ──
-    const allSplitAddresses: Array<{ address: string; version: string; deployedAt?: number }> = [];
+    const allSplitAddresses: Array<{ address: string; version: string; fundingType: string; deployedAt?: number }> = [];
 
     // Current split
-    allSplitAddresses.push({ address: splitAddress.toLowerCase(), version: "current" });
+    allSplitAddresses.push({ address: splitAddress.toLowerCase(), version: "current", fundingType: "credit" });
 
-    // Historical splits from site_config.splitHistory
+    // Historical and Credit splits from site_config
     try {
       const siteConfig = await getSiteConfigForWallet(merchantWallet.toLowerCase());
-      if (siteConfig && Array.isArray((siteConfig as any).splitHistory)) {
-        for (const entry of (siteConfig as any).splitHistory) {
-          const addr = String(entry?.address || "").toLowerCase();
-          if (addr && /^0x[a-f0-9]{40}$/i.test(addr) && addr !== splitAddress.toLowerCase()) {
-            allSplitAddresses.push({
-              address: addr,
-              version: `v${allSplitAddresses.length}`,
-              deployedAt: Number(entry.deployedAt || entry.archivedAt || 0) || undefined,
-            });
+      if (siteConfig) {
+        // If credit split address exists, add it
+        const creditAddr = String((siteConfig as any).splitAddressCredit || '').toLowerCase();
+        if (creditAddr && /^0x[a-f0-9]{40}$/i.test(creditAddr)) {
+          allSplitAddresses.push({ address: creditAddr, version: "credit", fundingType: "debit" });
+        }
+
+        // If the query parameter/body splitAddress was actually the credit address, tag it correctly
+        if (splitAddress.toLowerCase() === creditAddr) {
+          const mainSplit = allSplitAddresses.find(s => s.address === splitAddress.toLowerCase());
+          if (mainSplit) {
+            mainSplit.fundingType = "debit";
+            mainSplit.version = "credit";
+          }
+        }
+
+        if (Array.isArray((siteConfig as any).splitHistory)) {
+          for (const entry of (siteConfig as any).splitHistory) {
+            const addr = String(entry?.address || "").toLowerCase();
+            const alreadyIndexed = allSplitAddresses.some(s => s.address === addr);
+            if (addr && /^0x[a-f0-9]{40}$/i.test(addr) && !alreadyIndexed) {
+              allSplitAddresses.push({
+                address: addr,
+                version: entry.isCredit ? `credit_v${allSplitAddresses.length}` : `v${allSplitAddresses.length}`,
+                deployedAt: Number(entry.deployedAt || entry.archivedAt || 0) || undefined,
+                fundingType: entry.isCredit ? "debit" : "credit",
+              });
+            }
           }
         }
       }
     } catch (e) {
-      console.warn("[SplitIndex] Failed to read splitHistory from site_config:", e);
+      console.warn("[SplitIndex] Failed to read splitHistory/credit from site_config:", e);
     }
 
-    console.log(`[SplitIndex] Indexing ${allSplitAddresses.length} split(s) for ${merchantWallet}: ${allSplitAddresses.map(s => s.address.slice(0, 10)).join(", ")}`);
+    console.log(`[SplitIndex] Indexing ${allSplitAddresses.length} split(s) for ${merchantWallet}: ${allSplitAddresses.map(s => `${s.address.slice(0, 10)} (${s.fundingType})`).join(", ")}`);
 
     // ── FETCH TRANSACTIONS FROM ALL SPLITS ──
     const allTransactions: any[] = [];
@@ -122,7 +141,7 @@ export async function POST(req: NextRequest) {
         const hash = String(tx.hash || "").toLowerCase();
         if (hash && !seenHashes.has(hash)) {
           seenHashes.add(hash);
-          allTransactions.push({ ...tx, splitAddress: split.address, splitVersion: split.version });
+          allTransactions.push({ ...tx, splitAddress: split.address, splitVersion: split.version, fundingType: split.fundingType });
         }
       }
 
@@ -197,6 +216,7 @@ export async function POST(req: NextRequest) {
       blockNumber: number;
       splitAddress: string;
       splitVersion: string;
+      fundingType: string;
       releaseType?: string;
     }> = [];
 
@@ -238,6 +258,7 @@ export async function POST(req: NextRequest) {
         blockNumber,
         splitAddress: String(tx.splitAddress || splitAddress).toLowerCase(),
         splitVersion: String(tx.splitVersion || "current"),
+        fundingType: tx.fundingType || "credit",
         ...(tx.releaseType ? { releaseType: tx.releaseType } : {}),
       });
     }
@@ -305,6 +326,7 @@ export async function POST(req: NextRequest) {
           txType: tx.type,
           releaseType: tx.releaseType,
           releaseTo: tx.releaseTo,
+          fundingType: tx.fundingType || "credit",
           indexedAt: Date.now(),
           correlationId,
         };

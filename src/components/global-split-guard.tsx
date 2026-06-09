@@ -124,6 +124,7 @@ export default function GlobalSplitGuard() {
   const [recheckNonce, setRecheckNonce] = useState(0);
   const [awaitAuth, setAwaitAuth] = useState(false);
   const [previewRecipients, setPreviewRecipients] = useState<any[] | null>(null);
+  const [previewRecipientsCredit, setPreviewRecipientsCredit] = useState<any[] | null>(null);
   const prevOpenRef = useRef<boolean>(false);
 
   // ... (keep existing const definitions like platformRecipient, brandKey, partnerContext, etc.) ...
@@ -132,6 +133,7 @@ export default function GlobalSplitGuard() {
 
   let brandKey = String((brand as any)?.key || "basaltsurge").toLowerCase();
   const partnerContext = brandKey !== "portalpay" && brandKey !== "basaltsurge";
+  const isDual = typeof window !== 'undefined' && typeof document !== 'undefined' && document.documentElement.getAttribute("data-pp-dual-split") === "1";
 
   // NEW: Check if Private Partner functionality dictates suppression
   // If we are in a partner context AND it is private (request mode) => Only Admins should deal with splits.
@@ -244,6 +246,27 @@ export default function GlobalSplitGuard() {
 
   const merchantBps = Math.max(0, 10000 - platformBps - partnerBps);
 
+  const creditTotalBpsDisplay = (() => {
+    if (!partnerContext) return 150;
+    try {
+      const list = Array.isArray(previewRecipientsCredit) ? previewRecipientsCredit : [];
+      if (list.length >= 2) {
+        const shares = list
+          .map((r: any) => Math.max(0, Math.min(10000, Number(r?.sharesBps || 0))))
+          .filter((n: number) => Number.isFinite(n));
+        if (shares.length >= 2) {
+          const total = shares.reduce((a, b) => a + b, 0);
+          const merchant = Math.max(...shares);
+          const others = Math.max(0, Math.min(10000, total - merchant));
+          return others;
+        }
+      }
+    } catch { }
+    return 150;
+  })();
+
+  const creditMerchantBpsDisplay = Math.max(0, 10000 - creditTotalBpsDisplay);
+
   useEffect(() => {
     (async () => {
       try {
@@ -317,13 +340,16 @@ export default function GlobalSplitGuard() {
           return;
         }
 
-        // SUPPRESSION: Private Partner Container + Non-Admin
-        // In private partner apps, the Partner (Admin) manages the split. Regular users/merchants do not.
-        if (partnerContext && isPrivate && !userIsAdmin) {
+        // SUPPRESSION: Private Partner Container
+        // In private partner apps, the splits are all deployed by the partner container through the ClientRequestsPanel,
+        // so the global split guard modal should never show up.
+        if (partnerContext && isPrivate) {
           setOpen(false);
           setChecking(false);
           return;
         }
+
+
 
         // If not authenticated, attempt an unauthenticated preview so the split modal can still show correct recipients
         if (!authCheck?.authed) {
@@ -334,18 +360,40 @@ export default function GlobalSplitGuard() {
             });
             const j = await r.json().catch(() => ({}));
             try { setPreviewRecipients(Array.isArray(j?.split?.recipients) ? j.split.recipients : null); } catch { }
+
+            let jCredit: any = {};
+            if (isDual) {
+              try {
+                const rCredit = await fetch(buildBrandApiUrl(brandKey, `/api/split/deploy?wallet=${encodeURIComponent(merchant)}&brandKey=${encodeURIComponent(brandKey)}&isCredit=true`), {
+                  cache: "no-store",
+                  headers: { "x-wallet": merchant }
+                });
+                jCredit = await rCredit.json().catch(() => ({}));
+                try { setPreviewRecipientsCredit(Array.isArray(jCredit?.split?.recipients) ? jCredit.split.recipients : null); } catch { }
+              } catch (e) {
+                console.error("Failed to fetch unauthenticated credit split config", e);
+              }
+            }
+
             const addr = String(j?.split?.address || "").toLowerCase();
             const has = isValidHex(addr);
             const recipientCount = Array.isArray(j?.split?.recipients) ? j.split.recipients.length : 0;
             const partnerMisconfigured = partnerContext && has && recipientCount > 0 && recipientCount < 3;
             const misconfigured = !!(j?.misconfiguredSplit && j.misconfiguredSplit.needsRedeploy === true);
+
+            const addrCredit = isDual ? String(jCredit?.split?.address || "").toLowerCase() : "";
+            const hasCredit = isDual ? isValidHex(addrCredit) : true;
+            const recipientCountCredit = isDual && Array.isArray(jCredit?.split?.recipients) ? jCredit.split.recipients.length : 0;
+            const partnerMisconfiguredCredit = isDual && partnerContext && hasCredit && recipientCountCredit > 0 && recipientCountCredit < 3;
+            const misconfiguredCredit = isDual && !!(jCredit?.misconfiguredSplit && jCredit.misconfiguredSplit.needsRedeploy === true);
+
             // Properly configured means: split exists and required container configuration is valid
             const properlyConfigured =
-              (!partnerContext && has && platformValid && !misconfigured) ||
-              (partnerContext && has && partnerValid && !partnerMisconfigured && !misconfigured);
+              (!partnerContext && has && hasCredit && platformValid && !misconfigured && !misconfiguredCredit) ||
+              (partnerContext && has && hasCredit && partnerValid && !partnerMisconfigured && !partnerMisconfiguredCredit && !misconfigured && !misconfiguredCredit);
 
-            const requiresDeploy = j?.requiresDeploy === true;
-            const shouldOpen = !properlyConfigured && (!has || partnerMisconfigured || requiresDeploy);
+            const requiresDeploy = j?.requiresDeploy === true || (isDual && jCredit?.requiresDeploy === true);
+            const shouldOpen = !properlyConfigured && (!has || !hasCredit || partnerMisconfigured || partnerMisconfiguredCredit || requiresDeploy);
 
             if (shouldOpen) {
               if (!prevOpenRef.current) { setAck(false); }
@@ -364,6 +412,7 @@ export default function GlobalSplitGuard() {
           }
           return;
         }
+
         // authenticated
         setAwaitAuth(false);
         // Partner admin can use Skip (Admin) button; do not auto-close modal here.
@@ -375,12 +424,33 @@ export default function GlobalSplitGuard() {
         });
         const j = await r.json().catch(() => ({}));
         try { setPreviewRecipients(Array.isArray(j?.split?.recipients) ? j.split.recipients : null); } catch { }
+
+        let jCredit: any = {};
+        if (isDual) {
+          try {
+            const rCredit = await fetch(buildBrandApiUrl(brandKey, `/api/split/deploy?wallet=${encodeURIComponent(merchant)}&brandKey=${encodeURIComponent(brandKey)}&isCredit=true`), {
+              cache: "no-store",
+              headers: { "x-wallet": merchant }
+            });
+            jCredit = await rCredit.json().catch(() => ({}));
+            try { setPreviewRecipientsCredit(Array.isArray(jCredit?.split?.recipients) ? jCredit.split.recipients : null); } catch { }
+          } catch (e) {
+            console.error("Failed to fetch authenticated credit split config", e);
+          }
+        }
+
         const addr = String(j?.split?.address || "").toLowerCase();
         const has = isValidHex(addr);
-        setSplitExists(has);
         const isLegacy = j?.legacy === true;
         const misconfigured = !!(j?.misconfiguredSplit && j.misconfiguredSplit.needsRedeploy === true);
         const recipientCount = Array.isArray(j?.split?.recipients) ? j.split.recipients.length : 0;
+
+        const addrCredit = isDual ? String(jCredit?.split?.address || "").toLowerCase() : "";
+        const hasCredit = isDual ? isValidHex(addrCredit) : true;
+        const misconfiguredCredit = isDual && !!(jCredit?.misconfiguredSplit && jCredit.misconfiguredSplit.needsRedeploy === true);
+        const recipientCountCredit = isDual && Array.isArray(jCredit?.split?.recipients) ? jCredit.split.recipients.length : 0;
+
+        setSplitExists(has && hasCredit);
 
         // Derive partner from fetched recipients if brand missing (support per-merchant split overrides)
         const recipientsList = Array.isArray(j?.split?.recipients) ? j.split.recipients : [];
@@ -396,6 +466,7 @@ export default function GlobalSplitGuard() {
 
         // Treat partner container with a 2-recipient split as misconfigured, even if server didn't flag it
         const partnerMisconfigured = partnerContext && has && recipientCount > 0 && recipientCount < 3;
+        const partnerMisconfiguredCredit = isDual && partnerContext && hasCredit && recipientCountCredit > 0 && recipientCountCredit < 3;
 
         // If split already exists, do not show the modal due to server requiresDeploy flags.
         // Admin-only suppression: if admin previously chose Skip, honor suppression; merchants cannot bypass
@@ -406,13 +477,13 @@ export default function GlobalSplitGuard() {
 
         // Determine proper configuration state by container type
         const properlyConfigured =
-          (!partnerContext && has && platformValid && !misconfigured) ||
-          (partnerContext && has && effectivePartnerValid && !partnerMisconfigured && !misconfigured);
+          (!partnerContext && has && hasCredit && platformValid && !misconfigured && !misconfiguredCredit) ||
+          (partnerContext && has && hasCredit && effectivePartnerValid && !partnerMisconfigured && !partnerMisconfiguredCredit && !misconfigured && !misconfiguredCredit);
 
         // Respect server flags; never attempt silent redeploy
-        const requiresDeploy = (j?.requiresDeploy === true) || (partnerContext && !has);
+        const requiresDeploy = (j?.requiresDeploy === true) || (isDual && jCredit?.requiresDeploy === true) || (partnerContext && (!has || !hasCredit));
 
-        const shouldOpen = !properlyConfigured && (!has || misconfigured || partnerMisconfigured || requiresDeploy);
+        const shouldOpen = !properlyConfigured && (!has || !hasCredit || misconfigured || misconfiguredCredit || partnerMisconfigured || partnerMisconfiguredCredit || requiresDeploy);
 
         if (shouldOpen) {
           if (!prevOpenRef.current) { setAck(false); }
@@ -485,7 +556,57 @@ export default function GlobalSplitGuard() {
           </div>
         )}
 
-        {!partnerContext ? (
+        {partnerContext && isDual ? (
+          <div className="space-y-4 mb-4">
+            {/* Credit Card & Native Crypto Card */}
+            <div className="rounded-md border bg-muted/30 p-4">
+              <div className="font-semibold mb-2 text-sm text-primary flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                Credit Card & Native Crypto Splits
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">Your Business</span>
+                  <span className="flex items-center gap-2">
+                    {isValidHex(merchantAddrDisplay) ? <TruncatedAddress address={merchantAddrDisplay as any} /> : <span className="text-red-500">Not connected</span>}
+                    <span className="font-mono text-xs bg-background px-2 py-0.5 rounded">{bpsToPercent(merchantBpsDisplay)}%</span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">Processing Fee (Credit/Crypto)</span>
+                  <span className="flex items-center gap-2">
+                    {partnerValid ? <TruncatedAddress address={partnerAddr as any} /> : <span className="text-red-500">Not configured</span>}
+                    <span className="font-mono text-xs bg-background px-2 py-0.5 rounded">{bpsToPercent(partnerTotalBpsDisplay)}%</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Debit Card Card */}
+            <div className="rounded-md border bg-muted/30 p-4">
+              <div className="font-semibold mb-2 text-sm text-secondary flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse" />
+                Debit Card Splits
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">Your Business</span>
+                  <span className="flex items-center gap-2">
+                    {isValidHex(merchantAddrDisplay) ? <TruncatedAddress address={merchantAddrDisplay as any} /> : <span className="text-red-500">Not connected</span>}
+                    <span className="font-mono text-xs bg-background px-2 py-0.5 rounded">{bpsToPercent(creditMerchantBpsDisplay)}%</span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium">Processing Fee (Debit)</span>
+                  <span className="flex items-center gap-2">
+                    {partnerValid ? <TruncatedAddress address={partnerAddr as any} /> : <span className="text-red-500">Not configured</span>}
+                    <span className="font-mono text-xs bg-background px-2 py-0.5 rounded">{bpsToPercent(creditTotalBpsDisplay)}%</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : !partnerContext ? (
           <div className="rounded-md border bg-muted/30 p-4 mb-4">
             <div className="font-medium mb-3 text-sm">Distribution Recipients</div>
             <div className="space-y-2">
@@ -649,8 +770,18 @@ export default function GlobalSplitGuard() {
                     r.address.toLowerCase() !== platformRecipient
                   ).map((r: any) => ({ wallet: r.address, bps: r.sharesBps })) || [];
 
-                  const addr = await ensureSplitForWallet(account as any, brandKey, undefined, undefined, extraAgents);
-                  if (addr) {
+
+
+                  // Deploy standard (debit) split
+                  const addr = await ensureSplitForWallet(account as any, brandKey, undefined, undefined, extraAgents, undefined, undefined, false, false);
+                  
+                  let addrCredit: string | undefined = undefined;
+                  if (addr && isDual) {
+                    // Deploy credit split
+                    addrCredit = await ensureSplitForWallet(account as any, brandKey, undefined, undefined, extraAgents, undefined, undefined, false, true);
+                  }
+
+                  if (addr && (!isDual || addrCredit)) {
                     setSplitExists(true);
                     // success: close modal
                     setOpen(false);

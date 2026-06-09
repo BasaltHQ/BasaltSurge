@@ -142,7 +142,7 @@ export default function PartnerManagementPanel() {
   }
 
   // Merchants under selected partner
-  const [users, setUsers] = useState<Array<{ merchant: string; splitAddress?: string; kioskEnabled?: boolean; terminalEnabled?: boolean; createdAt?: number }>>([]);
+  const [users, setUsers] = useState<Array<{ merchant: string; splitAddress?: string; splitAddressCredit?: string; kioskEnabled?: boolean; terminalEnabled?: boolean; createdAt?: number }>>([]);
 
   async function toggleMerchantFeature(merchant: string, feature: 'kioskEnabled' | 'terminalEnabled', value: boolean) {
     // Optimistic update
@@ -274,6 +274,7 @@ export default function PartnerManagementPanel() {
       setUsers(itemsArr.map((it: any) => ({
         merchant: String(it.merchant || ""),
         splitAddress: it.splitAddress,
+        splitAddressCredit: it.splitAddressCredit,
         kioskEnabled: !!it.kioskEnabled,
         terminalEnabled: !!it.terminalEnabled,
         createdAt: typeof it.createdAt === "number" ? it.createdAt : 0,
@@ -978,19 +979,18 @@ export default function PartnerManagementPanel() {
   }
 
   // Fetch split transactions for a merchant
-  async function fetchMerchantTransactions(wallet: string) {
+  async function fetchMerchantTransactions(wallet: string, splitAddress?: string) {
     const w = String(wallet || "").toLowerCase();
     try {
-      const b = balancesCache.get(w);
-      const splitAddress = b?.splitAddressUsed;
-      if (!splitAddress || !/^0x[a-f0-9]{40}$/i.test(splitAddress)) {
+      const targetAddr = splitAddress || balancesCache.get(w)?.splitAddressUsed;
+      if (!targetAddr || !/^0x[a-f0-9]{40}$/i.test(targetAddr)) {
         setTxError(prev => ({ ...prev, [w]: "No split address configured" }));
         return;
       }
       setTxLoading(prev => ({ ...prev, [w]: true }));
       setTxError(prev => ({ ...prev, [w]: "" }));
 
-      const r = await fetch(`/api/split/transactions?splitAddress=${encodeURIComponent(splitAddress)}&merchantWallet=${encodeURIComponent(w)}&limit=100`, { cache: "no-store" });
+      const r = await fetch(`/api/split/transactions?splitAddress=${encodeURIComponent(targetAddr)}&merchantWallet=${encodeURIComponent(w)}&limit=100`, { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.error) {
         setTxError(prev => ({ ...prev, [w]: j?.error || "Failed to load transactions" }));
@@ -1031,13 +1031,10 @@ export default function PartnerManagementPanel() {
   }
 
   // Read releasable amounts for both Platform and Partner recipients
-  async function fetchReleasables(wallet: string) {
+  async function fetchReleasables(wallet: string, targetSplitAddress: string, balancesObj: Record<string, any>) {
     try {
       const w = String(wallet || "").toLowerCase();
-      const b = balancesCache.get(w) || null;
-      if (!b || !b.splitAddressUsed) return;
-
-      const split = String(b.splitAddressUsed || "").toLowerCase();
+      const split = String(targetSplitAddress || "").toLowerCase();
       const isHex = (s: string) => /^0x[a-f0-9]{40}$/i.test(String(s || "").trim());
 
       const platformRecipient = String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "").toLowerCase();
@@ -1062,7 +1059,7 @@ export default function PartnerManagementPanel() {
       ] as const;
 
       const contract = getContract({ client, chain, address: split as `0x${string}`, abi: PAYMENT_SPLITTER_READ_ABI as any });
-      const symbols = Object.keys((b.balances || {}) as Record<string, any>);
+      const symbols = Object.keys(balancesObj || {});
       const platformRecord: Record<string, { units: number }> = {};
       const partnerRecord: Record<string, { units: number }> = {};
 
@@ -1122,12 +1119,12 @@ export default function PartnerManagementPanel() {
 
       setPlatformReleasableCache((prev) => {
         const next = new Map(prev);
-        next.set(w, platformRecord);
+        next.set(split, platformRecord);
         return next;
       });
       setPartnerReleasableCache((prev) => {
         const next = new Map(prev);
-        next.set(w, partnerRecord);
+        next.set(split, partnerRecord);
         return next;
       });
     } catch {
@@ -1142,29 +1139,53 @@ export default function PartnerManagementPanel() {
     setExpanded(prev => ({ ...prev, [w]: !prev[w] }));
     if (!wasExpanded) {
       try {
-        // Pass the known split address from the row to bypass brand-agnostic lookup
-        await fetchMerchantBalances(w, knownSplitAddress);
-        // Use knownSplitAddress as fallback since React state (balancesCache) may not have flushed yet
-        const b = balancesCache.get(w);
-        const splitAddr = b?.splitAddressUsed || knownSplitAddress;
-        if (splitAddr && /^0x[a-f0-9]{40}$/i.test(splitAddr)) {
-          await Promise.all([fetchReleasables(w), fetchMerchantTransactions(w)]);
+        setResLoading(prev => ({ ...prev, [w]: true }));
+        setResError(prev => ({ ...prev, [w]: "" }));
+        let url = `/api/reserve/balances?wallet=${encodeURIComponent(w)}`;
+        if (knownSplitAddress && /^0x[a-f0-9]{40}$/i.test(knownSplitAddress)) {
+          url += `&splitAddress=${encodeURIComponent(knownSplitAddress)}&brandKey=${encodeURIComponent(brandKey || "")}`;
         }
-      } catch { }
+        const r = await fetch(url, { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || j?.error) {
+          setResError(prev => ({ ...prev, [w]: j?.error || "Failed to load balances" }));
+          setBalancesCache(prev => {
+            const next = new Map(prev);
+            next.set(w, null);
+            return next;
+          });
+        } else {
+          setBalancesCache(prev => {
+            const next = new Map(prev);
+            next.set(w, j as ReserveBalancesResponse);
+            return next;
+          });
+
+          // Fetch releasables and transactions using the fresh response `j`
+          const promises: Promise<any>[] = [];
+          if (j.splitAddressUsed && /^0x[a-f0-9]{40}$/i.test(j.splitAddressUsed)) {
+            promises.push(fetchReleasables(w, j.splitAddressUsed, j.balances || {}));
+          }
+          if (j.isDual && j.splitAddressCreditUsed && /^0x[a-f0-9]{40}$/i.test(j.splitAddressCreditUsed)) {
+            promises.push(fetchReleasables(w, j.splitAddressCreditUsed, j.balancesCredit || {}));
+          }
+          promises.push(fetchMerchantTransactions(w, j.splitAddressUsed || undefined));
+          await Promise.all(promises);
+        }
+      } catch (e: any) {
+        setResError(prev => ({ ...prev, [w]: e?.message || "Failed to load reserve info" }));
+      } finally {
+        setResLoading(prev => ({ ...prev, [w]: false }));
+      }
     }
   }
 
   // Platform-only: release Platform share (batch or per-token)
-  async function releasePlatformShare(wallet: string, onlySymbol?: string) {
+  async function releasePlatformShare(wallet: string, targetSplitAddress: string, onlySymbol?: string) {
     const w = String(wallet || "").toLowerCase();
+    const split = String(targetSplitAddress || "").toLowerCase();
     try {
       setReleaseError((prev) => ({ ...prev, [w]: "" }));
-      const b = balancesCache.get(w) || null;
-      if (!b || !b.splitAddressUsed) {
-        setReleaseError((prev) => ({ ...prev, [w]: "split_address_not_configured" }));
-        return;
-      }
-      const split = String(b.splitAddressUsed || "").toLowerCase();
       const isHex = (s: string) => /^0x[a-f0-9]{40}$/i.test(String(s || "").trim());
       if (!isHex(split)) {
         setReleaseError((prev) => ({ ...prev, [w]: "split_address_not_configured" }));
@@ -1172,7 +1193,7 @@ export default function PartnerManagementPanel() {
       }
 
       const preferred = ["ETH", "USDC", "USDT", "cbBTC", "cbXRP", "SOL"];
-      const relMap = platformReleasableCache.get(w) || {};
+      const relMap = platformReleasableCache.get(split) || {};
       const positiveRel = preferred.filter((sym) => {
         try {
           const u = Number(((relMap as any)[sym]?.units || 0));
@@ -1233,8 +1254,10 @@ export default function PartnerManagementPanel() {
             // Try to find address in balances cache if not found in env
             if (!tokenAddr) {
               const b = balancesCache.get(w);
-              if (b && b.balances && (b.balances as any)[symbol]?.address) {
-                tokenAddr = (b.balances as any)[symbol].address;
+              const isCredit = split === String(b?.splitAddressCreditUsed).toLowerCase();
+              const balSource = isCredit ? b?.balancesCredit : b?.balances;
+              if (balSource && (balSource as any)[symbol]?.address) {
+                tokenAddr = (balSource as any)[symbol].address;
               }
             }
 
@@ -1247,11 +1270,8 @@ export default function PartnerManagementPanel() {
                 "CBXRP": "0xcb585250f852C6c6bf90434AB21A00f02833a4af", // normalized key
                 "SOL": "0x311935Cd80B76769bF2ecC9D8Ab7635b2139cf82"
               };
-              // Handle case-insensitivity mapping if needed, but keys here match symbol
-              const normSym = symbol.toUpperCase().replace(/^W/, ""); // basic normalization if needed
+              const normSym = symbol.toUpperCase().replace(/^W/, "");
               if (baseFallbacks[normSym]) tokenAddr = baseFallbacks[normSym] as any;
-
-              // Handle specific casing for cbBTC/cbXRP if key is different
               if (symbol === "cbBTC") tokenAddr = baseFallbacks["CBBTC"] as any;
               if (symbol === "cbXRP") tokenAddr = baseFallbacks["CBXRP"] as any;
             }
@@ -1304,8 +1324,13 @@ export default function PartnerManagementPanel() {
         }
       }
 
-      await fetchMerchantBalances(w);
-      try { await fetchReleasables(w); } catch { }
+      // Refresh balances and releasables
+      const b = balancesCache.get(w);
+      const isCredit = split === String(b?.splitAddressCreditUsed).toLowerCase();
+      await fetchMerchantBalances(w, (isCredit ? b?.splitAddressUsed : undefined) || undefined);
+      const updatedB = balancesCache.get(w) || b;
+      const updatedBalancesObj = isCredit ? (updatedB?.balancesCredit || {}) : (updatedB?.balances || {});
+      try { await fetchReleasables(w, split, updatedBalancesObj); } catch { }
     } catch (e: any) {
       setReleaseError((prev) => ({ ...prev, [w]: e?.message || "Release failed" }));
     } finally {
@@ -1314,16 +1339,11 @@ export default function PartnerManagementPanel() {
   }
 
   // Release partner share (batch or per-token)
-  async function releasePartnerShare(wallet: string, onlySymbol?: string) {
+  async function releasePartnerShare(wallet: string, targetSplitAddress: string, onlySymbol?: string) {
     const w = String(wallet || "").toLowerCase();
+    const split = String(targetSplitAddress || "").toLowerCase();
     try {
       setReleaseError((prev) => ({ ...prev, [w]: "" }));
-      const b = balancesCache.get(w) || null;
-      if (!b || !b.splitAddressUsed) {
-        setReleaseError((prev) => ({ ...prev, [w]: "split_address_not_configured" }));
-        return;
-      }
-      const split = String(b.splitAddressUsed || "").toLowerCase();
       const isHex = (s: string) => /^0x[a-f0-9]{40}$/i.test(String(s || "").trim());
       if (!isHex(split)) {
         setReleaseError((prev) => ({ ...prev, [w]: "split_address_not_configured" }));
@@ -1331,7 +1351,7 @@ export default function PartnerManagementPanel() {
       }
 
       const preferred = ["ETH", "USDC", "USDT", "cbBTC", "cbXRP", "SOL"];
-      const relMap = partnerReleasableCache.get(w) || {};
+      const relMap = partnerReleasableCache.get(split) || {};
       const positiveRel = preferred.filter((sym) => {
         try {
           const u = Number(((relMap as any)[sym]?.units || 0));
@@ -1389,8 +1409,10 @@ export default function PartnerManagementPanel() {
             // Try to find address in balances cache if not found in env
             if (!tokenAddr) {
               const b = balancesCache.get(w);
-              if (b && b.balances && (b.balances as any)[symbol]?.address) {
-                tokenAddr = (b.balances as any)[symbol].address;
+              const isCredit = split === String(b?.splitAddressCreditUsed).toLowerCase();
+              const balSource = isCredit ? b?.balancesCredit : b?.balances;
+              if (balSource && (balSource as any)[symbol]?.address) {
+                tokenAddr = (balSource as any)[symbol].address;
               }
             }
 
@@ -1403,11 +1425,8 @@ export default function PartnerManagementPanel() {
                 "CBXRP": "0xcb585250f852C6c6bf90434AB21A00f02833a4af", // normalized key
                 "SOL": "0x311935Cd80B76769bF2ecC9D8Ab7635b2139cf82"
               };
-              // Handle case-insensitivity mapping if needed, but keys here match symbol
-              const normSym = symbol.toUpperCase().replace(/^W/, ""); // basic normalization if needed
+              const normSym = symbol.toUpperCase().replace(/^W/, "");
               if (baseFallbacks[normSym]) tokenAddr = baseFallbacks[normSym] as any;
-
-              // Handle specific casing for cbBTC/cbXRP if key is different
               if (symbol === "cbBTC") tokenAddr = baseFallbacks["CBBTC"] as any;
               if (symbol === "cbXRP") tokenAddr = baseFallbacks["CBXRP"] as any;
             }
@@ -1460,8 +1479,13 @@ export default function PartnerManagementPanel() {
         }
       }
 
-      await fetchMerchantBalances(w);
-      try { await fetchReleasables(w); } catch { }
+      // Refresh balances and releasables
+      const b = balancesCache.get(w);
+      const isCredit = split === String(b?.splitAddressCreditUsed).toLowerCase();
+      await fetchMerchantBalances(w, (isCredit ? b?.splitAddressUsed : undefined) || undefined);
+      const updatedB = balancesCache.get(w) || b;
+      const updatedBalancesObj = isCredit ? (updatedB?.balancesCredit || {}) : (updatedB?.balances || {});
+      try { await fetchReleasables(w, split, updatedBalancesObj); } catch { }
     } catch (e: any) {
       setReleaseError((prev) => ({ ...prev, [w]: e?.message || "Release failed" }));
     } finally {
@@ -2554,7 +2578,16 @@ export default function PartnerManagementPanel() {
                           <td className="px-4 py-3 text-sm font-mono">
                             <TruncatedAddress address={u.merchant} />
                           </td>
-                          <td className="px-4 py-3 text-sm font-mono">{u.splitAddress || "—"}</td>
+                          <td className="px-4 py-3 text-sm font-mono">
+                            {u.splitAddressCredit ? (
+                              <div className="flex flex-col">
+                                <div>Credit/Crypto: <TruncatedAddress address={u.splitAddress} /></div>
+                                <div className="text-[10px] text-muted-foreground/75">Debit: <TruncatedAddress address={u.splitAddressCredit} /></div>
+                              </div>
+                            ) : (
+                              u.splitAddress || "—"
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-sm text-center">
                             <input
                               type="checkbox"
@@ -2582,13 +2615,13 @@ export default function PartnerManagementPanel() {
                               </button>
                               <button
                                 className="text-xs px-2 py-0.5 rounded border border-purple-300/50 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30 transition-colors text-purple-600 dark:text-purple-400 disabled:opacity-40 disabled:cursor-not-allowed"
-                                onClick={() => releasePlatformShare(w)}
+                                onClick={() => b && b.splitAddressUsed && releasePlatformShare(w, b.splitAddressUsed)}
                                 disabled={
                                   relLoad ||
                                   !(b && b.splitAddressUsed) ||
                                   (() => {
                                     try {
-                                      const relMap = platformReleasableCache.get(w) || {};
+                                      const relMap = platformReleasableCache.get(b.splitAddressUsed.toLowerCase()) || {};
                                       const syms = Object.keys((b?.balances || {}));
                                       for (const s of syms) {
                                         const uAmt = Number(((relMap as any)[s]?.units || 0));
@@ -2606,13 +2639,13 @@ export default function PartnerManagementPanel() {
                               </button>
                               <button
                                 className="text-xs px-2 py-0.5 rounded border border-blue-300/50 hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors text-blue-600 dark:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed"
-                                onClick={() => releasePartnerShare(w)}
+                                onClick={() => b && b.splitAddressUsed && releasePartnerShare(w, b.splitAddressUsed)}
                                 disabled={
                                   relLoad ||
                                   !(b && b.splitAddressUsed) ||
                                   (() => {
                                     try {
-                                      const relMap = partnerReleasableCache.get(w) || {};
+                                      const relMap = partnerReleasableCache.get(b.splitAddressUsed.toLowerCase()) || {};
                                       const syms = Object.keys((b?.balances || {}));
                                       for (const s of syms) {
                                         const uAmt = Number(((relMap as any)[s]?.units || 0));
@@ -2637,38 +2670,37 @@ export default function PartnerManagementPanel() {
                           <tr className="border-t bg-foreground/5">
                             <td className="px-4 py-4" colSpan={5}>
                               <div className="rounded-md border p-3 space-y-3">
-                                <div className="flex items-center justify-between">
-                                  <div className="text-xs text-muted-foreground/70">
-                                    Split: {b && b.splitAddressUsed ? (
-                                      <div className="flex items-center gap-2 inline-flex">
-                                        <a className="underline" href={`https://base.blockscout.com/address/${b.splitAddressUsed}`} target="_blank" rel="noopener noreferrer">
-                                          <TruncatedAddress address={b.splitAddressUsed} />
-                                        </a>
-                                        {b.splitHistory && b.splitHistory.length > 0 && (
-                                          <select
-                                            className="ml-2 h-6 text-xs border border-foreground/10 rounded bg-foreground/[0.03] text-foreground focus:outline-none focus:ring-1 focus:ring-foreground/20 px-1"
-                                            value={b.splitAddressUsed}
-                                            onChange={(e) => {
-                                              const val = e.target.value;
-                                              setSelectedMerchantSplitVersion(prev => ({ ...prev, [w]: val }));
-                                              fetchMerchantBalances(w, val);
-                                            }}
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            {/* Include current/latest option if not in history explicitly, or just map history */}
-                                            {/* Usually history includes all past. Current might be the latest. let's assume history is complete or we add current */}
-                                            {/* The API returns splitHistory which usually includes all deployed splits. */}
-                                            {b.splitHistory.map((h, i) => (
-                                              <option className="bg-background text-foreground" key={h.address} value={h.address}>
-                                                {i === 0 ? "Latest" : `v${b.splitHistory!.length - i}`} ({h.address.slice(0, 6)}...)
-                                              </option>
-                                            ))}
-                                          </select>
-                                        )}
-                                      </div>
-                                    ) : "Not configured"}
+                                {b && !b.isDual && (
+                                  <div className="flex items-center justify-between">
+                                    <div className="text-xs text-muted-foreground/70">
+                                      Split: {b.splitAddressUsed ? (
+                                        <div className="flex items-center gap-2 inline-flex">
+                                          <a className="underline" href={`https://base.blockscout.com/address/${b.splitAddressUsed}`} target="_blank" rel="noopener noreferrer">
+                                            <TruncatedAddress address={b.splitAddressUsed} />
+                                          </a>
+                                          {b.splitHistory && b.splitHistory.length > 0 && (
+                                            <select
+                                              className="ml-2 h-6 text-xs border border-foreground/10 rounded bg-foreground/[0.03] text-foreground focus:outline-none focus:ring-1 focus:ring-foreground/20 px-1"
+                                              value={b.splitAddressUsed || undefined}
+                                              onChange={(e) => {
+                                                const val = e.target.value;
+                                                setSelectedMerchantSplitVersion(prev => ({ ...prev, [w]: val }));
+                                                fetchMerchantBalances(w, val);
+                                              }}
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              {b.splitHistory.map((h, i) => (
+                                                <option className="bg-background text-foreground" key={h.address} value={h.address}>
+                                                  {i === 0 ? "Latest" : `v${b.splitHistory!.length - i}`} ({h.address.slice(0, 6)}...)
+                                                </option>
+                                              ))}
+                                            </select>
+                                          )}
+                                        </div>
+                                      ) : "Not configured"}
+                                    </div>
                                   </div>
-                                </div>
+                                )}
 
                                 {relResults.length > 0 && (
                                   <div className="text-xs">
@@ -2686,120 +2718,261 @@ export default function PartnerManagementPanel() {
                                   <div className="text-xs text-red-500">Error: {resErr}</div>
                                 ) : b && b.balances ? (
                                   <>
-                                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                                      {Object.entries(b.balances).map(([symbol, info]: [string, any]) => {
-                                        const totalGenerated = (() => {
-                                          try {
-                                            const payments = Number(cumulative.payments?.[symbol] || 0);
-                                            return payments;
-                                          } catch {
-                                            return 0;
-                                          }
-                                        })();
-                                        return (
-                                          <div key={symbol} className="p-3 rounded-md border glass-pane space-y-2">
-                                            <div>
-                                              <div className="text-xs font-medium text-muted-foreground">{symbol}</div>
-                                              <div className="text-sm font-semibold">{Number(info.units || 0).toFixed(6)}</div>
-                                              <div className="text-xs text-muted-foreground/70">${Number(info.usd || 0).toFixed(2)}</div>
+                                    {b.isDual ? (
+                                      <div className="space-y-6">
+                                        {/* Standard / Credit & Crypto Split Section */}
+                                        <div className="space-y-2">
+                                          <div className="flex items-center justify-between border-b border-foreground/10 pb-1.5">
+                                            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Credit & Crypto Split Contract</span>
+                                            <div className="text-xs text-muted-foreground/70 flex items-center gap-2">
+                                              <span>Address:</span>
+                                              {b.splitAddressUsed ? (
+                                                <div className="flex items-center gap-2 inline-flex">
+                                                  <a className="underline font-mono" href={`https://base.blockscout.com/address/${b.splitAddressUsed}`} target="_blank" rel="noopener noreferrer">
+                                                    <TruncatedAddress address={b.splitAddressUsed} />
+                                                  </a>
+                                                  {(() => {
+                                                    const stdHistory = (b.splitHistory || []).filter((h: any) => !h.isCredit);
+                                                    return stdHistory.length > 0 && (
+                                                      <select
+                                                        className="ml-2 h-6 text-xs border border-foreground/10 rounded bg-foreground/[0.03] text-foreground focus:outline-none focus:ring-1 focus:ring-foreground/20 px-1"
+                                                        value={selectedMerchantSplitVersion[w] || b.splitAddressUsed || undefined}
+                                                        onChange={(e) => {
+                                                          const val = e.target.value;
+                                                          setSelectedMerchantSplitVersion(prev => ({ ...prev, [w]: val }));
+                                                          fetchMerchantBalances(w, val);
+                                                        }}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                      >
+                                                        {stdHistory.map((h: any, i: number) => (
+                                                          <option className="bg-background text-foreground" key={h.address} value={h.address}>
+                                                            {i === 0 ? "Latest" : `v${stdHistory.length - i}`} ({h.address.slice(0, 6)}...)
+                                                          </option>
+                                                        ))}
+                                                      </select>
+                                                    );
+                                                  })()}
+                                                </div>
+                                              ) : "Not configured"}
                                             </div>
-                                            {totalGenerated > 0 && (
-                                              <div className="text-xs text-sky-500 dark:text-sky-400 font-medium border-t border-foreground/10 pt-1">
-                                                ↑ {totalGenerated.toFixed(4)}
-                                              </div>
-                                            )}
-                                            {b && b.splitAddressUsed && (() => {
-                                              try {
-                                                const relMap = platformReleasableCache.get(w) || {};
-                                                const rel = (relMap as any)[symbol];
-                                                if (rel && typeof rel.units === "number") {
-                                                  const unitVal = Number(rel.units || 0);
-                                                  if (unitVal > 0) {
-                                                    return (
+                                          </div>
+                                          
+                                          {/* Grid for standard balances */}
+                                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                            {Object.entries(b.balances).map(([symbol, info]: [string, any]) => {
+                                              const totalGenerated = (() => {
+                                                try {
+                                                  const payments = Number(cumulative.payments?.[symbol] || 0);
+                                                  return payments;
+                                                } catch {
+                                                  return 0;
+                                                }
+                                              })();
+                                              const relMap = platformReleasableCache.get((b.splitAddressUsed || "").toLowerCase()) || {};
+                                              const rel = relMap[symbol];
+                                              const unitVal = rel && typeof rel.units === "number" ? Number(rel.units || 0) : 0;
+
+                                              const relMapP = partnerReleasableCache.get((b.splitAddressUsed || "").toLowerCase()) || {};
+                                              const relP = relMapP[symbol];
+                                              const unitValP = relP && typeof relP.units === "number" ? Number(relP.units || 0) : 0;
+
+                                              return (
+                                                <div key={symbol} className="p-3 rounded-md border glass-pane space-y-2">
+                                                  <div>
+                                                    <div className="text-xs font-medium text-muted-foreground">{symbol}</div>
+                                                    <div className="text-sm font-semibold">{Number(info.units || 0).toFixed(6)}</div>
+                                                    <div className="text-xs text-muted-foreground/70">${Number(info.usd || 0).toFixed(2)}</div>
+                                                  </div>
+                                                  {totalGenerated > 0 && (
+                                                    <div className="text-xs text-sky-500 dark:text-sky-400 font-medium border-t border-foreground/10 pt-1">
+                                                      ↑ {totalGenerated.toFixed(4)}
+                                                    </div>
+                                                  )}
+                                                  {unitVal > 0 && (
+                                                    <div className="text-xs text-amber-500 dark:text-amber-400 border-t border-foreground/10 pt-1">
+                                                      ⚡ {unitVal.toFixed(4)} releasable
+                                                    </div>
+                                                  )}
+                                                  {unitValP > 0 && (
+                                                    <div className="text-xs text-violet-500 dark:text-violet-400 border-t border-foreground/10 pt-1">
+                                                      ⚡ {unitValP.toFixed(4)} partner releasable
+                                                    </div>
+                                                  )}
+                                                  <div className="flex flex-wrap gap-1 mt-1">
+                                                    <button
+                                                      className="text-xs px-1.5 py-0.5 rounded border border-purple-300/50 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30 transition-colors text-purple-600 dark:text-purple-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                      onClick={() => releasePlatformShare(w, b.splitAddressUsed || "", symbol)}
+                                                      disabled={relLoad || !(unitVal > 0)}
+                                                      title={String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").toLowerCase() === "partner" ? `Release partner share for ${symbol}` : `Release platform share for ${symbol}`}
+                                                    >
+                                                      {relLoad ? "…" : "⚡ Plat"}
+                                                    </button>
+                                                    <button
+                                                      className="text-xs px-1.5 py-0.5 rounded border border-blue-300/50 hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors text-blue-600 dark:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                      onClick={() => releasePartnerShare(w, b.splitAddressUsed || "", symbol)}
+                                                      disabled={relLoad || !(unitValP > 0)}
+                                                      title={`Release partner share for ${symbol}`}
+                                                    >
+                                                      {relLoad ? "…" : "⚡ Part"}
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                          <div className="text-xs text-muted-foreground/70">
+                                            Credit Card & Native Crypto Reserve Value (USD): ${Number(b.totalUsdDebit || 0).toFixed(2)}
+                                          </div>
+                                        </div>
+
+                                        {/* Debit Split Section */}
+                                        <div className="space-y-2">
+                                          <div className="flex items-center justify-between border-b border-foreground/10 pb-1.5">
+                                            <span className="text-xs font-semibold text-purple-600 dark:text-purple-400">Debit Split Contract</span>
+                                            <div className="text-xs text-muted-foreground/70 flex items-center gap-2">
+                                              <span>Address:</span>
+                                              {b.splitAddressCreditUsed ? (
+                                                <a className="underline font-mono" href={`https://base.blockscout.com/address/${b.splitAddressCreditUsed}`} target="_blank" rel="noopener noreferrer">
+                                                  <TruncatedAddress address={b.splitAddressCreditUsed} />
+                                                </a>
+                                              ) : "Not configured"}
+                                            </div>
+                                          </div>
+                                          
+                                          {/* Grid for credit balances */}
+                                          {b.balancesCredit ? (
+                                            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                              {Object.entries(b.balancesCredit).map(([symbol, info]: [string, any]) => {
+                                                const relMap = platformReleasableCache.get((b.splitAddressCreditUsed || "").toLowerCase()) || {};
+                                                const rel = relMap[symbol];
+                                                const unitVal = rel && typeof rel.units === "number" ? Number(rel.units || 0) : 0;
+
+                                                const relMapP = partnerReleasableCache.get((b.splitAddressCreditUsed || "").toLowerCase()) || {};
+                                                const relP = relMapP[symbol];
+                                                const unitValP = relP && typeof relP.units === "number" ? Number(relP.units || 0) : 0;
+
+                                                return (
+                                                  <div key={symbol} className="p-3 rounded-md border glass-pane space-y-2">
+                                                    <div>
+                                                      <div className="text-xs font-medium text-muted-foreground">{symbol}</div>
+                                                      <div className="text-sm font-semibold">{Number(info.units || 0).toFixed(6)}</div>
+                                                      <div className="text-xs text-muted-foreground/70">${Number(info.usd || 0).toFixed(2)}</div>
+                                                    </div>
+                                                    {unitVal > 0 && (
                                                       <div className="text-xs text-amber-500 dark:text-amber-400 border-t border-foreground/10 pt-1">
                                                         ⚡ {unitVal.toFixed(4)} releasable
                                                       </div>
-                                                    );
-                                                  }
-                                                }
-                                                return null;
-                                              } catch { return null; }
-                                            })()}
-                                            {b && b.splitAddressUsed && (() => {
-                                              try {
-                                                const relMapP = partnerReleasableCache.get(w) || {};
-                                                const relP = (relMapP as any)[symbol];
-                                                if (relP && typeof relP.units === "number") {
-                                                  const unitValP = Number(relP.units || 0);
-                                                  if (unitValP > 0) {
-                                                    return (
+                                                    )}
+                                                    {unitValP > 0 && (
                                                       <div className="text-xs text-violet-500 dark:text-violet-400 border-t border-foreground/10 pt-1">
                                                         ⚡ {unitValP.toFixed(4)} partner releasable
                                                       </div>
-                                                    );
-                                                  }
-                                                }
-                                                return null;
-                                              } catch { return null; }
-                                            })()}
-                                            <div className="flex flex-wrap gap-1 mt-1">
-                                              <button
-                                                className="text-xs px-1.5 py-0.5 rounded border border-purple-300/50 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30 transition-colors text-purple-600 dark:text-purple-400 disabled:opacity-40 disabled:cursor-not-allowed"
-                                                onClick={() => releasePlatformShare(w, symbol)}
-                                                disabled={
-                                                  relLoad ||
-                                                  !(b && b.splitAddressUsed) ||
-                                                  (() => {
-                                                    try {
-                                                      const relMap = platformReleasableCache.get(w) || {};
-                                                      const rel = (relMap as any)[symbol];
-                                                      const uAmt = Number(rel?.units || 0);
-                                                      return !(uAmt > 0);
-                                                    } catch { return true; }
-                                                  })()
-                                                }
-                                                title={String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").toLowerCase() === "partner" ? `Release partner share for ${symbol}` : `Release platform share for ${symbol}`}
-                                              >
-                                                {relLoad ? "…" : "⚡ Plat"}
-                                              </button>
-                                              <button
-                                                className="text-xs px-1.5 py-0.5 rounded border border-blue-300/50 hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors text-blue-600 dark:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed"
-                                                onClick={() => releasePartnerShare(w, symbol)}
-                                                disabled={
-                                                  relLoad ||
-                                                  !(b && b.splitAddressUsed) ||
-                                                  (() => {
-                                                    try {
-                                                      const relMap = partnerReleasableCache.get(w) || {};
-                                                      const rel = (relMap as any)[symbol];
-                                                      const uAmt = Number(rel?.units || 0);
-                                                      return !(uAmt > 0);
-                                                    } catch { return true; }
-                                                  })()
-                                                }
-                                                title={`Release partner share for ${symbol}`}
-                                              >
-                                                {relLoad ? "…" : "⚡ Part"}
-                                              </button>
-                                              {(() => {
-                                                try {
-                                                  const arr = releaseResults.get(w) || [];
-                                                  const rr = (arr || []).find((x: any) => String(x?.symbol || "") === String(symbol));
-                                                  return rr ? (
-                                                    <div className={`text-xs mt-1 ${statusClassPlatform(rr)}`}>
-                                                      {formatPlatformMessage(rr)}
+                                                    )}
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                      <button
+                                                        className="text-xs px-1.5 py-0.5 rounded border border-purple-300/50 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30 transition-colors text-purple-600 dark:text-purple-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        onClick={() => releasePlatformShare(w, b.splitAddressCreditUsed || "", symbol)}
+                                                        disabled={relLoad || !(unitVal > 0)}
+                                                        title={String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").toLowerCase() === "partner" ? `Release partner share for ${symbol}` : `Release platform share for ${symbol}`}
+                                                      >
+                                                        {relLoad ? "…" : "⚡ Plat"}
+                                                      </button>
+                                                      <button
+                                                        className="text-xs px-1.5 py-0.5 rounded border border-blue-300/50 hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors text-blue-600 dark:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                        onClick={() => releasePartnerShare(w, b.splitAddressCreditUsed || "", symbol)}
+                                                        disabled={relLoad || !(unitValP > 0)}
+                                                        title={`Release partner share for ${symbol}`}
+                                                      >
+                                                        {relLoad ? "…" : "⚡ Part"}
+                                                      </button>
                                                     </div>
-                                                  ) : null;
-                                                } catch { return null; }
-                                              })()}
+                                                  </div>
+                                                );
+                                              })}
                                             </div>
+                                          ) : (
+                                            <div className="text-xs text-muted-foreground/70">No debit balances loaded.</div>
+                                          )}
+                                          <div className="text-xs text-muted-foreground/70">
+                                            Debit Reserve Value (USD): ${Number(b.totalUsdCredit || 0).toFixed(2)}
                                           </div>
-                                        );
-                                      })}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground/70">
-                                      Total Reserve Value (USD): ${Number(b.totalUsd || 0).toFixed(2)}
-                                    </div>
+                                        </div>
+
+                                        <div className="text-xs font-semibold text-foreground/80 border-t border-foreground/10 pt-2 flex items-center justify-between">
+                                          <span>Combined Reserve Value (USD):</span>
+                                          <span>${Number(b.totalUsd || 0).toFixed(2)}</span>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <>
+                                        {/* Standard Single Split UI */}
+                                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                          {Object.entries(b.balances).map(([symbol, info]: [string, any]) => {
+                                            const totalGenerated = (() => {
+                                              try {
+                                                const payments = Number(cumulative.payments?.[symbol] || 0);
+                                                return payments;
+                                              } catch {
+                                                return 0;
+                                              }
+                                            })();
+                                            const relMap = platformReleasableCache.get((b.splitAddressUsed || "").toLowerCase()) || {};
+                                            const rel = relMap[symbol];
+                                            const unitVal = rel && typeof rel.units === "number" ? Number(rel.units || 0) : 0;
+
+                                            const relMapP = partnerReleasableCache.get((b.splitAddressUsed || "").toLowerCase()) || {};
+                                            const relP = relMapP[symbol];
+                                            const unitValP = relP && typeof relP.units === "number" ? Number(relP.units || 0) : 0;
+
+                                            return (
+                                              <div key={symbol} className="p-3 rounded-md border glass-pane space-y-2">
+                                                <div>
+                                                  <div className="text-xs font-medium text-muted-foreground">{symbol}</div>
+                                                  <div className="text-sm font-semibold">{Number(info.units || 0).toFixed(6)}</div>
+                                                  <div className="text-xs text-muted-foreground/70">${Number(info.usd || 0).toFixed(2)}</div>
+                                                </div>
+                                                {totalGenerated > 0 && (
+                                                  <div className="text-xs text-sky-500 dark:text-sky-400 font-medium border-t border-foreground/10 pt-1">
+                                                    ↑ {totalGenerated.toFixed(4)}
+                                                  </div>
+                                                )}
+                                                {unitVal > 0 && (
+                                                  <div className="text-xs text-amber-500 dark:text-amber-400 border-t border-foreground/10 pt-1">
+                                                    ⚡ {unitVal.toFixed(4)} releasable
+                                                  </div>
+                                                )}
+                                                {unitValP > 0 && (
+                                                  <div className="text-xs text-violet-500 dark:text-violet-400 border-t border-foreground/10 pt-1">
+                                                    ⚡ {unitValP.toFixed(4)} partner releasable
+                                                  </div>
+                                                )}
+                                                <div className="flex flex-wrap gap-1 mt-1">
+                                                  <button
+                                                    className="text-xs px-1.5 py-0.5 rounded border border-purple-300/50 hover:border-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30 transition-colors text-purple-600 dark:text-purple-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                    onClick={() => releasePlatformShare(w, b.splitAddressUsed || "", symbol)}
+                                                    disabled={relLoad || !(unitVal > 0)}
+                                                    title={String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").toLowerCase() === "partner" ? `Release partner share for ${symbol}` : `Release platform share for ${symbol}`}
+                                                  >
+                                                    {relLoad ? "…" : "⚡ Plat"}
+                                                  </button>
+                                                  <button
+                                                    className="text-xs px-1.5 py-0.5 rounded border border-blue-300/50 hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors text-blue-600 dark:text-blue-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                    onClick={() => releasePartnerShare(w, b.splitAddressUsed || "", symbol)}
+                                                    disabled={relLoad || !(unitValP > 0)}
+                                                    title={`Release partner share for ${symbol}`}
+                                                  >
+                                                    {relLoad ? "…" : "⚡ Part"}
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground/70">
+                                          Total Reserve Value (USD): ${Number(b.totalUsd || 0).toFixed(2)}
+                                        </div>
+                                      </>
+                                    )}
 
 
                                     {b && b.splitAddressUsed && (

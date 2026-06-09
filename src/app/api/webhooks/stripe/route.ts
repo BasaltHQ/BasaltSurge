@@ -47,30 +47,38 @@ function verifyStripeSignature(
 async function resolveMerchantFromMetadata(
   metadata: any,
   container: any,
-  brandKey: string
-): Promise<{ merchantWallet?: string; splitAddress?: string } | null> {
+  brandKey: string,
+  useSeparateSplit = false
+): Promise<{ merchantWallet?: string; splitAddress?: string; fundingType?: string } | null> {
   // First try metadata
   const mw = String(metadata?.merchantWallet || "").toLowerCase();
   if (mw && /^0x[a-f0-9]{40}$/.test(mw)) {
     try {
       const spec = {
-        query: `SELECT c.wallet, c.splitAddress, c.split, c.config FROM c WHERE c.type='site_config' AND LOWER(c.wallet)=@addr`,
+        query: `SELECT c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.config FROM c WHERE c.type='site_config' AND LOWER(c.wallet)=@addr`,
         parameters: [{ name: '@addr', value: mw }]
       };
       const { resources } = await container.items.query(spec).fetchAll();
       const match = resources?.[0];
       if (match) {
-        const splitTop = String(match.splitAddress || '').toLowerCase();
-        const splitObj = String(match.split?.address || '').toLowerCase();
-        const splitCfgTop = String(match.config?.splitAddress || '').toLowerCase();
-        const splitCfgObj = String(match.config?.split?.address || '').toLowerCase();
-        const splitAddress = splitTop || splitObj || splitCfgTop || splitCfgObj || mw;
-        return { merchantWallet: mw, splitAddress };
+        let splitAddress: string;
+        if (useSeparateSplit) {
+          const splitTop = String(match.splitAddressCredit || '').toLowerCase();
+          const splitObj = String(match.splitCredit?.address || '').toLowerCase();
+          splitAddress = splitTop || splitObj || mw;
+        } else {
+          const splitTop = String(match.splitAddress || '').toLowerCase();
+          const splitObj = String(match.split?.address || '').toLowerCase();
+          const splitCfgTop = String(match.config?.splitAddress || '').toLowerCase();
+          const splitCfgObj = String(match.config?.split?.address || '').toLowerCase();
+          splitAddress = splitTop || splitObj || splitCfgTop || splitCfgObj || mw;
+        }
+        return { merchantWallet: mw, splitAddress, fundingType: useSeparateSplit ? "debit" : "credit" };
       }
     } catch (e) {
       console.error('[STRIPE WEBHOOK] Error resolving merchant:', e);
     }
-    return { merchantWallet: mw, splitAddress: mw };
+    return { merchantWallet: mw, splitAddress: mw, fundingType: useSeparateSplit ? "debit" : "credit" };
   }
   return null;
 }
@@ -124,8 +132,13 @@ export async function POST(req: NextRequest) {
     const status = session?.status || '';
     const txDetails = session?.transaction_details || {};
 
+    const { isDualSplitEnabled } = await import("@/lib/env");
+    const isDual = isDualSplitEnabled();
+    const cardFunding = session?.payment_details?.card?.funding || "";
+    const useSeparateSplit = isDual && (cardFunding === "debit" || cardFunding === "prepaid");
+
     // Resolve merchant context from metadata
-    const context = await resolveMerchantFromMetadata(metadata, container, brandKey);
+    const context = await resolveMerchantFromMetadata(metadata, container, brandKey, useSeparateSplit);
     const merchantWallet = context?.merchantWallet;
     const splitAddress = context?.splitAddress;
 
@@ -137,6 +150,7 @@ export async function POST(req: NextRequest) {
         brandKey,
         merchantWallet,
         splitAddress,
+        fundingType: context?.fundingType || (useSeparateSplit ? "debit" : "credit"),
         sessionId,
         status,
         stripeEventType: type,

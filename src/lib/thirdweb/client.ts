@@ -1,23 +1,43 @@
 import { createThirdwebClient } from "thirdweb";
 import { base, baseSepolia, optimism, arbitrum, polygon, sepolia } from "thirdweb/chains";
 
-let _client: ReturnType<typeof createThirdwebClient> | null = null;
+const clientCache = new Map<string, ReturnType<typeof createThirdwebClient>>();
 
 export function getClient() {
-  if (!_client) {
-    const secret = process.env.THIRDWEB_SECRET_KEY;
-    const brandKey = process.env.NEXT_PUBLIC_BRAND_KEY || "";
-    // For "basaltsurge" (platform), strictly use the main client ID, do NOT look for a brand-specific one.
-    // This avoids issues where NEXT_PUBLIC_THIRDWEB_CLIENT_ID_BASALTSURGE is set incorrectly or missing.
-    const isPlatform = !brandKey || brandKey.toLowerCase() === "basaltsurge" || brandKey.toLowerCase() === "portalpay";
-    const specificClientId = (!isPlatform && brandKey) ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${brandKey.toUpperCase()}`] : undefined;
-    const clientId = specificClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
+  const secret = process.env.THIRDWEB_SECRET_KEY;
+  
+  // Resolve brandKey dynamically
+  let brandKey = "";
+  if (typeof window !== "undefined") {
+    const path = window.location.pathname || "";
+    const isPlatformPath = path.startsWith("/developers") || path.startsWith("/docs");
+    if (isPlatformPath) {
+      brandKey = "basaltsurge";
+    } else {
+      brandKey = document.documentElement?.getAttribute("data-pp-brand-key") || "";
+    }
+  }
 
-    _client = secret
+  if (!brandKey) {
+    brandKey = process.env.NEXT_PUBLIC_BRAND_KEY || "";
+  }
+
+  // For "basaltsurge" (platform), strictly use the main client ID, do NOT look for a brand-specific one.
+  // This avoids issues where NEXT_PUBLIC_THIRDWEB_CLIENT_ID_BASALTSURGE is set incorrectly or missing.
+  const isPlatform = !brandKey || brandKey.toLowerCase() === "basaltsurge" || brandKey.toLowerCase() === "portalpay";
+  const specificClientId = (!isPlatform && brandKey) ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${brandKey.toUpperCase()}`] : undefined;
+  const clientId = specificClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
+
+  const cacheKey = secret ? `secret_${secret}` : `client_${clientId}`;
+
+  let clientInstance = clientCache.get(cacheKey);
+  if (!clientInstance) {
+    clientInstance = secret
       ? createThirdwebClient({ secretKey: secret as string })
       : createThirdwebClient({ clientId: String(clientId || "") });
+    clientCache.set(cacheKey, clientInstance);
   }
-  return _client;
+  return clientInstance;
 }
 
 // Backward compatibility: export a lazy proxy so existing imports `client` continue to work

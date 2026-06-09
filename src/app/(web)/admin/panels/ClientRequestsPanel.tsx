@@ -1,17 +1,20 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useActiveAccount } from "thirdweb/react";
 // Forced HMR update
 import Link from "next/link";
 import TeamManagementPanel from "@/components/admin/team/TeamManagementPanel";
 import { ensureSplitForWallet } from "@/lib/thirdweb/split";
+import { isDualSplitEnabled } from "@/lib/env";
 import { useBrand } from "@/contexts/BrandContext";
 import ShopConfigEditor from "@/components/admin/ShopConfigEditor";
 import { ReserveSettings } from "@/components/admin/reserve/ReserveSettings";
 import { TouchpointThemeCards, ThemePickerModal } from "@/components/admin/TouchpointThemePicker";
 import { parseKioskConfig } from "@/lib/themes";
 import type { TouchpointType, ColorMode, KioskLayout } from "@/lib/themes";
+import { Lock, CreditCard, Lightbulb, AlertTriangle, HelpCircle, Inbox, Store, Utensils, Sun, Moon, Grid, List, Newspaper, Sparkles, Ban, Check } from "lucide-react";
 
 type ClientRequest = {
     id: string;
@@ -50,14 +53,22 @@ type ClientRequest = {
         platformBps?: number;
         partnerBps: number;
         merchantBps: number;
-        agents?: { wallet: string; bps: number }[];
+        agents?: { wallet: string; bps: number; isCustom?: boolean }[];
+    };
+    splitConfigCredit?: {
+        platformBps?: number;
+        partnerBps: number;
+        merchantBps: number;
+        agents?: { wallet: string; bps: number; isCustom?: boolean }[];
     };
     splitHistory?: Array<{
         address: string;
         deployedAt: number;
         recipients?: string[];
+        isCredit?: boolean;
     }>;
     deployedSplitAddress?: string;
+    deployedSplitAddressCredit?: string;
     industryPack?: string | null;
     industryParams?: { restaurant?: { tables?: string[] }; [key: string]: any } | null;
 };
@@ -75,6 +86,27 @@ function extractDateTs(val: any, fallbackTs?: number): number {
         return isNaN(parsed) ? (fallbackTs || 0) : parsed;
     }
     return fallbackTs || 0;
+}
+
+// Helper to get split history version string
+function getHistoryVersionStr(h: any, index: number, history: any[]): string {
+    if (h.isCredit === undefined || h.isCredit === null) {
+        // Legacy/Unified (no payment-type specific prefix, no suffix)
+        const count = history.slice(index).filter((x: any) => x.isCredit === undefined || x.isCredit === null).length;
+        return `${count}`;
+    }
+    const isDebit = h.isCredit === true;
+    const count = history.slice(index).filter((x: any) => isDebit ? x.isCredit === true : x.isCredit === false).length;
+    return `${count}${isDebit ? "db" : "cr"}`;
+}
+
+// Helper to get active split version string
+function getActiveVersionStr(req: any, isDebit: boolean): string {
+    const history = req?.splitHistory || [];
+    const count = history.filter((x: any) => isDebit ? x.isCredit === true : x.isCredit !== true).length;
+    const activeAddr = isDebit ? req?.deployedSplitAddressCredit : req?.deployedSplitAddress;
+    const ver = count + (activeAddr ? 1 : 0);
+    return ver > 0 ? `${ver}${isDebit ? "db" : "cr"}` : "";
 }
 
 // Inline Tables Editor for restaurant industry pack merchants
@@ -209,6 +241,93 @@ function InlineTablesEditor({ merchantWallet, adminWallet, brandKey, initialTabl
 
 export default function ClientRequestsPanel() {
     const account = useActiveAccount();
+    const [serverEnvAgents, setServerEnvAgents] = useState<{ wallet: string; bps: number }[]>([]);
+    const [serverEnvAgentsDebit, setServerEnvAgentsDebit] = useState<{ wallet: string; bps: number }[]>([]);    const [serverIsDualSplit, setServerIsDualSplit] = useState(false);
+    const [serverCreditPlatformBps, setServerCreditPlatformBps] = useState<number>(150);
+    const [serverDebitPlatformBps, setServerDebitPlatformBps] = useState<number>(100);
+
+    const getCreditPlatformBps = () => {
+        if (serverCreditPlatformBps) return serverCreditPlatformBps;
+        return parseInt(process.env.NEXT_PUBLIC_CREDIT_SPLIT_PLATFORM_BPS || "150") || 150;
+    };
+    const getDebitPlatformBps = () => {
+        if (serverDebitPlatformBps) return serverDebitPlatformBps;
+        return parseInt(process.env.NEXT_PUBLIC_PLATFORM_BPS || process.env.NEXT_PUBLIC_PLATFORM_SPLIT_BPS || "100") || 100;
+    };
+    const getEnvAgents = (isDebit: boolean): { wallet: string; bps: number }[] => {
+        if (isDebit) {
+            if (serverEnvAgentsDebit && serverEnvAgentsDebit.length > 0) {
+                return serverEnvAgentsDebit;
+            }
+        } else {
+            if (serverEnvAgents && serverEnvAgents.length > 0) {
+                return serverEnvAgents;
+            }
+        }
+        // Client-side fallback
+        const list: { wallet: string; bps: number }[] = [];
+        const wallet1 = process.env.NEXT_PUBLIC_AGENT_WALLET || "";
+        let bps1 = 0;
+        if (isDebit) {
+            bps1 = parseInt(process.env.NEXT_PUBLIC_AGENT_SPLIT_BPS || "0") || 0;
+        } else {
+            bps1 = parseInt(
+                process.env.NEXT_PUBLIC_CREDIT_SPLIT_AGENT_BPS || 
+                process.env.NEXT_PUBLIC_AGENT_SPLIT_BPS || 
+                "0"
+            ) || 0;
+        }
+        if (wallet1 && bps1 > 0) {
+            list.push({ wallet: wallet1, bps: bps1 });
+        }
+        const parseJson = (jsonStr?: string) => {
+            if (!jsonStr) return;
+            try {
+                let clean = jsonStr.trim();
+                if (clean.startsWith('"') && clean.endsWith('"')) {
+                    clean = clean.slice(1, -1);
+                }
+                const parsed = JSON.parse(clean);
+                if (Array.isArray(parsed)) {
+                    parsed.forEach((item: any) => {
+                        if (item && item.wallet && typeof item.bps === "number") {
+                            if (!list.some(x => x.wallet.toLowerCase() === item.wallet.toLowerCase())) {
+                                let bps = item.bps;
+                                if (wallet1 && item.wallet.toLowerCase() === wallet1.toLowerCase()) {
+                                    bps = bps1;
+                                }
+                                list.push({ wallet: item.wallet, bps });
+                            }
+                        }
+                    });
+                }
+            } catch {}
+        };
+        parseJson(process.env.NEXT_PUBLIC_AGENT_WALLETS_JSON);
+        return list;
+    };
+
+    const mergeAgents = (existing: { wallet: string; bps: number }[], isDebit: boolean): { wallet: string; bps: number }[] => {
+        const envAgents = getEnvAgents(isDebit);
+        const merged = [...existing];
+        
+        envAgents.forEach(envA => {
+            const idx = merged.findIndex(x => x.wallet.toLowerCase() === envA.wallet.toLowerCase());
+            if (idx >= 0) {
+                merged[idx] = { ...merged[idx], bps: envA.bps }; // Enforce env BPS
+            } else {
+                merged.push({ wallet: envA.wallet, bps: envA.bps });
+            }
+        });
+        
+        return merged;
+    };
+    const isAgentImmutable = (wallet: string, isDebit: boolean): boolean => {
+        if (!wallet) return false;
+        const w = wallet.toLowerCase();
+        const envAgents = getEnvAgents(isDebit);
+        return envAgents.some(x => x.wallet.toLowerCase() === w);
+    };
     const [items, setItems] = useState<ClientRequest[]>([]);
     const brand = useBrand();
     const [loading, setLoading] = useState(false);
@@ -220,9 +339,17 @@ export default function ClientRequestsPanel() {
     // Split Config State
     const [approvingId, setApprovingId] = useState<string | null>(null);
     const [feeExplainerAcked, setFeeExplainerAcked] = useState(false);
+
+    const [confirmState, setConfirmState] = useState<{
+        type: "delete" | "block" | "deploy";
+        targetId?: string;
+        mode?: "active" | "both";
+    } | null>(null);
     
+    console.log("[ClientRequestsPanel] Render cycle. confirmState =", confirmState);
+
     const isPlatformContainer = process.env.NEXT_PUBLIC_CONTAINER_TYPE !== "partner" && (!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge");
-    const [platformBps, setPlatformBps] = useState(isPlatformContainer ? 100 : 50); // Default platform fee
+    const [platformBps, setPlatformBps] = useState(150); // Default platform fee (will be dynamically overwritten by backend/effect)
     const [historyViewerId, setHistoryViewerId] = useState<string | null>(null);
     const [activeTabs, setActiveTabs] = useState<Record<string, string>>({});
 
@@ -232,6 +359,10 @@ export default function ClientRequestsPanel() {
 
     useEffect(() => {
         if (!brandKey) return;
+        if (serverIsDualSplit) {
+            setPlatformBps(getCreditPlatformBps());
+            return;
+        }
         (async () => {
             try {
                 // Fetch authoritative brand config
@@ -253,14 +384,50 @@ export default function ClientRequestsPanel() {
                 }
             }
         })();
-    }, [brandKey, brand, isPlatformContainer]);
+    }, [brandKey, brand, isPlatformContainer, serverIsDualSplit]);
 
     const [partnerBps, setPartnerBps] = useState(isPlatformContainer ? 0 : 50); // Default partner fee (0.5%)
     const [partnerWallet, setPartnerWallet] = useState("");
-    const [agents, setAgents] = useState<{ wallet: string; bps: number }[]>([]);
+    const [agents, setAgents] = useState<{ wallet: string; bps: number; isCustom?: boolean }[]>([]);
+    
+    // Debit Card Split Config States
+    const [partnerBpsDebit, setPartnerBpsDebit] = useState(0);
+    const [platformBpsDebit, setPlatformBpsDebit] = useState(100);
+    const [agentsDebit, setAgentsDebit] = useState<{ wallet: string; bps: number; isCustom?: boolean }[]>([]);
+    const [activeSplitTab, setActiveSplitTab] = useState<"credit" | "debit">("credit");
+
+    // Dynamic split bindings based on selected tab
+    const isDebitTab = activeSplitTab === "debit";
+    const currentPlatformBps = isDebitTab ? platformBpsDebit : platformBps;
+    const setCurrentPlatformBps = isDebitTab ? setPlatformBpsDebit : setPlatformBps;
+    const currentPartnerBps = isDebitTab ? partnerBpsDebit : partnerBps;
+    const setCurrentPartnerBps = isDebitTab ? setPartnerBpsDebit : setPartnerBps;
+    const currentAgents = isDebitTab ? agentsDebit : agents;
+    const setCurrentAgents = isDebitTab ? setAgentsDebit : setAgents;
+
     const [approvedAgents, setApprovedAgents] = useState<{ wallet: string; name: string; email: string }[]>([]);
     const [deploying, setDeploying] = useState(false);
     const [deployResult, setDeployResult] = useState<string>("");
+    const [deployResultDebit, setDeployResultDebit] = useState<string>("");
+
+    // Make success alerts ephemeral
+    useEffect(() => {
+        if (deployResult && !deployResult.startsWith("Error") && !deployResult.includes("failed")) {
+            const timer = setTimeout(() => {
+                setDeployResult("");
+            }, 5000);
+            return () => clearTimeout(timer);
+        }
+    }, [deployResult]);
+
+    useEffect(() => {
+        if (deployResultDebit && !deployResultDebit.startsWith("Error") && !deployResultDebit.includes("failed")) {
+            const timer = setTimeout(() => {
+                setDeployResultDebit("");
+            }, 5000);
+            return () => clearTimeout(timer);
+        }
+    }, [deployResultDebit]);
 
     // Search & Filter State
     const [searchQuery, setSearchQuery] = useState("");
@@ -329,8 +496,8 @@ export default function ClientRequestsPanel() {
     const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
     const paginatedItems = filteredItems.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-    const agentsBps = agents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
-    const merchantBps = 10000 - platformBps - partnerBps - agentsBps;
+    const agentsBps = currentAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
+    const merchantBps = 10000 - currentPlatformBps - currentPartnerBps - agentsBps;
 
     async function load() {
         try {
@@ -355,6 +522,21 @@ export default function ClientRequestsPanel() {
                 return tsB - tsA;
             });
             setItems(arr);
+            if (Array.isArray(j?.envAgents)) {
+                setServerEnvAgents(j.envAgents);
+            }
+            if (Array.isArray(j?.envAgentsDebit)) {
+                setServerEnvAgentsDebit(j.envAgentsDebit);
+            }
+            if (typeof j?.isDualSplit === "boolean") {
+                setServerIsDualSplit(j.isDualSplit);
+            }
+            if (typeof j?.creditPlatformBps === "number") {
+                setServerCreditPlatformBps(j.creditPlatformBps);
+            }
+            if (typeof j?.debitPlatformBps === "number") {
+                setServerDebitPlatformBps(j.debitPlatformBps);
+            }
         } catch (e: any) {
             setError(e?.message || "Failed to load requests");
         } finally {
@@ -367,7 +549,24 @@ export default function ClientRequestsPanel() {
         load();
     }, [account?.address, brandKey]);
 
-    async function updateStatus(id: string, status: "pending" | "approved" | "rejected" | "blocked" | "orphaned", splitConfig?: { partnerBps: number, merchantBps: number; platformBps?: number; agents?: { wallet: string; bps: number }[] }, shouldClose = true, shopConfigUpdate?: any) {
+    async function updateStatus(
+        id: string, 
+        status: "pending" | "approved" | "rejected" | "blocked" | "orphaned", 
+        splitConfig?: { 
+            partnerBps: number; 
+            merchantBps: number; 
+            platformBps?: number; 
+            agents?: { wallet: string; bps: number; isCustom?: boolean }[];
+            splitConfigCredit?: {
+                partnerBps: number;
+                merchantBps: number;
+                platformBps?: number;
+                agents?: { wallet: string; bps: number; isCustom?: boolean }[];
+            };
+        }, 
+        shouldClose = true, 
+        shopConfigUpdate?: any
+    ): Promise<boolean> {
         try {
             setError("");
             setInfo("");
@@ -392,49 +591,80 @@ export default function ClientRequestsPanel() {
             const j = await r.json().catch(() => ({}));
             if (!r.ok || j?.error) {
                 setError(j?.error || "Update failed");
-                return;
+                return false;
             }
             if (shouldClose) {
                 setInfo(`Request ${status}.`);
             }
             await load();
             if (shouldClose) setApprovingId(null);
+            return true;
         } catch (e: any) {
             setError(e?.message || "Action failed");
+            return false;
         }
     }
 
 
 
 
-    const openApprovalModal = (id: string, existingSplit?: { platformBps?: number, partnerBps: number, agents?: { wallet: string, bps: number }[] }) => {
+    const openApprovalModal = (
+        id: string, 
+        existingSplit?: { platformBps?: number, partnerBps: number, agents?: { wallet: string, bps: number }[] },
+        existingSplitCredit?: { platformBps?: number, partnerBps: number, agents?: { wallet: string, bps: number }[] }
+    ) => {
         setApprovingId(id);
         setFeeExplainerAcked(false);
         setDeployResult("");
+        setDeployResultDebit("");
+        setActiveSplitTab("credit"); // Default to Credit/Crypto tab
         const envPartner = process.env.NEXT_PUBLIC_PARTNER_WALLET_ADDRESS || "";
         const brandPartner = (brand as any)?.partnerWallet || "";
         setPartnerWallet(brandPartner || envPartner || "");
+
+        // Build base agents list from brand context
+        let baseAgents: { wallet: string; bps: number }[] = [];
+        if (Array.isArray((brand as any)?.agents) && (brand as any).agents.length > 0) {
+            baseAgents = (brand as any).agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps }));
+        } else {
+            const defAgentWallet = (brand as any)?.agentWallet || "";
+            const defAgentFee = (brand as any)?.agentFeeBps || 0;
+            if (defAgentWallet && defAgentFee > 0) {
+                baseAgents = [{ wallet: defAgentWallet, bps: defAgentFee }];
+            }
+        }
+
+        // Initialize Credit Split States
         if (existingSplit) {
             setPartnerBps(existingSplit.partnerBps ?? (isPlatformContainer ? 0 : 50));
-            if (existingSplit.platformBps !== undefined) setPlatformBps(existingSplit.platformBps);
-            setAgents(existingSplit.agents || []);
+            if (existingSplit.platformBps !== undefined) {
+                setPlatformBps(existingSplit.platformBps);
+            } else {
+                setPlatformBps(serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? 100 : 50));
+            }
+            setAgents(mergeAgents(existingSplit.agents || [], false));
         } else {
             setPartnerBps(isPlatformContainer ? 0 : 50); // Reset to default
-            if (isPlatformContainer) setPlatformBps(100);
-            
-            if (Array.isArray((brand as any)?.agents) && (brand as any).agents.length > 0) {
-                setAgents((brand as any).agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps })));
-            } else {
-                const defAgentWallet = (brand as any)?.agentWallet || "";
-                const defAgentFee = (brand as any)?.agentFeeBps || 0;
-                if (defAgentWallet && defAgentFee > 0) {
-                    setAgents([{ wallet: defAgentWallet, bps: defAgentFee }]);
-                } else {
-                    setAgents([]);
-                }
-            }
+            setPlatformBps(serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? 100 : 50));
+            setAgents(mergeAgents(baseAgents, false));
             setLastVerifiedConfig(null); // No verified config for new splits
         }
+
+        // Initialize Debit Split States
+        if (existingSplitCredit) {
+            setPartnerBpsDebit(existingSplitCredit.partnerBps ?? 0);
+            if (existingSplitCredit.platformBps !== undefined) {
+                setPlatformBpsDebit(existingSplitCredit.platformBps);
+            } else {
+                setPlatformBpsDebit(serverIsDualSplit ? getDebitPlatformBps() : 150);
+            }
+            setAgentsDebit(mergeAgents(existingSplitCredit.agents || [], true));
+        } else {
+            setPartnerBpsDebit(0);
+            setPlatformBpsDebit(serverIsDualSplit ? getDebitPlatformBps() : 150);
+            setAgentsDebit(mergeAgents(baseAgents, true));
+        }
+
         // Fetch approved agents for dropdown
         (async () => {
             try {
@@ -446,64 +676,78 @@ export default function ClientRequestsPanel() {
     };
 
     // Calculate aggregate fee for display and updates
-    const totalFeeBps = platformBps + partnerBps + agentsBps;
-
+    const totalFeeBps = currentPlatformBps + currentPartnerBps + agentsBps;
     const [lastVerifiedConfig, setLastVerifiedConfig] = useState<{ partnerBps: number; agents: { wallet: string; bps: number }[] } | null>(null);
+    const [lastVerifiedConfigDebit, setLastVerifiedConfigDebit] = useState<{ partnerBps: number; agents: { wallet: string; bps: number }[] } | null>(null);
 
     // Deep compare to check for changes
     const hasChanges = React.useMemo(() => {
-        if (!lastVerifiedConfig) return true; // Enable by default if never verified (assume new)
+        const targetVerified = isDebitTab ? lastVerifiedConfigDebit : lastVerifiedConfig;
+        if (!targetVerified) return true; // Enable by default if never verified (assume new)
 
-        const currentPartnerBps = partnerBps;
-        const verifiedPartnerBps = lastVerifiedConfig.partnerBps;
+        const currentPartBps = isDebitTab ? partnerBpsDebit : partnerBps;
+        const verifiedPartBps = targetVerified.partnerBps;
 
-        if (currentPartnerBps !== verifiedPartnerBps) return true;
+        if (currentPartBps !== verifiedPartBps) return true;
 
-        if (agents.length !== lastVerifiedConfig.agents.length) return true;
+        const activeAgents = isDebitTab ? agentsDebit : agents;
+        if (activeAgents.length !== targetVerified.agents.length) return true;
 
         // Sort by wallet to compare agnostic of order
-        const currentAgents = [...agents].sort((a, b) => a.wallet.localeCompare(b.wallet));
-        const verifiedAgents = [...lastVerifiedConfig.agents].sort((a, b) => a.wallet.localeCompare(b.wallet));
+        const sortedCurrent = [...activeAgents].sort((a, b) => a.wallet.localeCompare(b.wallet));
+        const sortedVerified = [...targetVerified.agents].sort((a, b) => a.wallet.localeCompare(b.wallet));
 
-        for (let i = 0; i < currentAgents.length; i++) {
-            if (currentAgents[i].wallet.toLowerCase() !== verifiedAgents[i].wallet.toLowerCase()) return true;
-            if (currentAgents[i].bps !== verifiedAgents[i].bps) return true;
+        for (let i = 0; i < sortedCurrent.length; i++) {
+            if (sortedCurrent[i].wallet.toLowerCase() !== sortedVerified[i].wallet.toLowerCase()) return true;
+            if (sortedCurrent[i].bps !== sortedVerified[i].bps) return true;
         }
 
         return false;
-    }, [partnerBps, agents, lastVerifiedConfig]);
+    }, [isDebitTab, partnerBps, partnerBpsDebit, agents, agentsDebit, lastVerifiedConfig, lastVerifiedConfigDebit]);
 
-    const handleVerify = async () => {
-        if (!approvingId) return;
-        const req = items.find(i => i.wallet === approvingId);
-        if (!req) return;
-
-        setDeploying(true);
-        setDeployResult("");
-
+    const verifyContracts = async (
+        targetReq: ClientRequest,
+        creditAddr: string | undefined | null,
+        debitAddr: string | undefined | null
+    ): Promise<{ creditVerified: boolean; debitVerified: boolean }> => {
         try {
-            // 1. Get the expected address (from request or history)
-            const addr = req.deployedSplitAddress || (req.splitHistory && req.splitHistory.length > 0 ? req.splitHistory[0].address : "");
+            const { getSplitConfig } = await import("@/lib/thirdweb/split");
+            
+            let creditConfig = null;
+            let debitConfig = null;
+            let creditVerified = false;
+            let debitVerified = false;
 
-            if (!addr) {
-                setDeployResult("No deployment found to verify.");
-                setDeploying(false);
-                return;
+            if (creditAddr && creditAddr.trim()) {
+                try {
+                    creditConfig = await getSplitConfig(creditAddr);
+                    creditVerified = !!(creditConfig && creditConfig.recipients);
+                } catch (e) {
+                    console.error("[ClientRequestsPanel] credit verification failed:", e);
+                }
             }
 
-            // 2. Fetch live config
-            const { getSplitConfig } = await import("@/lib/thirdweb/split");
-            const liveConfig = await getSplitConfig(addr);
+            if (debitAddr && debitAddr.trim()) {
+                try {
+                    debitConfig = await getSplitConfig(debitAddr);
+                    debitVerified = !!(debitConfig && debitConfig.recipients);
+                } catch (e) {
+                    console.error("[ClientRequestsPanel] debit verification failed:", e);
+                }
+            }
 
-            if (liveConfig && liveConfig.recipients) {
-                const platformW = (process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "").toLowerCase();
-                const partnerW = partnerWallet.toLowerCase();
-                const merchantW = req.wallet.toLowerCase();
+            const platformW = (process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "").toLowerCase();
+            const partnerW = partnerWallet.toLowerCase();
+            const merchantW = targetReq.wallet.toLowerCase();
 
+            // Prepare next state config update object
+            let nextConfig: any = {};
+
+            if (creditVerified && creditConfig && creditConfig.recipients) {
                 let foundPartnerBps = 0;
                 const foundAgents: { wallet: string; bps: number }[] = [];
 
-                liveConfig.recipients.forEach(r => {
+                creditConfig.recipients.forEach(r => {
                     const w = r.address.toLowerCase();
                     if (w === platformW) {
                         // Platform fee
@@ -512,81 +756,294 @@ export default function ClientRequestsPanel() {
                     } else if (w === partnerW && partnerW) {
                         foundPartnerBps += r.bps;
                     } else {
-                        // Assume agent
                         foundAgents.push({ wallet: r.address, bps: r.bps });
                     }
                 });
 
-                // Update UI and Verified Config state
+                const mergedAgents = mergeAgents(foundAgents, false);
                 setPartnerBps(foundPartnerBps);
-                setAgents(foundAgents);
-                setLastVerifiedConfig({ partnerBps: foundPartnerBps, agents: foundAgents });
+                setAgents(mergedAgents);
+                setLastVerifiedConfig({ partnerBps: foundPartnerBps, agents: mergedAgents });
 
-                // Calculate merchantBps based on verified values
-                const verifiedAgentsBps = foundAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
+                const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
                 const verifiedMerchantBps = 10000 - platformBps - foundPartnerBps - verifiedAgentsBps;
 
-                // Persist to merchant's site:config in database
-                await updateStatus(
-                    req.id,
-                    req.status as any,
-                    {
-                        partnerBps: foundPartnerBps,
-                        merchantBps: verifiedMerchantBps,
-                        platformBps: platformBps,
-                        agents: foundAgents
-                    },
-                    false // Don't close modal
-                );
-
-                setDeployResult(`Verified & Synced: ${addr}`);
+                nextConfig = {
+                    ...nextConfig,
+                    partnerBps: foundPartnerBps,
+                    merchantBps: verifiedMerchantBps,
+                    platformBps: platformBps,
+                    agents: mergedAgents
+                };
             } else {
-                setDeployResult("Verification failed: Could not read contract.");
+                nextConfig = {
+                    ...nextConfig,
+                    partnerBps: partnerBps,
+                    merchantBps: 10000 - platformBps - partnerBps - agents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0),
+                    platformBps: platformBps,
+                    agents: agents
+                };
+            }
+
+            if (debitVerified && debitConfig && debitConfig.recipients) {
+                let foundPartnerBps = 0;
+                const foundAgents: { wallet: string; bps: number }[] = [];
+
+                debitConfig.recipients.forEach(r => {
+                    const w = r.address.toLowerCase();
+                    if (w === platformW) {
+                        // Platform fee
+                    } else if (w === merchantW) {
+                        // Merchant share
+                    } else if (w === partnerW && partnerW) {
+                        foundPartnerBps += r.bps;
+                    } else {
+                        foundAgents.push({ wallet: r.address, bps: r.bps });
+                    }
+                });
+
+                const mergedAgents = mergeAgents(foundAgents, true);
+                setPartnerBpsDebit(foundPartnerBps);
+                setAgentsDebit(mergedAgents);
+                setLastVerifiedConfigDebit({ partnerBps: foundPartnerBps, agents: mergedAgents });
+
+                const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
+                const verifiedMerchantBps = 10000 - platformBpsDebit - foundPartnerBps - verifiedAgentsBps;
+
+                nextConfig.splitConfigCredit = {
+                    partnerBps: foundPartnerBps,
+                    merchantBps: verifiedMerchantBps,
+                    platformBps: platformBpsDebit,
+                    agents: mergedAgents
+                };
+            } else {
+                nextConfig.splitConfigCredit = {
+                    partnerBps: partnerBpsDebit,
+                    merchantBps: 10000 - platformBpsDebit - partnerBpsDebit - agentsDebit.reduce((sum, a) => sum + (Number(a.bps) || 0), 0),
+                    platformBps: platformBpsDebit,
+                    agents: agentsDebit
+                };
+            }
+
+            if (creditVerified || debitVerified) {
+                await updateStatus(targetReq.id, targetReq.status as any, nextConfig, false);
+            }
+
+            return { creditVerified, debitVerified };
+        } catch (e) {
+            console.error("[ClientRequestsPanel] verifyContracts error:", e);
+            return { creditVerified: false, debitVerified: false };
+        }
+    };
+
+    const verifyContractByAddress = async (
+        targetReq: ClientRequest,
+        contractAddr: string,
+        isDebit: boolean
+    ): Promise<boolean> => {
+        const res = await verifyContracts(
+            targetReq,
+            isDebit ? undefined : contractAddr,
+            isDebit ? contractAddr : undefined
+        );
+        return isDebit ? res.debitVerified : res.creditVerified;
+    };
+
+    const handleVerify = async () => {
+        if (!approvingId) return;
+        const req = items.find(i => i.wallet === approvingId);
+        if (!req) return;
+
+        setDeploying(true);
+        setDeployResult("");
+        setDeployResultDebit("");
+
+        try {
+            const isDual = serverIsDualSplit;
+            const creditAddr = req.deployedSplitAddress || (req.splitHistory && req.splitHistory.length > 0 ? req.splitHistory.find(x => !x.isCredit)?.address : "");
+            const debitAddr = req.deployedSplitAddressCredit || (req.splitHistory && req.splitHistory.length > 0 ? req.splitHistory.find(x => x.isCredit)?.address : "");
+
+            if (isDual) {
+                if (!creditAddr && !debitAddr) {
+                    setDeployResult("Error: No Credit/Crypto deployment found to verify.");
+                    setDeployResultDebit("Error: No Debit deployment found to verify.");
+                    setDeploying(false);
+                    return;
+                }
+
+                const res = await verifyContracts(req, creditAddr, debitAddr);
+                if (creditAddr) {
+                    setDeployResult(res.creditVerified ? `Verified & Synced Credit: ${creditAddr}` : "Error: Credit Verification Failed.");
+                } else {
+                    setDeployResult("Error: No Credit/Crypto deployment found to verify.");
+                }
+                if (debitAddr) {
+                    setDeployResultDebit(res.debitVerified ? `Verified & Synced Debit: ${debitAddr}` : "Error: Debit Verification Failed.");
+                } else {
+                    setDeployResultDebit("Error: No Debit deployment found to verify.");
+                }
+            } else {
+                const addr = isDebitTab ? debitAddr : creditAddr;
+                if (!addr) {
+                    if (isDebitTab) {
+                        setDeployResultDebit(`Error: No Debit deployment found to verify.`);
+                    } else {
+                        setDeployResult(`Error: No Credit/Crypto deployment found to verify.`);
+                    }
+                    setDeploying(false);
+                    return;
+                }
+
+                const verified = await verifyContractByAddress(req, addr, isDebitTab);
+                if (isDebitTab) {
+                    setDeployResultDebit(verified ? `Verified & Synced Debit: ${addr}` : "Error: Verification failed: Could not read contract.");
+                } else {
+                    setDeployResult(verified ? `Verified & Synced Credit/Crypto: ${addr}` : "Error: Verification failed: Could not read contract.");
+                }
             }
 
         } catch (e: any) {
             console.error(e);
-            setDeployResult("Error: " + (e?.message || "Verification failed"));
+            const errMsg = "Error: " + (e?.message || "Verification failed");
+            if (serverIsDualSplit) {
+                setDeployResult(errMsg);
+                setDeployResultDebit(errMsg);
+            } else if (isDebitTab) {
+                setDeployResultDebit(errMsg);
+            } else {
+                setDeployResult(errMsg);
+            }
         } finally {
             setDeploying(false);
         }
     };
 
-    const handleDeploy = async (force = false) => {
-        if (!approvingId || !account) return;
+    const handleDeploy = async (force = false, deployMode: "active" | "both" = "active"): Promise<boolean> => {
+        if (!approvingId || !account) return false;
         const req = items.find(i => i.wallet === approvingId);
-        if (!req) return;
+        if (!req) return false;
 
-        // Auto-save config before deploying
-        await updateStatus(req.id, req.status as any, { partnerBps, merchantBps, platformBps, agents }, false);
+        // Auto-save configs before deploying
+        const creditConfig = { 
+            partnerBps, 
+            merchantBps: 10000 - platformBps - partnerBps - agents.reduce((s, a) => s + (Number(a.bps) || 0), 0), 
+            platformBps, 
+            agents 
+        };
+        const debitConfig = { 
+            partnerBps: partnerBpsDebit, 
+            merchantBps: 10000 - platformBpsDebit - partnerBpsDebit - agentsDebit.reduce((s, a) => s + (Number(a.bps) || 0), 0), 
+            platformBps: platformBpsDebit, 
+            agents: agentsDebit 
+        };
+        await updateStatus(req.id, req.status as any, { ...creditConfig, splitConfigCredit: debitConfig }, false);
+
+        const isDual = serverIsDualSplit;
+        const shouldDeployCredit = deployMode === "both" || (deployMode === "active" && !isDebitTab);
+        const shouldDeployDebit = isDual && (deployMode === "both" || (deployMode === "active" && isDebitTab));
 
         try {
             setDeploying(true);
             setDeployResult("");
-            // Use ensureSplitForWallet to deploy/check split contract
-            const addr = await ensureSplitForWallet(
-                account,
-                brandKey,
-                partnerBps,
-                req.wallet,
-                agents,
-                partnerWallet, // Pass explicit partner wallet override
-                platformBps, // Pass explicit platform fee override
-                force // forceRedeploy
-            );
+            setDeployResultDebit("");
 
-            if (addr) {
-                setDeployResult(`Deployed: ${addr}`);
+            let addr: string | undefined = undefined;
+            let addrCredit: string | undefined = undefined;
+
+            if (shouldDeployCredit) {
+                // Deploy standard (Credit/Crypto) split
+                addr = await ensureSplitForWallet(
+                    account,
+                    brandKey,
+                    partnerBps,
+                    req.wallet,
+                    agents,
+                    partnerWallet, // Pass explicit partner wallet override
+                    platformBps, // Pass explicit platform fee override
+                    force // forceRedeploy
+                );
+            }
+
+            if (shouldDeployDebit) {
+                // Deploy alternate (Debit) split
+                addrCredit = await ensureSplitForWallet(
+                    account,
+                    brandKey,
+                    partnerBpsDebit,
+                    req.wallet,
+                    agentsDebit,
+                    partnerWallet,
+                    platformBpsDebit,
+                    force,
+                    true
+                );
+            }
+
+            const successCredit = !shouldDeployCredit || !!addr;
+            const successDebit = !shouldDeployDebit || !!addrCredit;
+
+            if (successCredit && successDebit) {
+                // Immediately verify splits in a unified call if both or either deployed
+                const verifyRes = await verifyContracts(
+                    req,
+                    shouldDeployCredit ? addr : undefined,
+                    shouldDeployDebit ? addrCredit : undefined
+                );
+                
+                if (shouldDeployCredit && addr) {
+                    const creditVerifyMsg = verifyRes.creditVerified ? "Credit contract verified on-chain." : "Credit verification failed on-chain.";
+                    setDeployResult(`Deployed Credit/Crypto Split: ${addr}\n${creditVerifyMsg}`);
+                    setLastVerifiedConfig({ partnerBps, agents });
+                }
+                
+                if (shouldDeployDebit && addrCredit) {
+                    const debitVerifyMsg = verifyRes.debitVerified ? "Debit contract verified on-chain." : "Debit verification failed on-chain.";
+                    setDeployResultDebit(`Deployed Debit Split: ${addrCredit}\n${debitVerifyMsg}`);
+                    setLastVerifiedConfigDebit({ partnerBps: partnerBpsDebit, agents: agentsDebit });
+                }
+
                 await load(); // Refresh list to show updated history/config
-
-                // Update verified config to match what we just deployed
-                setLastVerifiedConfig({ partnerBps, agents });
+                return true;
             } else {
-                setDeployResult("Deployment failed or cancelled.");
+                if (!successCredit) {
+                    setDeployResult("Error: Credit/Crypto deployment failed or cancelled.");
+                }
+                if (!successDebit) {
+                    setDeployResultDebit("Error: Debit deployment failed or cancelled.");
+                }
+                return false;
             }
         } catch (e: any) {
-            console.error(e);
-            setDeployResult("Error: " + (e?.message || "Deployment failed"));
+            console.error("[ClientRequestsPanel] Deploy failed:", e);
+            let errMsg = "Deployment failed.";
+            if (e) {
+                if (typeof e === "string") {
+                    errMsg = e;
+                } else if (e.message && typeof e.message === "string") {
+                    errMsg = e.message;
+                    if (errMsg.includes("User rejected") || errMsg.includes("4001") || errMsg.includes("rejected the request")) {
+                        errMsg = "Transaction rejected by user.";
+                    } else if (errMsg.includes("insufficient funds") || errMsg.includes("INSUFFICIENT_FUNDS")) {
+                        errMsg = "Insufficient funds for transaction gas.";
+                    }
+                } else if (e.reason && typeof e.reason === "string") {
+                    errMsg = e.reason;
+                } else {
+                    try {
+                        const keys = Object.keys(e);
+                        if (keys.length > 0) {
+                            errMsg = JSON.stringify(e);
+                        }
+                    } catch {}
+                }
+            }
+            if (shouldDeployCredit) {
+                setDeployResult("Error: " + errMsg);
+            }
+            if (shouldDeployDebit) {
+                setDeployResultDebit("Error: " + errMsg);
+            }
+            return false;
         } finally {
             setDeploying(false);
         }
@@ -596,42 +1053,29 @@ export default function ClientRequestsPanel() {
         if (!approvingId) return;
         const req = items.find(i => i.wallet === approvingId);
         if (!req) return;
-        updateStatus(req.id, "approved", { partnerBps, merchantBps, platformBps, agents });
+        const creditConfig = { 
+            partnerBps, 
+            merchantBps: 10000 - platformBps - partnerBps - agents.reduce((s, a) => s + (Number(a.bps) || 0), 0), 
+            platformBps, 
+            agents 
+        };
+        const debitConfig = { 
+            partnerBps: partnerBpsDebit, 
+            merchantBps: 10000 - platformBpsDebit - partnerBpsDebit - agentsDebit.reduce((s, a) => s + (Number(a.bps) || 0), 0), 
+            platformBps: platformBpsDebit, 
+            agents: agentsDebit 
+        };
+        updateStatus(req.id, "approved", { ...creditConfig, splitConfigCredit: debitConfig });
     };
 
     async function deleteRequest(id: string) {
-        if (!confirm("Delete this request? The user will be able to apply again.")) return;
-        const targetReq = items.find(i => i.id === id);
-        try {
-            setError("");
-            setInfo("");
-            const r = await fetch("/api/partner/client-requests", {
-                method: "DELETE",
-                headers: {
-                    "Content-Type": "application/json",
-                    "x-wallet": account?.address || "",
-                    "x-brand-key": (brand as any)?.key || "",
-                },
-                body: JSON.stringify({
-                    requestId: id,
-                    wallet: targetReq?.wallet // Pass wallet to allow orphan deletion
-                }),
-            });
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok || j?.error) {
-                setError(j?.error || "Delete failed");
-                return;
-            }
-            setInfo("Request deleted. User can apply again.");
-            await load();
-        } catch (e: any) {
-            setError(e?.message || "Delete failed");
-        }
+        console.log("[ClientRequestsPanel] deleteRequest called. id =", id);
+        setConfirmState({ type: "delete", targetId: id });
     }
 
     async function blockUser(id: string) {
-        if (!confirm("Block this applicant? They will not be able to apply again until unblocked.")) return;
-        await updateStatus(id, "blocked");
+        console.log("[ClientRequestsPanel] blockUser called. id =", id);
+        setConfirmState({ type: "block", targetId: id });
     }
 
     const toggleExpand = (id: string) => {
@@ -643,7 +1087,7 @@ export default function ClientRequestsPanel() {
 
     return (
         <div className="w-full space-y-6 pb-24 admin-panel-enter">
-            <div className="rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6 space-y-6">
+            <div className="rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6 space-y-6 min-h-[calc(100vh-220px)]">
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-xl font-semibold">Client Requests</h2>
@@ -774,7 +1218,7 @@ export default function ClientRequestsPanel() {
                                                     {(req.shopLogoUrl || req.logoUrl || req.faviconUrl) ? (
                                                         <img src={req.shopLogoUrl || req.logoUrl || req.faviconUrl} className="w-full h-full object-contain" />
                                                     ) : (
-                                                        <span className="text-lg">🏢</span>
+                                                        <Store className="w-5 h-5 text-muted-foreground" />
                                                     )}
                                                 </div>
                                                 <div>
@@ -802,22 +1246,60 @@ export default function ClientRequestsPanel() {
                                                     <span className="text-muted-foreground">Type: </span>
                                                     <span className="uppercase text-xs font-mono bg-foreground/5 px-1.5 py-0.5 rounded">{req.businessType || "?"}</span>
                                                 </div>
-                                                {(req.deployedSplitAddress || (req.splitHistory && req.splitHistory.length > 0)) && (
+                                                {(req.deployedSplitAddress || req.deployedSplitAddressCredit || (req.splitHistory && req.splitHistory.length > 0)) && (
                                                     <div className="text-xs flex items-center justify-between gap-2">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-muted-foreground">Split: </span>
-                                                            <a
-                                                                href={`https://basescan.org/address/${req.deployedSplitAddress || req.splitHistory?.[0]?.address}`}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                className="font-mono text-emerald-400 hover:text-emerald-300 hover:underline inline-flex items-center gap-1"
-                                                                title="View Contract on Basescan"
-                                                            >
-                                                                {(req.deployedSplitAddress || req.splitHistory?.[0]?.address || "").slice(0, 6)}...{(req.deployedSplitAddress || req.splitHistory?.[0]?.address || "").slice(-4)}
-                                                                <svg className="w-3 h-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                                                </svg>
-                                                            </a>
+                                                        <div className="flex flex-col gap-1 justify-center">
+                                                            {req.deployedSplitAddress && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-muted-foreground">Credit/Crypto: </span>
+                                                                    <a
+                                                                        href={`https://basescan.org/address/${req.deployedSplitAddress}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="font-mono text-emerald-400 hover:text-emerald-300 hover:underline inline-flex items-center gap-1"
+                                                                        title="View Credit/Crypto Split Contract on Basescan"
+                                                                    >
+                                                                        {req.deployedSplitAddress.slice(0, 6)}...{req.deployedSplitAddress.slice(-4)}
+                                                                        <svg className="w-3 h-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                                        </svg>
+                                                                    </a>
+                                                                </div>
+                                                            )}
+                                                            {req.deployedSplitAddressCredit && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-muted-foreground">Debit: </span>
+                                                                    <a
+                                                                        href={`https://basescan.org/address/${req.deployedSplitAddressCredit}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="font-mono text-purple-400 hover:text-purple-300 hover:underline inline-flex items-center gap-1"
+                                                                        title="View Debit Split Contract on Basescan"
+                                                                    >
+                                                                        {req.deployedSplitAddressCredit.slice(0, 6)}...{req.deployedSplitAddressCredit.slice(-4)}
+                                                                        <svg className="w-3 h-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                                        </svg>
+                                                                    </a>
+                                                                </div>
+                                                            )}
+                                                            {!req.deployedSplitAddress && !req.deployedSplitAddressCredit && req.splitHistory && req.splitHistory.length > 0 && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-muted-foreground">Split: </span>
+                                                                    <a
+                                                                        href={`https://basescan.org/address/${req.splitHistory[0].address}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="font-mono text-emerald-400 hover:text-emerald-300 hover:underline inline-flex items-center gap-1"
+                                                                        title="View Contract on Basescan"
+                                                                    >
+                                                                        {req.splitHistory[0].address.slice(0, 6)}...{req.splitHistory[0].address.slice(-4)}
+                                                                        <svg className="w-3.5 h-3.5 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                                        </svg>
+                                                                    </a>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                         <button
                                                             onClick={() => setHistoryViewerId(req.wallet)}
@@ -846,7 +1328,7 @@ export default function ClientRequestsPanel() {
                                                     <>
                                                         <button
                                                             className="px-3 py-1.5 rounded-lg bg-green-500/10 hover:bg-green-500/20 text-green-500 border border-green-500/20 text-xs font-semibold transition-colors"
-                                                            onClick={() => openApprovalModal(req.wallet, req.splitConfig)}
+                                                            onClick={() => openApprovalModal(req.wallet, req.splitConfig, req.splitConfigCredit)}
                                                         >
                                                             Approve
                                                         </button>
@@ -862,7 +1344,7 @@ export default function ClientRequestsPanel() {
                                                     <>
                                                         <button
                                                             className="px-3 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 text-xs font-semibold transition-colors flex items-center gap-1"
-                                                            onClick={() => openApprovalModal(req.wallet, req.splitConfig)}
+                                                            onClick={() => openApprovalModal(req.wallet, req.splitConfig, req.splitConfigCredit)}
                                                             title="Update Revenue Split"
                                                         >
                                                             <span>
@@ -914,7 +1396,10 @@ export default function ClientRequestsPanel() {
                                                 )}
                                                 <button
                                                     className="px-3 py-1.5 rounded-lg bg-gray-500/10 hover:bg-gray-500/20 text-gray-400 border border-gray-500/20 text-xs font-semibold transition-colors"
-                                                    onClick={() => deleteRequest(req.id)}
+                                                    onClick={() => {
+                                                        console.log("[ClientRequestsPanel] Clicked Delete button. req.id =", req.id, "req =", req);
+                                                        deleteRequest(req.id);
+                                                    }}
                                                     title="Delete request (allows re-application)"
                                                 >
                                                     Delete
@@ -1066,7 +1551,7 @@ export default function ClientRequestsPanel() {
                                                                         secondaryColor: req.secondaryColor,
                                                                         layoutMode: req.layoutMode,
                                                                     }}
-                                                                    onSave={async (data) => updateStatus(req.id, req.status, undefined, false, data)}
+                                                                    onSave={async (data) => { await updateStatus(req.id, req.status, undefined, false, data); }}
                                                                 />
                                                             </div>
                                                         </div>
@@ -1082,7 +1567,7 @@ export default function ClientRequestsPanel() {
                             <tr>
                                 <td className="px-4 py-8 text-center text-muted-foreground" colSpan={5}>
                                     <div className="flex flex-col items-center justify-center gap-2">
-                                        <span className="text-2xl">📭</span>
+                                        <Inbox className="w-8 h-8 text-zinc-600" />
                                         <span>No client requests found.</span>
                                     </div>
                                 </td>
@@ -1123,25 +1608,25 @@ export default function ClientRequestsPanel() {
             )}
             {/* Split Config Modal */}
             {
-                approvingId && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-                        <div className="w-full max-w-4xl bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[85vh] sm:max-h-[90vh]">
+                approvingId && typeof window !== "undefined" && createPortal(
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 overflow-y-auto">
+                        <div className="w-full max-w-4xl bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[80vh] sm:max-h-[85vh]">
                             <div className="p-4 sm:p-6 border-b border-white/5 flex-shrink-0">
                                 <h3 className="text-lg font-semibold text-white">Approve & Configure Splits</h3>
                                 <p className="text-xs text-zinc-400 mt-1">Configure revenue sharing for this merchant.</p>
                             </div>
 
-                            <div className="p-4 sm:p-6 overflow-y-auto">
+                            <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0">
                                 {/* Fee Explainer Gate — must acknowledge before configuring */}
                                 {!feeExplainerAcked ? (
                                     <div className="flex items-center justify-center min-h-[300px]">
                                         <div className="w-full max-w-lg p-6 rounded-xl bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-amber-600/10 border border-amber-500/25 animate-in fade-in zoom-in-95 duration-300">
                                             <div className="flex items-center gap-2 mb-4">
-                                                <span className="text-2xl">💡</span>
+                                                <Lightbulb className="w-6 h-6 text-amber-400" />
                                                 <h3 className="text-lg font-bold text-amber-200">How Fee-on-Top Works</h3>
                                             </div>
                                             <p className="text-sm text-gray-300 leading-relaxed mb-4">
-                                                Our fee model is different. The processing fee is <span className="text-amber-300 font-semibold">added on top</span> of the merchant&apos;s subtotal to create the customer&apos;s total. The split contract then distributes the <span className="text-white font-semibold">full total</span> — the merchant receives their base price, and the fee portion flows to the partner &amp; platform.
+                                                Our fee model is different. The processing fee is <span className="text-amber-300 font-semibold">added on top</span> of the merchant&apos;s subtotal to create the customer&apos;s total. The split contract then distributes the <span className="text-white font-semibold">full total</span> — the merchant receives their base price, and the fee portion flows to the partner, agent, &amp; platform.
                                             </p>
                                             <div className="bg-black/30 rounded-lg p-4 border border-white/5 text-sm font-mono space-y-1.5 mb-5">
                                                 <div className="text-zinc-500 uppercase tracking-wider text-[10px] mb-2">Example — 10% processing fee</div>
@@ -1152,7 +1637,8 @@ export default function ClientRequestsPanel() {
                                                 <div className="h-px bg-white/10 my-1.5" />
                                                 <div className="text-zinc-500 uppercase tracking-wider text-[10px] mt-2 mb-1.5">Split Distribution on $11.00</div>
                                                 <div className="flex justify-between"><span className="text-zinc-400">→ Merchant (90%)</span><span className="text-emerald-400">$9.90</span></div>
-                                                <div className="flex justify-between"><span className="text-zinc-400">→ Partner (9.75%)</span><span className="text-blue-400">$1.0725</span></div>
+                                                <div className="flex justify-between"><span className="text-zinc-400">→ Partner (9.25%)</span><span className="text-blue-400">$1.0175</span></div>
+                                                <div className="flex justify-between"><span className="text-zinc-400">→ Agent (0.50%)</span><span className="text-amber-400">$0.055</span></div>
                                                 <div className="flex justify-between"><span className="text-zinc-400">→ Platform (0.25%)</span><span className="text-zinc-300">$0.0275</span></div>
                                             </div>
                                             <button
@@ -1164,203 +1650,237 @@ export default function ClientRequestsPanel() {
                                         </div>
                                     </div>
                                 ) : (
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
-                                    {/* LEFT COLUMN: Configuration */}
                                     <div className="space-y-6">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <span className="bg-emerald-500/10 text-emerald-500 text-[10px] font-mono px-2 py-0.5 rounded uppercase tracking-wider">Configuration</span>
+                                    {serverIsDualSplit && (
+                                        <div className="flex gap-2 p-1 rounded-xl bg-black/40 border border-white/5 w-fit">
+                                            <button
+                                                type="button"
+                                                onClick={() => setActiveSplitTab("credit")}
+                                                className={`px-4 py-2 rounded-lg font-semibold text-xs transition-all flex items-center gap-1.5 ${activeSplitTab === "credit"
+                                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-lg shadow-emerald-500/5"
+                                                    : "text-zinc-400 border border-transparent hover:text-zinc-200"
+                                                }`}
+                                            >
+                                                <CreditCard className="w-3.5 h-3.5" />
+                                                <span>Credit & Crypto Split</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setActiveSplitTab("debit")}
+                                                className={`px-4 py-2 rounded-lg font-semibold text-xs transition-all flex items-center gap-1.5 ${activeSplitTab === "debit"
+                                                    ? "bg-purple-500/10 text-purple-400 border border-purple-500/20 shadow-lg shadow-purple-500/5"
+                                                    : "text-zinc-400 border border-transparent hover:text-zinc-200"
+                                                }`}
+                                            >
+                                                <CreditCard className="w-3.5 h-3.5" />
+                                                <span>Debit Card Split</span>
+                                            </button>
                                         </div>
-
-                                        {/* Partner Wallet Input */}
-                                        {!isPlatformContainer && (
-                                            <div className="space-y-2">
-                                                <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
-                                                    <span>Partner Wallet</span>
-                                                </div>
-                                                <input
-                                                    type="text"
-                                                    value={partnerWallet}
-                                                    onChange={(e) => setPartnerWallet(e.target.value)}
-                                                    placeholder="0x..."
-                                                    className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white focus:border-emerald-500 outline-none font-mono"
-                                                />
-                                                <p className="text-[10px] text-zinc-500">Destination wallet for partner fees.</p>
-                                            </div>
-                                        )}
-
-                                        {/* Platform Fee */}
-                                        <div className="space-y-2">
-                                            <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
-                                                <span>Platform Fee</span>
-                                                <span>{isPlatformContainer ? "adjustable" : "Locked"}</span>
-                                            </div>
-                                            {isPlatformContainer ? (
-                                                <div className="p-4 rounded-lg bg-zinc-800/50 border border-white/10 space-y-4">
-                                                    <div className="flex justify-between items-center">
-                                                        <span className="text-white text-sm font-medium">Platform</span>
-                                                        <div className="flex items-center gap-2">
-                                                            <input
-                                                                type="number"
-                                                                value={platformBps}
-                                                                onChange={(e) => setPlatformBps(Math.min(9900, Math.max(0, parseInt(e.target.value) || 0)))}
-                                                                className="w-16 bg-black/40 border border-white/10 rounded px-2 py-1 text-right font-mono text-sm text-white focus:border-emerald-500 outline-none"
-                                                            />
-                                                            <span className="text-zinc-500 text-xs">bps</span>
-                                                        </div>
-                                                    </div>
-                                                    <input
-                                                        type="range"
-                                                        min="0"
-                                                        max="1000" // Max 10%
-                                                        step="5"
-                                                        value={platformBps}
-                                                        onChange={(e) => setPlatformBps(parseInt(e.target.value))}
-                                                        className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                                                    />
-                                                    <div className="text-right text-xs text-emerald-400 font-mono">
-                                                        {(platformBps / 100).toFixed(2)}%
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div className="p-3 rounded-lg bg-black/20 border border-white/5 flex justify-between items-center opacity-70">
-                                                    <span className="text-zinc-400 text-sm">Platform</span>
-                                                    <span className="font-mono text-emerald-500">{(platformBps / 100).toFixed(2)}%</span>
-                                                </div>
-                                            )}
-                                            <div className="text-[10px] text-zinc-500 font-mono flex justify-between">
-                                                <span>Wallet</span>
-                                                <span className="select-all" title={process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS}>
-                                                    {(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e").slice(0, 6)}...{(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e").slice(-4)}
+                                    )}
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
+                                        {/* LEFT COLUMN: Configuration */}
+                                        <div className="space-y-6">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <span className={`text-[10px] font-mono px-2 py-0.5 rounded uppercase tracking-wider ${isDebitTab ? "bg-purple-500/10 text-purple-400" : "bg-emerald-500/10 text-emerald-500"}`}>
+                                                    {isDebitTab ? "Debit Configuration" : "Credit/Crypto Configuration"}
                                                 </span>
                                             </div>
-                                        </div>
 
-                                        {/* Partner Fee (Slider) - Hidden for platform containers */}
-                                        {!isPlatformContainer && (
-                                            <div className="space-y-3">
-                                                <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
-                                                    <span>Partner Fee</span>
-                                                    <span>adjustable</span>
-                                                </div>
-                                                <div className="p-4 rounded-lg bg-zinc-800/50 border border-white/10 space-y-4">
-                                                    <div className="flex justify-between items-center">
-                                                        <span className="text-white text-sm font-medium">Your Revenue</span>
-                                                        <div className="flex items-center gap-2">
-                                                            <input
-                                                                type="number"
-                                                                value={partnerBps}
-                                                                onChange={(e) => setPartnerBps(Math.min(9900, Math.max(0, parseInt(e.target.value) || 0)))}
-                                                                className="w-16 bg-black/40 border border-white/10 rounded px-2 py-1 text-right font-mono text-sm text-white focus:border-emerald-500 outline-none"
-                                                            />
-                                                            <span className="text-zinc-500 text-xs">bps</span>
-                                                        </div>
+                                            {/* Partner Wallet Input */}
+                                            {!isPlatformContainer && (
+                                                <div className="space-y-2">
+                                                    <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
+                                                        <span>Partner Wallet</span>
                                                     </div>
                                                     <input
-                                                        type="range"
-                                                        min="0"
-                                                        max="1000" // Max 10%
-                                                        step="5"
-                                                        value={partnerBps}
-                                                        onChange={(e) => setPartnerBps(parseInt(e.target.value))}
-                                                        className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                                                        type="text"
+                                                        value={partnerWallet}
+                                                        onChange={(e) => setPartnerWallet(e.target.value)}
+                                                        placeholder="0x..."
+                                                        className={`w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white outline-none font-mono ${isDebitTab ? "focus:border-purple-500" : "focus:border-emerald-500"}`}
                                                     />
-                                                    <div className="text-right text-xs text-emerald-400 font-mono">
-                                                        {(partnerBps / 100).toFixed(2)}%
-                                                    </div>
+                                                    <p className="text-[10px] text-zinc-500">Destination wallet for partner fees.</p>
                                                 </div>
-                                            </div>
-                                        )}
+                                            )}
 
-                                        {/* Agent Shares (Dynamic) */}
-                                        <div className="space-y-3">
-                                            <div className="flex justify-between items-center text-xs uppercase tracking-wider font-mono text-zinc-500">
-                                                <span>Agent Shares</span>
-                                                <button
-                                                    onClick={() => setAgents([...agents, { wallet: "", bps: 0 }])}
-                                                    className="text-emerald-400 hover:text-emerald-300 transition-colors"
-                                                >
-                                                    + Add Agent
-                                                </button>
-                                            </div>
+                                            {/* Platform Fee */}
                                             <div className="space-y-2">
-                                                {agents.map((agent, idx) => {
-                                                    const isRegistered = approvedAgents.some(a => a.wallet.toLowerCase() === agent.wallet.toLowerCase());
-                                                    const isCustomMode = agent.isCustom || (!isRegistered && agent.wallet !== "");
-                                                    return (
-                                                        <div key={idx} className="space-y-1.5">
-                                                            <div className="flex gap-2">
-                                                                <select
-                                                                    value={isRegistered ? agent.wallet.toLowerCase() : (agent.isCustom ? "__custom__" : (agent.wallet ? "__custom__" : ""))}
-                                                                    onChange={(e) => {
-                                                                        const newAgents = [...agents];
-                                                                        if (e.target.value === "__custom__") {
-                                                                            newAgents[idx].wallet = "";
-                                                                            newAgents[idx].isCustom = true;
-                                                                        } else if (e.target.value === "") {
-                                                                            newAgents[idx].wallet = "";
-                                                                            newAgents[idx].isCustom = false;
-                                                                        } else {
-                                                                            newAgents[idx].wallet = e.target.value;
-                                                                            newAgents[idx].isCustom = false;
-                                                                        }
-                                                                        setAgents(newAgents);
-                                                                    }}
-                                                                    className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white focus:border-emerald-500 outline-none"
-                                                                >
-                                                                    <option value="" className="bg-zinc-900">Select agent…</option>
-                                                                    {approvedAgents.map(a => (
-                                                                        <option key={a.wallet} value={a.wallet.toLowerCase()} className="bg-zinc-900">
-                                                                            {a.name || "Unknown"} ({a.wallet.slice(0, 6)}…{a.wallet.slice(-4)})
-                                                                        </option>
-                                                                    ))}
-                                                                    <option value="__custom__" className="bg-zinc-900">⌨ Custom wallet…</option>
-                                                                </select>
-                                                                <div className="flex items-center gap-1 bg-black/40 border border-white/10 rounded px-2 w-24">
-                                                                    <input
-                                                                        type="number"
-                                                                        placeholder="0"
-                                                                        value={agent.bps}
-                                                                        onChange={(e) => {
-                                                                            const newAgents = [...agents];
-                                                                            newAgents[idx].bps = parseInt(e.target.value) || 0;
-                                                                            setAgents(newAgents);
-                                                                        }}
-                                                                        className="w-full bg-transparent text-right font-mono text-sm text-white outline-none"
-                                                                    />
-                                                                    <span className="text-zinc-500 text-xs">bps</span>
-                                                                </div>
-                                                                <button
-                                                                    onClick={() => setAgents(agents.filter((_, i) => i !== idx))}
-                                                                    className="p-2 hover:bg-red-500/20 text-zinc-500 hover:text-red-500 rounded transition-colors"
-                                                                >
-                                                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                                                                </button>
-                                                            </div>
-                                                            {isCustomMode && (
+                                                <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
+                                                    <span>Platform Fee</span>
+                                                    <span>{isPlatformContainer ? "adjustable" : "Locked"}</span>
+                                                </div>
+                                                {isPlatformContainer ? (
+                                                    <div className="p-4 rounded-lg bg-zinc-800/50 border border-white/10 space-y-4">
+                                                        <div className="flex justify-between items-center">
+                                                            <span className="text-white text-sm font-medium">Platform</span>
+                                                            <div className="flex items-center gap-2">
                                                                 <input
-                                                                    type="text"
-                                                                    placeholder="Agent Wallet (0x...)"
-                                                                    value={agent.wallet}
-                                                                    onChange={(e) => {
-                                                                        const newAgents = [...agents];
-                                                                        newAgents[idx].wallet = e.target.value;
-                                                                        newAgents[idx].isCustom = true;
-                                                                        setAgents(newAgents);
-                                                                    }}
-                                                                    className="w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white focus:border-emerald-500 outline-none font-mono"
+                                                                    type="number"
+                                                                    value={currentPlatformBps}
+                                                                    onChange={(e) => setCurrentPlatformBps(Math.min(9900, Math.max(0, parseInt(e.target.value) || 0)))}
+                                                                    className={`w-16 bg-black/40 border border-white/10 rounded px-2 py-1 text-right font-mono text-sm text-white outline-none ${isDebitTab ? "focus:border-purple-500" : "focus:border-emerald-500"}`}
                                                                 />
-                                                            )}
+                                                                <span className="text-zinc-500 text-xs">bps</span>
+                                                            </div>
                                                         </div>
-                                                    );
-                                                })}
-                                                {agents.length === 0 && (
-                                                    <div className="text-center py-4 border border-dashed border-white/10 rounded-lg text-xs text-zinc-500">
-                                                        No agents configured.
+                                                        <input
+                                                            type="range"
+                                                            min="0"
+                                                            max="1000" // Max 10%
+                                                            step="5"
+                                                            value={currentPlatformBps}
+                                                            onChange={(e) => setCurrentPlatformBps(parseInt(e.target.value))}
+                                                            className={`w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer ${isDebitTab ? "accent-purple-500" : "accent-emerald-500"}`}
+                                                        />
+                                                        <div className={`text-right text-xs font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
+                                                            {(currentPlatformBps / 100).toFixed(2)}%
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="p-3 rounded-lg bg-black/20 border border-white/5 flex justify-between items-center opacity-70">
+                                                        <span className="text-zinc-400 text-sm">Platform</span>
+                                                        <span className={`font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>{(currentPlatformBps / 100).toFixed(2)}%</span>
                                                     </div>
                                                 )}
+                                                <div className="text-[10px] text-zinc-500 font-mono flex justify-between">
+                                                    <span>Wallet</span>
+                                                    <span className="select-all" title={process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS}>
+                                                        {(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e").slice(0, 6)}...{(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e").slice(-4)}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            {/* Partner Fee (Slider) - Hidden for platform containers */}
+                                            {!isPlatformContainer && (
+                                                <div className="space-y-3">
+                                                    <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
+                                                        <span>Partner Fee</span>
+                                                        <span>adjustable</span>
+                                                    </div>
+                                                    <div className="p-4 rounded-lg bg-zinc-800/50 border border-white/10 space-y-4">
+                                                        <div className="flex justify-between items-center">
+                                                            <span className="text-white text-sm font-medium">Your Revenue</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <input
+                                                                    type="number"
+                                                                    value={currentPartnerBps}
+                                                                    onChange={(e) => setCurrentPartnerBps(Math.min(9900, Math.max(0, parseInt(e.target.value) || 0)))}
+                                                                    className={`w-16 bg-black/40 border border-white/10 rounded px-2 py-1 text-right font-mono text-sm text-white outline-none ${isDebitTab ? "focus:border-purple-500" : "focus:border-emerald-500"}`}
+                                                                />
+                                                                <span className="text-zinc-500 text-xs">bps</span>
+                                                            </div>
+                                                        </div>
+                                                        <input
+                                                            type="range"
+                                                            min="0"
+                                                            max="1000" // Max 10%
+                                                            step="5"
+                                                            value={currentPartnerBps}
+                                                            onChange={(e) => setCurrentPartnerBps(parseInt(e.target.value))}
+                                                            className={`w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer ${isDebitTab ? "accent-purple-500" : "accent-emerald-500"}`}
+                                                        />
+                                                        <div className={`text-right text-xs font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
+                                                            {(currentPartnerBps / 100).toFixed(2)}%
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Agent Shares (Dynamic) */}
+                                            <div className="space-y-3">
+                                                <div className="flex justify-between items-center text-xs uppercase tracking-wider font-mono text-zinc-500">
+                                                    <span>Agent Shares</span>
+                                                    <button
+                                                        onClick={() => setCurrentAgents([...currentAgents, { wallet: "", bps: 0 }])}
+                                                        className={`transition-colors font-medium ${isDebitTab ? "text-purple-400 hover:text-purple-300" : "text-emerald-400 hover:text-emerald-300"}`}
+                                                    >
+                                                        + Add Agent
+                                                    </button>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    {currentAgents.map((agent, idx) => {
+                                                        const isRegistered = approvedAgents.some(a => a.wallet.toLowerCase() === agent.wallet.toLowerCase());
+                                                        const isCustomMode = agent.isCustom || (!isRegistered && agent.wallet !== "");
+                                                        const isImmutable = isAgentImmutable(agent.wallet, isDebitTab);
+                                                        return (
+                                                            <div key={idx} className="space-y-1.5 opacity-90">
+                                                                <div className="flex gap-2">
+                                                                    <select
+                                                                        disabled={isImmutable}
+                                                                        value={isRegistered ? agent.wallet.toLowerCase() : (agent.isCustom ? "__custom__" : (agent.wallet ? "__custom__" : ""))}
+                                                                        onChange={(e) => {
+                                                                            const newAgents = [...currentAgents];
+                                                                            if (e.target.value === "__custom__") {
+                                                                                newAgents[idx].wallet = "";
+                                                                                newAgents[idx].isCustom = true;
+                                                                            } else if (e.target.value === "") {
+                                                                                newAgents[idx].wallet = "";
+                                                                                newAgents[idx].isCustom = false;
+                                                                            } else {
+                                                                                newAgents[idx].wallet = e.target.value;
+                                                                                newAgents[idx].isCustom = false;
+                                                                            }
+                                                                            setCurrentAgents(newAgents);
+                                                                        }}
+                                                                        className={`flex-1 bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white outline-none disabled:opacity-75 disabled:cursor-not-allowed ${isDebitTab ? "focus:border-purple-500" : "focus:border-emerald-500"}`}
+                                                                    >
+                                                                        <option value="" className="bg-zinc-900">Select agent…</option>
+                                                                        {approvedAgents.map(a => (
+                                                                            <option key={a.wallet} value={a.wallet.toLowerCase()} className="bg-zinc-900">
+                                                                                {a.name || "Unknown"} ({a.wallet.slice(0, 6)}…{a.wallet.slice(-4)})
+                                                                            </option>
+                                                                        ))}
+                                                                        <option value="__custom__" className="bg-zinc-900">⌨ Custom wallet…</option>
+                                                                     </select>
+                                                                    <div className="flex items-center gap-1 bg-black/40 border border-white/10 rounded px-2 w-24">
+                                                                        <input
+                                                                            type="number"
+                                                                            placeholder="0"
+                                                                            disabled={isImmutable}
+                                                                            value={agent.bps}
+                                                                            onChange={(e) => {
+                                                                                const newAgents = [...currentAgents];
+                                                                                newAgents[idx].bps = parseInt(e.target.value) || 0;
+                                                                                setCurrentAgents(newAgents);
+                                                                            }}
+                                                                            className="w-full bg-transparent text-right font-mono text-sm text-white outline-none disabled:cursor-not-allowed"
+                                                                        />
+                                                                        <span className="text-zinc-500 text-xs">bps</span>
+                                                                    </div>
+                                                                    {isImmutable ? (
+                                                                        <div className="p-2 text-zinc-500 rounded flex items-center justify-center w-8" title="Required Partner Agent (Immutable)">
+                                                                            <Lock className="w-3.5 h-3.5" />
+                                                                        </div>
+                                                                    ) : (
+                                                                        <button
+                                                                            onClick={() => setCurrentAgents(currentAgents.filter((_, i) => i !== idx))}
+                                                                            className="p-2 hover:bg-red-500/20 text-zinc-500 hover:text-red-500 rounded transition-colors"
+                                                                        >
+                                                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                                {isCustomMode && (
+                                                                    <input
+                                                                        type="text"
+                                                                        placeholder="Agent Wallet (0x...)"
+                                                                        disabled={isImmutable}
+                                                                        value={agent.wallet}
+                                                                        onChange={(e) => {
+                                                                            const newAgents = [...currentAgents];
+                                                                            newAgents[idx].wallet = e.target.value;
+                                                                            newAgents[idx].isCustom = true;
+                                                                            setCurrentAgents(newAgents);
+                                                                        }}
+                                                                        className={`w-full bg-black/40 border border-white/10 rounded px-3 py-2 text-sm text-white outline-none font-mono disabled:opacity-75 disabled:cursor-not-allowed ${isDebitTab ? "focus:border-purple-500" : "focus:border-emerald-500"}`}
+                                                                    />
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
 
                                     {/* RIGHT COLUMN: Summary & Actions */}
                                     <div className="space-y-6 flex flex-col h-full">
@@ -1400,8 +1920,9 @@ export default function ClientRequestsPanel() {
                                                 </div>
                                             </div>
                                             {merchantBps < 0 && (
-                                                <div className="text-xs text-red-500 bg-red-500/10 p-2 rounded border border-red-500/20">
-                                                    ⚠️ Warning: Fees exceed 100%. Merchant receives nothing.
+                                                <div className="text-xs text-red-500 bg-red-500/10 p-2 rounded border border-red-500/20 flex items-center gap-1.5">
+                                                    <AlertTriangle className="w-3.5 h-3.5" />
+                                                    <span>Warning: Fees exceed 100%. Merchant receives nothing.</span>
                                                 </div>
                                             )}
                                             {totalFeeBps !== 10000 && merchantBps > 0 && (
@@ -1429,49 +1950,158 @@ export default function ClientRequestsPanel() {
                                                     <span className="text-xs uppercase tracking-wider font-mono text-zinc-500">Split Contract</span>
                                                     {(() => {
                                                         const _req = items.find(r => r.wallet === approvingId);
-                                                        const count = (_req?.splitHistory?.length || 0);
-                                                        if (count > 0 || _req?.deployedSplitAddress) {
-                                                            return <span className="text-[10px] text-zinc-600 font-mono">Version {count + 1}</span>
+                                                        if (!_req) return null;
+                                                        const verStr = getActiveVersionStr(_req, isDebitTab);
+                                                        if (verStr) {
+                                                            return <span className="text-[10px] text-zinc-600 font-mono">Version {verStr}</span>
                                                         }
                                                         return null;
                                                     })()}
                                                 </div>
-                                                {deployResult ? (
-                                                    <span className="text-xs font-mono text-emerald-400">{deployResult.startsWith("Deployed") ? "Active" : "Error"}</span>
-                                                ) : (
-                                                    (() => {
-                                                        const _req = items.find(r => r.wallet === approvingId);
-                                                        const addr = _req?.deployedSplitAddress || (_req?.splitHistory && _req.splitHistory.length > 0 ? _req.splitHistory[0].address : "");
-                                                        if (addr) {
-                                                            return (
-                                                                <span className="text-xs font-mono text-emerald-400" title={addr}>
-                                                                    {addr.slice(0, 6)}...{addr.slice(-4)}
-                                                                </span>
-                                                            );
-                                                        }
-                                                        return <span className="text-xs font-mono text-zinc-600">Not Deployed</span>;
-                                                    })()
-                                                )}
+                                                {(() => {
+                                                    const resStr = isDebitTab ? deployResultDebit : deployResult;
+                                                    if (resStr) {
+                                                        return (
+                                                            <span className={`text-xs font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
+                                                                {resStr.startsWith("Deployed") || resStr.startsWith("Verified") ? "Active" : "Error"}
+                                                            </span>
+                                                        );
+                                                    }
+                                                    const _req = items.find(r => r.wallet === approvingId);
+                                                    if (!_req) return <span className="text-xs font-mono text-zinc-600">Not Deployed</span>;
+                                                    const addr = isDebitTab
+                                                        ? (_req.deployedSplitAddressCredit || (_req.splitHistory || []).find(h => h.isCredit)?.address || "")
+                                                        : (_req.deployedSplitAddress || (_req.splitHistory || []).find(h => !h.isCredit)?.address || "");
+                                                    if (addr) {
+                                                        return (
+                                                            <span className={`text-xs font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`} title={addr}>
+                                                                {addr.slice(0, 6)}...{addr.slice(-4)}
+                                                            </span>
+                                                        );
+                                                    }
+                                                    return <span className="text-xs font-mono text-zinc-600">Not Deployed</span>;
+                                                })()}
                                             </div>
 
                                             {/* History List */}
-                                            {items.find(r => r.wallet === approvingId)?.splitHistory && (items.find(r => r.wallet === approvingId)?.splitHistory?.length || 0) > 0 && (
-                                                <div className="glass-pane rounded-xl border p-3 space-y-1 mb-2 max-h-[100px] overflow-y-auto">
-                                                    <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wide mb-1.5">Version History</div>
-                                                    {(items.find(r => r.wallet === approvingId)?.splitHistory || []).map((h: any, i: number) => (
-                                                        <div key={i} className="flex justify-between items-center text-xs font-mono">
-                                                            <span className="text-zinc-400">{h.address.slice(0, 6)}...{h.address.slice(-4)}</span>
-                                                            <span className="text-zinc-600">{new Date(h.deployedAt).toLocaleDateString()}</span>
-                                                        </div>
-                                                    ))}
+                                            {(() => {
+                                                const req = items.find(r => r.wallet === approvingId);
+                                                const historyList = req?.splitHistory || [];
+                                                
+                                                const activeAddr = isDebitTab ? req?.deployedSplitAddressCredit : req?.deployedSplitAddress;
+                                                const activeVer = req ? getActiveVersionStr(req, isDebitTab) : "";
+
+                                                const tabSpecific = historyList.filter((h: any) => 
+                                                    isDebitTab ? h.isCredit === true : h.isCredit === false
+                                                );
+                                                const legacy = historyList.filter((h: any) => 
+                                                    h.isCredit === undefined || h.isCredit === null
+                                                );
+
+                                                if (tabSpecific.length === 0 && legacy.length === 0 && !activeAddr) return null;
+
+                                                const hasTabSpecific = tabSpecific.length > 0 || !!activeAddr;
+
+                                                return (
+                                                    <div className="glass-pane rounded-xl border border-white/5 p-3 space-y-3 mb-2 max-h-[160px] overflow-y-auto animate-in fade-in duration-200">
+                                                        <div className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wide mb-1">Version History</div>
+                                                        
+                                                        {hasTabSpecific && (
+                                                            <div className="space-y-1.5 animate-in fade-in duration-150">
+                                                                <div className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider">
+                                                                    {isDebitTab ? "Debit History" : "Credit & Crypto History"}
+                                                                </div>
+                                                                {activeAddr && (
+                                                                    <div className={`flex justify-between items-center text-xs font-mono py-1 border-b border-white/[0.04] px-1.5 rounded-md ${
+                                                                        isDebitTab 
+                                                                        ? "bg-purple-500/5 dark:bg-purple-500/[0.02]" 
+                                                                        : "bg-emerald-500/5 dark:bg-emerald-500/[0.02]"
+                                                                    }`}>
+                                                                        <div className="flex items-center gap-2">
+                                                                            <span className={`text-[10px] font-bold ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>v{activeVer}</span>
+                                                                            <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
+                                                                                isDebitTab 
+                                                                                ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" 
+                                                                                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                                            }`}>
+                                                                                Active
+                                                                            </span>
+                                                                            <span className="text-zinc-300 font-medium" title={activeAddr}>{activeAddr.slice(0, 6)}...{activeAddr.slice(-4)}</span>
+                                                                        </div>
+                                                                        <span className={`text-[10px] font-medium mr-1 ${isDebitTab ? "text-purple-500/80" : "text-emerald-500/80"}`}>Current</span>
+                                                                    </div>
+                                                                )}
+                                                                {tabSpecific.map((h: any) => {
+                                                                    const originalIndex = historyList.indexOf(h);
+                                                                    const verStr = getHistoryVersionStr(h, originalIndex, historyList);
+                                                                    return (
+                                                                        <div key={originalIndex} className="flex justify-between items-center text-xs font-mono py-0.5 border-b border-white/[0.02] last:border-0 px-1.5">
+                                                                            <div className="flex items-center gap-2">
+                                                                                <span className="text-zinc-500 text-[10px] font-semibold">v{verStr}</span>
+                                                                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
+                                                                                    isDebitTab 
+                                                                                    ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" 
+                                                                                    : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                                                }`}>
+                                                                                    {isDebitTab ? "Debit" : "Credit"}
+                                                                                </span>
+                                                                                <span className="text-zinc-400" title={h.address}>{h.address.slice(0, 6)}...{h.address.slice(-4)}</span>
+                                                                            </div>
+                                                                            <span className="text-zinc-600 text-[10px]">{new Date(h.deployedAt).toLocaleDateString()}</span>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+
+                                                        {legacy.length > 0 && (
+                                                            <div className="space-y-1.5 animate-in fade-in duration-150">
+                                                                <div className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider">
+                                                                    Legacy Unified History
+                                                                </div>
+                                                                {legacy.map((h: any) => {
+                                                                    const originalIndex = historyList.indexOf(h);
+                                                                    const verStr = getHistoryVersionStr(h, originalIndex, historyList);
+                                                                    return (
+                                                                        <div key={originalIndex} className="flex justify-between items-center text-xs font-mono py-0.5 border-b border-white/[0.02] last:border-0 px-1.5">
+                                                                            <div className="flex items-center gap-2">
+                                                                                <span className="text-zinc-500 text-[10px] font-semibold">v{verStr}</span>
+                                                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">
+                                                                                    Unified
+                                                                                </span>
+                                                                                <span className="text-zinc-400" title={h.address}>{h.address.slice(0, 6)}...{h.address.slice(-4)}</span>
+                                                                            </div>
+                                                                            <span className="text-zinc-600 text-[10px]">{new Date(h.deployedAt).toLocaleDateString()}</span>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
+
+                                            {deployResult && (
+                                                <div className={`p-3 rounded border text-xs font-mono break-all text-white mb-3 ${
+                                                    deployResult.startsWith("Error") 
+                                                    ? "bg-red-500/10 border-red-500/20 text-red-400" 
+                                                    : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                                                }`}>
+                                                    {deployResult}
                                                 </div>
                                             )}
 
-                                            {deployResult ? (
-                                                <div className="bg-black/40 p-3 rounded border border-white/10 text-xs font-mono break-all text-white">
-                                                    {deployResult}
+                                            {deployResultDebit && (
+                                                <div className={`p-3 rounded border text-xs font-mono break-all text-white mb-3 ${
+                                                    deployResultDebit.startsWith("Error") 
+                                                    ? "bg-red-500/10 border-red-500/20 text-red-400" 
+                                                    : "bg-purple-500/10 border-purple-500/20 text-purple-400"
+                                                }`}>
+                                                    {deployResultDebit}
                                                 </div>
-                                            ) : (
+                                            )}
+
+                                            <div className="flex flex-col gap-2">
                                                 <div className="flex gap-2">
                                                     {/* Verify Button */}
                                                     <button
@@ -1482,23 +2112,36 @@ export default function ClientRequestsPanel() {
                                                         {deploying && !deployResult ? "Loading..." : "Verify On-Chain"}
                                                     </button>
 
-                                                    {/* Deploy New Version Button (merged Deploy + Force) */}
+                                                    {/* Deploy Active Split Button */}
                                                     <button
                                                         onClick={() => {
-                                                            if (confirm("Deploy new version? This will archive the current split and deploy a new one with the updated configuration.")) {
-                                                                handleDeploy(true);
-                                                            }
+                                                            setConfirmState({ type: "deploy", mode: "active" });
                                                         }}
                                                         disabled={deploying}
                                                         className="flex-1 py-2 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-600/40 rounded-lg text-xs font-mono transition-colors flex items-center justify-center gap-2"
-                                                        title="Deploy new version (archive current and deploy updated split)"
+                                                        title={`Deploy new version of the active (${isDebitTab ? "Debit" : "Credit/Crypto"}) split contract`}
                                                     >
-                                                        {deploying ? "Deploying..." : "Deploy New Version"}
+                                                        {deploying ? "Deploying..." : `Deploy ${isDebitTab ? "Debit" : "Credit"} Split`}
                                                     </button>
                                                 </div>
-                                            )}
+
+                                                {/* Deploy Both Splits Button */}
+                                                {serverIsDualSplit && (
+                                                    <button
+                                                        onClick={() => {
+                                                            setConfirmState({ type: "deploy", mode: "both" });
+                                                        }}
+                                                        disabled={deploying}
+                                                        className="w-full py-2 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-600/40 rounded-lg text-xs font-mono transition-colors flex items-center justify-center gap-2 font-bold"
+                                                        title="Deploy both Credit/Crypto and Debit split contracts in a single flow"
+                                                    >
+                                                        Deploy Both Splits
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
+                                </div>
                                 </div>
                                 )}
                             </div>
@@ -1517,14 +2160,69 @@ export default function ClientRequestsPanel() {
                                     {items.find(r => r.wallet === approvingId)?.status === "approved" ? "Save Configuration" : "Confirm Approval"}
                                 </button>
                             </div>
+                            
+                            {confirmState?.type === "deploy" && (
+                                <div 
+                                    className="fixed inset-0 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm overflow-y-auto"
+                                    style={{ zIndex: 999999 }}
+                                >
+                                    <div className="w-full max-w-md bg-zinc-950 border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-150">
+                                        <div className="p-6 space-y-4">
+                                            <div className="flex items-start gap-4">
+                                                <div className="p-3 rounded-full flex-shrink-0 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                    <HelpCircle className="w-6 h-6" />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <h3 className="text-lg font-semibold text-white tracking-tight">
+                                                        {confirmState.mode === "both" ? "Deploy Both Splits" : `Deploy ${isDebitTab ? "Debit" : "Credit"} Split`}
+                                                    </h3>
+                                                    <p className="text-sm text-zinc-400 leading-relaxed">
+                                                        {confirmState.mode === "both"
+                                                            ? "Deploy both the Credit/Crypto and Debit split contracts? This will deploy two separate contracts sequentially."
+                                                            : `Deploy the new version of the ${isDebitTab ? "Debit Card" : "Credit Card & Crypto"} split contract? This will archive the current active contract for this split and deploy a new one.`}
+                                                    </p>
+
+                                                    {confirmState.mode === "both" && (
+                                                        <div className="mt-3 flex items-start gap-2 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-lg p-3 text-xs leading-relaxed animate-in fade-in duration-200">
+                                                            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                                                            <span>
+                                                                <strong>Important:</strong> Please ensure that both <strong>Credit & Crypto</strong> and <strong>Debit Card</strong> configurations are fully set and saved correctly before deploying.
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="px-6 py-4 bg-black/40 border-t border-white/5 flex gap-3 justify-end">
+                                            <button
+                                                onClick={() => setConfirmState(null)}
+                                                className="px-4 py-2 rounded-xl hover:bg-white/5 text-zinc-400 hover:text-white text-sm font-medium transition-colors"
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button
+                                                onClick={async () => {
+                                                    const mode = confirmState.mode || "active";
+                                                    await handleDeploy(true, mode);
+                                                    setConfirmState(null);
+                                                }}
+                                                className="px-5 py-2 rounded-xl font-semibold text-sm transition-all shadow-md bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/10"
+                                            >
+                                                Deploy
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
-                    </div >
+                    </div >,
+                    document.body
                 )
             }
             {/* History Viewer Modal */}
             {
-                historyViewerId && (
-                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                historyViewerId && typeof window !== "undefined" && createPortal(
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 overflow-y-auto">
                         <div className="w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
                             <div className="p-6 border-b border-white/5 flex justify-between items-start">
                                 <div>
@@ -1552,16 +2250,17 @@ export default function ClientRequestsPanel() {
                                         {(() => {
                                             const req = items.find(r => r.wallet === historyViewerId);
                                             if (!req) return null;
-                                            const currentAddr = req.deployedSplitAddress;
-                                            // Combine with history for a full view, but highlight current
-                                            // The splitHistory works as a log of PAST versions usually, but sometimes includes current if newly archived.
-                                            // We'll show Current first, then history.
                                             return (
                                                 <>
-                                                    {currentAddr && (
+                                                    {req.deployedSplitAddress && (
                                                         <tr className="bg-emerald-500/5">
-                                                            <td className="px-6 py-4 font-mono text-xs">
-                                                                <span className="text-emerald-400">Current</span>
+                                                            <td className="px-6 py-4 font-mono text-xs text-emerald-400">
+                                                                <div className="flex flex-col gap-1">
+                                                                    <span className="font-bold text-[10px]">Current (v{getActiveVersionStr(req, false)})</span>
+                                                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 w-fit">
+                                                                        Credit
+                                                                    </span>
+                                                                </div>
                                                             </td>
                                                             <td className="px-6 py-4">
                                                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wide">
@@ -1569,15 +2268,44 @@ export default function ClientRequestsPanel() {
                                                                 </span>
                                                             </td>
                                                             <td className="px-6 py-4 text-xs text-zinc-400">
-                                                                {/* We don't track exact current deploy time separately easily without digging, assume recent or just show address */}
-                                                                <span className="font-mono text-white" title={currentAddr}>{currentAddr.slice(0, 6)}...{currentAddr.slice(-4)}</span>
+                                                                <span className="font-mono text-white" title={req.deployedSplitAddress}>{req.deployedSplitAddress.slice(0, 6)}...{req.deployedSplitAddress.slice(-4)}</span>
                                                             </td>
                                                             <td className="px-6 py-4 text-right">
                                                                 <a
-                                                                    href={`https://basescan.org/address/${currentAddr}`}
+                                                                    href={`https://basescan.org/address/${req.deployedSplitAddress}`}
                                                                     target="_blank"
                                                                     rel="noopener noreferrer"
                                                                     className="text-emerald-400 hover:underline text-xs"
+                                                                >
+                                                                    View
+                                                                </a>
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                    {req.deployedSplitAddressCredit && (
+                                                        <tr className="bg-purple-500/5">
+                                                            <td className="px-6 py-4 font-mono text-xs text-purple-400">
+                                                                <div className="flex flex-col gap-1">
+                                                                    <span className="font-bold text-[10px]">Current (v{getActiveVersionStr(req, true)})</span>
+                                                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 w-fit">
+                                                                        Debit
+                                                                    </span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-6 py-4">
+                                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20 uppercase tracking-wide">
+                                                                    Active
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-xs text-zinc-400">
+                                                                <span className="font-mono text-white" title={req.deployedSplitAddressCredit}>{req.deployedSplitAddressCredit.slice(0, 6)}...{req.deployedSplitAddressCredit.slice(-4)}</span>
+                                                            </td>
+                                                            <td className="px-6 py-4 text-right">
+                                                                <a
+                                                                    href={`https://basescan.org/address/${req.deployedSplitAddressCredit}`}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    className="text-purple-400 hover:underline text-xs"
                                                                 >
                                                                     View
                                                                 </a>
@@ -1588,7 +2316,18 @@ export default function ClientRequestsPanel() {
                                                     {(req.splitHistory || []).map((h, i) => (
                                                         <tr key={i} className="hover:bg-white/5 transition-colors">
                                                             <td className="px-6 py-4 font-mono text-xs text-zinc-500">
-                                                                v{(req.splitHistory?.length || 0) - i}
+                                                                <div className="flex flex-col gap-1">
+                                                                    <span className="font-semibold text-zinc-400">v{getHistoryVersionStr(h, i, req.splitHistory || [])}</span>
+                                                                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider w-fit ${
+                                                                        h.isCredit === true
+                                                                        ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" 
+                                                                        : h.isCredit === false
+                                                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                                        : "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20"
+                                                                    }`}>
+                                                                        {h.isCredit === true ? "Debit" : h.isCredit === false ? "Credit" : "Unified"}
+                                                                    </span>
+                                                                </div>
                                                             </td>
                                                             <td className="px-6 py-4">
                                                                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-500/10 text-zinc-500 border border-zinc-500/20 uppercase tracking-wide">
@@ -1613,7 +2352,7 @@ export default function ClientRequestsPanel() {
                                                             </td>
                                                         </tr>
                                                     ))}
-                                                    {(!currentAddr && (!req.splitHistory || req.splitHistory.length === 0)) && (
+                                                    {!req.deployedSplitAddress && !req.deployedSplitAddressCredit && (!req.splitHistory || req.splitHistory.length === 0) && (
                                                         <tr>
                                                             <td colSpan={4} className="px-6 py-8 text-center text-zinc-500 text-xs italic bg-black/20">
                                                                 No deployment history found.
@@ -1636,9 +2375,125 @@ export default function ClientRequestsPanel() {
                                 </button>
                             </div>
                         </div>
-                    </div>
+                    </div>,
+                    document.body
                 )
             }
+
+            {/* Custom Confirm Modal */}
+            {confirmState && confirmState.type !== "deploy" && typeof window !== "undefined" && (() => {
+                console.log("[ClientRequestsPanel] Rendering Custom Confirm Modal. confirmState =", confirmState);
+                const targetReq = confirmState.targetId ? items.find(i => i.id === confirmState.targetId) : null;
+                console.log("[ClientRequestsPanel] targetReq found:", targetReq);
+                
+                let title = "";
+                let message = "";
+                let confirmText = "Confirm";
+                let isDestructive = false;
+                let onConfirm = (): Promise<boolean> => Promise.resolve(false);
+
+                if (confirmState.type === "delete") {
+                    title = "Delete Request";
+                    message = `Are you sure you want to delete the request for "${targetReq?.shopName || "this merchant"}"? The user will be able to apply again.`;
+                    confirmText = "Delete";
+                    isDestructive = true;
+                    onConfirm = async () => {
+                        if (!confirmState.targetId) return false;
+                        const id = confirmState.targetId;
+                        try {
+                            setError("");
+                            setInfo("");
+                            const r = await fetch("/api/partner/client-requests", {
+                                method: "DELETE",
+                                headers: {
+                                    "Content-Type": "application/json",
+                                    "x-wallet": account?.address || "",
+                                    "x-brand-key": brandKey || (brand as any)?.key || "",
+                                },
+                                body: JSON.stringify({
+                                    requestId: id,
+                                    wallet: targetReq?.wallet
+                                }),
+                            });
+                            const j = await r.json().catch(() => ({}));
+                            if (!r.ok || j?.error) {
+                                setError(j?.error || "Delete failed");
+                                return false;
+                            }
+                            setInfo("Request deleted. User can apply again.");
+                            await load();
+                            return true;
+                        } catch (e: any) {
+                            setError(e?.message || "Delete failed");
+                            return false;
+                        }
+                    };
+                } else if (confirmState.type === "block") {
+                    title = "Block Applicant";
+                    message = `Are you sure you want to block "${targetReq?.shopName || "this applicant"}"? They will not be able to apply again until unblocked.`;
+                    confirmText = "Block Applicant";
+                    isDestructive = true;
+                    onConfirm = async () => {
+                        if (!confirmState.targetId) return false;
+                        return await updateStatus(confirmState.targetId, "blocked");
+                    };
+                } else if (confirmState.type === "deploy") {
+                    title = "Deploy New Version";
+                    message = "Deploy new version? This will archive the current split and deploy a new one with the updated configuration.";
+                    confirmText = "Deploy";
+                    isDestructive = false;
+                    onConfirm = async () => {
+                        return await handleDeploy(true);
+                    };
+                }
+
+                return createPortal(
+                    <div 
+                        className="fixed inset-0 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto"
+                        style={{ zIndex: 999999 }}
+                    >
+                        <div className="w-full max-w-md bg-zinc-950 border border-white/10 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-150">
+                            <div className="p-6 space-y-4">
+                                <div className="flex items-start gap-4">
+                                    <div className={`p-3 rounded-full flex-shrink-0 ${isDestructive ? "bg-red-500/10 text-red-400 border border-red-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"}`}>
+                                        {isDestructive ? (
+                                            <AlertTriangle className="w-6 h-6" />
+                                        ) : (
+                                            <HelpCircle className="w-6 h-6" />
+                                        )}
+                                    </div>
+                                    <div className="space-y-1">
+                                        <h3 className="text-lg font-semibold text-white tracking-tight">{title}</h3>
+                                        <p className="text-sm text-zinc-400 leading-relaxed">{message}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="px-6 py-4 bg-black/40 border-t border-white/5 flex gap-3 justify-end">
+                                <button
+                                    onClick={() => setConfirmState(null)}
+                                    className="px-4 py-2 rounded-xl hover:bg-white/5 text-zinc-400 hover:text-white text-sm font-medium transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        await onConfirm();
+                                        setConfirmState(null);
+                                    }}
+                                    className={`px-5 py-2 rounded-xl font-semibold text-sm transition-all shadow-md ${
+                                        isDestructive 
+                                            ? "bg-red-600 hover:bg-red-500 text-white shadow-red-600/10" 
+                                            : "bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/10"
+                                    }`}
+                                >
+                                    {confirmText}
+                                </button>
+                            </div>
+                        </div>
+                    </div>,
+                    document.body
+                );
+            })()}
         </div>
         </div>
     );
@@ -1844,14 +2699,23 @@ function TouchpointThemesTab({
                     <button
                         onClick={saveKioskSettings}
                         disabled={!kioskDirty || kioskSaving}
-                        className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${kioskSaved
+                        className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${kioskSaved
                             ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
                             : kioskDirty
                                 ? "bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 hover:bg-emerald-400"
                                 : "bg-white/5 text-muted-foreground border border-white/10 cursor-not-allowed"
                             }`}
                     >
-                        {kioskSaving ? "Saving…" : kioskSaved ? "✓ Saved" : kioskDirty ? "Save Kiosk Settings" : "No Changes"}
+                        {kioskSaving ? "Saving…" : kioskSaved ? (
+                            <>
+                                <Check className="w-3 h-3" />
+                                <span>Saved</span>
+                            </>
+                        ) : kioskDirty ? (
+                            "Save Kiosk Settings"
+                        ) : (
+                            "No Changes"
+                        )}
                     </button>
                 </div>
 
@@ -1868,7 +2732,7 @@ function TouchpointThemesTab({
                                     : "bg-black/20 text-zinc-400 border border-white/5 hover:bg-white/5"
                                     }`}
                             >
-                                <span>{mode === "dark" ? "🌙" : "☀️"}</span>
+                                {mode === "dark" ? <Moon className="w-4 h-4 text-emerald-400" /> : <Sun className="w-4 h-4 text-amber-400" />}
                                 {mode}
                             </button>
                         ))}
@@ -1888,7 +2752,15 @@ function TouchpointThemesTab({
                                     : "bg-black/20 text-zinc-400 border border-white/5 hover:bg-white/5"
                                     }`}
                             >
-                                <span>{l === "grid" ? "⊞" : l === "list" ? "☰" : l === "magazine" ? "📰" : "🍽️"}</span>
+                                {l === "grid" ? (
+                                    <Grid className="w-4 h-4" />
+                                ) : l === "list" ? (
+                                    <List className="w-4 h-4" />
+                                ) : l === "magazine" ? (
+                                    <Newspaper className="w-4 h-4" />
+                                ) : (
+                                    <Utensils className="w-4 h-4" />
+                                )}
                                 {l}
                             </button>
                         ))}
@@ -1906,14 +2778,23 @@ function TouchpointThemesTab({
                     <button
                         onClick={saveHandheldSettings}
                         disabled={!handheldDirty || handheldSaving}
-                        className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${handheldSaved
+                        className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${handheldSaved
                             ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
                             : handheldDirty
                                 ? "bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 hover:bg-emerald-400"
                                 : "bg-white/5 text-muted-foreground border border-white/10 cursor-not-allowed"
                             }`}
                     >
-                        {handheldSaving ? "Saving…" : handheldSaved ? "✓ Saved" : handheldDirty ? "Save Handheld Settings" : "No Changes"}
+                        {handheldSaving ? "Saving…" : handheldSaved ? (
+                            <>
+                                <Check className="w-3 h-3" />
+                                <span>Saved</span>
+                            </>
+                        ) : handheldDirty ? (
+                            "Save Handheld Settings"
+                        ) : (
+                            "No Changes"
+                        )}
                     </button>
                 </div>
 
@@ -1930,7 +2811,7 @@ function TouchpointThemesTab({
                                     : "bg-black/20 text-zinc-400 border border-white/5 hover:bg-white/5"
                                     }`}
                             >
-                                <span>{mode === "restaurant" ? "🍽️" : "🏪"}</span>
+                                {mode === "restaurant" ? <Utensils className="w-4 h-4 text-emerald-400" /> : <Store className="w-4 h-4 text-zinc-400" />}
                                 {mode}
                             </button>
                         ))}
@@ -1947,23 +2828,26 @@ function TouchpointThemesTab({
                     <label className="text-xs uppercase tracking-wider font-mono text-zinc-500">Swipe-to-Dismiss Gesture</label>
                     <div className="flex gap-2">
                         {[
-                            { key: false, label: "Enabled", emoji: "✨" },
-                            { key: true, label: "Disabled", emoji: "🚫" },
-                        ].map(opt => (
-                            <button
-                                key={String(opt.key)}
-                                onClick={() => setPendingDisableSwipe(opt.key)}
-                                className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-all capitalize flex items-center justify-center gap-2 ${pendingDisableSwipe === opt.key
-                                    ? opt.key
-                                        ? "bg-red-500/15 text-red-400 border border-red-500/30 shadow-sm"
-                                        : "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shadow-sm"
-                                    : "bg-black/20 text-zinc-400 border border-white/5 hover:bg-white/5"
-                                    }`}
-                            >
-                                <span>{opt.emoji}</span>
-                                {opt.label}
-                            </button>
-                        ))}
+                            { key: false, label: "Enabled", icon: Sparkles },
+                            { key: true, label: "Disabled", icon: Ban },
+                        ].map(opt => {
+                            const Icon = opt.icon;
+                            return (
+                                <button
+                                    key={String(opt.key)}
+                                    onClick={() => setPendingDisableSwipe(opt.key)}
+                                    className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-all capitalize flex items-center justify-center gap-2 ${pendingDisableSwipe === opt.key
+                                        ? opt.key
+                                            ? "bg-red-500/15 text-red-400 border border-red-500/30 shadow-sm"
+                                            : "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shadow-sm"
+                                        : "bg-black/20 text-zinc-400 border border-white/5 hover:bg-white/5"
+                                        }`}
+                                >
+                                    <Icon className="w-4 h-4" />
+                                    <span>{opt.label}</span>
+                                </button>
+                            );
+                        })}
                     </div>
                     <p className="text-[10px] text-zinc-500 mt-1">
                         Configure whether swiping left-to-right closes screens like the Modifiers View.
@@ -1995,6 +2879,8 @@ function TouchpointThemesTab({
                     onClose={() => setPickerOpen(null)}
                 />
             )}
+
+
         </div>
     );
 }

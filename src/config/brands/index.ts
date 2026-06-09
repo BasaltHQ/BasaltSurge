@@ -105,39 +105,62 @@ import { isPlatformContext, isPartnerContext, getSanitizedSplitBps } from "@/lib
  * the default (basaltsurge) to allow dynamic hostname-based resolution.
  */
 export function getBrandKey(req?: NextRequest): string {
+  // Helpers to derive brand key from hostname
+  const deriveFromHost = (host: string): string | null => {
+    if (!host) return null;
+    const hostLower = host.toLowerCase().split(":")[0];
+    const parts = hostLower.split(".");
+    
+    // Check custom/known partner domains
+    if (hostLower.includes("paynex")) return "paynex";
+    if (hostLower.includes("xpaypass") || hostLower.includes("xoinpay")) return "xoinpay";
+    if (hostLower.includes("icunow")) return "icunow-store";
+    if (hostLower.includes("aipowerpay")) return "aipowerpay";
+    
+    // Check localhost subdomains or Azure/PayPortal subdomains
+    if (parts.length >= 2) {
+      const candidate = parts[0];
+      if (candidate && candidate !== "www" && candidate !== "api" && candidate !== "admin") {
+        const isLocal = hostLower.endsWith(".localhost") || hostLower.endsWith(".127.0.0.1");
+        const isAzure = hostLower.endsWith(".azurewebsites.net") || hostLower.endsWith(".azurecontainerapps.io");
+        const isPayportal = hostLower.endsWith(".payportal.co") || hostLower.endsWith(".portalpay.app");
+        if (isLocal || isAzure || isPayportal) {
+          return candidate;
+        }
+      }
+    }
+    
+    if (hostLower.includes("basaltsurge") || hostLower.includes("basalthq")) return "basaltsurge";
+    return null;
+  };
+
   // 1. Explicit header (passed from API routes)
   if (req) {
     const header = req.headers.get("x-brand-key");
     if (header) return header.toLowerCase().trim();
 
     // 2. Hostname-based resolution on server
-    const host = (req.headers.get("x-forwarded-host") || req.headers.get("host") || "").toLowerCase();
-    if (host.includes("paynex")) return "paynex";
-    if (host.includes("basaltsurge") || host.includes("basalthq")) return "basaltsurge";
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+    const derived = deriveFromHost(host);
+    if (derived) return derived;
   }
 
-  // 3. Respect public environment variable (client-safe)
-  const pub = (process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase().trim();
-
-  // 4. Server-side environment variable
-  const raw = (process.env.BRAND_KEY || "").toLowerCase().trim();
-
-  // In platform context, if the BRAND_KEY is set to 'basaltsurge' (the default),
-  // we treat it as a weak fallback and prefer hostname resolution if available.
-  const isPlatform = isPlatformContext();
-  const envKey = pub || raw;
-
-  if (isPlatform && envKey === "basaltsurge") {
-    // Continue through fallbacks below
-  } else if (envKey) {
-    return envKey;
-  }
-
-  // 5. Fallback for browser
+  // 3. Fallback for browser (client-side)
   if (typeof window !== "undefined") {
     const host = window.location.host || "";
-    if (host.includes("paynex")) return "paynex";
-    if (host.includes("basaltsurge") || host.includes("basalthq")) return "basaltsurge";
+    const derived = deriveFromHost(host);
+    if (derived) return derived;
+  }
+
+  // 4. Respect public environment variable (client-safe)
+  const pub = (process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase().trim();
+
+  // 5. Server-side environment variable
+  const raw = (process.env.BRAND_KEY || "").toLowerCase().trim();
+
+  const envKey = pub || raw;
+  if (envKey) {
+    return envKey;
   }
 
   // 6. Final fallback

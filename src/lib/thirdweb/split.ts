@@ -32,7 +32,8 @@ export async function ensureSplitForWallet(
   extraAgents?: { wallet: string, bps: number }[],
   partnerWalletOverride?: string,
   platformFeeBpsOverride?: number,
-  forceRedeploy?: boolean
+  forceRedeploy?: boolean,
+  isCreditOverride?: boolean
 ): Promise<string | undefined> {
   const brandKey = brandKeyOverride || getBrandKey();
   const callerWallet = account?.address || "";
@@ -72,6 +73,11 @@ export async function ensureSplitForWallet(
     }
     const agentSharesBps = agents.reduce((sum, a) => sum + Math.max(0, Math.min(10000, a.bps)), 0);
 
+    // Check if dual split is enabled and this is a credit deployment
+    const { isDualSplitEnabled, getSanitizedCreditSplitBps, getEnv } = await import("@/lib/env");
+    const isCredit = isCreditOverride !== undefined ? !!isCreditOverride : isDualSplitEnabled();
+    const dualSplit = isDualSplitEnabled() || isCredit;
+
     if (!brandKey) {
       // Persist recipients (without address) for later binding and exit early
       try {
@@ -81,7 +87,8 @@ export async function ensureSplitForWallet(
           body: JSON.stringify({
             wallet: merchant,
             platformPct: 0.5,
-            agents
+            agents,
+            isCredit
           }),
         });
       } catch { }
@@ -92,7 +99,8 @@ export async function ensureSplitForWallet(
     // SKIPPED if forceRedeploy is true
     if (!forceRedeploy) {
       try {
-        const r = await fetch(buildApiUrl(`/api/split/deploy?wallet=${encodeURIComponent(merchant)}&brandKey=${encodeURIComponent(brandKey)}`), { cache: "no-store", credentials: "include" });
+        const queryParams = `wallet=${encodeURIComponent(merchant)}&brandKey=${encodeURIComponent(brandKey)}${isCredit ? "&isCredit=true" : ""}`;
+        const r = await fetch(buildApiUrl(`/api/split/deploy?${queryParams}`), { cache: "no-store", credentials: "include" });
         const j = await r.json().catch(() => ({}));
         const existing = String(j?.split?.address || "").toLowerCase();
         // Only return existing if valid and not misconfigured
@@ -118,7 +126,8 @@ export async function ensureSplitForWallet(
             wallet: merchant,
             platformPct: 0.5, // for metadata correctness
             brandKey,
-            agents
+            agents,
+            isCredit
           }),
         });
       } catch { }
@@ -139,16 +148,42 @@ export async function ensureSplitForWallet(
       platform = CANONICAL_PLATFORM_WALLET.toLowerCase();
     }
 
+    let defaultPlatformBps = 50;
+    let defaultPartnerBps = typeof brand?.partnerFeeBps === "number" ? brand.partnerFeeBps : 50;
+
+    if (dualSplit) {
+      if (isCredit) {
+        // Debit card component
+        const env = getEnv();
+        defaultPlatformBps = env.PLATFORM_BPS ?? 100;
+        defaultPartnerBps = 0;
+      } else {
+        // Credit & Crypto component
+        const creditBps = getSanitizedCreditSplitBps();
+        if (creditBps) {
+          defaultPlatformBps = creditBps.platform;
+        } else {
+          defaultPlatformBps = 150;
+        }
+        defaultPartnerBps = 0;
+      }
+    }
+
     const platformBps = typeof platformFeeBpsOverride === "number"
       ? Math.max(0, Math.min(10000, platformFeeBpsOverride))
-      : (typeof brand?.platformFeeBps === "number"
-        ? Math.max(0, Math.min(10000, brand.platformFeeBps))
-        : 50);
+      : (dualSplit
+        ? defaultPlatformBps
+        : (typeof brand?.platformFeeBps === "number"
+          ? Math.max(0, Math.min(10000, brand.platformFeeBps))
+          : 50));
     // Platform container never has partner recipient
     const isPartner = brandKey !== "portalpay" && brandKey !== "basaltsurge";
 
-    // Use override if provided, otherwise brand default
-    let effectivePartnerBps = brand.partnerFeeBps;
+    // Use override if provided, otherwise default/brand
+    let effectivePartnerBps = isCredit ? defaultPartnerBps : brand.partnerFeeBps;
+    if (dualSplit) {
+      effectivePartnerBps = defaultPartnerBps;
+    }
     if (typeof partnerFeeBpsOverride === "number") {
       effectivePartnerBps = partnerFeeBpsOverride;
     }
@@ -160,7 +195,7 @@ export async function ensureSplitForWallet(
     // Merchant gets remainder after Platform, Partner, and Agents
     const merchantBps = Math.max(0, 10000 - platformBps - partnerBps - agentSharesBps);
 
-    const name = `${(typeof brand?.name === "string" && brand.name ? brand.name : "Brand")} Split ${merchant.slice(0, 6)}`;
+    const name = `${(typeof brand?.name === "string" && brand.name ? brand.name : "Brand")} ${isCredit ? "Credit" : "Split"} ${merchant.slice(0, 6)}`;
 
     // Build payees/shares arrays
     const payeeList: string[] = [merchant, platform];
@@ -209,7 +244,9 @@ export async function ensureSplitForWallet(
         credentials: "include",
         body: JSON.stringify({
           wallet: merchant,
-          splitAddress: addr,
+          splitAddress: isCredit ? undefined : addr,
+          splitAddressCredit: isCredit ? addr : undefined,
+          isCredit,
           brandKey,
           agents, // Send agents to persist them in site config
           partnerWallet: partner,
@@ -225,7 +262,8 @@ export async function ensureSplitForWallet(
       await r2.json().catch(() => ({}));
       // Verify persistence + recipients after POST
       try {
-        const r3 = await fetch(buildApiUrl(`/api/split/deploy?wallet=${encodeURIComponent(merchant)}&brandKey=${encodeURIComponent(brandKey)}`), { cache: "no-store", credentials: "include" });
+        const queryParams = `wallet=${encodeURIComponent(merchant)}&brandKey=${encodeURIComponent(brandKey)}${isCredit ? "&isCredit=true" : ""}`;
+        const r3 = await fetch(buildApiUrl(`/api/split/deploy?${queryParams}`), { cache: "no-store", credentials: "include" });
         const j3 = await r3.json().catch(() => ({}));
         const a3 = String(j3?.split?.address || "").toLowerCase();
         const rc3 = Array.isArray(j3?.split?.recipients) ? j3.split.recipients.length : 0;

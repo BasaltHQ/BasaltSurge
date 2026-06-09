@@ -529,3 +529,526 @@ export function MultiLineChart({ data, lines, height = 280, currency = true }: {
         </div>
     );
 }
+
+/* ────────── Transaction History Chart (Dynamic Bar/Line Series) ────────── */
+export function TransactionHistoryChart({ transactions = [], height = 180, title = "Transaction Frequency" }: {
+    transactions?: any[];
+    height?: number;
+    title?: string;
+}) {
+    const [viewType, setViewType] = useState<"bar" | "line">("bar");
+    const [range, setRange] = useState<"24h" | "7d" | "30d" | "all">("all");
+    const [selectedTokens, setSelectedTokens] = useState<string[]>([]);
+
+    const TOKEN_COLORS: Record<string, string> = {
+        USDC: "#3b82f6", // Blue
+        ETH: "#a855f7",  // Purple
+        CBBTC: "#f97316", // Orange
+        CBXRP: "#06b6d4", // Cyan
+        SOL: "#14b8a6",  // Teal
+        USDT: "#22c55e", // Green
+        DEFAULT: "#6366f1"
+    };
+
+    // Generate a detailed mock transaction list with timestamp, token, and value if no live transactions
+    const mockTransactions = React.useMemo(() => {
+        const now = Date.now();
+        const list: any[] = [];
+        const tokens = ["USDC", "ETH", "cbBTC"];
+        
+        let stepMs = 3 * 3600 * 1000; // 3 hours
+        if (range === "24h") { stepMs = 45 * 60 * 1000; }
+        else if (range === "30d") { stepMs = 18 * 3600 * 1000; }
+        else if (range === "all") { stepMs = 7 * 24 * 3600 * 1000; }
+        
+        const count = range === "24h" ? 24 : range === "7d" ? 40 : range === "30d" ? 60 : 80;
+        for (let i = 0; i < count; i++) {
+            const timestamp = now - (count - i) * stepMs;
+            const token = tokens[i % 3];
+            list.push({
+                timestamp,
+                token,
+                value: (i % 5 + 1) * 0.1,
+                type: "payment"
+            });
+        }
+        return list;
+    }, [range]);
+
+    // Filter transactions locally based on range
+    const filteredTxs = React.useMemo(() => {
+        if (!Array.isArray(transactions) || transactions.length === 0) return [];
+        if (range === "all") return transactions;
+
+        const now = Date.now();
+        let limitMs = 30 * 24 * 3600 * 1000;
+        if (range === "24h") limitMs = 24 * 3600 * 1000;
+        else if (range === "7d") limitMs = 7 * 24 * 3600 * 1000;
+
+        const cutoff = now - limitMs;
+        return transactions.filter(tx => {
+            const ts = Number(tx.timestamp || 0);
+            return ts >= cutoff;
+        });
+    }, [transactions, range]);
+
+    const hasData = Array.isArray(filteredTxs) && filteredTxs.length > 0;
+
+    const availableTokens = React.useMemo(() => {
+        const txSource = hasData ? filteredTxs : mockTransactions;
+        const set = new Set<string>();
+        txSource.forEach(tx => {
+            if (tx.token) set.add(tx.token.toUpperCase());
+        });
+        return Array.from(set).sort();
+    }, [filteredTxs, mockTransactions, hasData]);
+
+    const chartData = React.useMemo(() => {
+        const txSource = hasData ? filteredTxs : mockTransactions;
+        
+        // Filter and sort transactions by timestamp ascending
+        const sorted = [...txSource]
+            .filter(tx => tx.timestamp)
+            .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+
+        if (sorted.length === 0) {
+            return [
+                { label: "No Data", count: 0, tokenCounts: {} }
+            ];
+        }
+
+        const minTs = Number(sorted[0].timestamp);
+        const maxTs = Number(sorted[sorted.length - 1].timestamp);
+        const diffMs = maxTs - minTs;
+
+        const isHourly = diffMs <= 28 * 3600 * 1000; // ~1 day
+
+        const addTxToMap = (map: Map<string, { count: number, tokenCounts: Record<string, number> }>, key: string, token: string) => {
+            const tok = token.toUpperCase();
+            if (!map.has(key)) {
+                map.set(key, { count: 0, tokenCounts: {} });
+            }
+            const val = map.get(key)!;
+            val.count += 1;
+            val.tokenCounts[tok] = (val.tokenCounts[tok] || 0) + 1;
+        };
+
+        if (isHourly) {
+            const hoursMap = new Map<string, { count: number, tokenCounts: Record<string, number> }>();
+            for (let i = 0; i < 24; i += 2) {
+                hoursMap.set(`${i}:00`, { count: 0, tokenCounts: {} });
+            }
+            sorted.forEach(tx => {
+                const hr = new Date(Number(tx.timestamp)).getHours();
+                const bucket = `${Math.floor(hr / 2) * 2}:00`;
+                const token = tx.token || "ETH";
+                addTxToMap(hoursMap, bucket, token);
+            });
+            return Array.from(hoursMap.entries()).map(([label, val]) => ({ label, count: val.count, tokenCounts: val.tokenCounts }));
+        } else if (diffMs <= 8 * 24 * 3600 * 1000) {
+            const dateMap = new Map<string, { count: number, tokenCounts: Record<string, number> }>();
+            sorted.forEach(tx => {
+                const d = new Date(Number(tx.timestamp));
+                const key = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                const token = tx.token || "ETH";
+                addTxToMap(dateMap, key, token);
+            });
+            return Array.from(dateMap.entries()).map(([label, val]) => ({ label, count: val.count, tokenCounts: val.tokenCounts }));
+        } else {
+            const dateMap = new Map<string, { count: number, tokenCounts: Record<string, number> }>();
+            sorted.forEach(tx => {
+                const d = new Date(Number(tx.timestamp));
+                const key = `${d.getDate()}/${d.getMonth() + 1}`;
+                const token = tx.token || "ETH";
+                addTxToMap(dateMap, key, token);
+            });
+
+            const entries = Array.from(dateMap.entries());
+            if (entries.length > 12) {
+                const binSize = Math.ceil(entries.length / 12);
+                const binned: { label: string; count: number; tokenCounts: Record<string, number> }[] = [];
+                for (let i = 0; i < entries.length; i += binSize) {
+                    const chunk = entries.slice(i, i + binSize);
+                    const label = chunk[0][0];
+                    const count = chunk.reduce((sum, item) => sum + item[1].count, 0);
+                    
+                    const mergedTokenCounts: Record<string, number> = {};
+                    chunk.forEach(item => {
+                        Object.entries(item[1].tokenCounts).forEach(([tok, cnt]) => {
+                            mergedTokenCounts[tok] = (mergedTokenCounts[tok] || 0) + cnt;
+                        });
+                    });
+                    binned.push({ label, count, tokenCounts: mergedTokenCounts });
+                }
+                return binned;
+            }
+            return entries.map(([label, val]) => ({ label, count: val.count, tokenCounts: val.tokenCounts }));
+        }
+    }, [filteredTxs, mockTransactions, hasData, range]);
+
+    const maxCount = Math.max(...chartData.map(d => d.count), 1);
+
+    // Line plotting math
+    const svgWidth = 500;
+    const svgHeight = height - 40;
+    const padding = 15;
+
+    const points = React.useMemo(() => {
+        if (chartData.length < 2) return [];
+        return chartData.map((d, i) => {
+            const x = padding + (i / (chartData.length - 1)) * (svgWidth - 2 * padding);
+            const y = padding + (1 - d.count / maxCount) * (svgHeight - 2 * padding);
+            return { x, y, label: d.label, val: d.count };
+        });
+    }, [chartData, maxCount, svgHeight]);
+
+    const linePath = React.useMemo(() => {
+        if (points.length === 0) return "";
+        let path = `M ${points[0].x} ${points[0].y}`;
+        for (let i = 1; i < points.length; i++) {
+            const p0 = points[i - 1];
+            const p1 = points[i];
+            const cp1x = p0.x + (p1.x - p0.x) / 2;
+            const cp1y = p0.y;
+            const cp2x = p1.x - (p1.x - p0.x) / 2;
+            const cp2y = p1.y;
+            path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p1.x} ${p1.y}`;
+        }
+        return path;
+    }, [points]);
+
+    const areaPath = React.useMemo(() => {
+        if (points.length === 0) return "";
+        return `${linePath} L ${points[points.length - 1].x} ${svgHeight} L ${points[0].x} ${svgHeight} Z`;
+    }, [points, linePath, svgHeight]);
+
+    // Compute token-specific lines & areas.
+    // If not selected, it maps directly to the main aggregate line coordinates (collapsing back into it).
+    // This allows the browser to perform a beautiful morphing bifurcation animation when toggled!
+    const tokenSeriesList = React.useMemo(() => {
+        return availableTokens.map((token) => {
+            const isSelected = selectedTokens.includes(token);
+            const pointsForToken = chartData.map((d, i) => {
+                const x = padding + (i / (chartData.length - 1)) * (svgWidth - 2 * padding);
+                const count = isSelected ? (d.tokenCounts[token] || 0) : d.count;
+                const y = padding + (1 - count / maxCount) * (svgHeight - 2 * padding);
+                return { x, y, val: isSelected ? (d.tokenCounts[token] || 0) : d.count };
+            });
+
+            // Path generation
+            let path = "";
+            if (pointsForToken.length > 0) {
+                path = `M ${pointsForToken[0].x} ${pointsForToken[0].y}`;
+                for (let i = 1; i < pointsForToken.length; i++) {
+                    const p0 = pointsForToken[i - 1];
+                    const p1 = pointsForToken[i];
+                    const cp1x = p0.x + (p1.x - p0.x) / 2;
+                    const cp1y = p0.y;
+                    const cp2x = p1.x - (p1.x - p0.x) / 2;
+                    const cp2y = p1.y;
+                    path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p1.x} ${p1.y}`;
+                }
+            }
+            const area = pointsForToken.length > 0 ? `${path} L ${pointsForToken[pointsForToken.length - 1].x} ${svgHeight} L ${pointsForToken[0].x} ${svgHeight} Z` : "";
+
+            return {
+                token,
+                points: pointsForToken,
+                path,
+                area,
+                isSelected,
+            };
+        });
+    }, [chartData, availableTokens, selectedTokens, maxCount, svgHeight, points]);
+
+    return (
+        <div className="rounded-2xl border border-foreground/[0.04] bg-foreground/[0.02] p-5 shadow-sm relative overflow-hidden flex flex-col justify-between w-full h-full min-h-[220px]">
+            <style>{`
+                @keyframes growBar {
+                    from { transform: scaleY(0); opacity: 0; }
+                    to { transform: scaleY(1); opacity: 1; }
+                }
+                @keyframes drawLine {
+                    from { stroke-dashoffset: 1000; }
+                    to { stroke-dashoffset: 0; }
+                }
+                @keyframes scaleDot {
+                    from { transform: scale(0); opacity: 0; }
+                    to { transform: scale(1); opacity: 1; }
+                }
+                @keyframes animateArea {
+                    from { opacity: 0; transform: scaleY(0); }
+                    to { opacity: 1; transform: scaleY(1); }
+                }
+                .animate-chart-bar {
+                    transform-origin: bottom;
+                    animation: growBar 0.8s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+                }
+                .animate-chart-line {
+                    stroke-dasharray: 1000;
+                    stroke-dashoffset: 1000;
+                    animation: drawLine 1.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+                }
+                .animate-chart-area {
+                    transform-origin: bottom;
+                    animation: animateArea 1.2s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+                }
+                .animate-chart-dot {
+                    animation: scaleDot 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+                }
+            `}</style>
+
+            <div className="flex flex-col gap-2 mb-4 relative z-10">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground">{title}</div>
+                    
+                    <div className="flex items-center gap-2 self-end sm:self-auto">
+                        {/* Time Range Selector */}
+                        <div className="flex bg-foreground/[0.03] p-0.5 rounded-lg border border-foreground/5">
+                            {(["24h", "7d", "30d", "all"] as const).map((r) => (
+                                <button
+                                    key={r}
+                                    onClick={() => setRange(r)}
+                                    className={`px-2 py-0.5 rounded-md text-[8px] uppercase font-bold tracking-wider transition-all ${range === r ? "bg-primary text-black" : "text-muted-foreground hover:text-foreground"}`}
+                                >
+                                    {r === "all" ? "All" : r}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Chart Type Selector */}
+                        <div className="flex bg-foreground/[0.03] p-0.5 rounded-lg border border-foreground/5">
+                            <button
+                                onClick={() => setViewType("bar")}
+                                className={`px-2.5 py-1 rounded-md text-[8px] uppercase font-bold tracking-wider transition-all ${viewType === "bar" ? "bg-primary text-black" : "text-muted-foreground hover:text-foreground"}`}
+                            >
+                                Bar
+                            </button>
+                            <button
+                                onClick={() => setViewType("line")}
+                                className={`px-2.5 py-1 rounded-md text-[8px] uppercase font-bold tracking-wider transition-all ${viewType === "line" ? "bg-primary text-black" : "text-muted-foreground hover:text-foreground"}`}
+                            >
+                                Line
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Token Selector pills */}
+                {availableTokens.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-1 border-t border-foreground/5 pt-2">
+                        <span className="text-[8px] uppercase font-bold tracking-wider text-muted-foreground mr-1 self-center">Currencies:</span>
+                        <button
+                            onClick={() => setSelectedTokens([])}
+                            className={`px-2 py-0.5 rounded-full text-[8px] uppercase font-bold tracking-wider transition-all border ${selectedTokens.length === 0 ? "bg-primary text-black border-primary" : "text-muted-foreground border-foreground/10 hover:bg-foreground/5"}`}
+                        >
+                            All
+                        </button>
+                        {availableTokens.map(tok => {
+                            const isSel = selectedTokens.includes(tok);
+                            const col = TOKEN_COLORS[tok] || TOKEN_COLORS.DEFAULT;
+                            return (
+                                <button
+                                    key={tok}
+                                    onClick={() => {
+                                        setSelectedTokens(prev => 
+                                            prev.includes(tok) ? prev.filter(t => t !== tok) : [...prev, tok]
+                                        );
+                                    }}
+                                    className={`px-2 py-0.5 rounded-full text-[8px] uppercase font-bold tracking-wider transition-all border flex items-center gap-1`}
+                                    style={{
+                                        borderColor: isSel ? col : "rgba(255,255,255,0.1)",
+                                        backgroundColor: isSel ? `${col}20` : "transparent",
+                                        color: isSel ? col : "var(--muted-foreground)"
+                                    }}
+                                >
+                                    <span className="w-1 h-1 rounded-full" style={{ backgroundColor: col }} />
+                                    {tok}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+
+            <div className="relative z-10 w-full" style={{ height }}>
+                {!hasData && (
+                    <div className="absolute inset-0 bg-black/25 backdrop-blur-[1px] z-20 flex items-center justify-center rounded-xl pointer-events-none">
+                        <span className="text-[9px] uppercase font-bold tracking-[0.2em] bg-background border border-foreground/10 px-3 py-1.5 rounded-full text-muted-foreground shadow-sm pointer-events-auto">
+                            Not enough data
+                        </span>
+                    </div>
+                )}
+                {viewType === "bar" ? (
+                    <div className="absolute inset-0 flex items-end gap-[4px] pt-2 pb-6 pl-10 pr-2">
+                        {/* Y-Axis Grid */}
+                        <div className="absolute inset-y-0 left-0 flex flex-col justify-between pointer-events-none text-[8px] font-mono text-muted-foreground/60 w-8 pr-2 text-right">
+                            <span>{Math.round(maxCount)}</span>
+                            <span>{Math.round(maxCount / 2)}</span>
+                            <span>0</span>
+                        </div>
+                        {chartData.map((d, i) => {
+                            const count = selectedTokens.length > 0 
+                                ? selectedTokens.reduce((sum, t) => sum + (d.tokenCounts[t] || 0), 0)
+                                : d.count;
+                            const pct = (count / maxCount) * 100;
+                            return (
+                                <div key={i} className="flex-1 flex flex-col justify-end items-center group relative min-w-[12px] h-full">
+                                    <div
+                                        className="w-full rounded-t-[4px] bg-gradient-to-t from-[var(--pp-secondary,teal)]/40 to-[var(--pp-secondary,teal)] cursor-pointer hover:brightness-125 animate-chart-bar opacity-0"
+                                        style={{ 
+                                            height: `${Math.max(2, pct)}%`,
+                                            animationDelay: `${i * 35}ms`,
+                                            animationFillMode: 'forwards'
+                                        }}
+                                    />
+                                    {/* Tooltip */}
+                                    <div className="absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 bg-black/90 text-white text-[9px] px-2 py-0.5 rounded-md border border-white/10 opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none z-30 transition-opacity font-mono font-semibold">
+                                        {count} tx{count !== 1 ? 's' : ''}
+                                    </div>
+                                    {/* Label */}
+                                    <div className="absolute top-full mt-1.5 text-[8px] text-muted-foreground/80 whitespace-nowrap overflow-hidden text-ellipsis max-w-full">
+                                        {d.label}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <div className="absolute inset-0 pt-2 pb-6 pl-10 pr-2">
+                        {/* Y-Axis Grid */}
+                        <div className="absolute inset-y-0 left-0 flex flex-col justify-between pointer-events-none text-[8px] font-mono text-muted-foreground/60 w-8 pr-2 text-right">
+                            <span>{Math.round(maxCount)}</span>
+                            <span>{Math.round(maxCount / 2)}</span>
+                            <span>0</span>
+                        </div>
+                        {points.length > 1 ? (
+                            <div className="relative w-full h-full">
+                                <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
+                                    <defs>
+                                        <linearGradient id="chart-area-grad" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="var(--pp-secondary, #0d9488)" stopOpacity="0.2" />
+                                            <stop offset="100%" stopColor="var(--pp-secondary, #0d9488)" stopOpacity="0.01" />
+                                        </linearGradient>
+                                    </defs>
+                                    
+                                    {/* Main Aggregate Area (only if no tokens are selected) */}
+                                    {selectedTokens.length === 0 && (
+                                        <path d={areaPath} fill="url(#chart-area-grad)" className="animate-chart-area" />
+                                    )}
+
+                                    {/* Token Specific Areas */}
+                                    {tokenSeriesList.map((series) => {
+                                        const col = TOKEN_COLORS[series.token] || TOKEN_COLORS.DEFAULT;
+                                        return (
+                                            <path
+                                                key={`area-${series.token}`}
+                                                d={series.area}
+                                                fill={col}
+                                                fillOpacity={series.isSelected ? "0.04" : "0"}
+                                                className="transition-all duration-1000"
+                                                style={{ transitionProperty: "d, fill-opacity" }}
+                                            />
+                                        );
+                                    })}
+
+                                    {/* Main Aggregate Line */}
+                                    <path
+                                        d={linePath}
+                                        fill="none"
+                                        stroke={selectedTokens.length > 0 ? "rgba(156, 163, 175, 0.2)" : "var(--pp-secondary, #0d9488)"}
+                                        strokeWidth={selectedTokens.length > 0 ? "1.5" : "2.5"}
+                                        strokeDasharray={selectedTokens.length > 0 ? "4 4" : "none"}
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        className="transition-all duration-700 animate-chart-line"
+                                    />
+
+                                    {/* Token Specific Lines (branching off main line) */}
+                                    {tokenSeriesList.map((series) => {
+                                        const col = TOKEN_COLORS[series.token] || TOKEN_COLORS.DEFAULT;
+                                        return (
+                                            <path
+                                                key={`line-${series.token}`}
+                                                d={series.path}
+                                                fill="none"
+                                                stroke={col}
+                                                strokeWidth="2"
+                                                strokeLinecap="round"
+                                                strokeLinejoin="round"
+                                                opacity={series.isSelected ? 1 : 0}
+                                                className="transition-all duration-1000"
+                                                style={{ 
+                                                    transitionProperty: "d, opacity",
+                                                    pointerEvents: "none"
+                                                }}
+                                            />
+                                        );
+                                    })}
+
+                                    {/* Plot dots for selected tokens & aggregate */}
+                                    {selectedTokens.length === 0 ? (
+                                        points.map((p, i) => (
+                                            <g key={`dot-agg-${i}`} className="group/dot cursor-pointer animate-chart-dot opacity-0" style={{ animationDelay: `${i * 30 + 500}ms`, transformOrigin: `${p.x}px ${p.y}px`, animationFillMode: 'forwards' }}>
+                                                <circle cx={p.x} cy={p.y} r="3.5" fill="var(--pp-secondary, #0d9488)" stroke="white" strokeWidth="1" />
+                                                <circle cx={p.x} cy={p.y} r="8" fill="transparent" className="hover:fill-[var(--pp-secondary)]/10" />
+                                            </g>
+                                        ))
+                                    ) : (
+                                        tokenSeriesList.map((series) => {
+                                            if (!series.isSelected) return null;
+                                            const col = TOKEN_COLORS[series.token] || TOKEN_COLORS.DEFAULT;
+                                            return series.points.map((p, i) => (
+                                                <g key={`dot-${series.token}-${i}`} className="group/dot cursor-pointer animate-chart-dot opacity-0" style={{ transformOrigin: `${p.x}px ${p.y}px`, animationDelay: `${i * 10}ms`, animationFillMode: 'forwards' }}>
+                                                    <circle cx={p.x} cy={p.y} r="3" fill={col} stroke="white" strokeWidth="1" />
+                                                    <circle cx={p.x} cy={p.y} r="6" fill="transparent" />
+                                                </g>
+                                            ));
+                                        })
+                                    )}
+                                </svg>
+                                {/* HTML Labels and Tooltips overlay */}
+                                <div className="absolute inset-0 flex justify-between pointer-events-none">
+                                    {points.map((p, i) => (
+                                        <div key={i} className="flex-1 relative h-full group">
+                                            <div className="absolute top-full mt-1.5 left-1/2 -translate-x-1/2 text-[8px] text-muted-foreground/80 whitespace-nowrap">
+                                                {p.label}
+                                            </div>
+                                            {/* Multi-currency Tooltip */}
+                                            <div className="absolute bg-black/90 text-white text-[9px] px-2.5 py-1.5 rounded-md border border-white/10 opacity-0 group-hover:opacity-100 pointer-events-none z-30 transition-opacity font-mono flex flex-col gap-0.5 shadow-lg min-w-[90px]"
+                                                style={{ 
+                                                    left: `${(i / (points.length - 1)) * 100}%`, 
+                                                    top: `calc(${(1 - p.val / maxCount) * 100}% - 28px)`,
+                                                    transform: 'translateX(-50%)'
+                                                }}>
+                                                <div className="font-bold border-b border-white/10 pb-0.5 mb-0.5 text-foreground text-center">{p.label}</div>
+                                                {selectedTokens.length === 0 ? (
+                                                    <div className="text-center">Total: {p.val} txs</div>
+                                                ) : (
+                                                    <>
+                                                        {selectedTokens.map(tok => {
+                                                            const count = chartData[i]?.tokenCounts[tok] || 0;
+                                                            return (
+                                                                <div key={tok} className="flex items-center gap-1.5 text-[8px]" style={{ color: TOKEN_COLORS[tok] || TOKEN_COLORS.DEFAULT }}>
+                                                                    <span className="w-1 h-1 rounded-full" style={{ backgroundColor: TOKEN_COLORS[tok] || TOKEN_COLORS.DEFAULT }} />
+                                                                    {tok}: {count}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                        <div className="text-[7px] text-muted-foreground pt-0.5 border-t border-white/5 mt-0.5 text-center">Total: {p.val}</div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="h-full flex items-center justify-center text-xs text-muted-foreground/50">Insufficient data points</div>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
