@@ -763,26 +763,41 @@ export function ReserveAnalytics() {
         >
           Aggregate Reserve
         </button>
-        <button
-          onClick={() => handleTabChange('credit')}
-          className={`pb-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 whitespace-nowrap ${
-            activeTab === 'credit'
-              ? 'border-emerald-500 text-foreground font-extrabold'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          Credit Card & Native Crypto Reserve
-        </button>
-        <button
-          onClick={() => handleTabChange('debit')}
-          className={`pb-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 whitespace-nowrap ${
-            activeTab === 'debit'
-              ? 'border-purple-500 text-foreground font-extrabold'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          Debit Card Reserve
-        </button>
+        {data?.isDual ? (
+          <>
+            <button
+              onClick={() => handleTabChange('credit')}
+              className={`pb-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 whitespace-nowrap ${
+                activeTab === 'credit'
+                  ? 'border-emerald-500 text-foreground font-extrabold'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Credit Card & Native Crypto Reserve
+            </button>
+            <button
+              onClick={() => handleTabChange('debit')}
+              className={`pb-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 whitespace-nowrap ${
+                activeTab === 'debit'
+                  ? 'border-purple-500 text-foreground font-extrabold'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Debit Card Reserve
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => handleTabChange('credit')}
+            className={`pb-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 whitespace-nowrap ${
+              activeTab === 'credit'
+                ? 'border-emerald-500 text-foreground font-extrabold'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Standard Reserve
+          </button>
+        )}
         <button
           onClick={() => handleTabChange('legacy')}
           className={`pb-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 whitespace-nowrap ${
