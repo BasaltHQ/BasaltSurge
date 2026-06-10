@@ -38,7 +38,11 @@ export type BrandConfig = {
 
   // New: brand URL and partner split config
   appUrl?: string; // brand-specific base URL (custom domain), resolved via defaults if absent
-  platformFeeBps?: number; // default 80 bps (0.8%)
+  platformFeeBps?: number; // default platform fee BPS (Debit)
+  creditPlatformFeeBps?: number; // Platform fee BPS (Credit)
+  agentFeeBps?: number; // Agent fee BPS (Debit)
+  creditAgentFeeBps?: number; // Agent fee BPS (Credit)
+  primaryAgentWallet?: string; // Primary Agent wallet
   partnerFeeBps?: number; // per-brand partner fee bps
   defaultMerchantFeeBps?: number; // optional default merchant add-on bps
   partnerWallet?: string; // optional wallet for partner recipient in split
@@ -270,6 +274,10 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     apimCatalog,
     accessMode: (raw.accessMode as any) || (envAccessMode === "request" ? "request" : (envAccessMode === "open" ? "open" : undefined)) || raw.accessMode,
     unifiedFeeEnabled: typeof raw.unifiedFeeEnabled === "boolean" ? raw.unifiedFeeEnabled : false,
+    creditPlatformFeeBps: typeof raw.creditPlatformFeeBps === "number" ? raw.creditPlatformFeeBps : undefined,
+    agentFeeBps: typeof raw.agentFeeBps === "number" ? raw.agentFeeBps : undefined,
+    creditAgentFeeBps: typeof raw.creditAgentFeeBps === "number" ? raw.creditAgentFeeBps : undefined,
+    primaryAgentWallet: raw.primaryAgentWallet,
   };
 }
 

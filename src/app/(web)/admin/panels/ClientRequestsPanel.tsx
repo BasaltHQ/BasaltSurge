@@ -268,16 +268,16 @@ export default function ClientRequestsPanel() {
         }
         // Client-side fallback
         const list: { wallet: string; bps: number }[] = [];
-        const wallet1 = process.env.NEXT_PUBLIC_AGENT_WALLET || "";
+        const wallet1 = (brand as any)?.primaryAgentWallet || process.env.NEXT_PUBLIC_AGENT_WALLET || "";
         let bps1 = 0;
         if (isDebit) {
-            bps1 = parseInt(process.env.NEXT_PUBLIC_AGENT_SPLIT_BPS || "0") || 0;
+            bps1 = (brand as any)?.agentFeeBps !== undefined ? (brand as any).agentFeeBps : (parseInt(process.env.NEXT_PUBLIC_AGENT_SPLIT_BPS || "0") || 0);
         } else {
-            bps1 = parseInt(
+            bps1 = (brand as any)?.creditAgentFeeBps !== undefined ? (brand as any).creditAgentFeeBps : (parseInt(
                 process.env.NEXT_PUBLIC_CREDIT_SPLIT_AGENT_BPS || 
                 process.env.NEXT_PUBLIC_AGENT_SPLIT_BPS || 
                 "0"
-            ) || 0;
+            ) || 0);
         }
         if (wallet1 && bps1 > 0) {
             list.push({ wallet: wallet1, bps: bps1 });
@@ -369,7 +369,13 @@ export default function ClientRequestsPanel() {
                 const b = j?.brand as any;
                 
                 if (serverIsDualSplit) {
-                    setPlatformBps(getCreditPlatformBps());
+                    if (b && typeof b.creditPlatformFeeBps === "number") {
+                        setPlatformBps(Math.max(0, Math.min(10000, b.creditPlatformFeeBps)));
+                    } else if (typeof (brand as any)?.creditPlatformFeeBps === "number") {
+                        setPlatformBps((brand as any).creditPlatformFeeBps);
+                    } else {
+                        setPlatformBps(getCreditPlatformBps());
+                    }
                 } else if (b && typeof b.platformFeeBps === "number") {
                     setPlatformBps(Math.max(0, Math.min(10000, b.platformFeeBps)));
                 } else if (typeof (brand as any)?.platformFeeBps === "number") {
@@ -384,7 +390,11 @@ export default function ClientRequestsPanel() {
                 }
             } catch {
                 if (serverIsDualSplit) {
-                    setPlatformBps(getCreditPlatformBps());
+                    if (typeof (brand as any)?.creditPlatformFeeBps === "number") {
+                        setPlatformBps((brand as any).creditPlatformFeeBps);
+                    } else {
+                        setPlatformBps(getCreditPlatformBps());
+                    }
                 } else if (typeof (brand as any)?.platformFeeBps === "number") {
                     setPlatformBps((brand as any).platformFeeBps);
                 } else if (isPlatformContainer) {
@@ -508,6 +518,10 @@ export default function ClientRequestsPanel() {
 
     const agentsBps = currentAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
     const merchantBps = 10000 - currentPlatformBps - currentPartnerBps - agentsBps;
+    const primaryAgentBps = ((isDebitTab ? getEnvAgents(true)[0]?.bps : getEnvAgents(false)[0]?.bps) || 0);
+    const unifiedServiceFeeBps = currentPlatformBps + primaryAgentBps;
+    const customAgents = currentAgents.filter(a => !isAgentImmutable(a.wallet, isDebitTab));
+    const customAgentsBps = customAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
 
     async function load() {
         try {
@@ -650,12 +664,14 @@ export default function ClientRequestsPanel() {
             if (existingSplit.platformBps !== undefined && isPlatformContainer) {
                 setPlatformBps(existingSplit.platformBps);
             } else {
-                setPlatformBps(serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
+                const dbVal = (brand as any)?.creditPlatformFeeBps !== undefined ? (brand as any).creditPlatformFeeBps : (serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
+                setPlatformBps(dbVal);
             }
             setAgents(mergeAgents(existingSplit.agents || [], false));
         } else {
             setPartnerBps(isPlatformContainer ? 0 : 50); // Reset to default
-            setPlatformBps(serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
+            const dbVal = (brand as any)?.creditPlatformFeeBps !== undefined ? (brand as any).creditPlatformFeeBps : (serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
+            setPlatformBps(dbVal);
             setAgents(mergeAgents(baseAgents, false));
             setLastVerifiedConfig(null); // No verified config for new splits
         }
@@ -666,12 +682,14 @@ export default function ClientRequestsPanel() {
             if (existingSplitCredit.platformBps !== undefined && isPlatformContainer) {
                 setPlatformBpsDebit(existingSplitCredit.platformBps);
             } else {
-                setPlatformBpsDebit(serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
+                const dbVal = (brand as any)?.platformFeeBps !== undefined ? (brand as any).platformFeeBps : (serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
+                setPlatformBpsDebit(dbVal);
             }
             setAgentsDebit(mergeAgents(existingSplitCredit.agents || [], true));
         } else {
             setPartnerBpsDebit(0);
-            setPlatformBpsDebit(serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
+            const dbVal = (brand as any)?.platformFeeBps !== undefined ? (brand as any).platformFeeBps : (serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
+            setPlatformBpsDebit(dbVal);
             setAgentsDebit(mergeAgents(baseAgents, true));
         }
 
@@ -1789,24 +1807,19 @@ export default function ClientRequestsPanel() {
 
                                             {/* Platform Fee */}
                                             <div className="space-y-2">
-                                                {/* Unified Fee View (If Enabled on Partner Container) */}
+                                                {/* Unified Fee View */}
                                              {unifiedFeeEnabled && !isPlatformContainer && (
                                                  <div className="space-y-2">
                                                      <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
-                                                         <span>Unified Platform &amp; Agent Fee</span>
+                                                         <span>Service Fee</span>
                                                          <span>Locked</span>
                                                      </div>
-                                                     <div className="p-4 rounded-lg bg-zinc-800/50 border border-white/10 space-y-3">
+                                                     <div className="p-4 rounded-lg bg-zinc-800/50 border border-white/10">
                                                          <div className="flex justify-between items-center text-sm">
-                                                             <span className="text-white font-medium">Unified Service Fee</span>
+                                                             <span className="text-white font-medium">Service Fee</span>
                                                              <span className={`font-mono font-semibold ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
                                                                  {(((currentPlatformBps + ((isDebitTab ? getEnvAgents(true)[0]?.bps : getEnvAgents(false)[0]?.bps) || 0)) / 100)).toFixed(2)}%
                                                              </span>
-                                                         </div>
-                                                         <div className="h-px bg-white/10" />
-                                                         <div className="text-[10px] text-zinc-400 font-mono space-y-1 select-all break-all leading-normal">
-                                                             <div>Platform ({currentPlatformBps} BPS): {(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e")}</div>
-                                                             <div>Primary Agent ({(isDebitTab ? getEnvAgents(true)[0]?.bps : getEnvAgents(false)[0]?.bps) || 0} BPS): {(isDebitTab ? getEnvAgents(true)[0]?.wallet : getEnvAgents(false)[0]?.wallet) || "None"}</div>
                                                          </div>
                                                      </div>
                                                  </div>
@@ -2013,21 +2026,42 @@ export default function ClientRequestsPanel() {
                                                 <span>Total: {(totalFeeBps / 100).toFixed(2)}% Fees</span>
                                             </div>
                                             <div className="p-3 rounded-lg border border-white/5 bg-black/20 space-y-2">
-                                                <div className="flex justify-between text-xs">
-                                                    <span className="text-zinc-400">Platform</span>
-                                                    <span className="font-mono text-zinc-300">{(platformBps / 100).toFixed(2)}%</span>
-                                                </div>
-                                                {!isPlatformContainer && (
-                                                    <div className="flex justify-between text-xs">
-                                                        <span className="text-zinc-400">Partner</span>
-                                                        <span className="font-mono text-zinc-300">{(partnerBps / 100).toFixed(2)}%</span>
-                                                    </div>
-                                                )}
-                                                {agents.length > 0 && (
-                                                    <div className="flex justify-between text-xs">
-                                                        <span className="text-zinc-400">Agents ({agents.length})</span>
-                                                        <span className="font-mono text-zinc-300">{(agentsBps / 100).toFixed(2)}%</span>
-                                                    </div>
+                                                {unifiedFeeEnabled && !isPlatformContainer ? (
+                                                    <>
+                                                        <div className="flex justify-between text-xs">
+                                                            <span className="text-zinc-400">Service Fee</span>
+                                                            <span className="font-mono text-zinc-300">{(unifiedServiceFeeBps / 100).toFixed(2)}%</span>
+                                                        </div>
+                                                        <div className="flex justify-between text-xs">
+                                                            <span className="text-zinc-400">Partner</span>
+                                                            <span className="font-mono text-zinc-300">{(currentPartnerBps / 100).toFixed(2)}%</span>
+                                                        </div>
+                                                        {customAgents.length > 0 && (
+                                                            <div className="flex justify-between text-xs">
+                                                                <span className="text-zinc-400">Agents ({customAgents.length})</span>
+                                                                <span className="font-mono text-zinc-300">{(customAgentsBps / 100).toFixed(2)}%</span>
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <div className="flex justify-between text-xs">
+                                                            <span className="text-zinc-400">Platform</span>
+                                                            <span className="font-mono text-zinc-300">{(currentPlatformBps / 100).toFixed(2)}%</span>
+                                                        </div>
+                                                        {!isPlatformContainer && (
+                                                            <div className="flex justify-between text-xs">
+                                                                <span className="text-zinc-400">Partner</span>
+                                                                <span className="font-mono text-zinc-300">{(currentPartnerBps / 100).toFixed(2)}%</span>
+                                                            </div>
+                                                        )}
+                                                        {currentAgents.length > 0 && (
+                                                            <div className="flex justify-between text-xs">
+                                                                <span className="text-zinc-400">Agents ({currentAgents.length})</span>
+                                                                <span className="font-mono text-zinc-300">{(agentsBps / 100).toFixed(2)}%</span>
+                                                            </div>
+                                                        )}
+                                                    </>
                                                 )}
                                                 <div className="h-px bg-white/10 my-1" />
                                                 <div className="flex justify-between text-xs font-semibold">

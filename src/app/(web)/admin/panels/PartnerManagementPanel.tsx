@@ -95,6 +95,18 @@ export default function PartnerManagementPanel() {
       if (typeof config?.platformFeeBps === "number") {
         body.platformFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.platformFeeBps))));
       }
+      if (typeof config?.creditPlatformFeeBps === "number") {
+        body.creditPlatformFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.creditPlatformFeeBps))));
+      }
+      if (typeof config?.agentFeeBps === "number") {
+        body.agentFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.agentFeeBps))));
+      }
+      if (typeof config?.creditAgentFeeBps === "number") {
+        body.creditAgentFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.creditAgentFeeBps))));
+      }
+      if (config?.primaryAgentWallet !== undefined) {
+        body.primaryAgentWallet = String(config.primaryAgentWallet);
+      }
       if (typeof config?.defaultMerchantFeeBps === "number") {
         body.defaultMerchantFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.defaultMerchantFeeBps))));
       }
@@ -120,7 +132,7 @@ export default function PartnerManagementPanel() {
       }
 
       // If nothing to persist, skip
-      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents && body.unifiedFeeEnabled === undefined) {
+      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined) {
         return true;
       }
 
@@ -805,6 +817,14 @@ export default function PartnerManagementPanel() {
         body.partnerFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.partnerFeeBps))));
       if (typeof config?.platformFeeBps === "number")
         body.platformFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.platformFeeBps))));
+      if (typeof config?.creditPlatformFeeBps === "number")
+        body.creditPlatformFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.creditPlatformFeeBps))));
+      if (typeof config?.agentFeeBps === "number")
+        body.agentFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.agentFeeBps))));
+      if (typeof config?.creditAgentFeeBps === "number")
+        body.creditAgentFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.creditAgentFeeBps))));
+      if (config?.primaryAgentWallet !== undefined)
+        body.primaryAgentWallet = String(config.primaryAgentWallet);
       if (typeof config?.defaultMerchantFeeBps === "number")
         body.defaultMerchantFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.defaultMerchantFeeBps))));
       if (config?.partnerWallet) body.partnerWallet = String(config.partnerWallet);
@@ -1680,7 +1700,7 @@ export default function PartnerManagementPanel() {
             <div className="p-5 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Platform Fee (bps)</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Platform Fee Debit (bps)</label>
                 <input
                   type="number"
                   min={0}
@@ -1695,10 +1715,90 @@ export default function PartnerManagementPanel() {
                   title={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? "Fees locked after partner container deploy" : undefined}
                 />
                 <div className="text-[11px] text-muted-foreground/70 mt-1.5">
-                  Platform share in basis points (e.g., 50 = 0.5%). Defaults to 50 bps unless overridden here.
+                  Platform share for Debit cards in basis points (e.g., 50 = 0.5%).
                   {Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? (
                     <span className="text-amber-600"> • Locked after partner container deploy</span>
                   ) : null}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Platform Fee Credit (bps)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={10000}
+                  step={1}
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                  value={config?.creditPlatformFeeBps !== undefined ? Number(config.creditPlatformFeeBps) : ""}
+                  placeholder="e.g. 75"
+                  onChange={(e) => {
+                    const val = e.target.value === "" ? undefined : Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0))));
+                    setConfig((prev: any) => ({ ...prev, creditPlatformFeeBps: val }));
+                  }}
+                  disabled={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState)}
+                  title={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? "Fees locked after partner container deploy" : undefined}
+                />
+                <div className="text-[11px] text-muted-foreground/70 mt-1.5">
+                  Platform share for Credit/Crypto (e.g., 75 = 0.75%).
+                  {Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? (
+                    <span className="text-amber-600"> • Locked after partner container deploy</span>
+                  ) : null}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Primary Agent Wallet</label>
+                <input
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                  value={String(config?.primaryAgentWallet || "")}
+                  placeholder="0x..."
+                  onChange={(e) => setConfig((prev: any) => ({ ...prev, primaryAgentWallet: e.target.value }))}
+                />
+                <div className="text-[11px] text-muted-foreground/70 mt-1.5">
+                  Destination wallet for the primary agent's split fees.
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Primary Agent Fee Debit (bps)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10000}
+                    step={1}
+                    className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                    value={config?.agentFeeBps !== undefined ? Number(config.agentFeeBps) : ""}
+                    placeholder="e.g. 130"
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? undefined : Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0))));
+                      setConfig((prev: any) => ({ ...prev, agentFeeBps: val }));
+                    }}
+                    disabled={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState)}
+                    title={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? "Fees locked after partner container deploy" : undefined}
+                  />
+                  <div className="text-[11px] text-muted-foreground/70 mt-1.5">
+                    Debit (e.g. 130 = 1.30%)
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Primary Agent Fee Credit (bps)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10000}
+                    step={1}
+                    className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                    value={config?.creditAgentFeeBps !== undefined ? Number(config.creditAgentFeeBps) : ""}
+                    placeholder="e.g. 130"
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? undefined : Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0))));
+                      setConfig((prev: any) => ({ ...prev, creditAgentFeeBps: val }));
+                    }}
+                    disabled={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState)}
+                    title={Boolean(containerAppName) || Boolean(containerFqdn) || Boolean(containerState) ? "Fees locked after partner container deploy" : undefined}
+                  />
+                  <div className="text-[11px] text-muted-foreground/70 mt-1.5">
+                    Credit (e.g. 130 = 1.30%)
+                  </div>
                 </div>
               </div>
               <div>
