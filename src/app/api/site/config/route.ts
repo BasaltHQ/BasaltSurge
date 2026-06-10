@@ -1,3 +1,4 @@
+// Forced hot-reload trigger for Next.js Turbopack
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { isSupportedCurrency } from "@/lib/fx";
