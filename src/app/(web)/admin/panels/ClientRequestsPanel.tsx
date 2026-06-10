@@ -256,19 +256,6 @@ export default function ClientRequestsPanel() {
     };
 
     const [unifiedFeeEnabled, setUnifiedFeeEnabled] = useState(false);
-
-    useEffect(() => {
-        if (typeof window !== "undefined") {
-            setUnifiedFeeEnabled(localStorage.getItem("pp_unified_fee_enabled") === "true");
-        }
-    }, []);
-
-    const handleUnifiedFeeToggle = (val: boolean) => {
-        setUnifiedFeeEnabled(val);
-        if (typeof window !== "undefined") {
-            localStorage.setItem("pp_unified_fee_enabled", val ? "true" : "false");
-        }
-    };
     const getEnvAgents = (isDebit: boolean): { wallet: string; bps: number }[] => {
         if (isDebit) {
             if (serverEnvAgentsDebit && serverEnvAgentsDebit.length > 0) {
@@ -374,29 +361,36 @@ export default function ClientRequestsPanel() {
 
     useEffect(() => {
         if (!brandKey) return;
-        if (serverIsDualSplit) {
-            setPlatformBps(getCreditPlatformBps());
-            return;
-        }
         (async () => {
             try {
                 // Fetch authoritative brand config
                 const r = await fetch(`/api/platform/brands/${encodeURIComponent(brandKey)}/config`);
                 const j = await r.json().catch(() => ({}));
                 const b = j?.brand as any;
-                if (b && typeof b.platformFeeBps === "number") {
+                
+                if (serverIsDualSplit) {
+                    setPlatformBps(getCreditPlatformBps());
+                } else if (b && typeof b.platformFeeBps === "number") {
                     setPlatformBps(Math.max(0, Math.min(10000, b.platformFeeBps)));
                 } else if (typeof (brand as any)?.platformFeeBps === "number") {
                     // Fallback to context
                     setPlatformBps((brand as any).platformFeeBps);
                 }
+                
+                if (b) {
+                    setUnifiedFeeEnabled(!!b.unifiedFeeEnabled);
+                } else {
+                    setUnifiedFeeEnabled(!!(brand as any)?.unifiedFeeEnabled);
+                }
             } catch {
-                // on error fallback to context
-                if (typeof (brand as any)?.platformFeeBps === "number") {
+                if (serverIsDualSplit) {
+                    setPlatformBps(getCreditPlatformBps());
+                } else if (typeof (brand as any)?.platformFeeBps === "number") {
                     setPlatformBps((brand as any).platformFeeBps);
                 } else if (isPlatformContainer) {
                     setPlatformBps(getDebitPlatformBps());
                 }
+                setUnifiedFeeEnabled(!!(brand as any)?.unifiedFeeEnabled);
             }
         })();
     }, [brandKey, brand, isPlatformContainer, serverIsDualSplit]);
@@ -1144,17 +1138,6 @@ export default function ClientRequestsPanel() {
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
-                    {!isPlatformContainer && (
-                        <label className="flex items-center gap-2 text-xs font-medium bg-foreground/[0.02] border border-foreground/[0.05] hover:bg-foreground/[0.04] px-3 py-2 rounded-lg cursor-pointer transition-colors shadow-sm select-none">
-                            <input
-                                type="checkbox"
-                                checked={unifiedFeeEnabled}
-                                onChange={(e) => handleUnifiedFeeToggle(e.target.checked)}
-                                className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0"
-                            />
-                            <span>Unified Fee Display</span>
-                        </label>
-                    )}
                     <button className="h-10 px-4 rounded-lg border border-foreground/[0.05] bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors shadow-sm" onClick={load} disabled={loading}>
                         {loading ? "Refreshing…" : "Refresh"}
                     </button>

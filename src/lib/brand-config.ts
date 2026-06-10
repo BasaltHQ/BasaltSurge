@@ -71,6 +71,7 @@ export type BrandConfigDoc = {
 
   // Access Control
   accessMode?: "open" | "request";
+  unifiedFeeEnabled?: boolean;
 
   // Thirdweb Keys
   thirdwebClientId?: string;
@@ -264,6 +265,7 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     defaultMerchantFeeBps: 0,
     partnerWallet: "",
     apimCatalog: [],
+    unifiedFeeEnabled: false,
   };
 
   const withDefaults = applyBrandDefaults(baseRaw);
@@ -305,6 +307,7 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     agents: Array.isArray(overrides.agents) ? overrides.agents : withDefaults.agents || [],
     apimCatalog: Array.isArray(overrides.apimCatalog) ? overrides.apimCatalog : withDefaults.apimCatalog,
     accessMode: (overrides.accessMode === "request" || overrides.accessMode === "open") ? overrides.accessMode : withDefaults.accessMode,
+    unifiedFeeEnabled: typeof overrides.unifiedFeeEnabled === "boolean" ? overrides.unifiedFeeEnabled : withDefaults.unifiedFeeEnabled,
   });
 
   // BasaltSurge defaults: only apply when the DB doesn't have explicit values.

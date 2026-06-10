@@ -122,6 +122,8 @@ export type UseStripeEmbeddedOnrampProps = {
   onStepChange?: (step: OnrampStep) => void;
   /** Card detected callback */
   onCardDetected?: (card: { funding: "credit" | "debit"; brand: string; last4: string } | null) => void;
+  /** eCommerce mode flag */
+  isEcommerceMode?: boolean;
 };
 
 export type UseStripeEmbeddedOnrampReturn = {
@@ -233,6 +235,7 @@ export function useStripeEmbeddedOnramp({
   onError,
   onStepChange,
   onCardDetected,
+  isEcommerceMode = false,
 }: UseStripeEmbeddedOnrampProps): UseStripeEmbeddedOnrampReturn {
   const [step, setStep] = useState<OnrampStep>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -480,6 +483,7 @@ export function useStripeEmbeddedOnramp({
       return;
     }
     isRunningRef.current = true;
+    console.log("[EMBEDDED ONRAMP] startOnramp triggered. isEcommerceMode prop:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
 
     const activeEmail = overrideEmail || email;
     const activePhone = overridePhone || phone || localPhone;
@@ -956,6 +960,33 @@ export function useStripeEmbeddedOnramp({
       }
 
       // ─── Step 11: Wait for USDC to arrive in buyer's smart wallet ───
+      console.log("[EMBEDDED ONRAMP] Checking eCommerce mode before Step 11. isEcommerceMode:", isEcommerceMode);
+      if (isEcommerceMode) {
+        console.log("[EMBEDDED ONRAMP] eCommerce mode active. Launching background task and completing client flow.");
+        fetch("/api/stripe/background-poll", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId,
+            receiptId,
+            merchantWallet,
+            email: activeEmail,
+            amount,
+            splitAddress,
+            splitAddressCredit,
+            brandKey,
+            detectedCardFunding,
+          }),
+        }).catch((err) => {
+          console.error("[EMBEDDED ONRAMP] Failed to kick off background poll:", err);
+        });
+
+        isRunningRef.current = false;
+        updateStep("completed");
+        onSuccess?.({ sessionId, txHash: "ecommerce_pending" });
+        return;
+      }
+
       updateStep("awaiting_funds");
  
       // Poll for onramp fulfillment (Stripe delivers USDC to buyer's smart wallet)
@@ -1020,7 +1051,7 @@ export function useStripeEmbeddedOnramp({
     enabled, email, phone, localPhone, splitAddress, splitAddressCredit, amount, network,
     destinationCurrency, receiptId, merchantWallet, brandKey,
     publishableKey, connectedWalletAddress, connectedWallet, onSuccess, handleError,
-    updateStep, createBuyerWallet, executeGaslessTransfer, onCardDetected,
+    updateStep, createBuyerWallet, executeGaslessTransfer, onCardDetected, isEcommerceMode,
   ]);
 
   const submitPhone = useCallback((phoneNumber: string) => {

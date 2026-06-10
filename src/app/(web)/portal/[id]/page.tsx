@@ -2835,6 +2835,20 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Otherwise → Legacy iframe-based Stripe Crypto Onramp interceptor
   const stripeHeadless = String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE";
 
+  // eCommerce mode check: checks for ?=e or ?e (both next.js searchParams and raw window.location.search fallback)
+  const isEcommerceMode = (() => {
+    if (typeof window !== "undefined") {
+      const search = window.location.search;
+      if (search.includes("=e") || search === "?e" || search.includes("&e") || search.includes("?e&")) return true;
+    }
+    if (searchParams) {
+      if (searchParams.get("") === "e" || searchParams.has("e")) return true;
+    }
+    return false;
+  })();
+
+  console.log("[PORTAL PAGE] isEcommerceMode:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
+
   // Headless: New Embedded Components flow with Smart Wallet Bridge
   // If buyer is already connected via Thirdweb (account?.address), uses their existing wallet.
   // Otherwise, creates a deterministic smart wallet from their email (no OTP via auth_endpoint).
@@ -2859,6 +2873,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     connectedWalletAddress: account?.address, // Skip wallet creation if buyer is already connected
     connectedWallet: account,
     enabled: stripeHeadless,
+    isEcommerceMode,
     onCardDetected: (card) => {
       if (card) {
         setDetectedCardFunding(card.funding);

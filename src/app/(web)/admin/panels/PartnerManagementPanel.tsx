@@ -108,6 +108,7 @@ export default function PartnerManagementPanel() {
       if (config?.thirdwebClientId !== undefined) body.thirdwebClientId = String(config.thirdwebClientId);
       if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
+      if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
       if (typeof config?.name === "string") body.name = config.name;
       if (config?.colors) body.colors = config.colors;
       if (config?.logos) body.logos = config.logos;
@@ -119,7 +120,7 @@ export default function PartnerManagementPanel() {
       }
 
       // If nothing to persist, skip
-      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents) {
+      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents && body.unifiedFeeEnabled === undefined) {
         return true;
       }
 
@@ -816,6 +817,7 @@ export default function PartnerManagementPanel() {
       if (config?.thirdwebClientId !== undefined) body.thirdwebClientId = String(config.thirdwebClientId);
       if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
+      if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
 
       // Email Config
       if (config?.email) {
@@ -1850,6 +1852,19 @@ export default function PartnerManagementPanel() {
                     setConfig((prev: any) => ({ ...prev, defaultMerchantFeeBps: Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0)))) }))
                   }
                 />
+              </div>
+              <div className="flex items-center">
+                <label className="flex items-center gap-2.5 text-xs font-medium cursor-pointer select-none mt-5">
+                  <input
+                    type="checkbox"
+                    checked={!!config?.unifiedFeeEnabled}
+                    onChange={(e) =>
+                      setConfig((prev: any) => ({ ...prev, unifiedFeeEnabled: e.target.checked }))
+                    }
+                    className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4"
+                  />
+                  <span>Unified Fee Display</span>
+                </label>
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">Thirdweb Client ID</label>

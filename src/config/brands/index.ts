@@ -52,6 +52,7 @@ export type BrandConfig = {
 
   // Access Control
   accessMode?: "open" | "request"; // default: open
+  unifiedFeeEnabled?: boolean;
 };
 
 export const BRANDS: Record<string, BrandConfig> = {
@@ -64,6 +65,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     platformFeeBps: 50,
     partnerFeeBps: 0,
     defaultMerchantFeeBps: 0,
+    unifiedFeeEnabled: false,
     apimCatalog: [], // original platform may expose full catalog elsewhere
   },
   basaltsurge: {
@@ -75,6 +77,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     platformFeeBps: 50,
     partnerFeeBps: 0,
     defaultMerchantFeeBps: 0,
+    unifiedFeeEnabled: false,
     apimCatalog: [],
   },
   // Example second brand - provide assets under /public/brands/paynex/*
@@ -87,6 +90,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     platformFeeBps: 50,
     partnerFeeBps: 50, // example 0.25%
     defaultMerchantFeeBps: 0,
+    unifiedFeeEnabled: false,
     partnerWallet: "0x2367ae402e06edb2460e51f820c09fc885f87b65", // set via Admin API
     apimCatalog: [
       // { productId: "prod-payments", aliasName: "Payments API", visible: true },
@@ -265,6 +269,7 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     defaultMerchantFeeBps,
     apimCatalog,
     accessMode: (raw.accessMode as any) || (envAccessMode === "request" ? "request" : (envAccessMode === "open" ? "open" : undefined)) || raw.accessMode,
+    unifiedFeeEnabled: typeof raw.unifiedFeeEnabled === "boolean" ? raw.unifiedFeeEnabled : false,
   };
 }
 
