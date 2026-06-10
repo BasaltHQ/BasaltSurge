@@ -1728,7 +1728,7 @@ export default function ClientRequestsPanel() {
 
                                 <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0">
                                     {/* Fee Explainer Gate — must acknowledge before configuring */}
-                                    {!feeExplainerAcked ? (
+                                    {!feeExplainerAcked && !(unifiedFeeEnabled && !isPlatformContainer) ? (
                                         <div className="flex items-center justify-center min-h-[300px]">
                                             <div className="w-full max-w-lg p-6 rounded-xl bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-amber-600/10 border border-amber-500/25 animate-in fade-in zoom-in-95 duration-300">
                                                 <div className="flex items-center gap-2 mb-4">
@@ -1798,7 +1798,10 @@ export default function ClientRequestsPanel() {
                                                     {/* Presented Fee Card */}
                                                     {(() => {
                                                         const fallbackFeeBps = unifiedServiceFeeBps + currentPartnerBps + customAgentsBps;
-                                                        const activePresentedFeeBps = (isDebitTab ? presentedFeeBps : creditPresentedFeeBps) ?? fallbackFeeBps;
+                                                        const basePresentedFeeBps = (isDebitTab ? presentedFeeBps : creditPresentedFeeBps);
+                                                        const activePresentedFeeBps = basePresentedFeeBps !== undefined
+                                                            ? (basePresentedFeeBps + currentPartnerBps + customAgentsBps)
+                                                            : fallbackFeeBps;
                                                         return (
                                                             <div className={`p-6 rounded-2xl border bg-gradient-to-br ${
                                                                 isDebitTab 
