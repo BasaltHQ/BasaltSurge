@@ -263,11 +263,40 @@ export function useStripeEmbeddedOnramp({
 
   useEffect(() => {
     mountedRef.current = true;
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const err = event.reason;
+      const errMessage = String(err?.message || err || "").toLowerCase();
+      if (errMessage.includes("identity verification") || errMessage.includes("verification_required")) {
+        event.preventDefault(); // Stop default browser console logging
+        console.log("[EMBEDDED ONRAMP] Intercepted identity verification requirement. Launching verifyDocuments...");
+        
+        updateStep("verifying_identity");
+        
+        if (onrampRef.current) {
+          onrampRef.current.verifyDocuments()
+            .then((res) => {
+              console.log("[EMBEDDED ONRAMP] verifyDocuments completed:", res);
+              updateStep("collecting_payment");
+            })
+            .catch((verifyErr) => {
+              console.error("[EMBEDDED ONRAMP] verifyDocuments error:", verifyErr);
+              updateStep("collecting_payment");
+            });
+        } else {
+          updateStep("collecting_payment");
+        }
+      }
+    };
+
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+
     return () => {
       mountedRef.current = false;
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
       try { onrampRef.current?.destroy(); } catch {}
     };
-  }, []);
+  }, [updateStep]);
 
 
 
