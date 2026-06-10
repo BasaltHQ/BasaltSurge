@@ -261,6 +261,12 @@ export function useStripeEmbeddedOnramp({
 
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
 
+  const updateStep = useCallback((newStep: OnrampStep) => {
+    if (!mountedRef.current) return;
+    setStep(newStep);
+    onStepChange?.(newStep);
+  }, [onStepChange]);
+
   useEffect(() => {
     mountedRef.current = true;
 
@@ -297,14 +303,6 @@ export function useStripeEmbeddedOnramp({
       try { onrampRef.current?.destroy(); } catch {}
     };
   }, [updateStep]);
-
-
-
-  const updateStep = useCallback((newStep: OnrampStep) => {
-    if (!mountedRef.current) return;
-    setStep(newStep);
-    onStepChange?.(newStep);
-  }, [onStepChange]);
 
   const handleError = useCallback((message: string, err?: any) => {
     if (!mountedRef.current) return;
