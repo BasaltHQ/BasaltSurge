@@ -17,10 +17,14 @@ export interface EnvConfig {
   NEXT_PUBLIC_PLATFORM_WALLET?: string;
   NEXT_PUBLIC_RECIPIENT_ADDRESS?: string;
   PLATFORM_SPLIT_BPS?: number;
+  PLATFORM_BPS?: number;
   PARTNER_SPLIT_BPS?: number;
   EDGE_ROUTING_MODE: EdgeRoutingMode;
   AFD_CHANGE_LOCKED: boolean;
   AUTHZ_FALLBACK_ENABLED: boolean;
+  DUAL_SPLIT_CONFIG: boolean;
+  CREDIT_SPLIT_AGENT_BPS?: number;
+  CREDIT_SPLIT_PLATFORM_BPS?: number;
 }
 
 /**
@@ -89,7 +93,12 @@ export function getEnv(): EnvConfig {
   const NEXT_PUBLIC_RECIPIENT_ADDRESS = normalizeHexAddress(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS);
 
   const PLATFORM_SPLIT_BPS = clampBps(coerceNum(process.env.PLATFORM_SPLIT_BPS));
+  const PLATFORM_BPS = clampBps(coerceNum(process.env.PLATFORM_BPS || process.env.NEXT_PUBLIC_PLATFORM_BPS));
   const PARTNER_SPLIT_BPS = clampBps(coerceNum(process.env.PARTNER_SPLIT_BPS));
+
+  const DUAL_SPLIT_CONFIG = String(process.env.DUAL_SPLIT_CONFIG || process.env.NEXT_PUBLIC_DUAL_SPLIT_CONFIG || '').trim().toLowerCase() === 'true';
+  const CREDIT_SPLIT_AGENT_BPS = clampBps(coerceNum(process.env.CREDIT_SPLIT_AGENT_BPS || process.env.NEXT_PUBLIC_CREDIT_SPLIT_AGENT_BPS));
+  const CREDIT_SPLIT_PLATFORM_BPS = clampBps(coerceNum(process.env.CREDIT_SPLIT_PLATFORM_BPS || process.env.NEXT_PUBLIC_CREDIT_SPLIT_PLATFORM_BPS));
 
   // Fallback toggles and routing mode
   const EDGE_ROUTING_MODE: EdgeRoutingMode =
@@ -106,10 +115,14 @@ export function getEnv(): EnvConfig {
     NEXT_PUBLIC_PLATFORM_WALLET,
     NEXT_PUBLIC_RECIPIENT_ADDRESS,
     PLATFORM_SPLIT_BPS,
+    PLATFORM_BPS,
     PARTNER_SPLIT_BPS,
     EDGE_ROUTING_MODE,
     AFD_CHANGE_LOCKED,
     AUTHZ_FALLBACK_ENABLED,
+    DUAL_SPLIT_CONFIG,
+    CREDIT_SPLIT_AGENT_BPS,
+    CREDIT_SPLIT_PLATFORM_BPS,
   };
 }
 
@@ -187,6 +200,20 @@ export function getSanitizedSplitBps(): { platform: number; partner: number } | 
   const sum = Math.max(0, (p ?? 0)) + Math.max(0, (q ?? 0));
   if (sum > 10000) return undefined;
   return { platform: p ?? 50, partner: q ?? 0 };
+}
+
+export const isDualSplitEnabled = (): boolean => {
+  const isPartner = typeof window === 'undefined' ? isPartnerContext() : isPartnerContextClient();
+  return isPartner && !!getEnv().DUAL_SPLIT_CONFIG;
+};
+
+export function getSanitizedCreditSplitBps(): { platform: number; agent: number } | undefined {
+  const env = getEnv();
+  const p = clampBps(env.CREDIT_SPLIT_PLATFORM_BPS ?? 150); // default 150bps (1.5%) if unspecified
+  const q = clampBps(env.CREDIT_SPLIT_AGENT_BPS ?? 0);
+  const sum = Math.max(0, (p ?? 0)) + Math.max(0, (q ?? 0));
+  if (sum > 10000) return undefined;
+  return { platform: p ?? 150, agent: q ?? 0 };
 }
 
 /**

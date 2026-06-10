@@ -12,6 +12,7 @@ import { wrapFetchWithPayment } from "thirdweb/x402";
 import { useActiveWallet, ConnectButton } from "thirdweb/react";
 import { useBrand } from "@/contexts/BrandContext";
 import { usePortalThirdwebTheme } from "@/lib/thirdweb/theme";
+import { client as twClient, chain, getWallets } from "@/lib/thirdweb/client";
 import { resolveBrandAppLogo, normalizeBrandName, resolveBrandSymbol, isBasaltSurge } from "@/lib/branding";
 import { DocsSidebarProvider } from "@/contexts/DocsSidebarContext";
 import { DashboardContentWrapper } from "@/components/dashboard/dashboard-content-wrapper";
@@ -61,6 +62,7 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const brand = useBrand();
+  const [wallets, setWallets] = useState<any[]>([]);
 
   // Modal and selection state
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -177,6 +179,11 @@ export default function ProductsPage() {
 
   useEffect(() => {
     fetchProducts();
+    let mounted = true;
+    getWallets()
+      .then((w) => { if (mounted) setWallets(w as any[]); })
+      .catch(() => setWallets([]));
+    return () => { mounted = false; };
   }, []);
 
   async function fetchProducts() {
@@ -266,8 +273,7 @@ export default function ProductsPage() {
     }
 
     try {
-      const clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
-      const client = clientId ? createThirdwebClient({ clientId }) : null;
+      const client = twClient;
       const fetchWithPay = fetch; // Use standard fetch to allow handling 402 fallback explicitly (PortalPay embed)
 
       const res = await fetchWithPay("/api/apim-management/subscriptions", {
@@ -348,8 +354,7 @@ export default function ProductsPage() {
   async function performSubscribeStarterTip(payTip: boolean) {
     if (!selectedProduct) return;
     try {
-      const clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
-      const client = clientId ? createThirdwebClient({ clientId }) : null;
+      const client = twClient;
       const fetchImpl = payTip && client && wallet ? wrapFetchWithPayment(fetch, client, wallet) : fetch;
 
       const res = await fetchImpl("/api/apim-management/subscriptions", {
@@ -946,12 +951,10 @@ export default function ProductsPage() {
         actions={[{ label: "Close", onClick: () => setWalletModalOpen(false), variant: "secondary" }]}
       >
         <div className="flex justify-center">
-          {(process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "").length > 0 ? (
-            <ConnectButton client={createThirdwebClient({ clientId: process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "" })} theme={twTheme} />
+          {wallets.length > 0 ? (
+            <ConnectButton client={twClient} chain={chain} wallets={wallets} theme={twTheme} />
           ) : (
-            <div className="text-sm text-muted-foreground">
-              Set NEXT_PUBLIC_THIRDWEB_CLIENT_ID to enable wallet modal.
-            </div>
+            <div className="w-full h-11 bg-white/5 animate-pulse rounded-lg" />
           )}
         </div>
       </Modal>

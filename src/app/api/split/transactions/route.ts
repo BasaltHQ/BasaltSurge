@@ -69,6 +69,10 @@ export async function GET(req: NextRequest) {
             doc?.split?.address,
             doc?.config?.split?.address,
             doc?.config?.splitAddress,
+            doc?.splitAddressCredit,
+            doc?.splitCredit?.address,
+            doc?.config?.splitCredit?.address,
+            doc?.config?.splitAddressCredit,
           ];
           if (Array.isArray(doc?.splitHistory)) {
             for (const h of doc.splitHistory) {
@@ -400,6 +404,7 @@ export async function GET(req: NextRequest) {
             hash: txHash, from: addr, to: splitAddrLower,
             value: amountEth, timestamp, blockNumber,
             status: "success", type: 'payment', token: 'ETH',
+            splitAddress: splitAddrLower,
           });
         } else if (topic0 === PAYMENT_RELEASED_TOPIC.toLowerCase()) {
           // RELEASE DETECTION — 4-way reconciliation:
@@ -424,6 +429,7 @@ export async function GET(req: NextRequest) {
             value: amountEth, timestamp, blockNumber,
             status: "success", type: 'release',
             releaseType, releaseTo: addr, token: 'ETH',
+            splitAddress: splitAddrLower,
           });
         }
       } catch { /* skip malformed log */ }
@@ -519,6 +525,7 @@ export async function GET(req: NextRequest) {
         hash, from: transfer?.from?.hash || "", to: transfer?.to?.hash || "",
         value: valueInToken, timestamp, blockNumber: transfer?.block || 0,
         status: "success", type: txType, releaseType, releaseTo, token: tokenSymbol,
+        splitAddress: splitAddrLower,
       };
     }).filter(Boolean);
 

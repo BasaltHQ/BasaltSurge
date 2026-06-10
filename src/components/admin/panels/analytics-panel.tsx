@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useActiveAccount } from 'thirdweb/react';
+import { TransactionHistoryChart } from '@/components/admin/ReportCharts';
 
 type SeriesPoint = { date: string; gmvUsd: number; orders: number };
 type TopItem = { key: string; label: string; units: number; salesUsd: number };
@@ -214,6 +215,61 @@ export function AnalyticsPanel() {
     const ms = new Date(customSinceLocal).getTime();
     return Number.isFinite(ms) ? ms : 0;
   }, [customSinceLocal]);
+
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [txLoading, setTxLoading] = useState(false);
+
+  useEffect(() => {
+    const wallet = metrics?.merchant || account?.address;
+    if (!wallet) return;
+
+    let cancelled = false;
+    async function loadTx() {
+      setTxLoading(true);
+      try {
+        const res = await fetch(`/api/split/transactions?merchantWallet=${encodeURIComponent(wallet || "")}&limit=1000`, {
+          cache: 'no-store',
+        });
+        const data = await res.json();
+        if (!cancelled && data && Array.isArray(data.transactions)) {
+          setTransactions(data.transactions);
+        }
+      } catch (e) {
+        console.error("Failed to load split transactions for analytics panel", e);
+      } finally {
+        if (!cancelled) setTxLoading(false);
+      }
+    }
+    loadTx();
+    return () => {
+      cancelled = true;
+    };
+  }, [metrics?.merchant, account?.address]);
+
+  const filteredTransactions = useMemo(() => {
+    if (!transactions.length) return [];
+    if (sinceMsCustom && sinceMsCustom > 0) {
+      return transactions.filter(tx => {
+        const ts = Number(tx.timestamp || 0);
+        return ts >= sinceMsCustom;
+      });
+    }
+    
+    // preset ranges: all, 24h, 7d, 30d
+    if (range === 'all') return transactions;
+    
+    const now = Date.now();
+    let limitMs = 0;
+    if (range === '24h') limitMs = 24 * 3600 * 1000;
+    else if (range === '7d') limitMs = 7 * 24 * 3600 * 1000;
+    else if (range === '30d') limitMs = 30 * 24 * 3600 * 1000;
+    
+    const cutoff = now - limitMs;
+    return transactions.filter(tx => {
+      const ts = Number(tx.timestamp || 0);
+      return ts >= cutoff;
+    });
+  }, [transactions, range, sinceMsCustom]);
 
   const queryString = useMemo(() => {
     const qs = new URLSearchParams();
@@ -445,6 +501,11 @@ export function AnalyticsPanel() {
                 <StatCard title="Points Issued" value={formatCountOrDash(metrics.pointsIssued || 0, noData)} sub={`XP per $: ${noData ? '-' : Number(metrics.xpPerDollar || 0).toLocaleString()}`} />
               </div>
             </div>
+          </div>
+
+          {/* Transaction History Chart */}
+          <div className="mb-6">
+            <TransactionHistoryChart transactions={filteredTransactions} height={180} />
           </div>
 
           {/* Time Series */}

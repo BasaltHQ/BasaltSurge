@@ -155,22 +155,17 @@ export function deriveContainerIdentityFromHostname(host: string): ContainerIden
  * No HTTP calls - uses direct env reads and hostname parsing.
  */
 export function getContainerIdentity(host?: string): ContainerIdentity {
-  // Detect from runtime env first (preferred)
-  let containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || process.env.CONTAINER_TYPE || "").toLowerCase();
-  let brandKey = String(process.env.NEXT_PUBLIC_BRAND_KEY || process.env.BRAND_KEY || "").toLowerCase();
-
-  // If brandKey is empty, try to derive from hostname
-  if (!brandKey && host) {
+  // 1. Try to derive from hostname first (especially useful for multi-tenant dev or multi-domain prod)
+  if (host) {
     const derived = deriveContainerIdentityFromHostname(host);
-
     if (derived) {
-      brandKey = derived.brandKey;
-      // Only override containerType if it wasn't explicitly set in env
-      if (!containerType) {
-        containerType = derived.containerType;
-      }
+      return derived;
     }
   }
+
+  // 2. Detect from runtime env (fallback)
+  let containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || process.env.CONTAINER_TYPE || "").toLowerCase();
+  let brandKey = String(process.env.NEXT_PUBLIC_BRAND_KEY || process.env.BRAND_KEY || "").toLowerCase();
 
   // Default containerType to "platform" if still empty
   if (!containerType) {

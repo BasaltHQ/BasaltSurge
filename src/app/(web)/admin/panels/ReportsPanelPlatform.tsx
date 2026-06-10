@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useActiveAccount } from "thirdweb/react";
 import { FileText, Search, ChevronDown, ChevronRight, Loader2, Table2, Globe, Check, X, DollarSign, TrendingUp, Receipt, Users, BarChart3, PieChart, Building2, Link2 } from "lucide-react";
 import { formatCurrency } from "@/lib/fx";
-import { EnhancedStatCard, VolumeVsTipsBar, RevenueBreakdown, MerchantGrid, HorizontalBarChart, DonutChart } from "@/components/admin/ReportCharts";
+import { EnhancedStatCard, VolumeVsTipsBar, RevenueBreakdown, MerchantGrid, HorizontalBarChart, DonutChart, TransactionHistoryChart } from "@/components/admin/ReportCharts";
 
 /**
  * ReportsPanelPlatform — Platform-level reports panel.
@@ -826,10 +826,12 @@ export default function ReportsPanelPlatform() {
                                                                         </div>
                                                                     </div>
                                                                 )}
-                                                                {/* On-Chain Transaction Hashes */}
                                                                 {merchantDetail.splitTransactions?.length > 0 && (
-                                                                    <div>
-                                                                        <h4 className="text-xs font-bold uppercase text-muted-foreground mb-2">On-Chain Transactions ({merchantDetail.splitTransactions.length})</h4>
+                                                                    <div className="space-y-4">
+                                                                        <div>
+                                                                            <h4 className="text-xs font-bold uppercase text-muted-foreground mb-2">On-Chain Transactions ({merchantDetail.splitTransactions.length})</h4>
+                                                                            <TransactionHistoryChart transactions={merchantDetail.splitTransactions} height={140} />
+                                                                        </div>
                                                                         <div className="max-h-64 overflow-y-auto rounded-lg border bg-background">
                                                                             <table className="w-full text-xs">
                                                                                 <thead className="bg-muted/30 sticky top-0">
@@ -896,187 +898,190 @@ export default function ReportsPanelPlatform() {
 
             {/* Transactions Tab */}
             {viewMode === "transactions" && (
-                <div className="border rounded-xl glass-pane overflow-hidden">
-                    <div className="p-5 border-b border-foreground/10 space-y-4">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-                                <Link2 className="w-5 h-5 text-primary" />
-                                On-Chain Transactions
-                                {txLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
-                                {!txLoading && <span className="text-sm font-medium text-muted-foreground/70">({getFilteredTransactions().length})</span>}
-                            </h3>
-                            <button onClick={() => loadAllTransactions(true)} disabled={txLoading} className="h-8 px-3 rounded-lg border text-[10px] font-bold uppercase tracking-wider hover:bg-foreground/5 bg-foreground/[0.02] border-foreground/10 disabled:opacity-50 transition-colors">
-                                Refresh
-                            </button>
+                <div className="space-y-6">
+                    <TransactionHistoryChart transactions={getFilteredTransactions()} height={180} />
+                    <div className="border rounded-xl glass-pane overflow-hidden">
+                        <div className="p-5 border-b border-foreground/10 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-xl font-semibold tracking-tight flex items-center gap-2">
+                                    <Link2 className="w-5 h-5 text-primary" />
+                                    On-Chain Transactions
+                                    {txLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                                    {!txLoading && <span className="text-sm font-medium text-muted-foreground/70">({getFilteredTransactions().length})</span>}
+                                </h3>
+                                <button onClick={() => loadAllTransactions(true)} disabled={txLoading} className="h-8 px-3 rounded-lg border text-[10px] font-bold uppercase tracking-wider hover:bg-foreground/5 bg-foreground/[0.02] border-foreground/10 disabled:opacity-50 transition-colors">
+                                    Refresh
+                                </button>
+                            </div>
+                            <div className="flex gap-2 flex-wrap items-center">
+                                {(["all", "payment", "merchant", "partner", "agent", "platform"] as const).map(f => {
+                                    const labels: Record<string, string> = { all: "All", payment: "Payment", merchant: "Merchant Release", partner: "Partner Release", agent: "Agent Release", platform: "Platform Release" };
+                                    const colors: Record<string, string> = { all: "", payment: "bg-blue-500/10 text-blue-400 border-blue-500/30", merchant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30", partner: "bg-purple-500/10 text-purple-400 border-purple-500/30", agent: "bg-cyan-500/10 text-cyan-400 border-cyan-500/30", platform: "bg-amber-500/10 text-amber-400 border-amber-500/30" };
+                                    const isActive = txTypeFilter === f;
+                                    return (
+                                        <button key={f} onClick={() => setTxTypeFilter(f)}
+                                            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${isActive
+                                                ? (f === "all" ? "bg-primary text-black border-primary shadow-[0_0_10px_rgba(var(--primary),0.2)]" : colors[f])
+                                                : "bg-foreground/[0.02] text-muted-foreground border-foreground/5 hover:bg-foreground/5"
+                                                }`}>
+                                            {labels[f]}
+                                        </button>
+                                    );
+                                })}
+                                <div className="h-6 w-px bg-foreground/10 mx-1" />
+                                <select value={txMerchantFilter} onChange={e => setTxMerchantFilter(e.target.value)}
+                                    className="h-[34px] px-2 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-[10px] font-bold uppercase tracking-wider focus:ring-1 focus:ring-primary/50 transition-colors">
+                                    <option value="">All Merchants</option>
+                                    {(data?.merchants || []).map((m: any) => (
+                                        <option key={m.wallet} value={m.wallet.toLowerCase()}>{m.name || m.wallet.slice(0, 10)}</option>
+                                    ))}
+                                </select>
+                            </div>
                         </div>
-                        <div className="flex gap-2 flex-wrap items-center">
-                            {(["all", "payment", "merchant", "partner", "agent", "platform"] as const).map(f => {
-                                const labels: Record<string, string> = { all: "All", payment: "Payment", merchant: "Merchant Release", partner: "Partner Release", agent: "Agent Release", platform: "Platform Release" };
-                                const colors: Record<string, string> = { all: "", payment: "bg-blue-500/10 text-blue-400 border-blue-500/30", merchant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30", partner: "bg-purple-500/10 text-purple-400 border-purple-500/30", agent: "bg-cyan-500/10 text-cyan-400 border-cyan-500/30", platform: "bg-amber-500/10 text-amber-400 border-amber-500/30" };
-                                const isActive = txTypeFilter === f;
-                                return (
-                                    <button key={f} onClick={() => setTxTypeFilter(f)}
-                                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${isActive
-                                            ? (f === "all" ? "bg-primary text-black border-primary shadow-[0_0_10px_rgba(var(--primary),0.2)]" : colors[f])
-                                            : "bg-foreground/[0.02] text-muted-foreground border-foreground/5 hover:bg-foreground/5"
-                                            }`}>
-                                        {labels[f]}
-                                    </button>
-                                );
-                            })}
-                            <div className="h-6 w-px bg-foreground/10 mx-1" />
-                            <select value={txMerchantFilter} onChange={e => setTxMerchantFilter(e.target.value)}
-                                className="h-[34px] px-2 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-[10px] font-bold uppercase tracking-wider focus:ring-1 focus:ring-primary/50 transition-colors">
-                                <option value="">All Merchants</option>
-                                {(data?.merchants || []).map((m: any) => (
-                                    <option key={m.wallet} value={m.wallet.toLowerCase()}>{m.name || m.wallet.slice(0, 10)}</option>
-                                ))}
-                            </select>
-                        </div>
-                    </div>
-                    {/* HUD Stats */}
-                    {!txLoading && (() => {
-                        const txs = getFilteredTransactions();
-                        const merchants = new Set(txs.map((t: any) => t.merchantWallet));
-                        const volumeByToken: Record<string, number> = {};
-                        const merchantByToken: Record<string, number> = {};
-                        const partnerByToken: Record<string, number> = {};
-                        const agentByToken: Record<string, number> = {};
-                        const platformByToken: Record<string, number> = {};
-                        for (const tx of txs) {
-                            const val = Number(tx.value || 0);
-                            const tok = tx.token || 'UNKNOWN';
-                            if (tx.type === 'payment') volumeByToken[tok] = (volumeByToken[tok] || 0) + val;
-                            if (tx.type === 'release' && tx.releaseType === 'merchant') merchantByToken[tok] = (merchantByToken[tok] || 0) + val;
-                            if (tx.type === 'release' && tx.releaseType === 'partner') partnerByToken[tok] = (partnerByToken[tok] || 0) + val;
-                            if (tx.type === 'release' && tx.releaseType === 'agent') agentByToken[tok] = (agentByToken[tok] || 0) + val;
-                            if (tx.type === 'release' && tx.releaseType === 'platform') platformByToken[tok] = (platformByToken[tok] || 0) + val;
-                        }
-                        // Supplement: if a token has volume but no release txs, use cumulative API data
-                        for (const tok of Object.keys(volumeByToken)) {
-                            if (!(merchantByToken[tok] > 0) && !(partnerByToken[tok] > 0) && !(agentByToken[tok] > 0) && !(platformByToken[tok] > 0)) {
-                                if (txCumulative.merchantReleases[tok] > 0) merchantByToken[tok] = txCumulative.merchantReleases[tok];
-                                if (txCumulative.partnerReleases[tok] > 0) partnerByToken[tok] = txCumulative.partnerReleases[tok];
-                                if (txCumulative.agentReleases[tok] > 0) agentByToken[tok] = txCumulative.agentReleases[tok];
-                                if (txCumulative.platformReleases[tok] > 0) platformByToken[tok] = txCumulative.platformReleases[tok];
+                        {/* HUD Stats */}
+                        {!txLoading && (() => {
+                            const txs = getFilteredTransactions();
+                            const merchants = new Set(txs.map((t: any) => t.merchantWallet));
+                            const volumeByToken: Record<string, number> = {};
+                            const merchantByToken: Record<string, number> = {};
+                            const partnerByToken: Record<string, number> = {};
+                            const agentByToken: Record<string, number> = {};
+                            const platformByToken: Record<string, number> = {};
+                            for (const tx of txs) {
+                                const val = Number(tx.value || 0);
+                                const tok = tx.token || 'UNKNOWN';
+                                if (tx.type === 'payment') volumeByToken[tok] = (volumeByToken[tok] || 0) + val;
+                                if (tx.type === 'release' && tx.releaseType === 'merchant') merchantByToken[tok] = (merchantByToken[tok] || 0) + val;
+                                if (tx.type === 'release' && tx.releaseType === 'partner') partnerByToken[tok] = (partnerByToken[tok] || 0) + val;
+                                if (tx.type === 'release' && tx.releaseType === 'agent') agentByToken[tok] = (agentByToken[tok] || 0) + val;
+                                if (tx.type === 'release' && tx.releaseType === 'platform') platformByToken[tok] = (platformByToken[tok] || 0) + val;
                             }
-                        }
-                        const toUsd = (map: Record<string, number>) => Object.entries(map).reduce((sum, [tok, amt]) => sum + amt * (tokenPrices[tok] || 0), 0);
-                        const fmt = (v: number) => v < 0.01 ? v.toFixed(6) : v < 1 ? v.toFixed(4) : v.toFixed(2);
-                        const volumeUsd = toUsd(volumeByToken);
-                        const merchantUsd = toUsd(merchantByToken);
-                        const partnerUsd = toUsd(partnerByToken);
-                        const agentUsd = toUsd(agentByToken);
-                        const platformUsd = toUsd(platformByToken);
-                        const renderTokenRows = (map: Record<string, number>, colorClass: string) => {
-                            const entries = Object.entries(map).sort((a, b) => b[1] - a[1]);
-                            return entries.length > 0 ? entries.map(([tok, val]) => (
-                                <div key={tok} className="flex justify-between items-center">
-                                    <span className={`text-xs font-medium ${colorClass}`}>{tok}</span>
-                                    <span className={`text-sm font-bold font-mono ${colorClass}`}>{fmt(val)}</span>
-                                </div>
-                            )) : null;
-                        };
-                        const hasAgent = agentUsd > 0 || Object.keys(agentByToken).length > 0;
-                        return (
-                            <div className={`grid grid-cols-2 ${hasAgent ? 'md:grid-cols-7' : 'md:grid-cols-6'} gap-3 px-5 py-4 border-b border-foreground/10 bg-foreground/[0.01]`}>
-                                <div className="p-3 rounded-xl border bg-foreground/[0.02]">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-1">Active Merchants</div>
-                                    <div className="text-2xl font-bold">{merchants.size}</div>
-                                </div>
-                                <div className="p-3 rounded-xl border bg-foreground/[0.02]">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-1">Total Volume</div>
-                                    <div className="text-lg font-bold font-mono">{formatCurrency(volumeUsd, "USD")}</div>
-                                    {renderTokenRows(volumeByToken, 'text-muted-foreground/70')}
-                                </div>
-                                <div className="p-3 rounded-xl border bg-emerald-500/5 border-emerald-500/20">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 mb-1">Merchant Share</div>
-                                    <div className="text-lg font-bold text-emerald-400 font-mono">{formatCurrency(merchantUsd, "USD")}</div>
-                                    {renderTokenRows(merchantByToken, 'text-emerald-400/70')}
-                                </div>
-                                <div className="p-3 rounded-xl border bg-purple-500/5 border-purple-500/20">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-purple-400 mb-1">Partner Share</div>
-                                    <div className="text-lg font-bold text-purple-400 font-mono">{formatCurrency(partnerUsd, "USD")}</div>
-                                    {renderTokenRows(partnerByToken, 'text-purple-400/70')}
-                                </div>
-                                {hasAgent && (
-                                    <div className="p-3 rounded-xl border bg-cyan-500/5 border-cyan-500/20">
-                                        <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 mb-1">Agent Share</div>
-                                        <div className="text-lg font-bold text-cyan-400 font-mono">{formatCurrency(agentUsd, "USD")}</div>
-                                        {renderTokenRows(agentByToken, 'text-cyan-400/70')}
+                            // Supplement: if a token has volume but no release txs, use cumulative API data
+                            for (const tok of Object.keys(volumeByToken)) {
+                                if (!(merchantByToken[tok] > 0) && !(partnerByToken[tok] > 0) && !(agentByToken[tok] > 0) && !(platformByToken[tok] > 0)) {
+                                    if (txCumulative.merchantReleases[tok] > 0) merchantByToken[tok] = txCumulative.merchantReleases[tok];
+                                    if (txCumulative.partnerReleases[tok] > 0) partnerByToken[tok] = txCumulative.partnerReleases[tok];
+                                    if (txCumulative.agentReleases[tok] > 0) agentByToken[tok] = txCumulative.agentReleases[tok];
+                                    if (txCumulative.platformReleases[tok] > 0) platformByToken[tok] = txCumulative.platformReleases[tok];
+                                }
+                            }
+                            const toUsd = (map: Record<string, number>) => Object.entries(map).reduce((sum, [tok, amt]) => sum + amt * (tokenPrices[tok] || 0), 0);
+                            const fmt = (v: number) => v < 0.01 ? v.toFixed(6) : v < 1 ? v.toFixed(4) : v.toFixed(2);
+                            const volumeUsd = toUsd(volumeByToken);
+                            const merchantUsd = toUsd(merchantByToken);
+                            const partnerUsd = toUsd(partnerByToken);
+                            const agentUsd = toUsd(agentByToken);
+                            const platformUsd = toUsd(platformByToken);
+                            const renderTokenRows = (map: Record<string, number>, colorClass: string) => {
+                                const entries = Object.entries(map).sort((a, b) => b[1] - a[1]);
+                                return entries.length > 0 ? entries.map(([tok, val]) => (
+                                    <div key={tok} className="flex justify-between items-center">
+                                        <span className={`text-xs font-medium ${colorClass}`}>{tok}</span>
+                                        <span className={`text-sm font-bold font-mono ${colorClass}`}>{fmt(val)}</span>
                                     </div>
-                                )}
-                                <div className="p-3 rounded-xl border bg-amber-500/5 border-amber-500/20">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400 mb-1">Platform Share</div>
-                                    <div className="text-lg font-bold text-amber-400 font-mono">{formatCurrency(platformUsd, "USD")}</div>
-                                    {renderTokenRows(platformByToken, 'text-amber-400/70')}
+                                )) : null;
+                            };
+                            const hasAgent = agentUsd > 0 || Object.keys(agentByToken).length > 0;
+                            return (
+                                <div className={`grid grid-cols-2 ${hasAgent ? 'md:grid-cols-7' : 'md:grid-cols-6'} gap-3 px-5 py-4 border-b border-foreground/10 bg-foreground/[0.01]`}>
+                                    <div className="p-3 rounded-xl border bg-foreground/[0.02]">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-1">Active Merchants</div>
+                                        <div className="text-2xl font-bold">{merchants.size}</div>
+                                    </div>
+                                    <div className="p-3 rounded-xl border bg-foreground/[0.02]">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 mb-1">Total Volume</div>
+                                        <div className="text-lg font-bold font-mono">{formatCurrency(volumeUsd, "USD")}</div>
+                                        {renderTokenRows(volumeByToken, 'text-muted-foreground/70')}
+                                    </div>
+                                    <div className="p-3 rounded-xl border bg-emerald-500/5 border-emerald-500/20">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 mb-1">Merchant Share</div>
+                                        <div className="text-lg font-bold text-emerald-400 font-mono">{formatCurrency(merchantUsd, "USD")}</div>
+                                        {renderTokenRows(merchantByToken, 'text-emerald-400/70')}
+                                    </div>
+                                    <div className="p-3 rounded-xl border bg-purple-500/5 border-purple-500/20">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-purple-400 mb-1">Partner Share</div>
+                                        <div className="text-lg font-bold text-purple-400 font-mono">{formatCurrency(partnerUsd, "USD")}</div>
+                                        {renderTokenRows(partnerByToken, 'text-purple-400/70')}
+                                    </div>
+                                    {hasAgent && (
+                                        <div className="p-3 rounded-xl border bg-cyan-500/5 border-cyan-500/20">
+                                            <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 mb-1">Agent Share</div>
+                                            <div className="text-lg font-bold text-cyan-400 font-mono">{formatCurrency(agentUsd, "USD")}</div>
+                                            {renderTokenRows(agentByToken, 'text-cyan-400/70')}
+                                        </div>
+                                    )}
+                                    <div className="p-3 rounded-xl border bg-amber-500/5 border-amber-500/20">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400 mb-1">Platform Share</div>
+                                        <div className="text-lg font-bold text-amber-400 font-mono">{formatCurrency(platformUsd, "USD")}</div>
+                                        {renderTokenRows(platformByToken, 'text-amber-400/70')}
+                                    </div>
+                                    <div className="p-3 rounded-xl border bg-blue-500/5 border-blue-500/20">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-blue-400 mb-1">Total Transactions</div>
+                                        <div className="text-2xl font-bold text-blue-400">{txs.length}</div>
+                                        <div className="text-[10px] text-muted-foreground/70">on-chain</div>
+                                    </div>
                                 </div>
-                                <div className="p-3 rounded-xl border bg-blue-500/5 border-blue-500/20">
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-blue-400 mb-1">Total Transactions</div>
-                                    <div className="text-2xl font-bold text-blue-400">{txs.length}</div>
-                                    <div className="text-[10px] text-muted-foreground/70">on-chain</div>
-                                </div>
-                            </div>
-                        );
-                    })()}
-                    {(() => {
-                        const filtered = getFilteredTransactions();
-                        return filtered.length > 0 ? (
-                            <div className="max-h-[600px] overflow-y-auto bg-foreground/[0.01]">
-                                <table className="w-full text-sm">
-                                    <thead className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground/70 border-b border-foreground/10 bg-foreground/[0.03] sticky top-0 z-10 backdrop-blur-md">
-                                        <tr>
-                                            <th className="text-left py-3 px-5">Date</th>
-                                            <th className="text-left py-3 px-5">Merchant</th>
-                                            <th className="text-left py-3 px-5">Tx Hash</th>
-                                            <th className="text-left py-3 px-5">Type</th>
-                                            <th className="text-left py-3 px-5">Token</th>
-                                            <th className="text-right py-3 px-5">Amount</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-foreground/5">
-                                        {filtered.map((tx: any, idx: number) => (
-                                            <tr key={`${tx.hash}-${idx}`} className="hover:bg-foreground/[0.02] transition-colors">
-                                                <td className="py-3 px-5 text-muted-foreground/80 font-medium whitespace-nowrap">
-                                                    {tx.timestamp ? new Date(tx.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : '\u2014'}
-                                                </td>
-                                                <td className="py-3 px-5">
-                                                    <div className="flex items-center gap-2">
-                                                        {tx.merchantLogo && <img src={tx.merchantLogo} alt="" className="w-5 h-5 rounded-full" />}
-                                                        <div>
-                                                            <span className="font-semibold text-xs">{tx.merchantName}</span>
-                                                            {tx.brandKey && <span className="ml-1.5 text-[10px] font-semibold text-muted-foreground/70">({tx.brandKey})</span>}
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td className="py-3 px-5">
-                                                    <a href={`https://basescan.org/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline text-xs">
-                                                        {tx.hash.slice(0, 8)}…{tx.hash.slice(-4)}
-                                                    </a>
-                                                </td>
-                                                <td className="py-3 px-5">
-                                                    <span className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest ${tx.type === 'payment' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                                                        : tx.releaseType === 'merchant' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                                            : tx.releaseType === 'partner' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                                                                : tx.releaseType === 'agent' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
-                                                                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                                        }`}>
-                                                        {tx.type === 'release' ? `${tx.releaseType || ''} release` : tx.type}
-                                                    </span>
-                                                </td>
-                                                <td className="py-3 px-5 font-semibold text-xs">{tx.token}</td>
-                                                <td className="py-3 px-5 text-right font-mono font-medium">{Number(tx.value || 0).toFixed(6)}</td>
+                            );
+                        })()}
+                        {(() => {
+                            const filtered = getFilteredTransactions();
+                            return filtered.length > 0 ? (
+                                <div className="max-h-[600px] overflow-y-auto bg-foreground/[0.01]">
+                                    <table className="w-full text-sm">
+                                        <thead className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground/70 border-b border-foreground/10 bg-foreground/[0.03] sticky top-0 z-10 backdrop-blur-md">
+                                            <tr>
+                                                <th className="text-left py-3 px-5">Date</th>
+                                                <th className="text-left py-3 px-5">Merchant</th>
+                                                <th className="text-left py-3 px-5">Tx Hash</th>
+                                                <th className="text-left py-3 px-5">Type</th>
+                                                <th className="text-left py-3 px-5">Token</th>
+                                                <th className="text-right py-3 px-5">Amount</th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        ) : (
-                            <div className="p-16 text-center text-sm font-medium text-muted-foreground/70">
-                                {txLoading ? "Loading transactions..." : "No on-chain transactions found for this period"}
-                            </div>
-                        );
-                    })()}
+                                        </thead>
+                                        <tbody className="divide-y divide-foreground/5">
+                                            {filtered.map((tx: any, idx: number) => (
+                                                <tr key={`${tx.hash}-${idx}`} className="hover:bg-foreground/[0.02] transition-colors">
+                                                    <td className="py-3 px-5 text-muted-foreground/80 font-medium whitespace-nowrap">
+                                                        {tx.timestamp ? new Date(tx.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : '\u2014'}
+                                                    </td>
+                                                    <td className="py-3 px-5">
+                                                        <div className="flex items-center gap-2">
+                                                            {tx.merchantLogo && <img src={tx.merchantLogo} alt="" className="w-5 h-5 rounded-full" />}
+                                                            <div>
+                                                                <span className="font-semibold text-xs">{tx.merchantName}</span>
+                                                                {tx.brandKey && <span className="ml-1.5 text-[10px] font-semibold text-muted-foreground/70">({tx.brandKey})</span>}
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-3 px-5">
+                                                        <a href={`https://basescan.org/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline text-xs">
+                                                            {tx.hash.slice(0, 8)}…{tx.hash.slice(-4)}
+                                                        </a>
+                                                    </td>
+                                                    <td className="py-3 px-5">
+                                                        <span className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest ${tx.type === 'payment' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                                            : tx.releaseType === 'merchant' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                                                : tx.releaseType === 'partner' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                                                                    : tx.releaseType === 'agent' ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20'
+                                                                        : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                                            }`}>
+                                                            {tx.type === 'release' ? `${tx.releaseType || ''} release` : tx.type}
+                                                        </span>
+                                                    </td>
+                                                    <td className="py-3 px-5 font-semibold text-xs">{tx.token}</td>
+                                                    <td className="py-3 px-5 text-right font-mono font-medium">{Number(tx.value || 0).toFixed(6)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <div className="p-16 text-center text-sm font-medium text-muted-foreground/70">
+                                    {txLoading ? "Loading transactions..." : "No on-chain transactions found for this period"}
+                                </div>
+                            );
+                        })()}
+                    </div>
                 </div>
             )}
         </div>

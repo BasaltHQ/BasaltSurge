@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
             return json({ error: "missing_brand_key" }, { status: 500 });
         }
 
-            const container = await getContainer();
+        const container = await getContainer();
 
         // Fetch requests AND their corresponding site configs (for split persistence)
         // Use StringEquals for case-insensitive brand matching to handle XOINPAY vs xoinpay discrepancies
@@ -265,8 +265,10 @@ export async function GET(req: NextRequest) {
                     ...req,
                     createdAt: normalizedCreatedAt,
                     deployedSplitAddress: deployedAddress,
+                    deployedSplitAddressCredit: conf?.splitAddressCredit || conf?.splitCredit?.address,
                     splitHistory: conf?.splitHistory || [],
                     splitConfig: conf?.splitConfig || req.splitConfig, // Prefer deployed config
+                    splitConfigCredit: conf?.splitConfigCredit || req.splitConfigCredit || null,
                     shopName: shopConf?.name || conf?.shopName || conf?.name || req.shopName, // shop_config name > site_config name > request name
                     // Merge Shop Config Theme Data (Live Source of Truth)
                     shopLogoUrl: conf?.theme?.brandLogoUrl || req.shopLogoUrl || req.logoUrl,
@@ -311,6 +313,14 @@ export async function GET(req: NextRequest) {
             // Partner containers: preserve original orphaned behavior untouched.
             // Platform container: synthesize a full "approved" record from the config.
             if (isPartnerContext()) {
+                const hasSplit = conf.splitAddress || 
+                                 conf.split?.address || 
+                                 conf.splitAddressCredit || 
+                                 conf.splitCredit?.address || 
+                                 (Array.isArray(conf.splitHistory) && conf.splitHistory.length > 0);
+                if (!hasSplit) {
+                    return null;
+                }
                 return {
                     id: conf.id || `orphan-${wallet.slice(0, 8)}`,
                     wallet: wallet,
@@ -323,7 +333,9 @@ export async function GET(req: NextRequest) {
                     createdAt: toMs(conf.createdAt) || toMs(shopConf?.createdAt) || ((conf._ts || 0) * 1000) || ((shopConf?._ts || 0) * 1000) || Date.now(),
                     updatedAt: toMs(conf.updatedAt) || toMs(shopConf?.updatedAt) || ((conf._ts || 0) * 1000) || ((shopConf?._ts || 0) * 1000) || Date.now(),
                     splitConfig: conf.splitConfig,
+                    splitConfigCredit: conf.splitConfigCredit,
                     deployedSplitAddress: conf.splitAddress || conf.split?.address,
+                    deployedSplitAddressCredit: conf.splitAddressCredit || conf.splitCredit?.address,
                     splitHistory: conf.splitHistory || [],
                     note: "This merchant has a configuration but no request record.",
                 };
@@ -364,7 +376,9 @@ export async function GET(req: NextRequest) {
                 updatedAt: toMs(conf.updatedAt) || toMs(shopConf?.updatedAt) || ((conf._ts || 0) * 1000) || ((shopConf?._ts || 0) * 1000) || Date.now(),
                 // Financial config
                 splitConfig: conf.splitConfig,
+                splitConfigCredit: conf.splitConfigCredit,
                 deployedSplitAddress: conf.splitAddress || conf.split?.address,
+                deployedSplitAddressCredit: conf.splitAddressCredit || conf.splitCredit?.address,
                 splitHistory: conf.splitHistory || [],
                 // Touchpoint themes
                 touchpointThemes: conf.touchpointThemes || undefined,
@@ -399,7 +413,66 @@ export async function GET(req: NextRequest) {
             return synthesized;
         }).filter(Boolean); // Remove nulls
 
-        return json({ ok: true, requests: result, brandKey });
+        // Parse server-side env agents
+        const envAgents = [];
+        const envAgentsDebit = [];
+
+        const agentWallet = process.env.NEXT_PUBLIC_AGENT_WALLET || process.env.AGENT_WALLET || "";
+
+        // Debit agent BPS (uses AGENT_SPLIT_BPS)
+        const debitBps = parseInt(process.env.NEXT_PUBLIC_AGENT_SPLIT_BPS || process.env.AGENT_SPLIT_BPS || "0") || 0;
+        if (agentWallet && debitBps > 0) {
+            envAgentsDebit.push({ wallet: agentWallet.toLowerCase(), bps: debitBps });
+        }
+
+        // Credit/Crypto agent BPS (uses CREDIT_SPLIT_AGENT_BPS with fallback to AGENT_SPLIT_BPS)
+        const creditBpsVal = parseInt(
+            process.env.NEXT_PUBLIC_CREDIT_SPLIT_AGENT_BPS ||
+            process.env.CREDIT_SPLIT_AGENT_BPS ||
+            String(debitBps)
+        ) || 0;
+        if (agentWallet && creditBpsVal > 0) {
+            envAgents.push({ wallet: agentWallet.toLowerCase(), bps: creditBpsVal });
+        }
+
+        const parseJson = (jsonStr: string | undefined, list: any[], overrideBps: number) => {
+            if (!jsonStr) return;
+            try {
+                let clean = jsonStr.trim();
+                if (clean.startsWith('"') && clean.endsWith('"')) {
+                    clean = clean.slice(1, -1);
+                }
+                const parsed = JSON.parse(clean);
+                if (Array.isArray(parsed)) {
+                    parsed.forEach((item) => {
+                        if (item && item.wallet && typeof item.bps === "number") {
+                            const w = String(item.wallet).toLowerCase();
+                            if (!list.some(x => x.wallet.toLowerCase() === w)) {
+                                let bps = item.bps;
+                                if (agentWallet && w === agentWallet.toLowerCase()) {
+                                    bps = overrideBps;
+                                }
+                                list.push({ wallet: w, bps });
+                            }
+                        }
+                    });
+                }
+            } catch (err) { }
+        };
+
+        parseJson(process.env.NEXT_PUBLIC_AGENT_WALLETS_JSON, envAgentsDebit, debitBps);
+        parseJson(process.env.AGENT_WALLETS_JSON, envAgentsDebit, debitBps);
+
+        parseJson(process.env.NEXT_PUBLIC_AGENT_WALLETS_JSON, envAgents, creditBpsVal);
+        parseJson(process.env.AGENT_WALLETS_JSON, envAgents, creditBpsVal);
+
+        const isDualSplit = String(process.env.DUAL_SPLIT_CONFIG || process.env.NEXT_PUBLIC_DUAL_SPLIT_CONFIG || "").trim().toLowerCase() === "true";
+        const { getSanitizedCreditSplitBps } = await import("@/lib/env");
+        const creditBps = getSanitizedCreditSplitBps();
+        const creditPlatformBps = creditBps?.platform ?? 150;
+        const debitPlatformBps = process.env.PLATFORM_BPS ? parseInt(process.env.PLATFORM_BPS) : (process.env.NEXT_PUBLIC_PLATFORM_BPS ? parseInt(process.env.NEXT_PUBLIC_PLATFORM_BPS) : 100);
+
+        return json({ ok: true, requests: result, brandKey, envAgents, envAgentsDebit, isDualSplit, creditPlatformBps, debitPlatformBps });
     } catch (e: any) {
         console.error("[client-requests] GET Error:", e);
         return json({ error: e?.message || "query_failed" }, { status: 500 });
@@ -715,6 +788,52 @@ export async function PATCH(req: NextRequest) {
                             split: { address: splitAddress, recipients: newRecipients },
                             recipients: newRecipients
                         };
+
+                        // Dual Split Sync
+                        const { isDualSplitEnabled } = await import("@/lib/env");
+                        if (isDualSplitEnabled()) {
+                            const clientCredit = splitConfig.splitConfigCredit;
+                            const debitPlatformBps = typeof clientCredit?.platformBps === "number"
+                                ? clientCredit.platformBps
+                                : (process.env.PLATFORM_BPS ? parseInt(process.env.PLATFORM_BPS) : 100);
+                            const debitPartnerBps = typeof clientCredit?.partnerBps === "number"
+                                ? clientCredit.partnerBps
+                                : 0;
+                            const debitAgents = Array.isArray(clientCredit?.agents)
+                                ? clientCredit.agents
+                                : (Array.isArray(splitConfig.agents) ? splitConfig.agents : []);
+
+                            const debitAgentBps = debitAgents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0);
+                            const debitMerchantBps = Math.max(0, 10000 - debitPlatformBps - debitPartnerBps - debitAgentBps);
+
+                            newConfig.splitConfigCredit = {
+                                merchantBps: debitMerchantBps,
+                                partnerBps: debitPartnerBps,
+                                platformBps: debitPlatformBps,
+                                agents: debitAgents
+                            };
+
+                            const newRecipientsCredit = [
+                                { address: merchantWallet.toLowerCase(), sharesBps: debitMerchantBps },
+                                ...(debitPartnerBps > 0 && partnerWallet ? [{ address: partnerWallet.toLowerCase(), sharesBps: debitPartnerBps }] : []),
+                                { address: platformWallet.toLowerCase(), sharesBps: debitPlatformBps },
+                                ...(debitAgents.map((a: any) => ({ address: String(a.wallet || "").toLowerCase(), sharesBps: Number(a.bps) || 0 })).filter((r: any) => r.address && r.sharesBps > 0))
+                            ].filter((r: any) => r.address && r.sharesBps > 0);
+
+                            const splitAddressCredit = newConfig.splitAddressCredit || existingDoc.splitAddressCredit || "";
+                            newConfig.splitCredit = {
+                                address: splitAddressCredit,
+                                recipients: newRecipientsCredit,
+                                brandKey: brandKey.toLowerCase()
+                            };
+
+                            newConfig.config = {
+                                ...(newConfig.config || {}),
+                                splitAddressCredit,
+                                splitCredit: { address: splitAddressCredit, recipients: newRecipientsCredit },
+                                splitConfigCredit: newConfig.splitConfigCredit
+                            };
+                        }
                     }
 
                     // Sync Processing Fee
@@ -770,12 +889,37 @@ export async function PATCH(req: NextRequest) {
                 };
 
                 if (splitConfig) {
+                    const agentBps = Array.isArray(splitConfig.agents) ? splitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0) : 0;
                     shopConfig.splitConfig = {
                         merchantBps: Number(splitConfig.merchantBps),
                         partnerBps: Number(splitConfig.partnerBps),
-                        platformBps: typeof splitConfig.platformBps === "number" ? Number(splitConfig.platformBps) : (10000 - Number(splitConfig.partnerBps) - Number(splitConfig.merchantBps) - (Array.isArray(splitConfig.agents) ? splitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0) : 0)),
+                        platformBps: typeof splitConfig.platformBps === "number" ? Number(splitConfig.platformBps) : (10000 - Number(splitConfig.partnerBps) - Number(splitConfig.merchantBps) - agentBps),
                         agents: Array.isArray(splitConfig.agents) ? splitConfig.agents : []
                     };
+
+                    const { isDualSplitEnabled } = await import("@/lib/env");
+                    if (isDualSplitEnabled()) {
+                        const clientCredit = splitConfig.splitConfigCredit;
+                        const debitPlatformBps = typeof clientCredit?.platformBps === "number"
+                            ? clientCredit.platformBps
+                            : (process.env.PLATFORM_BPS ? parseInt(process.env.PLATFORM_BPS) : 100);
+                        const debitPartnerBps = typeof clientCredit?.partnerBps === "number"
+                            ? clientCredit.partnerBps
+                            : 0;
+                        const debitAgents = Array.isArray(clientCredit?.agents)
+                            ? clientCredit.agents
+                            : (Array.isArray(splitConfig.agents) ? splitConfig.agents : []);
+
+                        const debitAgentBps = debitAgents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0);
+                        const debitMerchantBps = Math.max(0, 10000 - debitPlatformBps - debitPartnerBps - debitAgentBps);
+
+                        shopConfig.splitConfigCredit = {
+                            merchantBps: debitMerchantBps,
+                            partnerBps: debitPartnerBps,
+                            platformBps: debitPlatformBps,
+                            agents: debitAgents
+                        };
+                    }
                 }
 
                 if (typeof body.processingFeePct === "number") {
@@ -882,9 +1026,30 @@ export async function DELETE(req: NextRequest) {
         }
 
         // 1. Delete the specific request document if we have a valid ID and it's not synthetic
-        if (requestIdToDelete && !requestIdToDelete.startsWith("orphan-") && !requestIdToDelete.startsWith("site:")) {
+        if (requestIdToDelete && !requestIdToDelete.startsWith("orphan-") && !requestIdToDelete.startsWith("site:") && !requestIdToDelete.startsWith("shop:")) {
             try {
                 await container.item(requestIdToDelete, merchantWallet).delete();
+            } catch (e) { /* ignore */ }
+        }
+
+        // 1.5 Secondary delete for orphans (delete underlying configs so they don't show up anymore)
+        const isOrphan = !requestIdToDelete || requestIdToDelete.startsWith("orphan-") || requestIdToDelete.startsWith("site:") || requestIdToDelete.startsWith("shop:");
+        if (isOrphan && merchantWallet) {
+            const isBasalt = brandKey === "basaltsurge" || brandKey === "portalpay";
+            const siteConfigId = isBasalt ? "site:config:basaltsurge" : `site:config:${brandKey}`;
+            const shopConfigId = isBasalt ? "shop:config" : `shop:config:${brandKey}`;
+
+            try {
+                await container.item(siteConfigId, merchantWallet).delete();
+            } catch (e) { /* ignore */ }
+            try {
+                await container.item(shopConfigId, merchantWallet).delete();
+            } catch (e) { /* ignore */ }
+            try {
+                await container.item("site:config", merchantWallet).delete();
+            } catch (e) { /* ignore */ }
+            try {
+                await container.item("shop:config", merchantWallet).delete();
             } catch (e) { /* ignore */ }
         }
 

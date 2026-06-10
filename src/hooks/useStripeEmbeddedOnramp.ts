@@ -87,6 +87,8 @@ export type UseStripeEmbeddedOnrampProps = {
   phone?: string;
   /** Split contract address — final destination for funds */
   splitAddress?: string;
+  /** Credit split contract address */
+  splitAddressCredit?: string;
   /** USD amount to onramp */
   amount?: number;
   /** Network for destination */
@@ -113,7 +115,9 @@ export type UseStripeEmbeddedOnrampProps = {
   connectedWallet?: any;
   /** Callbacks */
   onSuccess?: (result: { sessionId: string; txHash?: string }) => void;
+  /** Error callback */
   onError?: (error: Error) => void;
+  /** Step change callback */
   onStepChange?: (step: OnrampStep) => void;
 };
 
@@ -205,6 +209,7 @@ export function useStripeEmbeddedOnramp({
   email,
   phone,
   splitAddress,
+  splitAddressCredit,
   amount,
   network = "base",
   destinationCurrency = "usdc",
@@ -909,14 +914,15 @@ export function useStripeEmbeddedOnramp({
 
       // ─── Step 11: Wait for USDC to arrive in buyer's smart wallet ───
       updateStep("awaiting_funds");
-
+ 
       // Poll for onramp fulfillment (Stripe delivers USDC to buyer's smart wallet)
       let fundsDelivered = false;
+      let isDebitCard = false;
       console.log(`[EMBEDDED ONRAMP] Starting to poll status for session: ${sessionId}`);
       for (let poll = 0; poll < 60; poll++) { // Max 5 minutes
         await new Promise(r => setTimeout(r, 5000));
         if (!mountedRef.current) return;
-
+ 
         try {
           const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(sessionId)}`);
           if (!statusRes.ok) {
@@ -925,44 +931,50 @@ export function useStripeEmbeddedOnramp({
           }
           const statusData = await statusRes.json();
           console.log(`[EMBEDDED ONRAMP] Polled status (attempt ${poll + 1}):`, statusData?.status, statusData);
-
+ 
           if (statusData && statusData.status === "fulfillment_complete") {
             fundsDelivered = true;
-            console.log("[EMBEDDED ONRAMP] ✓ USDC delivered to buyer's smart wallet");
+            isDebitCard = statusData.paymentDetails?.card?.funding === "debit" || statusData.paymentDetails?.card?.funding === "prepaid";
+            console.log("[EMBEDDED ONRAMP] ✓ USDC delivered to buyer's smart wallet. Debit card:", isDebitCard);
             break;
           }
         } catch (pollErr) {
           console.warn("[EMBEDDED ONRAMP] Exception while polling status:", pollErr);
         }
       }
-
+ 
       if (!fundsDelivered) {
         handleError("Timed out waiting for funds delivery");
         return;
       }
-
+ 
       if (!mountedRef.current) return;
-
+ 
       // ─── Step 12: Gasless transfer from buyer's smart wallet → split contract ───
       updateStep("transferring");
+ 
+      // Choose target split address based on card funding type
+      const targetSplitAddress = isDebitCard && splitAddressCredit
+        ? splitAddressCredit
+        : (splitAddress || "");
 
-      const txHash = await executeGaslessTransfer(activeEmail, splitAddress, amount, connectedWallet);
-
+      const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, amount, connectedWallet);
+ 
       if (!txHash) {
         handleError("Failed to transfer funds to merchant");
         return;
       }
-
+ 
       // ─── Done ───
       isRunningRef.current = false;
       updateStep("completed");
       onSuccess?.({ sessionId, txHash });
-
+ 
     } catch (err: any) {
       handleError(err?.message || "Onramp flow failed");
     }
   }, [
-    enabled, email, phone, localPhone, splitAddress, amount, network,
+    enabled, email, phone, localPhone, splitAddress, splitAddressCredit, amount, network,
     destinationCurrency, receiptId, merchantWallet, brandKey,
     publishableKey, connectedWalletAddress, connectedWallet, onSuccess, handleError,
     updateStep, createBuyerWallet, executeGaslessTransfer,

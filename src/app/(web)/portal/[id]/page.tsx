@@ -2331,6 +2331,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           setSellerAddress(merchantWallet as `0x${string}`);
         }
 
+        const splitAddrCredit = (cfg as any)?.splitAddressCredit || (cfg as any)?.splitCredit?.address || "";
+        if (isValidHexAddress(String(splitAddrCredit || ""))) {
+          setSellerAddressCredit(splitAddrCredit as `0x${string}`);
+        } else if (isValidHexAddress(String(splitAddr || ""))) {
+          setSellerAddressCredit(splitAddr as `0x${string}`);
+        } else {
+          setSellerAddressCredit(merchantWallet as `0x${string}`);
+        }
+
         // tipConfig (merchant tip presets)
         const tc = (cfg as any)?.tipConfig;
         if (tc && typeof tc === "object") {
@@ -2349,6 +2358,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         if (!cancelled) {
           // fallback to merchant wallet if split lookup fails
           setSellerAddress(merchantWallet as `0x${string}`);
+          setSellerAddressCredit(merchantWallet as `0x${string}`);
         }
       });
     return () => {
@@ -2500,6 +2510,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const aaEnabled = String(process.env.NEXT_PUBLIC_THIRDWEB_AA_ENABLED || "").toLowerCase() === "true";
 
   const [sellerAddress, setSellerAddress] = useState<`0x${string}` | undefined>(undefined);
+  const [sellerAddressCredit, setSellerAddressCredit] = useState<`0x${string}` | undefined>(undefined);
 
   // Claim/Loyalty Logic
   const [claimStatus, setClaimStatus] = useState<"idle" | "claiming" | "success" | "base_registered" | "error">("idle");
@@ -2804,6 +2815,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   } = useStripeEmbeddedOnramp({
     email: shipEmail || undefined,
     splitAddress: sellerAddress as string,
+    splitAddressCredit: sellerAddressCredit as string,
     amount: totalUsd,
     receiptId,
     merchantWallet: (merchantWallet || resolvedRecipient || recipient) as string,

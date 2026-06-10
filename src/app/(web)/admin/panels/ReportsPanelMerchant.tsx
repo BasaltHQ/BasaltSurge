@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useActiveAccount } from "thirdweb/react";
 import { FileText, Download, Calendar, User, Loader2, Printer, Table2, DollarSign, Receipt, TrendingUp, BarChart3, PieChart, ArrowUpDown, Link2 } from "lucide-react";
 import { formatCurrency } from "@/lib/fx";
-import { EnhancedStatCard, VolumeVsTipsBar, PaymentMethodDonut, VerticalBarChart, DonutChart, HorizontalBarChart } from "@/components/admin/ReportCharts";
+import { EnhancedStatCard, VolumeVsTipsBar, PaymentMethodDonut, VerticalBarChart, DonutChart, HorizontalBarChart, TransactionHistoryChart } from "@/components/admin/ReportCharts";
 import { isValorAvailable, printValorReport } from "@/lib/valor-printer";
 import { useTheme } from "@/contexts/ThemeContext";
 
@@ -593,104 +593,107 @@ export default function ReportsPanelMerchant() {
 
             {/* On-Chain Transactions Tab */}
             {reportType === "transactions" && (
-                <div className="border rounded-xl glass-pane overflow-hidden">
-                    <div className="p-5 border-b border-foreground/10 space-y-4">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-                                <Link2 className="w-5 h-5 text-primary" />
-                                On-Chain Transactions
-                                {splitTxLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
-                                {!splitTxLoading && <span className="text-sm font-medium text-muted-foreground/70">({splitTransactions.filter((tx: any) => {
-                                    if (txTypeFilter === "all") return true;
-                                    if (txTypeFilter === "payment") return tx.type === "payment";
-                                    if (txTypeFilter === "merchant") return tx.type === "release" && tx.releaseType === "merchant";
-                                    if (txTypeFilter === "platform") return tx.type === "release" && tx.releaseType === "platform";
-                                    return true;
-                                }).length})</span>}
-                            </h3>
-                        </div>
-                        <div className="flex gap-2 flex-wrap">
-                            {(["all", "payment", "merchant", "platform"] as const).map(f => {
-                                const labels = { all: "All", payment: "Payment", merchant: "Merchant Release", platform: "Platform Release" };
-                                const colors = { all: "", payment: "bg-blue-500/10 text-blue-400 border-blue-500/30", merchant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30", platform: "bg-amber-500/10 text-amber-400 border-amber-500/30" };
-                                const isActive = txTypeFilter === f;
-                                return (
-                                    <button key={f} onClick={() => setTxTypeFilter(f)}
-                                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${isActive
-                                                ? (f === "all" ? "bg-primary text-black border-primary shadow-[0_0_10px_rgba(var(--primary),0.2)]" : colors[f])
-                                                : "bg-foreground/[0.02] text-muted-foreground border-foreground/5 hover:bg-foreground/5"
-                                            }`}>
-                                        {labels[f]}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    </div>
-                    {splitTransactions.filter((tx: any) => {
-                        if (txTypeFilter === "all") return true;
-                        if (txTypeFilter === "payment") return tx.type === "payment";
-                        if (txTypeFilter === "merchant") return tx.type === "release" && tx.releaseType === "merchant";
-                        if (txTypeFilter === "platform") return tx.type === "release" && tx.releaseType === "platform";
-                        return true;
-                    }).length > 0 ? (
-                        <div className="max-h-[600px] overflow-y-auto bg-foreground/[0.01]">
-                            <table className="w-full text-sm">
-                                <thead className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground/70 border-b border-foreground/10 bg-foreground/[0.03] sticky top-0 z-10 backdrop-blur-md">
-                                    <tr>
-                                        <th className="text-left py-3 px-5">Date</th>
-                                        <th className="text-left py-3 px-5">Tx Hash</th>
-                                        <th className="text-left py-3 px-5">Type</th>
-                                        <th className="text-left py-3 px-5">Token</th>
-                                        <th className="text-right py-3 px-5">Amount</th>
-                                        <th className="text-left py-3 px-5">From / To</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-foreground/5">
-                                    {splitTransactions.filter((tx: any) => {
+                <div className="space-y-6">
+                    <TransactionHistoryChart transactions={splitTransactions} height={180} />
+                    <div className="border rounded-xl glass-pane overflow-hidden">
+                        <div className="p-5 border-b border-foreground/10 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-xl font-semibold tracking-tight flex items-center gap-2">
+                                    <Link2 className="w-5 h-5 text-primary" />
+                                    On-Chain Transactions
+                                    {splitTxLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+                                    {!splitTxLoading && <span className="text-sm font-medium text-muted-foreground/70">({splitTransactions.filter((tx: any) => {
                                         if (txTypeFilter === "all") return true;
                                         if (txTypeFilter === "payment") return tx.type === "payment";
                                         if (txTypeFilter === "merchant") return tx.type === "release" && tx.releaseType === "merchant";
                                         if (txTypeFilter === "platform") return tx.type === "release" && tx.releaseType === "platform";
                                         return true;
-                                    }).map((tx: any, txIdx: number) => (
-                                        <tr key={`${tx.hash}-${txIdx}`} className="hover:bg-foreground/[0.02] transition-colors">
-                                            <td className="py-3 px-5 text-muted-foreground/80 font-medium whitespace-nowrap">
-                                                {tx.timestamp ? new Date(tx.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : '\u2014'}
-                                            </td>
-                                            <td className="py-3 px-5">
-                                                <a href={`https://basescan.org/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline text-xs">
-                                                    {tx.hash?.slice(0, 10)}\u2026{tx.hash?.slice(-6)}
-                                                </a>
-                                            </td>
-                                            <td className="py-3 px-5">
-                                                <span className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest ${tx.type === 'payment' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                                                        : tx.releaseType === 'merchant' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                                    }`}>
-                                                    {tx.type === 'release' ? `${tx.releaseType || ''} release` : tx.type}
-                                                </span>
-                                            </td>
-                                            <td className="py-3 px-5 font-semibold text-xs">{tx.token}</td>
-                                            <td className="py-3 px-5 text-right font-mono font-medium">{Number(tx.value || 0).toFixed(6)}</td>
-                                            <td className="py-3 px-5 font-mono text-muted-foreground/80 text-xs">
-                                                {tx.type === 'payment'
-                                                    ? `From: ${(tx.from || '').slice(0, 6)}\u2026${(tx.from || '').slice(-4)}`
-                                                    : `To: ${(tx.to || tx.releaseTo || '').slice(0, 6)}\u2026${(tx.to || tx.releaseTo || '').slice(-4)}`
-                                                }
-                                            </td>
+                                    }).length})</span>}
+                                </h3>
+                            </div>
+                            <div className="flex gap-2 flex-wrap">
+                                {(["all", "payment", "merchant", "platform"] as const).map(f => {
+                                    const labels = { all: "All", payment: "Payment", merchant: "Merchant Release", platform: "Platform Release" };
+                                    const colors = { all: "", payment: "bg-blue-500/10 text-blue-400 border-blue-500/30", merchant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30", platform: "bg-amber-500/10 text-amber-400 border-amber-500/30" };
+                                    const isActive = txTypeFilter === f;
+                                    return (
+                                        <button key={f} onClick={() => setTxTypeFilter(f)}
+                                            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${isActive
+                                                    ? (f === "all" ? "bg-primary text-black border-primary shadow-[0_0_10px_rgba(var(--primary),0.2)]" : colors[f])
+                                                    : "bg-foreground/[0.02] text-muted-foreground border-foreground/5 hover:bg-foreground/5"
+                                                }`}>
+                                            {labels[f]}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                        {splitTransactions.filter((tx: any) => {
+                            if (txTypeFilter === "all") return true;
+                            if (txTypeFilter === "payment") return tx.type === "payment";
+                            if (txTypeFilter === "merchant") return tx.type === "release" && tx.releaseType === "merchant";
+                            if (txTypeFilter === "platform") return tx.type === "release" && tx.releaseType === "platform";
+                            return true;
+                        }).length > 0 ? (
+                            <div className="max-h-[600px] overflow-y-auto bg-foreground/[0.01]">
+                                <table className="w-full text-sm">
+                                    <thead className="text-[10px] uppercase font-semibold tracking-wider text-muted-foreground/70 border-b border-foreground/10 bg-foreground/[0.03] sticky top-0 z-10 backdrop-blur-md">
+                                        <tr>
+                                            <th className="text-left py-3 px-5">Date</th>
+                                            <th className="text-left py-3 px-5">Tx Hash</th>
+                                            <th className="text-left py-3 px-5">Type</th>
+                                            <th className="text-left py-3 px-5">Token</th>
+                                            <th className="text-right py-3 px-5">Amount</th>
+                                            <th className="text-left py-3 px-5">From / To</th>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    ) : !splitTxLoading ? (
-                        <div className="text-sm text-muted-foreground/70 font-medium text-center py-16">No on-chain transactions found for this period</div>
-                    ) : (
-                        <div className="flex items-center justify-center py-12">
-                            <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-                            <span className="ml-2 text-sm text-muted-foreground">Loading transactions\u2026</span>
-                        </div>
-                    )}
+                                    </thead>
+                                    <tbody className="divide-y divide-foreground/5">
+                                        {splitTransactions.filter((tx: any) => {
+                                            if (txTypeFilter === "all") return true;
+                                            if (txTypeFilter === "payment") return tx.type === "payment";
+                                            if (txTypeFilter === "merchant") return tx.type === "release" && tx.releaseType === "merchant";
+                                            if (txTypeFilter === "platform") return tx.type === "release" && tx.releaseType === "platform";
+                                            return true;
+                                        }).map((tx: any, txIdx: number) => (
+                                            <tr key={`${tx.hash}-${txIdx}`} className="hover:bg-foreground/[0.02] transition-colors">
+                                                <td className="py-3 px-5 text-muted-foreground/80 font-medium whitespace-nowrap">
+                                                    {tx.timestamp ? new Date(tx.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' }) : '\u2014'}
+                                                </td>
+                                                <td className="py-3 px-5">
+                                                    <a href={`https://basescan.org/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline text-xs">
+                                                        {tx.hash?.slice(0, 10)}\u2026{tx.hash?.slice(-6)}
+                                                    </a>
+                                                </td>
+                                                <td className="py-3 px-5">
+                                                    <span className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest ${tx.type === 'payment' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                                            : tx.releaseType === 'merchant' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                                                : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                                        }`}>
+                                                        {tx.type === 'release' ? `${tx.releaseType || ''} release` : tx.type}
+                                                    </span>
+                                                </td>
+                                                <td className="py-3 px-5 font-semibold text-xs">{tx.token}</td>
+                                                <td className="py-3 px-5 text-right font-mono font-medium">{Number(tx.value || 0).toFixed(6)}</td>
+                                                <td className="py-3 px-5 font-mono text-muted-foreground/80 text-xs">
+                                                    {tx.type === 'payment'
+                                                        ? `From: ${(tx.from || '').slice(0, 6)}\u2026${(tx.from || '').slice(-4)}`
+                                                        : `To: ${(tx.to || tx.releaseTo || '').slice(0, 6)}\u2026${(tx.to || tx.releaseTo || '').slice(-4)}`
+                                                    }
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : !splitTxLoading ? (
+                            <div className="text-sm text-muted-foreground/70 font-medium text-center py-16">No on-chain transactions found for this period</div>
+                        ) : (
+                            <div className="flex items-center justify-center py-12">
+                                <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+                                <span className="ml-2 text-sm text-muted-foreground">Loading transactions\u2026</span>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
         </div>

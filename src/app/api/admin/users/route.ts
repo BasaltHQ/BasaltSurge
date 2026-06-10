@@ -16,12 +16,13 @@ type UsersAggRow = {
   totalCustomerXp: number;
   platformFeeUsd: number;
   splitAddress?: string;
+  splitAddressCredit?: string;
   transactionCount?: number;
   totalVolumeEth?: number;
   kioskEnabled?: boolean;
   terminalEnabled?: boolean;
   createdAt?: number;
-  allSplitAddresses?: Array<{ address: string; deployedAt?: number; current?: boolean }>;
+  allSplitAddresses?: Array<{ address: string; deployedAt?: number; current?: boolean; isCredit?: boolean }>;
 };
 
 export async function GET(req: NextRequest) {
@@ -165,6 +166,7 @@ export async function GET(req: NextRequest) {
 
     // Fetch split addresses and reserve balances for accurate totalEarnedUsd across all tokens
     const splitAddressMap = new Map<string, string>();
+    const splitAddressCreditMap = new Map<string, string>();
     const splitAddressTimestamps = new Map<string, number>(); // Track updatedAt for each wallet's current split
     const reserveDataMap = new Map<string, { totalUsd: number; balances: Record<string, { units: number; usd: number }> }>();
 
@@ -423,7 +425,7 @@ export async function GET(req: NextRequest) {
 
     // Build comprehensive split address history per merchant from ALL site_config docs
     // This discovers addresses from splitAddress, split.address, AND splitHistory across all docs
-    const allSplitAddressesMap = new Map<string, Array<{ address: string; deployedAt?: number; current?: boolean }>>();
+    const allSplitAddressesMap = new Map<string, Array<{ address: string; deployedAt?: number; current?: boolean; isCredit?: boolean }>>();
 
     // For site_config fallback, also extract split addresses
     const fallbackWalletsFromSiteConfig: string[] = [];
@@ -451,6 +453,20 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      const scSplitAddressCredit = String((r as any)?.splitAddressCredit || (r as any)?.splitCredit?.address || (r as any)?.config?.splitAddressCredit || (r as any)?.config?.splitCredit?.address || "").toLowerCase();
+      if (hex(scSplitAddressCredit)) {
+        const existingSplitCredit = splitAddressCreditMap.get(w);
+        if (!existingSplitCredit) {
+          splitAddressCreditMap.set(w, scSplitAddressCredit);
+        } else {
+          const existingTime = splitAddressTimestamps.get(w) || 0;
+          const thisTime = r?.updatedAt ? new Date(r.updatedAt).getTime() : 0;
+          if (thisTime > existingTime) {
+            splitAddressCreditMap.set(w, scSplitAddressCredit);
+          }
+        }
+      }
+
       // Collect ALL split addresses for this wallet from this doc
       const existing = allSplitAddressesMap.get(w) || [];
       const seenAddrs = new Set(existing.map(e => e.address));
@@ -461,6 +477,16 @@ export async function GET(req: NextRequest) {
         existing.push({
           address: scSplitAddress,
           deployedAt: r?.updatedAt ? new Date(r.updatedAt).getTime() : undefined,
+        });
+      }
+
+      // From top-level splitAddressCredit
+      if (hex(scSplitAddressCredit) && !seenAddrs.has(scSplitAddressCredit)) {
+        seenAddrs.add(scSplitAddressCredit);
+        existing.push({
+          address: scSplitAddressCredit,
+          deployedAt: r?.updatedAt ? new Date(r.updatedAt).getTime() : undefined,
+          isCredit: true,
         });
       }
 
@@ -589,6 +615,7 @@ export async function GET(req: NextRequest) {
           totalCustomerXp,
           platformFeeUsd,
           splitAddress,
+          splitAddressCredit: splitAddressCreditMap.get(m),
           transactionCount,
           totalVolumeEth,
           kioskEnabled: featuresMap.get(m)?.kioskEnabled ?? false,

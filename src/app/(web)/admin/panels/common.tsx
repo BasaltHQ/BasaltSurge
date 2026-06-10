@@ -15,11 +15,23 @@ export type ReserveBalancesResponse = {
       usd?: number;
     }
   >;
+  balancesCredit?: Record<
+    string,
+    {
+      units?: number;
+      usd?: number;
+      address?: string | null;
+    }
+  > | null;
   totalUsd?: number;
+  totalUsdDebit?: number;
+  totalUsdCredit?: number;
+  isDual?: boolean;
   wallet?: string; // legacy
   merchantWallet?: string;
   sourceWallet?: string;
   splitAddressUsed?: string | null;
+  splitAddressCreditUsed?: string | null;
   indexedMetrics?: {
     totalVolumeUsd: number;
     merchantEarnedUsd: number;
@@ -31,6 +43,7 @@ export type ReserveBalancesResponse = {
   splitHistory?: Array<{
     address: string;
     deployedAt: number;
+    isCredit?: boolean;
   }>;
 };
 
