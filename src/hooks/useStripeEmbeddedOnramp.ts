@@ -40,6 +40,7 @@ export type OnrampStep =
   | "registering_wallet"
   | "collecting_payment"
   | "creating_session"
+  | "confirming_fees"
   | "checking_out"
   | "awaiting_funds"
   | "transferring"
@@ -119,6 +120,8 @@ export type UseStripeEmbeddedOnrampProps = {
   onError?: (error: Error) => void;
   /** Step change callback */
   onStepChange?: (step: OnrampStep) => void;
+  /** Card detected callback */
+  onCardDetected?: (card: { funding: "credit" | "debit"; brand: string; last4: string } | null) => void;
 };
 
 export type UseStripeEmbeddedOnrampReturn = {
@@ -144,6 +147,12 @@ export type UseStripeEmbeddedOnrampReturn = {
   cryptoCustomerId: string | null;
   /** The buyer's smart wallet address (deterministic from email) */
   buyerWalletAddress: string | null;
+  /** Expose detected card funding type (credit vs. debit) */
+  detectedCardFunding: "credit" | "debit" | null;
+  /** Expose detected card brand */
+  detectedCardBrand: string | null;
+  /** Expose detected card last 4 digits */
+  detectedCardLast4: string | null;
 };
 
 const STEP_MESSAGES: Record<OnrampStep, string> = {
@@ -161,6 +170,7 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
   registering_wallet: "Registering wallet...",
   collecting_payment: "Select payment method...",
   creating_session: "Preparing transaction...",
+  confirming_fees: "Reviewing payment fee...",
   checking_out: "Processing payment...",
   awaiting_funds: "Waiting for funds...",
   transferring: "Completing transfer...",
@@ -222,6 +232,7 @@ export function useStripeEmbeddedOnramp({
   onSuccess,
   onError,
   onStepChange,
+  onCardDetected,
 }: UseStripeEmbeddedOnrampProps): UseStripeEmbeddedOnrampReturn {
   const [step, setStep] = useState<OnrampStep>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -230,6 +241,9 @@ export function useStripeEmbeddedOnramp({
   const [cryptoCustomerId, setCryptoCustomerId] = useState<string | null>(null);
   const [buyerWalletAddress, setBuyerWalletAddress] = useState<string | null>(null);
   const [localPhone, setLocalPhone] = useState<string>("");
+  const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | null>(null);
+  const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
+  const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
 
   const onrampRef = useRef<OnrampCoordinator | null>(null);
   const mountedRef = useRef(true);
@@ -281,7 +295,11 @@ export function useStripeEmbeddedOnramp({
     verificationTokenRef.current = null;
     setLocalPhone("");
     buyerAccountRef.current = null;
-  }, []);
+    setDetectedCardFunding(null);
+    setDetectedCardBrand(null);
+    setDetectedCardLast4(null);
+    onCardDetected?.(null);
+  }, [onCardDetected]);
 
   // ─── Create/retrieve Thirdweb EOA wallet for buyer email ───
   // Uses auth_endpoint strategy — no OTP (email already verified by Stripe Link)
@@ -747,6 +765,7 @@ export function useStripeEmbeddedOnramp({
       updateStep("creating_session");
 
       let sessionId: string | null = null;
+      let paymentDetails: any = null;
 
       try {
         const sessionRes = await fetch("/api/stripe/onramp-session-v2", {
@@ -768,9 +787,9 @@ export function useStripeEmbeddedOnramp({
         });
 
         if (!sessionRes.ok) {
-          const sessionData = await sessionRes.json();
-          const errMessage = String(sessionData.error || "").toLowerCase();
-          const errCode = String(sessionData.code || "").toLowerCase();
+          const errData = await sessionRes.json().catch(() => ({}));
+          const errMessage = String(errData.error || "").toLowerCase();
+          const errCode = String(errData.code || "").toLowerCase();
 
           if (
             errMessage.includes("verification") || 
@@ -805,24 +824,26 @@ export function useStripeEmbeddedOnramp({
               });
 
               if (!retryRes.ok) {
-                const retryData = await retryRes.json();
+                const retryData = await retryRes.json().catch(() => ({}));
                 handleError(retryData.error || "Session creation failed after document verification");
                 return;
               }
 
-              const retryData = await retryRes.json();
+              const retryData = await retryRes.json().catch(() => ({}));
               sessionId = retryData.id;
+              paymentDetails = retryData.paymentDetails;
             } catch (verifyErr: any) {
               handleError(verifyErr?.message || "Identity verification failed or was cancelled");
               return;
             }
           } else {
-            handleError(sessionData.error || "Session creation failed");
+            handleError(errData.error || "Session creation failed");
             return;
           }
         } else {
-          const sessionData = await sessionRes.json();
-          sessionId = sessionData.id;
+          const successData = await sessionRes.json().catch(() => ({}));
+          sessionId = successData.id;
+          paymentDetails = successData.paymentDetails;
         }
       } catch (err: any) {
         handleError(err?.message || "Session creation failed");
@@ -830,6 +851,28 @@ export function useStripeEmbeddedOnramp({
       }
 
       if (!sessionId || !mountedRef.current) return;
+
+      // Extract card type metadata if available
+      if (paymentDetails?.card) {
+        const funding = paymentDetails.card.funding;
+        const brand = paymentDetails.card.brand;
+        const last4 = paymentDetails.card.last4;
+        
+        // Detect if debit/prepaid
+        const isDebit = funding === "debit" || funding === "prepaid";
+        const fundingType = isDebit ? "debit" : "credit";
+        setDetectedCardFunding(fundingType);
+        setDetectedCardBrand(brand);
+        setDetectedCardLast4(last4);
+        onCardDetected?.({ funding: fundingType, brand, last4 });
+        
+        console.log(`[EMBEDDED ONRAMP] Card detected: ${brand} ${funding} (${last4}). Pausing for fee review.`);
+        
+        // Pause in confirming_fees state for 2.5 seconds
+        updateStep("confirming_fees");
+        await new Promise(r => setTimeout(r, 2500));
+        if (!mountedRef.current) return;
+      }
 
       // ─── Step 10: Perform checkout with retry loop ───
       updateStep("checking_out");
@@ -954,7 +997,7 @@ export function useStripeEmbeddedOnramp({
       updateStep("transferring");
  
       // Choose target split address based on card funding type
-      const targetSplitAddress = isDebitCard && splitAddressCredit
+      const targetSplitAddress = (isDebitCard || detectedCardFunding === "debit") && splitAddressCredit
         ? splitAddressCredit
         : (splitAddress || "");
 
@@ -977,7 +1020,7 @@ export function useStripeEmbeddedOnramp({
     enabled, email, phone, localPhone, splitAddress, splitAddressCredit, amount, network,
     destinationCurrency, receiptId, merchantWallet, brandKey,
     publishableKey, connectedWalletAddress, connectedWallet, onSuccess, handleError,
-    updateStep, createBuyerWallet, executeGaslessTransfer,
+    updateStep, createBuyerWallet, executeGaslessTransfer, onCardDetected,
   ]);
 
   const submitPhone = useCallback((phoneNumber: string) => {
@@ -1006,5 +1049,8 @@ export function useStripeEmbeddedOnramp({
     isActive,
     cryptoCustomerId,
     buyerWalletAddress,
+    detectedCardFunding,
+    detectedCardBrand,
+    detectedCardLast4,
   };
 }

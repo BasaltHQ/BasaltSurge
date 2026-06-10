@@ -195,7 +195,7 @@ export function failIfMissingPartnerEnv(): void {
  */
 export function getSanitizedSplitBps(): { platform: number; partner: number } | undefined {
   const env = getEnv();
-  const p = clampBps(env.PLATFORM_SPLIT_BPS ?? 50); // default 50bps if unspecified
+  const p = clampBps(env.PLATFORM_BPS ?? env.PLATFORM_SPLIT_BPS ?? 50); // prioritize PLATFORM_BPS
   const q = clampBps(env.PARTNER_SPLIT_BPS ?? 0);
   const sum = Math.max(0, (p ?? 0)) + Math.max(0, (q ?? 0));
   if (sum > 10000) return undefined;
@@ -209,7 +209,7 @@ export const isDualSplitEnabled = (): boolean => {
 
 export function getSanitizedCreditSplitBps(): { platform: number; agent: number } | undefined {
   const env = getEnv();
-  const p = clampBps(env.CREDIT_SPLIT_PLATFORM_BPS ?? 150); // default 150bps (1.5%) if unspecified
+  const p = clampBps(env.PLATFORM_BPS ?? env.CREDIT_SPLIT_PLATFORM_BPS ?? 150); // prioritize PLATFORM_BPS
   const q = clampBps(env.CREDIT_SPLIT_AGENT_BPS ?? 0);
   const sum = Math.max(0, (p ?? 0)) + Math.max(0, (q ?? 0));
   if (sum > 10000) return undefined;

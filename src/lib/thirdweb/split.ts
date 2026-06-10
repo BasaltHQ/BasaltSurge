@@ -155,7 +155,7 @@ export async function ensureSplitForWallet(
       if (isCredit) {
         // Debit card component
         const env = getEnv();
-        defaultPlatformBps = env.PLATFORM_BPS ?? 100;
+        defaultPlatformBps = env.PLATFORM_BPS ?? 125;
         defaultPartnerBps = 0;
       } else {
         // Credit & Crypto component

@@ -243,16 +243,31 @@ export default function ClientRequestsPanel() {
     const account = useActiveAccount();
     const [serverEnvAgents, setServerEnvAgents] = useState<{ wallet: string; bps: number }[]>([]);
     const [serverEnvAgentsDebit, setServerEnvAgentsDebit] = useState<{ wallet: string; bps: number }[]>([]);    const [serverIsDualSplit, setServerIsDualSplit] = useState(false);
-    const [serverCreditPlatformBps, setServerCreditPlatformBps] = useState<number>(150);
-    const [serverDebitPlatformBps, setServerDebitPlatformBps] = useState<number>(100);
+    const [serverCreditPlatformBps, setServerCreditPlatformBps] = useState<number | null>(null);
+    const [serverDebitPlatformBps, setServerDebitPlatformBps] = useState<number | null>(null);
 
     const getCreditPlatformBps = () => {
-        if (serverCreditPlatformBps) return serverCreditPlatformBps;
-        return parseInt(process.env.NEXT_PUBLIC_CREDIT_SPLIT_PLATFORM_BPS || "150") || 150;
+        if (serverCreditPlatformBps !== null) return serverCreditPlatformBps;
+        return parseInt(process.env.NEXT_PUBLIC_CREDIT_SPLIT_PLATFORM_BPS || "125") || 125;
     };
     const getDebitPlatformBps = () => {
-        if (serverDebitPlatformBps) return serverDebitPlatformBps;
-        return parseInt(process.env.NEXT_PUBLIC_PLATFORM_BPS || process.env.NEXT_PUBLIC_PLATFORM_SPLIT_BPS || "100") || 100;
+        if (serverDebitPlatformBps !== null) return serverDebitPlatformBps;
+        return parseInt(process.env.NEXT_PUBLIC_PLATFORM_BPS || process.env.NEXT_PUBLIC_PLATFORM_SPLIT_BPS || "125") || 125;
+    };
+
+    const [unifiedFeeEnabled, setUnifiedFeeEnabled] = useState(false);
+
+    useEffect(() => {
+        if (typeof window !== "undefined") {
+            setUnifiedFeeEnabled(localStorage.getItem("pp_unified_fee_enabled") === "true");
+        }
+    }, []);
+
+    const handleUnifiedFeeToggle = (val: boolean) => {
+        setUnifiedFeeEnabled(val);
+        if (typeof window !== "undefined") {
+            localStorage.setItem("pp_unified_fee_enabled", val ? "true" : "false");
+        }
     };
     const getEnvAgents = (isDebit: boolean): { wallet: string; bps: number }[] => {
         if (isDebit) {
@@ -349,7 +364,7 @@ export default function ClientRequestsPanel() {
     console.log("[ClientRequestsPanel] Render cycle. confirmState =", confirmState);
 
     const isPlatformContainer = process.env.NEXT_PUBLIC_CONTAINER_TYPE !== "partner" && (!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge");
-    const [platformBps, setPlatformBps] = useState(150); // Default platform fee (will be dynamically overwritten by backend/effect)
+    const [platformBps, setPlatformBps] = useState(125); // Default platform fee (will be dynamically overwritten by backend/effect)
     const [historyViewerId, setHistoryViewerId] = useState<string | null>(null);
     const [activeTabs, setActiveTabs] = useState<Record<string, string>>({});
 
@@ -380,7 +395,7 @@ export default function ClientRequestsPanel() {
                 if (typeof (brand as any)?.platformFeeBps === "number") {
                     setPlatformBps((brand as any).platformFeeBps);
                 } else if (isPlatformContainer) {
-                    setPlatformBps(100);
+                    setPlatformBps(getDebitPlatformBps());
                 }
             }
         })();
@@ -392,7 +407,7 @@ export default function ClientRequestsPanel() {
     
     // Debit Card Split Config States
     const [partnerBpsDebit, setPartnerBpsDebit] = useState(0);
-    const [platformBpsDebit, setPlatformBpsDebit] = useState(100);
+    const [platformBpsDebit, setPlatformBpsDebit] = useState(125);
     const [agentsDebit, setAgentsDebit] = useState<{ wallet: string; bps: number; isCustom?: boolean }[]>([]);
     const [activeSplitTab, setActiveSplitTab] = useState<"credit" | "debit">("credit");
 
@@ -407,6 +422,7 @@ export default function ClientRequestsPanel() {
 
     const [approvedAgents, setApprovedAgents] = useState<{ wallet: string; name: string; email: string }[]>([]);
     const [deploying, setDeploying] = useState(false);
+    const [deployStatus, setDeployStatus] = useState<string>("");
     const [deployResult, setDeployResult] = useState<string>("");
     const [deployResultDebit, setDeployResultDebit] = useState<string>("");
 
@@ -637,15 +653,15 @@ export default function ClientRequestsPanel() {
         // Initialize Credit Split States
         if (existingSplit) {
             setPartnerBps(existingSplit.partnerBps ?? (isPlatformContainer ? 0 : 50));
-            if (existingSplit.platformBps !== undefined) {
+            if (existingSplit.platformBps !== undefined && isPlatformContainer) {
                 setPlatformBps(existingSplit.platformBps);
             } else {
-                setPlatformBps(serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? 100 : 50));
+                setPlatformBps(serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
             }
             setAgents(mergeAgents(existingSplit.agents || [], false));
         } else {
             setPartnerBps(isPlatformContainer ? 0 : 50); // Reset to default
-            setPlatformBps(serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? 100 : 50));
+            setPlatformBps(serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
             setAgents(mergeAgents(baseAgents, false));
             setLastVerifiedConfig(null); // No verified config for new splits
         }
@@ -653,15 +669,15 @@ export default function ClientRequestsPanel() {
         // Initialize Debit Split States
         if (existingSplitCredit) {
             setPartnerBpsDebit(existingSplitCredit.partnerBps ?? 0);
-            if (existingSplitCredit.platformBps !== undefined) {
+            if (existingSplitCredit.platformBps !== undefined && isPlatformContainer) {
                 setPlatformBpsDebit(existingSplitCredit.platformBps);
             } else {
-                setPlatformBpsDebit(serverIsDualSplit ? getDebitPlatformBps() : 150);
+                setPlatformBpsDebit(serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
             }
             setAgentsDebit(mergeAgents(existingSplitCredit.agents || [], true));
         } else {
             setPartnerBpsDebit(0);
-            setPlatformBpsDebit(serverIsDualSplit ? getDebitPlatformBps() : 150);
+            setPlatformBpsDebit(serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
             setAgentsDebit(mergeAgents(baseAgents, true));
         }
 
@@ -943,7 +959,16 @@ export default function ClientRequestsPanel() {
         const shouldDeployDebit = isDual && (deployMode === "both" || (deployMode === "active" && isDebitTab));
 
         try {
+            if (typeof window !== "undefined") {
+                (window as any).__pp_deploying = true;
+            }
             setDeploying(true);
+            setDeployStatus(shouldDeployCredit && shouldDeployDebit 
+                ? "Step 1 of 2: Initiating Credit & Crypto Split deployment..."
+                : shouldDeployCredit 
+                    ? "Deploying Credit & Crypto Split..."
+                    : "Deploying Debit Card Split..."
+            );
             setDeployResult("");
             setDeployResultDebit("");
 
@@ -952,6 +977,11 @@ export default function ClientRequestsPanel() {
 
             if (shouldDeployCredit) {
                 // Deploy standard (Credit/Crypto) split
+                if (shouldDeployCredit && shouldDeployDebit) {
+                    setDeployStatus("Step 1 of 2: Deploying Credit & Crypto Split (please confirm in your wallet)...");
+                } else {
+                    setDeployStatus("Deploying Credit & Crypto Split (please confirm in your wallet)...");
+                }
                 addr = await ensureSplitForWallet(
                     account,
                     brandKey,
@@ -964,8 +994,19 @@ export default function ClientRequestsPanel() {
                 );
             }
 
+            // Cooldown pause between sequential contract deployments to prevent RPC rate-limits / nonce collisions
+            if (shouldDeployCredit && shouldDeployDebit) {
+                setDeployStatus("Cooldown pause to prevent rate-limits / nonce collisions...");
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+            }
+
             if (shouldDeployDebit) {
                 // Deploy alternate (Debit) split
+                if (shouldDeployCredit && shouldDeployDebit) {
+                    setDeployStatus("Step 2 of 2: Deploying Debit Card Split (please confirm in your wallet)...");
+                } else {
+                    setDeployStatus("Deploying Debit Card Split (please confirm in your wallet)...");
+                }
                 addrCredit = await ensureSplitForWallet(
                     account,
                     brandKey,
@@ -983,6 +1024,7 @@ export default function ClientRequestsPanel() {
             const successDebit = !shouldDeployDebit || !!addrCredit;
 
             if (successCredit && successDebit) {
+                setDeployStatus("Verifying and syncing deployed splits on-chain...");
                 // Immediately verify splits in a unified call if both or either deployed
                 const verifyRes = await verifyContracts(
                     req,
@@ -1045,7 +1087,13 @@ export default function ClientRequestsPanel() {
             }
             return false;
         } finally {
+            if (typeof window !== "undefined") {
+                const w = window as any;
+                w.__pp_last_deploy_time = Date.now();
+                w.__pp_deploying = false;
+            }
             setDeploying(false);
+            setDeployStatus("");
         }
     };
 
@@ -1095,9 +1143,22 @@ export default function ClientRequestsPanel() {
                         Manage access requests for <span className="font-mono text-emerald-400">{brandKey}</span>.
                     </p>
                 </div>
-                <button className="h-10 px-4 rounded-lg border border-foreground/[0.05] bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors shadow-sm" onClick={load} disabled={loading}>
-                    {loading ? "Refreshing…" : "Refresh"}
-                </button>
+                <div className="flex items-center gap-3">
+                    {!isPlatformContainer && (
+                        <label className="flex items-center gap-2 text-xs font-medium bg-foreground/[0.02] border border-foreground/[0.05] hover:bg-foreground/[0.04] px-3 py-2 rounded-lg cursor-pointer transition-colors shadow-sm select-none">
+                            <input
+                                type="checkbox"
+                                checked={unifiedFeeEnabled}
+                                onChange={(e) => handleUnifiedFeeToggle(e.target.checked)}
+                                className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0"
+                            />
+                            <span>Unified Fee Display</span>
+                        </label>
+                    )}
+                    <button className="h-10 px-4 rounded-lg border border-foreground/[0.05] bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors shadow-sm" onClick={load} disabled={loading}>
+                        {loading ? "Refreshing…" : "Refresh"}
+                    </button>
+                </div>
             </div>
 
             {error && <div className="microtext text-red-500">{error}</div>}
@@ -1343,25 +1404,65 @@ export default function ClientRequestsPanel() {
                                                 {req.status === "approved" && (
                                                     <>
                                                         <button
-                                                            className="px-3 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 text-xs font-semibold transition-colors flex items-center gap-1"
+                                                            className="px-4 py-2.5 rounded-xl bg-blue-500/5 hover:bg-blue-500/10 text-blue-400 border border-blue-500/15 hover:border-blue-500/30 text-xs font-semibold shadow-sm hover:shadow-md hover:shadow-blue-500/5 hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 flex items-center gap-2.5 group cursor-pointer"
                                                             onClick={() => openApprovalModal(req.wallet, req.splitConfig, req.splitConfigCredit)}
                                                             title="Update Revenue Split"
                                                         >
                                                             <span>
-                                                                {req.splitConfig
-                                                                    ? (() => {
-                                                                        const agentCount = req.splitConfig.agents?.length || 0;
-                                                                        if (isPlatformContainer) {
-                                                                            const pBps = req.splitConfig.platformBps ?? platformBps;
-                                                                            const aBps = (req.splitConfig.agents || []).reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0);
-                                                                            const totalBps = pBps + aBps;
-                                                                            return `${(totalBps / 100).toFixed(2)}% Fee${agentCount > 0 ? ` (${agentCount} Agent${agentCount > 1 ? 's' : ''})` : ''}`;
-                                                                        }
-                                                                        return `${(req.splitConfig.partnerBps / 100).toFixed(2)}% Split${agentCount > 0 ? ` (+${agentCount} Agents)` : ''}`;
-                                                                    })()
-                                                                    : "Set Split"}
+                                                                {req.splitConfig || req.splitConfigCredit ? (
+                                                                    <span className="flex items-center gap-2">
+                                                                        {serverIsDualSplit ? (
+                                                                            <>
+                                                                                <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/10 text-emerald-400 font-mono text-[10px] tracking-tight">
+                                                                                    Cr: {(() => {
+                                                                                        if (req.splitConfig) {
+                                                                                            const agentCount = req.splitConfig.agents?.length || 0;
+                                                                                            if (isPlatformContainer) {
+                                                                                                const pBps = req.splitConfig.platformBps ?? platformBps;
+                                                                                                const aBps = (req.splitConfig.agents || []).reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0);
+                                                                                                return `${((pBps + aBps) / 100).toFixed(2)}% Fee${agentCount > 0 ? ` (+${agentCount} Ag)` : ''}`;
+                                                                                            }
+                                                                                            return `${((req.splitConfig.partnerBps || 0) / 100).toFixed(2)}% Split${agentCount > 0 ? ` (+${agentCount} Ag)` : ''}`;
+                                                                                        }
+                                                                                        return "Set Split";
+                                                                                    })()}
+                                                                                </span>
+                                                                                <span className="h-4 w-px bg-white/10" />
+                                                                                <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/10 text-purple-400 font-mono text-[10px] tracking-tight">
+                                                                                    Db: {(() => {
+                                                                                        if (req.splitConfigCredit) {
+                                                                                            const agentCount = req.splitConfigCredit.agents?.length || 0;
+                                                                                            if (isPlatformContainer) {
+                                                                                                const pBps = req.splitConfigCredit.platformBps ?? platformBpsDebit;
+                                                                                                const aBps = (req.splitConfigCredit.agents || []).reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0);
+                                                                                                return `${((pBps + aBps) / 100).toFixed(2)}% Fee${agentCount > 0 ? ` (+${agentCount} Ag)` : ''}`;
+                                                                                            }
+                                                                                            return `${((req.splitConfigCredit.partnerBps || 0) / 100).toFixed(2)}% Split${agentCount > 0 ? ` (+${agentCount} Ag)` : ''}`;
+                                                                                        }
+                                                                                        return "Set Split";
+                                                                                    })()}
+                                                                                </span>
+                                                                            </>
+                                                                        ) : (
+                                                                            <span className="flex items-center gap-1 px-2 py-1 rounded bg-blue-500/10 border border-blue-500/10 text-blue-300 font-mono text-[10px] tracking-tight">
+                                                                                {(() => {
+                                                                                    const agentCount = req.splitConfig?.agents?.length || 0;
+                                                                                    if (isPlatformContainer) {
+                                                                                        const pBps = req.splitConfig?.platformBps ?? platformBps;
+                                                                                        const aBps = (req.splitConfig?.agents || []).reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0);
+                                                                                        const totalBps = pBps + aBps;
+                                                                                        return `${(totalBps / 100).toFixed(2)}% Fee${agentCount > 0 ? ` (${agentCount} Ag)` : ''}`;
+                                                                                    }
+                                                                                    return `${((req.splitConfig?.partnerBps || 0) / 100).toFixed(2)}% Split${agentCount > 0 ? ` (+${agentCount} Ag)` : ''}`;
+                                                                                })()}
+                                                                            </span>
+                                                                        )}
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="text-zinc-400 font-medium tracking-wide">Set Split</span>
+                                                                )}
                                                             </span>
-                                                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <svg className="w-3.5 h-3.5 group-hover:rotate-90 transition-transform duration-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                                                             </svg>
@@ -1705,49 +1806,77 @@ export default function ClientRequestsPanel() {
 
                                             {/* Platform Fee */}
                                             <div className="space-y-2">
-                                                <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
-                                                    <span>Platform Fee</span>
-                                                    <span>{isPlatformContainer ? "adjustable" : "Locked"}</span>
-                                                </div>
-                                                {isPlatformContainer ? (
-                                                    <div className="p-4 rounded-lg bg-zinc-800/50 border border-white/10 space-y-4">
-                                                        <div className="flex justify-between items-center">
-                                                            <span className="text-white text-sm font-medium">Platform</span>
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="number"
-                                                                    value={currentPlatformBps}
-                                                                    onChange={(e) => setCurrentPlatformBps(Math.min(9900, Math.max(0, parseInt(e.target.value) || 0)))}
-                                                                    className={`w-16 bg-black/40 border border-white/10 rounded px-2 py-1 text-right font-mono text-sm text-white outline-none ${isDebitTab ? "focus:border-purple-500" : "focus:border-emerald-500"}`}
-                                                                />
-                                                                <span className="text-zinc-500 text-xs">bps</span>
-                                                            </div>
-                                                        </div>
-                                                        <input
-                                                            type="range"
-                                                            min="0"
-                                                            max="1000" // Max 10%
-                                                            step="5"
-                                                            value={currentPlatformBps}
-                                                            onChange={(e) => setCurrentPlatformBps(parseInt(e.target.value))}
-                                                            className={`w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer ${isDebitTab ? "accent-purple-500" : "accent-emerald-500"}`}
-                                                        />
-                                                        <div className={`text-right text-xs font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
-                                                            {(currentPlatformBps / 100).toFixed(2)}%
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <div className="p-3 rounded-lg bg-black/20 border border-white/5 flex justify-between items-center opacity-70">
-                                                        <span className="text-zinc-400 text-sm">Platform</span>
-                                                        <span className={`font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>{(currentPlatformBps / 100).toFixed(2)}%</span>
-                                                    </div>
-                                                )}
-                                                <div className="text-[10px] text-zinc-500 font-mono flex justify-between">
-                                                    <span>Wallet</span>
-                                                    <span className="select-all" title={process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS}>
-                                                        {(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e").slice(0, 6)}...{(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e").slice(-4)}
-                                                    </span>
-                                                </div>
+                                                {/* Unified Fee View (If Enabled on Partner Container) */}
+                                             {unifiedFeeEnabled && !isPlatformContainer && (
+                                                 <div className="space-y-2">
+                                                     <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
+                                                         <span>Unified Platform &amp; Agent Fee</span>
+                                                         <span>Locked</span>
+                                                     </div>
+                                                     <div className="p-4 rounded-lg bg-zinc-800/50 border border-white/10 space-y-3">
+                                                         <div className="flex justify-between items-center text-sm">
+                                                             <span className="text-white font-medium">Unified Service Fee</span>
+                                                             <span className={`font-mono font-semibold ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
+                                                                 {(((currentPlatformBps + ((isDebitTab ? getEnvAgents(true)[0]?.bps : getEnvAgents(false)[0]?.bps) || 0)) / 100)).toFixed(2)}%
+                                                             </span>
+                                                         </div>
+                                                         <div className="h-px bg-white/10" />
+                                                         <div className="text-[10px] text-zinc-400 font-mono space-y-1 select-all break-all leading-normal">
+                                                             <div>Platform ({currentPlatformBps} BPS): {(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e")}</div>
+                                                             <div>Primary Agent ({(isDebitTab ? getEnvAgents(true)[0]?.bps : getEnvAgents(false)[0]?.bps) || 0} BPS): {(isDebitTab ? getEnvAgents(true)[0]?.wallet : getEnvAgents(false)[0]?.wallet) || "None"}</div>
+                                                         </div>
+                                                     </div>
+                                                 </div>
+                                             )}
+
+                                             {/* Platform Fee */}
+                                             {(!unifiedFeeEnabled || isPlatformContainer) && (
+                                                 <div className="space-y-2">
+                                                     <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
+                                                         <span>Platform Fee</span>
+                                                         <span>{isPlatformContainer ? "adjustable" : "Locked"}</span>
+                                                     </div>
+                                                     {isPlatformContainer ? (
+                                                         <div className="p-4 rounded-lg bg-zinc-800/50 border border-white/10 space-y-4">
+                                                             <div className="flex justify-between items-center">
+                                                                 <span className="text-white text-sm font-medium">Platform</span>
+                                                                 <div className="flex items-center gap-2">
+                                                                     <input
+                                                                         type="number"
+                                                                         value={currentPlatformBps}
+                                                                         onChange={(e) => setCurrentPlatformBps(Math.min(9900, Math.max(0, parseInt(e.target.value) || 0)))}
+                                                                         className={`w-16 bg-black/40 border border-white/10 rounded px-2 py-1 text-right font-mono text-sm text-white outline-none ${isDebitTab ? "focus:border-purple-500" : "focus:border-emerald-500"}`}
+                                                                     />
+                                                                     <span className="text-zinc-500 text-xs">bps</span>
+                                                                 </div>
+                                                             </div>
+                                                             <input
+                                                                 type="range"
+                                                                 min="0"
+                                                                 max="1000" // Max 10%
+                                                                 step="5"
+                                                                 value={currentPlatformBps}
+                                                                 onChange={(e) => setCurrentPlatformBps(parseInt(e.target.value))}
+                                                                 className={`w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer ${isDebitTab ? "accent-purple-500" : "accent-emerald-500"}`}
+                                                             />
+                                                             <div className={`text-right text-xs font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
+                                                                 {(currentPlatformBps / 100).toFixed(2)}%
+                                                             </div>
+                                                         </div>
+                                                     ) : (
+                                                         <div className="p-3 rounded-lg bg-black/20 border border-white/5 flex justify-between items-center opacity-70">
+                                                             <span className="text-zinc-400 text-sm">Platform</span>
+                                                             <span className={`font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>{(currentPlatformBps / 100).toFixed(2)}%</span>
+                                                         </div>
+                                                     )}
+                                                     <div className="text-[10px] text-zinc-500 font-mono flex justify-between">
+                                                         <span>Wallet</span>
+                                                         <span className="select-all" title={process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS}>
+                                                             {(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e").slice(0, 6)}...{(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e").slice(-4)}
+                                                         </span>
+                                                     </div>
+                                                 </div>
+                                             )}
                                             </div>
 
                                             {/* Partner Fee (Slider) - Hidden for platform containers */}
@@ -1802,6 +1931,12 @@ export default function ClientRequestsPanel() {
                                                         const isRegistered = approvedAgents.some(a => a.wallet.toLowerCase() === agent.wallet.toLowerCase());
                                                         const isCustomMode = agent.isCustom || (!isRegistered && agent.wallet !== "");
                                                         const isImmutable = isAgentImmutable(agent.wallet, isDebitTab);
+                                                        
+                                                        // Filter out environment agents from UI when unifiedFee is enabled on partner container
+                                                        if (unifiedFeeEnabled && !isPlatformContainer && isImmutable) {
+                                                            return null;
+                                                        }
+                                                        
                                                         return (
                                                             <div key={idx} className="space-y-1.5 opacity-90">
                                                                 <div className="flex gap-2">
@@ -2182,6 +2317,21 @@ export default function ClientRequestsPanel() {
                                                             : `Deploy the new version of the ${isDebitTab ? "Debit Card" : "Credit Card & Crypto"} split contract? This will archive the current active contract for this split and deploy a new one.`}
                                                     </p>
 
+                                                    {deployStatus && (
+                                                        <div className="mt-3 bg-white/5 border border-white/10 rounded-lg p-3 text-xs leading-relaxed animate-in fade-in duration-200">
+                                                            <div className="flex items-center gap-2 text-zinc-300 font-semibold mb-1">
+                                                                <span className="relative flex h-2 w-2">
+                                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                                                </span>
+                                                                Deployment Progress
+                                                            </div>
+                                                            <span className="text-zinc-400 font-mono whitespace-pre-line">
+                                                                {deployStatus}
+                                                            </span>
+                                                        </div>
+                                                    )}
+
                                                     {confirmState.mode === "both" && (
                                                         <div className="mt-3 flex items-start gap-2 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-lg p-3 text-xs leading-relaxed animate-in fade-in duration-200">
                                                             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -2196,7 +2346,8 @@ export default function ClientRequestsPanel() {
                                         <div className="px-6 py-4 bg-black/40 border-t border-white/5 flex gap-3 justify-end">
                                             <button
                                                 onClick={() => setConfirmState(null)}
-                                                className="px-4 py-2 rounded-xl hover:bg-white/5 text-zinc-400 hover:text-white text-sm font-medium transition-colors"
+                                                disabled={deploying}
+                                                className="px-4 py-2 rounded-xl hover:bg-white/5 text-zinc-400 hover:text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
                                                 Cancel
                                             </button>
@@ -2206,9 +2357,14 @@ export default function ClientRequestsPanel() {
                                                     await handleDeploy(true, mode);
                                                     setConfirmState(null);
                                                 }}
-                                                className="px-5 py-2 rounded-xl font-semibold text-sm transition-all shadow-md bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/10"
+                                                disabled={deploying}
+                                                className={`px-5 py-2 rounded-xl font-semibold text-sm transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
+                                                    deploying 
+                                                        ? "bg-emerald-500/30 text-emerald-400/50 cursor-not-allowed" 
+                                                        : "bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-500/10"
+                                                }`}
                                             >
-                                                Deploy
+                                                {deploying ? "Deploying..." : "Deploy"}
                                             </button>
                                         </div>
                                     </div>

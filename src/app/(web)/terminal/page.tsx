@@ -969,13 +969,24 @@ function PreviewContent({ forcedMode }: { forcedMode: PreviewMode }) {
     return () => { try { mo.disconnect(); } catch { }; clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, [theme?.secondaryColor]);
 
-  const LogoImg = () => (
-    <img
-      alt="logo"
-      src={(() => { const a = (theme as any)?.symbolLogoUrl ? String((theme as any).symbolLogoUrl).trim() : ""; const b = (theme.brandFaviconUrl || "").trim(); const c = (theme.brandLogoUrl || "").trim(); return resolveBrandSymbol(a || b || c, (theme as any)?.brandKey || (theme as any)?.key); })()}
-      className="max-h-9 object-contain"
-    />
-  );
+  const getSymbolLogo = () => {
+    const a = (theme as any)?.symbolLogoUrl ? String((theme as any).symbolLogoUrl).trim() : "";
+    const b = (theme.brandFaviconUrl || "").trim();
+    const c = (theme.brandLogoUrl || "").trim();
+    return resolveBrandSymbol(a || b || c, (theme as any)?.brandKey || (theme as any)?.key) || "";
+  };
+
+  const LogoImg = () => {
+    const logoSrc = getSymbolLogo();
+    if (!logoSrc) return null;
+    return (
+      <img
+        alt="logo"
+        src={logoSrc}
+        className="max-h-9 object-contain"
+      />
+    );
+  };
 
   const HeaderBar = () => (
     <div className="flex items-center gap-3 px-4 py-3" style={{ background: "var(--pp-primary)", color: "var(--pp-text-header)" }}>
@@ -1028,7 +1039,9 @@ function PreviewContent({ forcedMode }: { forcedMode: PreviewMode }) {
     <div className="mt-4 rounded-2xl border p-4 bg-background/70">
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-lg bg-foreground/5 overflow-hidden grid place-items-center">
-          <img src={(() => { const a = (theme as any)?.symbolLogoUrl ? String((theme as any).symbolLogoUrl).trim() : ""; const b = (theme.brandFaviconUrl || "").trim(); const c = (theme.brandLogoUrl || "").trim(); return resolveBrandSymbol(a || b || c, (theme as any)?.brandKey || (theme as any)?.key); })()} alt="Logo" className="w-10 h-10 object-contain" />
+          {getSymbolLogo() && (
+            <img src={getSymbolLogo()} alt="Logo" className="w-10 h-10 object-contain" />
+          )}
         </div>
         <div>
           <div className="text-sm font-semibold">{theme.brandName || getDefaultBrandName(theme.brandKey)}</div>
@@ -1122,9 +1135,10 @@ function PreviewContent({ forcedMode }: { forcedMode: PreviewMode }) {
         />
       ) : (
         <div className="w-full flex flex-col items-center justify-center gap-3 py-8 text-center min-h-[240px]">
-          <img src={(() => { const a = (theme as any)?.symbolLogoUrl ? String((theme as any).symbolLogoUrl).trim() : ""; const b = (theme.brandFaviconUrl || "").trim(); const c = (theme.brandLogoUrl || "").trim(); return resolveBrandSymbol(a || b || c, (theme as any)?.brandKey || (theme as any)?.key); })()} alt="Logo" className="w-16 h-16 rounded-lg object-contain" />
+          {getSymbolLogo() && (
+            <img src={getSymbolLogo()} alt="Logo" className="w-16 h-16 rounded-lg object-contain" />
+          )}
           <div className="text-sm text-muted-foreground">{totalUsd <= 0 ? "Invalid amount" : "Enter amount to continue checkout"}</div>
-
         </div>
       )}
       {showPortalMessage ? (
@@ -1233,7 +1247,9 @@ function PreviewContent({ forcedMode }: { forcedMode: PreviewMode }) {
                 <div className="mt-2">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-lg bg-foreground/5 overflow-hidden grid place-items-center">
-                      <img src={(() => { const a = (theme as any)?.symbolLogoUrl ? String((theme as any).symbolLogoUrl).trim() : ""; const b = (theme.brandFaviconUrl || "").trim(); const c = (theme.brandLogoUrl || "").trim(); return resolveBrandSymbol(a || b || c, (theme as any)?.brandKey || (theme as any)?.key); })()} alt="Logo" className="w-10 h-10 object-contain" />
+                      {getSymbolLogo() && (
+                        <img src={getSymbolLogo()} alt="Logo" className="w-10 h-10 object-contain" />
+                      )}
                     </div>
                     <div>
                       <div className="text-sm font-semibold">{theme.brandName || getDefaultBrandName(theme.brandKey)}</div>

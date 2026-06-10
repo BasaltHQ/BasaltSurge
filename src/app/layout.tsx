@@ -708,7 +708,7 @@ export default async function RootLayout({
         <noscript>
           <img height="1" width="1" style={{ display: 'none' }} alt="" src="https://px.ads.linkedin.com/collect/?pid=8943644&fmt=gif" />
         </noscript>
-        <script id="pp-error-cause-polyfill" dangerouslySetInnerHTML={{ __html: `
+        <Script id="pp-error-cause-polyfill" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: `
           try {
             if (typeof Error !== 'undefined') {
               var errorTypes = [Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError];
@@ -781,8 +781,8 @@ export default async function RootLayout({
             }
           } catch(e) {}
         `}} />
-        {!isDebug() && <script id="pp-silence-console" dangerouslySetInnerHTML={{ __html: `try{var _l=console.log.bind(console);console.log=function(){};console._log=_l}catch(e){}`}} />}
-        <script id="pp-preset-vars" dangerouslySetInnerHTML={{ __html: `try {
+        {!isDebug() && <Script id="pp-silence-console" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: `try{var _l=console.log.bind(console);console.log=function(){};console._log=_l}catch(e){}`}} />}
+        <Script id="pp-preset-vars" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: `try {
           var d=document.documentElement;
           var dp=d.getAttribute('data-pp-brand-primary')||'#1f2937';
           var da=d.getAttribute('data-pp-brand-accent')||'#F54029';
@@ -796,7 +796,7 @@ export default async function RootLayout({
           d.style.setProperty('--primary',dp);
           d.style.setProperty('--primary-foreground',dh);
         } catch(e) {}`}} />
-        <script id="pp-prelock" dangerouslySetInnerHTML={{ __html: `try {
+        <Script id="pp-prelock" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: `try {
           var d=document.documentElement;
           var url=new URL(window.location.href);
           var path=url.pathname || "";
@@ -845,14 +845,14 @@ export default async function RootLayout({
             d.setAttribute("data-pp-theme-ready","1");
           }
         } catch(e) {}`}} />
-        <script id="pp-ios-webview-polyfill" dangerouslySetInnerHTML={{ __html: `
+        <Script id="pp-ios-webview-polyfill" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: `
           try {
             if (typeof window !== "undefined" && !window.webkit) {
               window.webkit = { messageHandlers: {} };
             }
           } catch(e) {}
         `}} />
-        <script id="pp-suppress-ethereum-redefine" dangerouslySetInnerHTML={{ __html: `
+        <Script id="pp-suppress-ethereum-redefine" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: `
           try {
             // Suppress extension errors like "Cannot redefine property: ethereum"
             window.addEventListener('error', function (e) {
@@ -878,7 +878,7 @@ export default async function RootLayout({
             }, true);
           } catch {}
         `}} />
-        <script id="pp-suppress-extension-errors" dangerouslySetInnerHTML={{ __html: `
+        <Script id="pp-suppress-extension-errors" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: `
           try {
             window.addEventListener('error', function (e) {
               try {
@@ -945,7 +945,7 @@ export default async function RootLayout({
         `}} />
         {process.env.NODE_ENV !== "production" && (
           <>
-            <script id="pp-suppress-nested-button-error" dangerouslySetInnerHTML={{ __html: `
+            <Script id="pp-suppress-nested-button-error" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: `
               try {
                 // Suppress React DEV warning: "In HTML, <button> cannot be a descendant of <button>" from third-party modals
                 // Only intercept when the message matches exactly to avoid hiding other errors
@@ -996,7 +996,7 @@ export default async function RootLayout({
                 }, true);
               } catch {}
             `}} />
-            <script id="pp-filter-react-nested-button" dangerouslySetInnerHTML={{ __html: `
+            <Script id="pp-filter-react-nested-button" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: `
               try {
                 (function(){
                   var origError = console.error;

@@ -204,18 +204,22 @@ function Thumbnail({ src, size = 56, alt = "", fill = false, itemId = "", primar
         backgroundColor: colors[0]
     };
 
+    const overlayLogoSrc = logoUrl || (() => {
+        const a = String((brand?.logos?.symbol || "") as string).trim();
+        const c = String((brand?.logos?.app || "") as string).trim();
+        return resolveBrandSymbol(a || c, (brand as any)?.key);
+    })();
+
     return (
         <div style={{ ...style, ...gradientStyle }} className="rounded-md flex items-center justify-center flex-shrink-0 relative overflow-hidden">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-                src={logoUrl || (() => {
-                    const a = String((brand?.logos?.symbol || "") as string).trim();
-                    const c = String((brand?.logos?.app || "") as string).trim();
-                    return resolveBrandSymbol(a || c, (brand as any)?.key);
-                })()}
-                alt={brand?.name || "Brand"}
-                className="w-1/2 h-1/2 object-contain opacity-90"
-            />
+            {overlayLogoSrc && (
+                <img
+                    src={overlayLogoSrc}
+                    alt={brand?.name || "Brand"}
+                    className="w-1/2 h-1/2 object-contain opacity-90"
+                />
+            )}
         </div>
     );
 }
@@ -2175,18 +2179,20 @@ export default function ShopClient({ config: cfg, items: initialItems, reviews: 
                         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
                             <div className="flex items-center gap-3 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
                                 <div className={`w-8 h-8 ${cfg?.theme?.logoShape === "circle" ? "rounded-full" : "rounded-lg"} overflow-hidden flex-shrink-0 border bg-white flex items-center justify-center`}>
-                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img
-                                        src={(() => {
-                                            const a = String(cfg?.theme?.brandLogoUrl || "").trim();
-                                            const b = String((brand?.logos?.symbol || "") as string).trim();
-                                            const c = String((brand?.logos?.favicon || "") as string).trim();
-                                            const d = String((brand?.logos?.app || "") as string).trim();
-                                            return resolveBrandSymbol(a || b || c || d, (brand as any)?.key);
-                                        })()}
-                                        alt="Logo"
-                                        className="max-w-full max-h-full object-contain"
-                                    />
+                                    {(() => {
+                                        const a = String(cfg?.theme?.brandLogoUrl || "").trim();
+                                        const b = String((brand?.logos?.symbol || "") as string).trim();
+                                        const c = String((brand?.logos?.favicon || "") as string).trim();
+                                        const d = String((brand?.logos?.app || "") as string).trim();
+                                        const resolvedSrc = resolveBrandSymbol(a || b || c || d, (brand as any)?.key);
+                                        return resolvedSrc ? (
+                                            <img
+                                                src={resolvedSrc}
+                                                alt="Logo"
+                                                className="max-w-full max-h-full object-contain"
+                                            />
+                                        ) : null;
+                                    })()}
                                 </div>
                                 <div className="font-bold text-lg truncate hidden md:block">{cfg?.name}</div>
                             </div>
@@ -2227,7 +2233,7 @@ export default function ShopClient({ config: cfg, items: initialItems, reviews: 
                                                     const b = String((brand?.logos?.symbol || "") as string).trim();
                                                     const c = String((brand?.logos?.favicon || "") as string).trim();
                                                     const d = String((brand?.logos?.app || "") as string).trim();
-                                                    return resolveBrandSymbol(a || b || c || d, (brand as any)?.key);
+                                                    return resolveBrandSymbol(a || b || c || d, (brand as any)?.key) || undefined;
                                                 })(),
                                                 size: "compact",
                                                 showThirdwebBranding: false,
@@ -2299,18 +2305,20 @@ export default function ShopClient({ config: cfg, items: initialItems, reviews: 
                                         <div className="flex items-center justify-between gap-3">
                                             <div className="flex items-center gap-3 min-w-0">
                                                 <div className={`w-16 h-16 ${cfg?.theme?.logoShape === "circle" ? "rounded-full" : "rounded-lg"} overflow-hidden flex items-center justify-center flex-shrink-0`}>
-                                                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                    <img
-                                                        src={(() => {
-                                                            const a = String(cfg?.theme?.brandLogoUrl || "").trim();
-                                                            const b = String((brand?.logos?.symbol || "") as string).trim();
-                                                            const c = String((brand?.logos?.favicon || "") as string).trim();
-                                                            const d = String((brand?.logos?.app || "") as string).trim();
-                                                            return resolveBrandSymbol(a || b || c || d, (brand as any)?.key);
-                                                        })()}
-                                                        alt="Logo"
-                                                        className="max-w-full max-h-full object-contain"
-                                                    />
+                                                    {(() => {
+                                                        const a = String(cfg?.theme?.brandLogoUrl || "").trim();
+                                                        const b = String((brand?.logos?.symbol || "") as string).trim();
+                                                        const c = String((brand?.logos?.favicon || "") as string).trim();
+                                                        const d = String((brand?.logos?.app || "") as string).trim();
+                                                        const resolvedSrc = resolveBrandSymbol(a || b || c || d, (brand as any)?.key);
+                                                        return resolvedSrc ? (
+                                                            <img
+                                                                src={resolvedSrc}
+                                                                alt="Logo"
+                                                                className="max-w-full max-h-full object-contain"
+                                                            />
+                                                        ) : null;
+                                                    })()}
                                                 </div>
                                                 <div className="min-w-0">
                                                     <div className="text-base md:text-lg font-semibold truncate">{cfg?.name || "Shop"}</div>
@@ -2378,7 +2386,7 @@ export default function ShopClient({ config: cfg, items: initialItems, reviews: 
                                                                     const b = String((brand?.logos?.symbol || "") as string).trim();
                                                                     const c = String((brand?.logos?.favicon || "") as string).trim();
                                                                     const d = String((brand?.logos?.app || "") as string).trim();
-                                                                    return resolveBrandSymbol(a || b || c || d, (brand as any)?.key);
+                                                                    return resolveBrandSymbol(a || b || c || d, (brand as any)?.key) || undefined;
                                                                 })(),
                                                                 size: "compact",
                                                                 showThirdwebBranding: false,
@@ -2492,7 +2500,7 @@ export default function ShopClient({ config: cfg, items: initialItems, reviews: 
                                                                 const b = String((brand?.logos?.symbol || "") as string).trim();
                                                                 const c = String((brand?.logos?.favicon || "") as string).trim();
                                                                 const d = String((brand?.logos?.app || "") as string).trim();
-                                                                return resolveBrandSymbol(a || b || c || d, (brand as any)?.key);
+                                                                return resolveBrandSymbol(a || b || c || d, (brand as any)?.key) || undefined;
                                                             })(),
                                                             size: "compact",
                                                             showThirdwebBranding: false,

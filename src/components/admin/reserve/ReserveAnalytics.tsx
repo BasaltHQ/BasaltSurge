@@ -695,10 +695,10 @@ export function ReserveAnalytics() {
                 setSelectedCreditSplit(val);
                 fetchBalances(val);
               }}
-              className="h-10 px-4 rounded-xl bg-foreground/[0.03] border border-foreground/5 focus:bg-foreground/[0.05] focus:ring-1 focus:ring-emerald-500 focus:outline-none transition-all text-xs font-mono font-medium"
+              className="h-10 px-4 rounded-xl bg-zinc-900 border border-foreground/5 focus:bg-zinc-800 focus:ring-1 focus:ring-emerald-500 focus:outline-none transition-all text-xs font-mono font-medium text-white"
             >
               {creditOptions.map((h) => (
-                <option key={h.address} value={h.address}>
+                <option key={h.address} value={h.address} className="bg-zinc-950 text-white">
                   {h.label}
                 </option>
               ))}
@@ -713,10 +713,10 @@ export function ReserveAnalytics() {
                 setSelectedDebitSplit(val);
                 fetchBalances(val);
               }}
-              className="h-10 px-4 rounded-xl bg-foreground/[0.03] border border-foreground/5 focus:bg-foreground/[0.05] focus:ring-1 focus:ring-purple-500 focus:outline-none transition-all text-xs font-mono font-medium"
+              className="h-10 px-4 rounded-xl bg-zinc-900 border border-foreground/5 focus:bg-zinc-800 focus:ring-1 focus:ring-purple-500 focus:outline-none transition-all text-xs font-mono font-medium text-white"
             >
               {debitOptions.map((h) => (
-                <option key={h.address} value={h.address}>
+                <option key={h.address} value={h.address} className="bg-zinc-950 text-white">
                   {h.label}
                 </option>
               ))}
@@ -731,10 +731,10 @@ export function ReserveAnalytics() {
                 setSelectedLegacySplit(val);
                 fetchBalances(val);
               }}
-              className="h-10 px-4 rounded-xl bg-foreground/[0.03] border border-foreground/5 focus:bg-foreground/[0.05] focus:ring-1 focus:ring-zinc-500 focus:outline-none transition-all text-xs font-mono font-medium"
+              className="h-10 px-4 rounded-xl bg-zinc-900 border border-foreground/5 focus:bg-zinc-800 focus:ring-1 focus:ring-zinc-500 focus:outline-none transition-all text-xs font-mono font-medium text-white"
             >
               {legacyOptions.map((h) => (
-                <option key={h.address} value={h.address}>
+                <option key={h.address} value={h.address} className="bg-zinc-950 text-white">
                   {h.label}
                 </option>
               ))}

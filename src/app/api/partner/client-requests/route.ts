@@ -467,10 +467,10 @@ export async function GET(req: NextRequest) {
         parseJson(process.env.AGENT_WALLETS_JSON, envAgents, creditBpsVal);
 
         const isDualSplit = String(process.env.DUAL_SPLIT_CONFIG || process.env.NEXT_PUBLIC_DUAL_SPLIT_CONFIG || "").trim().toLowerCase() === "true";
-        const { getSanitizedCreditSplitBps } = await import("@/lib/env");
+        const { getSanitizedCreditSplitBps, getEnv } = await import("@/lib/env");
         const creditBps = getSanitizedCreditSplitBps();
-        const creditPlatformBps = creditBps?.platform ?? 150;
-        const debitPlatformBps = process.env.PLATFORM_BPS ? parseInt(process.env.PLATFORM_BPS) : (process.env.NEXT_PUBLIC_PLATFORM_BPS ? parseInt(process.env.NEXT_PUBLIC_PLATFORM_BPS) : 100);
+        const creditPlatformBps = creditBps?.platform ?? 125;
+        const debitPlatformBps = getEnv().PLATFORM_BPS ?? 125;
 
         return json({ ok: true, requests: result, brandKey, envAgents, envAgentsDebit, isDualSplit, creditPlatformBps, debitPlatformBps });
     } catch (e: any) {
@@ -790,12 +790,12 @@ export async function PATCH(req: NextRequest) {
                         };
 
                         // Dual Split Sync
-                        const { isDualSplitEnabled } = await import("@/lib/env");
+                        const { isDualSplitEnabled, getEnv } = await import("@/lib/env");
                         if (isDualSplitEnabled()) {
                             const clientCredit = splitConfig.splitConfigCredit;
                             const debitPlatformBps = typeof clientCredit?.platformBps === "number"
                                 ? clientCredit.platformBps
-                                : (process.env.PLATFORM_BPS ? parseInt(process.env.PLATFORM_BPS) : 100);
+                                : (getEnv().PLATFORM_BPS ?? 125);
                             const debitPartnerBps = typeof clientCredit?.partnerBps === "number"
                                 ? clientCredit.partnerBps
                                 : 0;
@@ -897,12 +897,12 @@ export async function PATCH(req: NextRequest) {
                         agents: Array.isArray(splitConfig.agents) ? splitConfig.agents : []
                     };
 
-                    const { isDualSplitEnabled } = await import("@/lib/env");
+                    const { isDualSplitEnabled, getEnv } = await import("@/lib/env");
                     if (isDualSplitEnabled()) {
                         const clientCredit = splitConfig.splitConfigCredit;
                         const debitPlatformBps = typeof clientCredit?.platformBps === "number"
                             ? clientCredit.platformBps
-                            : (process.env.PLATFORM_BPS ? parseInt(process.env.PLATFORM_BPS) : 100);
+                            : (getEnv().PLATFORM_BPS ?? 125);
                         const debitPartnerBps = typeof clientCredit?.partnerBps === "number"
                             ? clientCredit.partnerBps
                             : 0;

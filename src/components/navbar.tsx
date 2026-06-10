@@ -1071,6 +1071,13 @@ export function Navbar() {
                                     connectModal={{ title: tCommon("login"), titleIcon: modalTitleIcon, size: "compact", showThirdwebBranding: false }}
                                     theme={twTheme}
                                     onDisconnect={async () => {
+                                        if (typeof window !== "undefined") {
+                                            const w = window as any;
+                                            if (w.__pp_deploying || (w.__pp_last_deploy_time && Date.now() - w.__pp_last_deploy_time < 30000)) {
+                                                console.log("Wallet state cycled during or after split contract deployment, bypass desktop navbar logout.");
+                                                return;
+                                            }
+                                        }
                                         try {
                                             await fetch('/api/auth/logout', { method: 'POST' });
                                             window.dispatchEvent(new CustomEvent("pp:auth:logged_out"));
@@ -1281,6 +1288,13 @@ export function Navbar() {
                                             theme={twTheme}
                                             onConnect={() => setMobileOpen(false)}
                                             onDisconnect={async () => {
+                                                if (typeof window !== "undefined") {
+                                                    const w = window as any;
+                                                    if (w.__pp_deploying || (w.__pp_last_deploy_time && Date.now() - w.__pp_last_deploy_time < 30000)) {
+                                                        console.log("Wallet state cycled during or after split contract deployment, bypass desktop navbar logout.");
+                                                        return;
+                                                    }
+                                                }
                                                 try {
                                                     await fetch('/api/auth/logout', { method: 'POST' });
                                                     window.dispatchEvent(new CustomEvent("pp:auth:logged_out"));

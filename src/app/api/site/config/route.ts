@@ -487,6 +487,8 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
     storeCurrency: "USD" as string,
     // Split contract routing fields
     splitAddress: undefined as string | undefined,
+    splitAddressCredit: undefined as string | undefined,
+    splitConfigCredit: undefined as any,
     split: undefined as { address: string; recipients?: { address: string; sharesBps: number }[] } | undefined,
     accumulationMode: "fixed" as "fixed" | "dynamic",
     taxConfig: {
@@ -561,6 +563,21 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
   // Also handle config.splitAddress without nested split object
   if (!config.splitAddress && isHexAddr((config as any)?.config?.splitAddress)) {
     config.splitAddress = (config as any).config.splitAddress;
+  }
+
+  // Also handle splitAddressCredit and splitConfigCredit
+  const nestedSplitCredit = (config as any)?.config?.splitAddressCredit;
+  if (!config.splitAddressCredit && isHexAddr(nestedSplitCredit)) {
+    config.splitAddressCredit = nestedSplitCredit;
+  } else if (!config.splitAddressCredit && isHexAddr(raw?.splitAddressCredit)) {
+    config.splitAddressCredit = raw.splitAddressCredit;
+  }
+  
+  const nestedConfigCredit = (config as any)?.config?.splitConfigCredit;
+  if (!config.splitConfigCredit && nestedConfigCredit) {
+    config.splitConfigCredit = nestedConfigCredit;
+  } else if (!config.splitConfigCredit && raw?.splitConfigCredit) {
+    config.splitConfigCredit = raw.splitConfigCredit;
   }
 
 
