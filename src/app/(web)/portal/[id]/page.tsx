@@ -56,6 +56,10 @@ type SiteConfigResponse = {
     portalTheme?: Record<string, any>; // Portal Theme Playground config
     splitConfig?: any;
     splitConfigCredit?: any;
+    stripeOnrampEnabled?: boolean;
+    coinbaseOnrampEnabled?: boolean;
+    transakOnrampEnabled?: boolean;
+    rampnowOnrampEnabled?: boolean;
   };
   degraded?: boolean;
   reason?: string;
@@ -2262,6 +2266,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   });
   const [availableTokens, setAvailableTokens] = useState<TokenDef[]>(() => getBuildTimeTokens());
 
+  // Onramp active state toggles
+  const [stripeOnrampEnabled, setStripeOnrampEnabled] = useState<boolean>(true);
+  const [coinbaseOnrampEnabled, setCoinbaseOnrampEnabled] = useState<boolean>(false);
+  const [transakOnrampEnabled, setTransakOnrampEnabled] = useState<boolean>(false);
+  const [rampnowOnrampEnabled, setRampnowOnrampEnabled] = useState<boolean>(false);
+
   // Consolidated site-config fetch (single call) to set fee, default token, and seller/split address
   useEffect(() => {
     if (!merchantWallet) return; // avoid unscoped fetch on portal; wait for merchant wallet
@@ -2298,6 +2308,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
         if (cfg?.splitConfig) setSplitConfig(cfg.splitConfig);
         if (cfg?.splitConfigCredit) setSplitConfigCredit(cfg.splitConfigCredit);
+
+        if (typeof cfg.stripeOnrampEnabled === "boolean") setStripeOnrampEnabled(cfg.stripeOnrampEnabled);
+        if (typeof cfg.coinbaseOnrampEnabled === "boolean") setCoinbaseOnrampEnabled(cfg.coinbaseOnrampEnabled);
+        if (typeof cfg.transakOnrampEnabled === "boolean") setTransakOnrampEnabled(cfg.transakOnrampEnabled);
+        if (typeof cfg.rampnowOnrampEnabled === "boolean") setRampnowOnrampEnabled(cfg.rampnowOnrampEnabled);
 
         // basePlatformFeePct (platform + partner + agent fees)
         const splitCfg = (cfg as any)?.splitConfig;
@@ -2744,15 +2759,66 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const scopeEl = document.body;
     const tryReorder = () => {
       try {
+        // ── Filter Out Disabled Onramp Providers ──
+        const tryFilterOnramps = () => {
+          const els = Array.from(scopeEl.querySelectorAll('button, div[role="button"], a[role="button"], span, p'));
+          els.forEach((el: any) => {
+            const txt = (el.textContent || '').trim();
+            const txtLower = txt.toLowerCase();
+            
+            const hideProvider = (node: HTMLElement) => {
+              let target: HTMLElement | null = node;
+              for (let j = 0; j < 6 && target; j++) {
+                const rect = target.getBoundingClientRect();
+                const style = window.getComputedStyle(target);
+                const isCard = rect.width > 120 && rect.height > 30 && rect.height < 200;
+                const isClickable = style.cursor === "pointer" || target.tagName === "BUTTON" || target.getAttribute("role") === "button";
+                if (isCard && isClickable) {
+                  target.style.setProperty('display', 'none', 'important');
+                  break;
+                }
+                target = target.parentElement;
+              }
+            };
+
+            // Coinbase Pay (onramp) - avoid hiding "Coinbase Wallet" (which is a connection method)
+            if (!coinbaseOnrampEnabled && (txt === 'Coinbase Pay' || (txtLower === 'coinbase' && el.children.length === 0 && !el.closest('button')?.textContent?.toLowerCase().includes('wallet')))) {
+              hideProvider(el);
+            }
+            
+            // Stripe
+            if (!stripeOnrampEnabled && (txt === 'Stripe' || txt === 'Stripe Link' || (txtLower === 'stripe' && el.children.length === 0))) {
+              hideProvider(el);
+            }
+            
+            // Transak
+            if (!transakOnrampEnabled && (txt === 'Transak' || (txtLower === 'transak' && el.children.length === 0))) {
+              hideProvider(el);
+            }
+            
+            // Rampnow / Ramp Network
+            if (!rampnowOnrampEnabled && (txt === 'Ramp' || txt === 'Ramp Network' || (txtLower === 'ramp' && el.children.length === 0))) {
+              hideProvider(el);
+            }
+          });
+        };
+        tryFilterOnramps();
+
         const allButtons = Array.from(scopeEl.querySelectorAll('button'));
         const getByText = (t: string) => allButtons.find(b => (b.textContent || '').toLowerCase().includes(t));
+        const cardBtn = getByText('pay with card');
+
+        const allOnrampsDisabled = !stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled;
+        if (allOnrampsDisabled && cardBtn) {
+          cardBtn.style.setProperty('display', 'none', 'important');
+        }
+
         const isWalletAddrLike = (txt: string) => {
           const s = (txt || '').toLowerCase();
           if (!s.includes('0x')) return false;
           // Accept full or truncated addresses: e.g., 0xabc123..., 0xabc123…xyz
           return /0x[a-f0-9]{2,6}(\.{3}|…)[a-f0-9]{2,6}/i.test(s) || /0x[a-f0-9]{6,}/i.test(s);
         };
-        const cardBtn = getByText('pay with card');
         const connectBtn = getByText('connect a wallet');
         const walletBtn = allButtons.find(b => isWalletAddrLike(b.textContent || '')) || allButtons.find(b => /(metamask|coinbase wallet|wallet)/i.test(b.textContent || '')) || null;
 
@@ -2797,7 +2863,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const t2 = setTimeout(tryReorder, 400);
     const t3 = setTimeout(tryReorder, 1200);
     return () => { try { mo.disconnect(); } catch { }; clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
-  }, [effectiveSecondaryColor, theme.secondaryColor]);
+  }, [effectiveSecondaryColor, theme.secondaryColor, stripeOnrampEnabled, coinbaseOnrampEnabled, transakOnrampEnabled, rampnowOnrampEnabled]);
 
   // ── Thirdweb Bruteforce DOM Overrides ──
   // Thirdweb's Emotion CSS-in-JS aggressively overrides injected stylesheets with inline or high-specificity classes.

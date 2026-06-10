@@ -31,6 +31,7 @@ import { Modal } from "@/components/ui/modal";
 import { useBrand } from "@/contexts/BrandContext";
 import { getDefaultBrandName, isPlatformBrand, getEffectiveBrandKey, isRuntimePlatformBrand } from "@/lib/branding";
 import BrandingPanelExt from "@/app/(web)/admin/panels/BrandingPanel";
+import OnrampsPanel from "./panels/OnrampsPanel";
 import { Thumbnail, type ReserveBalancesResponse, type SiteConfig, type TaxCatalogEntry } from "@/app/(web)/admin/panels/common";
 import PartnerManagementPanelExt from "@/app/(web)/admin/panels/PartnerManagementPanel";
 import ApplicationsPanelExt from "@/app/(web)/admin/panels/ApplicationsPanel";
@@ -11158,6 +11159,9 @@ export default function AdminPage() {
         )}
         {activeTab === "branding" && (
           <BrandingPanelExt />
+        )}
+        {activeTab === "onramps" && (
+          <OnrampsPanel />
         )}
         {activeTab === "splitConfig" && ((canBranding && containerType === "partner" && !isRequestMode) || (isPlatform && isSuperadmin)) && (
           <SplitConfigPanelExt />

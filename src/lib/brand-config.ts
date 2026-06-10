@@ -76,6 +76,13 @@ export type BrandConfigDoc = {
   // Access Control
   accessMode?: "open" | "request";
   unifiedFeeEnabled?: boolean;
+  presentedFeeBps?: number;
+  creditPresentedFeeBps?: number;
+
+  stripeOnrampEnabled?: boolean;
+  coinbaseOnrampEnabled?: boolean;
+  transakOnrampEnabled?: boolean;
+  rampnowOnrampEnabled?: boolean;
 
   // Thirdweb Keys
   thirdwebClientId?: string;
@@ -274,6 +281,12 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     agentFeeBps: undefined,
     creditAgentFeeBps: undefined,
     primaryAgentWallet: undefined,
+    presentedFeeBps: undefined,
+    creditPresentedFeeBps: undefined,
+    stripeOnrampEnabled: true,
+    coinbaseOnrampEnabled: false,
+    transakOnrampEnabled: false,
+    rampnowOnrampEnabled: false,
   };
 
   const withDefaults = applyBrandDefaults(baseRaw);
@@ -320,6 +333,12 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     agentFeeBps: typeof overrides.agentFeeBps === "number" ? overrides.agentFeeBps : withDefaults.agentFeeBps,
     creditAgentFeeBps: typeof overrides.creditAgentFeeBps === "number" ? overrides.creditAgentFeeBps : withDefaults.creditAgentFeeBps,
     primaryAgentWallet: typeof overrides.primaryAgentWallet === "string" ? overrides.primaryAgentWallet : withDefaults.primaryAgentWallet,
+    presentedFeeBps: typeof overrides.presentedFeeBps === "number" ? overrides.presentedFeeBps : withDefaults.presentedFeeBps,
+    creditPresentedFeeBps: typeof overrides.creditPresentedFeeBps === "number" ? overrides.creditPresentedFeeBps : withDefaults.creditPresentedFeeBps,
+    stripeOnrampEnabled: typeof overrides.stripeOnrampEnabled === "boolean" ? overrides.stripeOnrampEnabled : withDefaults.stripeOnrampEnabled,
+    coinbaseOnrampEnabled: typeof overrides.coinbaseOnrampEnabled === "boolean" ? overrides.coinbaseOnrampEnabled : withDefaults.coinbaseOnrampEnabled,
+    transakOnrampEnabled: typeof overrides.transakOnrampEnabled === "boolean" ? overrides.transakOnrampEnabled : withDefaults.transakOnrampEnabled,
+    rampnowOnrampEnabled: typeof overrides.rampnowOnrampEnabled === "boolean" ? overrides.rampnowOnrampEnabled : withDefaults.rampnowOnrampEnabled,
   });
 
   // BasaltSurge defaults: only apply when the DB doesn't have explicit values.

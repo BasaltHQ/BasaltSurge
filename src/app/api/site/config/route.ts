@@ -454,6 +454,29 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
       }] : [])
     ];
 
+    // Fetch and apply brand config onramp options
+    try {
+      if (brandKeyForFees) {
+        const { brand: fetchedBrand } = await getBrandConfigFromCosmos(brandKeyForFees);
+        if (fetchedBrand) {
+          cfg.stripeOnrampEnabled = fetchedBrand.stripeOnrampEnabled ?? true;
+          cfg.coinbaseOnrampEnabled = fetchedBrand.coinbaseOnrampEnabled ?? false;
+          cfg.transakOnrampEnabled = fetchedBrand.transakOnrampEnabled ?? false;
+          cfg.rampnowOnrampEnabled = fetchedBrand.rampnowOnrampEnabled ?? false;
+        }
+      } else {
+        cfg.stripeOnrampEnabled = true;
+        cfg.coinbaseOnrampEnabled = false;
+        cfg.transakOnrampEnabled = false;
+        cfg.rampnowOnrampEnabled = false;
+      }
+    } catch {
+      cfg.stripeOnrampEnabled = true;
+      cfg.coinbaseOnrampEnabled = false;
+      cfg.transakOnrampEnabled = false;
+      cfg.rampnowOnrampEnabled = false;
+    }
+
     return cfg;
   } catch {
     return cfg;

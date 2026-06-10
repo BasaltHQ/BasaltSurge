@@ -121,6 +121,12 @@ export default function PartnerManagementPanel() {
       if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
       if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
+      if (typeof config?.presentedFeeBps === "number") {
+        body.presentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.presentedFeeBps))));
+      }
+      if (typeof config?.creditPresentedFeeBps === "number") {
+        body.creditPresentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.creditPresentedFeeBps))));
+      }
       if (typeof config?.name === "string") body.name = config.name;
       if (config?.colors) body.colors = config.colors;
       if (config?.logos) body.logos = config.logos;
@@ -132,7 +138,7 @@ export default function PartnerManagementPanel() {
       }
 
       // If nothing to persist, skip
-      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined) {
+      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined && body.presentedFeeBps === undefined && body.creditPresentedFeeBps === undefined) {
         return true;
       }
 
@@ -838,6 +844,10 @@ export default function PartnerManagementPanel() {
       if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
       if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
+      if (typeof config?.presentedFeeBps === "number")
+        body.presentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.presentedFeeBps))));
+      if (typeof config?.creditPresentedFeeBps === "number")
+        body.creditPresentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.creditPresentedFeeBps))));
 
       // Email Config
       if (config?.email) {
@@ -1799,6 +1809,44 @@ export default function PartnerManagementPanel() {
                   <div className="text-[11px] text-muted-foreground/70 mt-1.5">
                     Credit (e.g. 130 = 1.30%)
                   </div>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Presented Fee Debit (bps)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={10000}
+                  step={1}
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                  value={config?.presentedFeeBps !== undefined ? Number(config.presentedFeeBps) : ""}
+                  placeholder="e.g. 295"
+                  onChange={(e) => {
+                    const val = e.target.value === "" ? undefined : Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0))));
+                    setConfig((prev: any) => ({ ...prev, presentedFeeBps: val }));
+                  }}
+                />
+                <div className="text-[11px] text-muted-foreground/70 mt-1.5">
+                  Top-line fee presented to Debit card merchants (e.g. 295 = 2.95%).
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Presented Fee Credit (bps)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={10000}
+                  step={1}
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                  value={config?.creditPresentedFeeBps !== undefined ? Number(config.creditPresentedFeeBps) : ""}
+                  placeholder="e.g. 295"
+                  onChange={(e) => {
+                    const val = e.target.value === "" ? undefined : Math.max(0, Math.min(10000, Math.floor(Number(e.target.value || 0))));
+                    setConfig((prev: any) => ({ ...prev, creditPresentedFeeBps: val }));
+                  }}
+                />
+                <div className="text-[11px] text-muted-foreground/70 mt-1.5">
+                  Top-line fee presented to Credit/Crypto merchants (e.g. 295 = 2.95%).
                 </div>
               </div>
               <div>

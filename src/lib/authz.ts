@@ -64,7 +64,8 @@ export type AdminPanel =
   | 'branding'        // Branding editor
   | 'merchants'       // Merchant list, inventory, orders
   | 'walletsSplit'    // Wallets/Split configuration
-  | 'admins';         // Admin User Management (NEW)
+  | 'admins'          // Admin User Management (NEW)
+  | 'onramps';        // Onramps panel
 
 // ------------------------------------------------------------------
 // Role Resolution Logic
@@ -182,6 +183,10 @@ export function canAccessPanel(panel: AdminPanel, wallet?: string): boolean {
   }
 
   if (panel === 'branding') {
+    return permissions.includes('manage:branding');
+  }
+
+  if (panel === 'onramps') {
     return permissions.includes('manage:branding');
   }
 
