@@ -54,6 +54,8 @@ type SiteConfigResponse = {
     tokens?: TokenDef[];
     touchpointThemes?: Record<string, string>;
     portalTheme?: Record<string, any>; // Portal Theme Playground config
+    splitConfig?: any;
+    splitConfigCredit?: any;
   };
   degraded?: boolean;
   reason?: string;
@@ -1717,10 +1719,41 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const canUseFullLogo = !!fullLogoCandidate && (hasPartnerPath || !genericRe.test(fileName));
   const effectiveNavbarMode: "symbol" | "logo" = (navbarMode === "logo" && canUseFullLogo) ? "logo" : "symbol";
 
+  // Card Detection & Countdown States
+  const [awaitingFundsSeconds, setAwaitingFundsSeconds] = useState(40);
+  const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | null>(null);
+  const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
+  const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
+
   // Fee from admin config
   const [processingFeePct, setProcessingFeePct] = useState<number>(0);
   // Base platform fee (platformFeeBps + partnerFeeBps) - loaded from site config for partner containers
   const [basePlatformFeePct, setBasePlatformFeePct] = useState<number>(0.5);
+  const [splitConfig, setSplitConfig] = useState<any>(null);
+  const [splitConfigCredit, setSplitConfigCredit] = useState<any>(null);
+
+  const effectiveBasePlatformFeePct = useMemo(() => {
+    // If debit card is detected and splitConfigCredit is present, calculate from splitConfigCredit
+    if (detectedCardFunding === "debit" && splitConfigCredit && typeof splitConfigCredit === "object") {
+      const partnerBps = typeof splitConfigCredit.partnerBps === "number" ? splitConfigCredit.partnerBps : 0;
+      const platformBps = typeof splitConfigCredit.platformBps === "number" ? splitConfigCredit.platformBps : 0;
+      const agentBps = Array.isArray(splitConfigCredit.agents)
+        ? splitConfigCredit.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+        : 0;
+      return (partnerBps + platformBps + agentBps) / 100;
+    }
+    // Otherwise, try splitConfig
+    if (splitConfig && typeof splitConfig === "object") {
+      const partnerBps = typeof splitConfig.partnerBps === "number" ? splitConfig.partnerBps : 0;
+      const platformBps = typeof splitConfig.platformBps === "number" ? splitConfig.platformBps : 0;
+      const agentBps = Array.isArray(splitConfig.agents)
+        ? splitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+        : 0;
+      return (partnerBps + platformBps + agentBps) / 100;
+    }
+    // Fallback to the loaded basePlatformFeePct state
+    return basePlatformFeePct;
+  }, [detectedCardFunding, splitConfig, splitConfigCredit, basePlatformFeePct]);
 
   // Dynamic receipt
   const [receipt, setReceipt] = useState<Receipt | null>(null);
@@ -2043,9 +2076,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   };
 
   const processingFeeUsd = useMemo(() => {
-    const feePctFraction = Math.max(0, (basePlatformFeePct + Number(processingFeePct || 0)) / 100);
+    const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0)) / 100);
     return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
-  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, basePlatformFeePct, processingFeePct]);
+  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, effectiveBasePlatformFeePct, processingFeePct]);
 
   const totalUsd = useMemo(() => {
     if (!receipt) return 0;
@@ -2262,6 +2295,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         if (typeof cfg.processingFeePct === "number") {
           setProcessingFeePct(cfg.processingFeePct);
         }
+
+        if (cfg?.splitConfig) setSplitConfig(cfg.splitConfig);
+        if (cfg?.splitConfigCredit) setSplitConfigCredit(cfg.splitConfigCredit);
 
         // basePlatformFeePct (platform + partner + agent fees)
         const splitCfg = (cfg as any)?.splitConfig;
@@ -2799,6 +2835,20 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Otherwise → Legacy iframe-based Stripe Crypto Onramp interceptor
   const stripeHeadless = String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE";
 
+  // eCommerce mode check: checks for ?=e or ?e (both next.js searchParams and raw window.location.search fallback)
+  const isEcommerceMode = (() => {
+    if (typeof window !== "undefined") {
+      const search = window.location.search;
+      if (search.includes("=e") || search === "?e" || search.includes("&e") || search.includes("?e&")) return true;
+    }
+    if (searchParams) {
+      if (searchParams.get("") === "e" || searchParams.has("e")) return true;
+    }
+    return false;
+  })();
+
+  console.log("[PORTAL PAGE] isEcommerceMode:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
+
   // Headless: New Embedded Components flow with Smart Wallet Bridge
   // If buyer is already connected via Thirdweb (account?.address), uses their existing wallet.
   // Otherwise, creates a deterministic smart wallet from their email (no OTP via auth_endpoint).
@@ -2823,6 +2873,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     connectedWalletAddress: account?.address, // Skip wallet creation if buyer is already connected
     connectedWallet: account,
     enabled: stripeHeadless,
+    isEcommerceMode,
+    onCardDetected: (card) => {
+      if (card) {
+        setDetectedCardFunding(card.funding);
+        setDetectedCardBrand(card.brand);
+        setDetectedCardLast4(card.last4);
+      } else {
+        setDetectedCardFunding(null);
+        setDetectedCardBrand(null);
+        setDetectedCardLast4(null);
+      }
+    },
     onSuccess: (result) => {
       console.log("[STRIPE HEADLESS] ✓ Onramp + transfer completed:", result);
       // Funds are now in the split contract — receipt can be marked paid
@@ -2841,6 +2903,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       console.error("[STRIPE HEADLESS] Error:", error);
     },
   });
+
+  // Countdown timer for awaiting_funds step in Stripe headless flow
+  useEffect(() => {
+    if (headlessStep !== "awaiting_funds") {
+      setAwaitingFundsSeconds(40);
+      return;
+    }
+    const timer = setInterval(() => {
+      setAwaitingFundsSeconds(prev => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [headlessStep]);
 
 
 
@@ -3308,7 +3382,24 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   </div>
                 </div>
                 <p className="text-white font-semibold text-sm tracking-tight mb-1">{headlessStatus}</p>
-                <p className="text-white/40 text-[11px]">This process is secure and authenticated.</p>
+                {headlessStep === "awaiting_funds" ? (
+                  <div className="w-full max-w-xs mt-6 flex flex-col items-stretch px-2 animate-in fade-in zoom-in duration-500">
+                    <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden relative">
+                      <div 
+                        className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-1000 ease-linear rounded-full"
+                        style={{ width: `${((40 - awaitingFundsSeconds) / 40) * 100}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between w-full mt-2.5 text-[11px]">
+                      <span className="text-white/50">Fulfillment Status</span>
+                      <span className="text-emerald-400 font-mono font-bold animate-pulse">
+                        {awaitingFundsSeconds > 0 ? `${awaitingFundsSeconds}s remaining` : 'Finalizing transfer...'}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-white/40 text-[11px]">This process is secure and authenticated.</p>
+                )}
 
                 {headlessBuyerWallet && (
                   <div className="w-full max-w-xs mt-6 p-3 rounded-xl border border-white/5 bg-white/[0.01] flex flex-col items-stretch text-left animate-in fade-in duration-500">
@@ -3413,8 +3504,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               color-scheme: dark !important;
               border: none !important;
               border-radius: 12px !important;
+            }
+            ${isLightText ? `
+            .pp-portal-container iframe,
+            .stripe-embedded-container iframe {
               filter: invert(0.93) hue-rotate(180deg) brightness(1.1) contrast(0.95) !important;
             }
+            ` : ''}
 
             /* ── portalTheme live overrides ── */
             ${theme.pageBg ? `
@@ -3592,7 +3688,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             borderTopRightRadius: "inherit"
           }}
         >
-          {effectiveNavbarMode === "logo" ? (
+          {effectiveNavbarMode === "logo" && getHeaderLogo() ? (
             // Full-width logo (no text)
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -3603,14 +3699,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             />
           ) : (
             <>
-              <div data-pp-logo-wrapper="1" className={`${theme.brandLogoShape === "round" ? "rounded-full" : "rounded-md"} w-9 h-9 bg-white/10 flex items-center justify-center overflow-hidden`}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  alt="logo"
-                  src={getSymbolLogo()}
-                  className="max-h-9 object-contain drop-shadow-[0_1.2px_1.2px_rgba(0,0,0,0.8)]"
-                />
-              </div>
+              {getSymbolLogo() && (
+                <div data-pp-logo-wrapper="1" className={`${theme.brandLogoShape === "round" ? "rounded-full" : "rounded-md"} w-9 h-9 bg-white/10 flex items-center justify-center overflow-hidden`}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    alt="logo"
+                    src={getSymbolLogo()}
+                    className="max-h-9 object-contain drop-shadow-[0_1.2px_1.2px_rgba(0,0,0,0.8)]"
+                  />
+                </div>
+              )}
               <div className="font-semibold truncate" style={{ fontFamily: theme.fontFamily }}>
                 {effectiveBrandName || getDefaultBrandName(theme.brandKey)}
               </div>
@@ -3664,7 +3762,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     const c = (theme.brandLogoUrl || "").trim();
                     const a = (theme.symbolLogoUrl || "").trim();
                     const b = (theme.brandFaviconUrl || "").trim();
-                    return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key);
+                    return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
                   })(),
                   size: "compact",
                 }}
@@ -3701,7 +3799,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 const c = (theme.brandLogoUrl || "").trim();
                 const a = (theme.symbolLogoUrl || "").trim();
                 const b = (theme.brandFaviconUrl || "").trim();
-                return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key);
+                return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
               })(),
               size: "compact",
             }}
@@ -3805,14 +3903,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   {/* Receipt */}
                   <div className="mt-2 p-3">
                     <div className="flex items-center gap-3">
-                      <div data-pp-logo-wrapper="1" className={`${theme.brandLogoShape === "round" ? "rounded-full" : "rounded-lg"} w-10 h-10 bg-foreground/5 overflow-hidden grid place-items-center`}>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={getSymbolLogo()}
-                          alt="Logo"
-                          className="w-10 h-10 object-contain"
-                        />
-                      </div>
+                      {getSymbolLogo() && (
+                        <div data-pp-logo-wrapper="1" className={`${theme.brandLogoShape === "round" ? "rounded-full" : "rounded-lg"} w-10 h-10 bg-foreground/5 overflow-hidden grid place-items-center`}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={getSymbolLogo()}
+                            alt="Logo"
+                            className="w-10 h-10 object-contain"
+                          />
+                        </div>
+                      )}
                       <div>
                         <div className="text-sm font-semibold">{effectiveBrandName || getDefaultBrandName(theme.brandKey)}</div>
                         <div className="microtext text-muted-foreground">Digital Receipt</div>
@@ -3920,7 +4020,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       )}
                       {processingFeeUsd > 0 && (
                         <div className="flex items-center justify-between text-sm">
-                          <span className="opacity-80">Processing Fee ({(basePlatformFeePct + Number(processingFeePct || 0)).toFixed(2)}%)</span>
+                          <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
+                            <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0)).toFixed(2)}%)</span>
+                            {detectedCardFunding && (
+                              <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
+                                {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
+                              </span>
+                            )}
+                          </span>
                           <span>{(() => {
                             if (currency === "USD") {
                               return formatCurrency(processingFeeUsd, "USD");
@@ -4009,7 +4116,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           const c = (theme.brandLogoUrl || "").trim();
                                           const a = (theme.symbolLogoUrl || "").trim();
                                           const b = (theme.brandFaviconUrl || "").trim();
-                                          return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key);
+                                          return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
                                         })(),
                                         size: "compact",
                                       }}
@@ -4217,7 +4324,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                               itemsSubtotalUsd,
                                               taxUsd,
                                               processingFeeUsd,
-                                              feePct: (basePlatformFeePct + Number(processingFeePct || 0)),
+                                              feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
                                               shipping: {
                                                 name: shipName,
                                                 line1: shipLine1,
@@ -4298,7 +4405,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                       itemsSubtotalUsd,
                                       taxUsd,
                                       processingFeeUsd,
-                                      feePct: (basePlatformFeePct + Number(processingFeePct || 0)),
+                                      feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
                                     },
                                   }}
                                   onSuccess={(result: any) => {
@@ -4336,12 +4443,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         </>
                       ) : (
                         <div className="w-full flex flex-col items-center justify-center gap-3 py-8 text-center min-h-[240px]">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={getSymbolLogo()}
-                            alt="Logo"
-                            className="w-16 h-16 rounded-lg object-contain"
-                          />
+                          {getSymbolLogo() && (
+                            <img
+                              src={getSymbolLogo()}
+                              alt="Logo"
+                              className="w-16 h-16 rounded-lg object-contain"
+                            />
+                          )}
                           <div className="text-sm text-muted-foreground">
                             {loadingReceipt
                               ? "Loading receipt…"
@@ -4561,7 +4669,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   )}
                   {processingFeeUsd > 0 && (
                     <div className="flex items-center justify-between text-sm">
-                      <span className="opacity-80">Processing Fee ({(basePlatformFeePct + Number(processingFeePct || 0)).toFixed(2)}%)</span>
+                      <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
+                        <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0)).toFixed(2)}%)</span>
+                        {detectedCardFunding && (
+                          <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
+                            {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
+                          </span>
+                        )}
+                      </span>
                       <span>{(() => {
                         if (currency === "USD") {
                           return formatCurrency(processingFeeUsd, "USD");
@@ -4650,7 +4765,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         const c = (theme.brandLogoUrl || "").trim();
                                         const a = (theme.symbolLogoUrl || "").trim();
                                         const b = (theme.brandFaviconUrl || "").trim();
-                                        return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key);
+                                        return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
                                       })(),
                                       size: "compact",
                                     }}
@@ -4836,7 +4951,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                         purchaseData={{
                                           productId: `portal:${receiptId}`,
-                                          meta: { token, currency, usd: totalUsd, tipUsd, itemsSubtotalUsd, taxUsd, processingFeeUsd, feePct: (basePlatformFeePct + Number(processingFeePct || 0)) },
+                                          meta: { token, currency, usd: totalUsd, tipUsd, itemsSubtotalUsd, taxUsd, processingFeeUsd, feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)) },
                                         }}
                                         onSuccess={async (data: any) => {
                                           try {
@@ -4908,7 +5023,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     itemsSubtotalUsd,
                                     taxUsd,
                                     processingFeeUsd: processingFeeUsd,
-                                    feePct: (basePlatformFeePct + Number(processingFeePct || 0)),
+                                    feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
                                     employeeId: receipt?.employeeId,
                                     sessionId: receipt?.sessionId,
                                   },
@@ -4985,12 +5100,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       </>
                     ) : (
                       <div className="w-full flex flex-col items-center justify-center gap-3 py-8 text-center min-h-[240px]">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={getSymbolLogo()}
-                          alt="Logo"
-                          className="w-16 h-16 rounded-lg object-contain"
-                        />
+                        {getSymbolLogo() && (
+                          <img
+                            src={getSymbolLogo()}
+                            alt="Logo"
+                            className="w-16 h-16 rounded-lg object-contain"
+                          />
+                        )}
                         <div className="text-sm text-muted-foreground">
                           {loadingReceipt
                             ? "Loading receipt…"
@@ -5156,7 +5272,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         const c = (theme.brandLogoUrl || "").trim();
                         const a = (theme.symbolLogoUrl || "").trim();
                         const b = (theme.brandFaviconUrl || "").trim();
-                        return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key);
+                        return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
                       })(),
                       size: "compact",
                     }}

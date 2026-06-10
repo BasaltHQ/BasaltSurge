@@ -38,6 +38,8 @@ export type SiteConfig = {
 
   // Per-merchant split routing (PaymentSplitter/Split) for on-chain revenue share
   splitAddress?: string; // if set, checkout will route to this instead of the merchant EOA
+  splitAddressCredit?: string;
+  splitConfigCredit?: any;
   split?: {
     address: string;
     recipients?: { address: string; sharesBps: number }[];
@@ -150,6 +152,13 @@ function normalize(raw?: any, targetWallet?: string): SiteConfig {
 
   base.split = effectiveSplitAddr ? { address: effectiveSplitAddr, recipients } : undefined;
 
+  if (isHex(raw?.splitAddressCredit)) {
+    base.splitAddressCredit = raw.splitAddressCredit;
+  }
+  if (raw?.splitConfigCredit) {
+    base.splitConfigCredit = raw.splitConfigCredit;
+  }
+
   return base as SiteConfig;
 }
 
@@ -203,6 +212,8 @@ export async function getSiteConfigForWallet(wallet?: string, brandKeyOverride?:
                 if (legacyDoc.storeCurrency && resource.storeCurrency === undefined) resource.storeCurrency = legacyDoc.storeCurrency;
                 if (typeof legacyDoc.processingFeePct === "number" && typeof resource.processingFeePct !== "number") resource.processingFeePct = legacyDoc.processingFeePct;
                 if (legacyDoc.splitAddress && !resource.splitAddress) resource.splitAddress = legacyDoc.splitAddress;
+                if (legacyDoc.splitAddressCredit && !resource.splitAddressCredit) resource.splitAddressCredit = legacyDoc.splitAddressCredit;
+                if (legacyDoc.splitConfigCredit && !resource.splitConfigCredit) resource.splitConfigCredit = legacyDoc.splitConfigCredit;
                 if (legacyDoc.split && !resource.split) resource.split = legacyDoc.split;
                 if (legacyDoc.splitVersion && !resource.splitVersion) resource.splitVersion = legacyDoc.splitVersion;
                 if (legacyDoc.splitHistory && !resource.splitHistory) resource.splitHistory = legacyDoc.splitHistory;

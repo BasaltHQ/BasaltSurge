@@ -44,10 +44,15 @@ export async function POST(
     }
 
     // Build mandate_data for ACH support
-    const customerIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    let customerIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
       || req.headers.get("x-real-ip")
-      || req.ip
+      || (req as any).ip
       || "0.0.0.0";
+
+    // Bypass loopback/localhost IPs with a mock US IP address for developer testing
+    if (customerIp === "::1" || customerIp === "127.0.0.1" || customerIp === "0.0.0.0" || customerIp.startsWith("::ffff:")) {
+      customerIp = "72.229.28.185"; // New York, USA
+    }
     const userAgent = req.headers.get("user-agent") || "";
 
     const formParams = new URLSearchParams({

@@ -67,13 +67,17 @@ export default function AdminHero() {
         <div className="flex items-center gap-4">
           {/* Brand logo */}
           <div className="flex items-center">
-            <Image
-              src={logoUrl}
-              alt={displayBrandName || 'Brand'}
-              width={140}
-              height={36}
-              className="object-contain h-8 w-auto max-w-[160px]"
-            />
+            {logoUrl ? (
+              <Image
+                src={logoUrl}
+                alt={displayBrandName || 'Brand'}
+                width={140}
+                height={36}
+                className="object-contain h-8 w-auto max-w-[160px]"
+              />
+            ) : (
+              <span className="text-white font-bold text-lg">{displayBrandName}</span>
+            )}
           </div>
 
           {/* Divider */}
@@ -103,7 +107,7 @@ export default function AdminHero() {
               client={client}
               chain={chain}
               wallets={wallets}
-              connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
+              accountAbstraction={{ chain, sponsorGas: true }}
               theme={twTheme}
               connectButton={{
                 label: "Sign In",
@@ -133,6 +137,13 @@ export default function AdminHero() {
                 showThirdwebBranding: false,
               }}
               onDisconnect={async () => {
+                if (typeof window !== "undefined") {
+                  const w = window as any;
+                  if (w.__pp_deploying || (w.__pp_last_deploy_time && Date.now() - w.__pp_last_deploy_time < 30000)) {
+                    console.log("Wallet state cycled during or after split contract deployment, bypass admin-hero navbar logout.");
+                    return;
+                  }
+                }
                 try {
                   await fetch('/api/auth/logout', { method: 'POST' });
                   window.dispatchEvent(new CustomEvent("pp:auth:logged_out"));

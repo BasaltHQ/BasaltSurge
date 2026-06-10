@@ -38,7 +38,11 @@ export type BrandConfig = {
 
   // New: brand URL and partner split config
   appUrl?: string; // brand-specific base URL (custom domain), resolved via defaults if absent
-  platformFeeBps?: number; // default 80 bps (0.8%)
+  platformFeeBps?: number; // default platform fee BPS (Debit)
+  creditPlatformFeeBps?: number; // Platform fee BPS (Credit)
+  agentFeeBps?: number; // Agent fee BPS (Debit)
+  creditAgentFeeBps?: number; // Agent fee BPS (Credit)
+  primaryAgentWallet?: string; // Primary Agent wallet
   partnerFeeBps?: number; // per-brand partner fee bps
   defaultMerchantFeeBps?: number; // optional default merchant add-on bps
   partnerWallet?: string; // optional wallet for partner recipient in split
@@ -52,6 +56,7 @@ export type BrandConfig = {
 
   // Access Control
   accessMode?: "open" | "request"; // default: open
+  unifiedFeeEnabled?: boolean;
 };
 
 export const BRANDS: Record<string, BrandConfig> = {
@@ -64,6 +69,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     platformFeeBps: 50,
     partnerFeeBps: 0,
     defaultMerchantFeeBps: 0,
+    unifiedFeeEnabled: false,
     apimCatalog: [], // original platform may expose full catalog elsewhere
   },
   basaltsurge: {
@@ -75,6 +81,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     platformFeeBps: 50,
     partnerFeeBps: 0,
     defaultMerchantFeeBps: 0,
+    unifiedFeeEnabled: false,
     apimCatalog: [],
   },
   // Example second brand - provide assets under /public/brands/paynex/*
@@ -87,6 +94,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     platformFeeBps: 50,
     partnerFeeBps: 50, // example 0.25%
     defaultMerchantFeeBps: 0,
+    unifiedFeeEnabled: false,
     partnerWallet: "0x2367ae402e06edb2460e51f820c09fc885f87b65", // set via Admin API
     apimCatalog: [
       // { productId: "prod-payments", aliasName: "Payments API", visible: true },
@@ -265,6 +273,11 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     defaultMerchantFeeBps,
     apimCatalog,
     accessMode: (raw.accessMode as any) || (envAccessMode === "request" ? "request" : (envAccessMode === "open" ? "open" : undefined)) || raw.accessMode,
+    unifiedFeeEnabled: typeof raw.unifiedFeeEnabled === "boolean" ? raw.unifiedFeeEnabled : false,
+    creditPlatformFeeBps: typeof raw.creditPlatformFeeBps === "number" ? raw.creditPlatformFeeBps : undefined,
+    agentFeeBps: typeof raw.agentFeeBps === "number" ? raw.agentFeeBps : undefined,
+    creditAgentFeeBps: typeof raw.creditAgentFeeBps === "number" ? raw.creditAgentFeeBps : undefined,
+    primaryAgentWallet: raw.primaryAgentWallet,
   };
 }
 

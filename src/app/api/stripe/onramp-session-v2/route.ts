@@ -69,10 +69,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Get customer IP for the session
-    const customerIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    let customerIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
       || req.headers.get("x-real-ip")
-      || req.ip
+      || (req as any).ip
       || "0.0.0.0";
+
+    // Bypass loopback/localhost IPs with a mock US IP address for developer testing
+    if (customerIp === "::1" || customerIp === "127.0.0.1" || customerIp === "0.0.0.0" || customerIp.startsWith("::ffff:")) {
+      customerIp = "72.229.28.185"; // New York, USA
+    }
 
     // Build form-encoded body
     const params = new URLSearchParams();
@@ -132,6 +137,7 @@ export async function POST(req: NextRequest) {
       status: data.status,
       quoteExpiresAt: data.quote?.expires_at || null,
       transactionDetails: data.transaction_details || null,
+      paymentDetails: data.payment_details || null,
     });
   } catch (e: any) {
     console.error("[ONRAMP V2] Error:", e);

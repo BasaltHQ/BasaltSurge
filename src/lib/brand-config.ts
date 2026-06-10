@@ -54,6 +54,10 @@ export type BrandConfigDoc = {
   // Routing and fees
   appUrl?: string;
   platformFeeBps?: number;
+  creditPlatformFeeBps?: number;
+  agentFeeBps?: number;
+  creditAgentFeeBps?: number;
+  primaryAgentWallet?: string;
   partnerFeeBps?: number;
   defaultMerchantFeeBps?: number;
   // Partner Split config
@@ -71,6 +75,7 @@ export type BrandConfigDoc = {
 
   // Access Control
   accessMode?: "open" | "request";
+  unifiedFeeEnabled?: boolean;
 
   // Thirdweb Keys
   thirdwebClientId?: string;
@@ -264,6 +269,11 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     defaultMerchantFeeBps: 0,
     partnerWallet: "",
     apimCatalog: [],
+    unifiedFeeEnabled: false,
+    creditPlatformFeeBps: undefined,
+    agentFeeBps: undefined,
+    creditAgentFeeBps: undefined,
+    primaryAgentWallet: undefined,
   };
 
   const withDefaults = applyBrandDefaults(baseRaw);
@@ -305,6 +315,11 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     agents: Array.isArray(overrides.agents) ? overrides.agents : withDefaults.agents || [],
     apimCatalog: Array.isArray(overrides.apimCatalog) ? overrides.apimCatalog : withDefaults.apimCatalog,
     accessMode: (overrides.accessMode === "request" || overrides.accessMode === "open") ? overrides.accessMode : withDefaults.accessMode,
+    unifiedFeeEnabled: typeof overrides.unifiedFeeEnabled === "boolean" ? overrides.unifiedFeeEnabled : withDefaults.unifiedFeeEnabled,
+    creditPlatformFeeBps: typeof overrides.creditPlatformFeeBps === "number" ? overrides.creditPlatformFeeBps : withDefaults.creditPlatformFeeBps,
+    agentFeeBps: typeof overrides.agentFeeBps === "number" ? overrides.agentFeeBps : withDefaults.agentFeeBps,
+    creditAgentFeeBps: typeof overrides.creditAgentFeeBps === "number" ? overrides.creditAgentFeeBps : withDefaults.creditAgentFeeBps,
+    primaryAgentWallet: typeof overrides.primaryAgentWallet === "string" ? overrides.primaryAgentWallet : withDefaults.primaryAgentWallet,
   });
 
   // BasaltSurge defaults: only apply when the DB doesn't have explicit values.

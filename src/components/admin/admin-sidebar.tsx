@@ -582,15 +582,25 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
     >
       {/* Desktop Sticky Logo section */}
       <div className={`hidden md:flex items-center group pt-4 pb-4 mb-2 shrink-0 border-b border-white/5 ${isCollapsed ? 'justify-center px-0' : 'px-5'}`}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={getSymbolLogo()}
-          alt={displayBrandName || 'Brand'}
-          className={"transition-all group-hover:scale-105 rounded-lg object-contain " + (isWideLogo ? "h-9 w-auto max-w-[180px]" : "h-9 w-9")}
-        />
-        {!isCollapsed && !isWideLogo && (
+        {getSymbolLogo() ? (
+          <img
+            src={getSymbolLogo()}
+            alt={displayBrandName || 'Brand'}
+            className={"transition-all group-hover:scale-105 rounded-lg object-contain " + (isWideLogo ? "h-9 w-auto max-w-[180px]" : "h-9 w-9")}
+          />
+        ) : (
+          !isCollapsed && (
+            <div className="font-bold text-white/95 text-base truncate">{displayBrandName}</div>
+          )
+        )}
+        {!isCollapsed && !isWideLogo && getSymbolLogo() && (
           <div className="ml-3 min-w-0">
             <div className="font-semibold text-white/90 text-sm truncate">{displayBrandName}</div>
+            <div className="text-[10px] font-medium tracking-widest uppercase text-white/30">Console</div>
+          </div>
+        )}
+        {!isCollapsed && !getSymbolLogo() && (
+          <div className="ml-2 min-w-0">
             <div className="text-[10px] font-medium tracking-widest uppercase text-white/30">Console</div>
           </div>
         )}

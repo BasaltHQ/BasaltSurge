@@ -10828,6 +10828,13 @@ export default function AdminPage() {
   const [wasConnected, setWasConnected] = useState(isConnected);
   useEffect(() => {
     if (wasConnected && !isConnected) {
+      if (typeof window !== "undefined") {
+        const w = window as any;
+        if (w.__pp_deploying || (w.__pp_last_deploy_time && Date.now() - w.__pp_last_deploy_time < 30000)) {
+          console.log("Wallet state cycled during or after split contract deployment, bypass redirect.");
+          return;
+        }
+      }
       window.location.href = "/";
     }
     if (isConnected) setWasConnected(true);

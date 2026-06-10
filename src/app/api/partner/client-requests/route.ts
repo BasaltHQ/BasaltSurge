@@ -413,24 +413,38 @@ export async function GET(req: NextRequest) {
             return synthesized;
         }).filter(Boolean); // Remove nulls
 
+        // Read brand config from DB/Cosmos
+        const { getBrandConfigFromCosmos } = await import("@/lib/brand-config");
+        const { brand: dbBrand } = await getBrandConfigFromCosmos(brandKey);
+
+        const dbPlatformFeeBps = typeof dbBrand?.platformFeeBps === "number" ? dbBrand.platformFeeBps : undefined;
+        const dbCreditPlatformFeeBps = typeof dbBrand?.creditPlatformFeeBps === "number" ? dbBrand.creditPlatformFeeBps : undefined;
+        const dbAgentFeeBps = typeof dbBrand?.agentFeeBps === "number" ? dbBrand.agentFeeBps : undefined;
+        const dbCreditAgentFeeBps = typeof dbBrand?.creditAgentFeeBps === "number" ? dbBrand.creditAgentFeeBps : undefined;
+        const dbPrimaryAgentWallet = dbBrand?.primaryAgentWallet || "";
+
         // Parse server-side env agents
         const envAgents = [];
         const envAgentsDebit = [];
 
-        const agentWallet = process.env.NEXT_PUBLIC_AGENT_WALLET || process.env.AGENT_WALLET || "";
+        const agentWallet = dbPrimaryAgentWallet || process.env.NEXT_PUBLIC_AGENT_WALLET || process.env.AGENT_WALLET || "";
 
-        // Debit agent BPS (uses AGENT_SPLIT_BPS)
-        const debitBps = parseInt(process.env.NEXT_PUBLIC_AGENT_SPLIT_BPS || process.env.AGENT_SPLIT_BPS || "0") || 0;
+        // Debit agent BPS (uses agentFeeBps from DB, or AGENT_SPLIT_BPS from env)
+        const debitBps = dbAgentFeeBps !== undefined
+            ? dbAgentFeeBps
+            : (parseInt(process.env.NEXT_PUBLIC_AGENT_SPLIT_BPS || process.env.AGENT_SPLIT_BPS || "0") || 0);
         if (agentWallet && debitBps > 0) {
             envAgentsDebit.push({ wallet: agentWallet.toLowerCase(), bps: debitBps });
         }
 
-        // Credit/Crypto agent BPS (uses CREDIT_SPLIT_AGENT_BPS with fallback to AGENT_SPLIT_BPS)
-        const creditBpsVal = parseInt(
-            process.env.NEXT_PUBLIC_CREDIT_SPLIT_AGENT_BPS ||
-            process.env.CREDIT_SPLIT_AGENT_BPS ||
-            String(debitBps)
-        ) || 0;
+        // Credit/Crypto agent BPS (uses creditAgentFeeBps from DB, or CREDIT_SPLIT_AGENT_BPS from env)
+        const creditBpsVal = dbCreditAgentFeeBps !== undefined
+            ? dbCreditAgentFeeBps
+            : (parseInt(
+                process.env.NEXT_PUBLIC_CREDIT_SPLIT_AGENT_BPS ||
+                process.env.CREDIT_SPLIT_AGENT_BPS ||
+                String(debitBps)
+            ) || 0);
         if (agentWallet && creditBpsVal > 0) {
             envAgents.push({ wallet: agentWallet.toLowerCase(), bps: creditBpsVal });
         }
@@ -467,10 +481,10 @@ export async function GET(req: NextRequest) {
         parseJson(process.env.AGENT_WALLETS_JSON, envAgents, creditBpsVal);
 
         const isDualSplit = String(process.env.DUAL_SPLIT_CONFIG || process.env.NEXT_PUBLIC_DUAL_SPLIT_CONFIG || "").trim().toLowerCase() === "true";
-        const { getSanitizedCreditSplitBps } = await import("@/lib/env");
+        const { getSanitizedCreditSplitBps, getEnv } = await import("@/lib/env");
         const creditBps = getSanitizedCreditSplitBps();
-        const creditPlatformBps = creditBps?.platform ?? 150;
-        const debitPlatformBps = process.env.PLATFORM_BPS ? parseInt(process.env.PLATFORM_BPS) : (process.env.NEXT_PUBLIC_PLATFORM_BPS ? parseInt(process.env.NEXT_PUBLIC_PLATFORM_BPS) : 100);
+        const creditPlatformBps = dbCreditPlatformFeeBps !== undefined ? dbCreditPlatformFeeBps : (creditBps?.platform ?? 125);
+        const debitPlatformBps = dbPlatformFeeBps !== undefined ? dbPlatformFeeBps : (getEnv().PLATFORM_BPS ?? 125);
 
         return json({ ok: true, requests: result, brandKey, envAgents, envAgentsDebit, isDualSplit, creditPlatformBps, debitPlatformBps });
     } catch (e: any) {
@@ -790,12 +804,12 @@ export async function PATCH(req: NextRequest) {
                         };
 
                         // Dual Split Sync
-                        const { isDualSplitEnabled } = await import("@/lib/env");
+                        const { isDualSplitEnabled, getEnv } = await import("@/lib/env");
                         if (isDualSplitEnabled()) {
                             const clientCredit = splitConfig.splitConfigCredit;
                             const debitPlatformBps = typeof clientCredit?.platformBps === "number"
                                 ? clientCredit.platformBps
-                                : (process.env.PLATFORM_BPS ? parseInt(process.env.PLATFORM_BPS) : 100);
+                                : (getEnv().PLATFORM_BPS ?? 125);
                             const debitPartnerBps = typeof clientCredit?.partnerBps === "number"
                                 ? clientCredit.partnerBps
                                 : 0;
@@ -897,12 +911,12 @@ export async function PATCH(req: NextRequest) {
                         agents: Array.isArray(splitConfig.agents) ? splitConfig.agents : []
                     };
 
-                    const { isDualSplitEnabled } = await import("@/lib/env");
+                    const { isDualSplitEnabled, getEnv } = await import("@/lib/env");
                     if (isDualSplitEnabled()) {
                         const clientCredit = splitConfig.splitConfigCredit;
                         const debitPlatformBps = typeof clientCredit?.platformBps === "number"
                             ? clientCredit.platformBps
-                            : (process.env.PLATFORM_BPS ? parseInt(process.env.PLATFORM_BPS) : 100);
+                            : (getEnv().PLATFORM_BPS ?? 125);
                         const debitPartnerBps = typeof clientCredit?.partnerBps === "number"
                             ? clientCredit.partnerBps
                             : 0;

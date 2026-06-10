@@ -114,6 +114,7 @@ export default function GlobalSplitGuard() {
   const [open, setOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [deploying, setDeploying] = useState(false);
+  const [deployStatus, setDeployStatus] = useState("");
   const [error, setError] = useState("");
   const [ack, setAck] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -677,6 +678,20 @@ export default function GlobalSplitGuard() {
             Partner wallet not configured. The distribution will be set up with available recipients. You can update the partner configuration later through Partner Management.
           </div>
         )}
+        {deployStatus && (
+          <div className="mt-3 bg-muted/40 border border-muted-foreground/10 rounded-md p-3 text-xs leading-relaxed animate-in fade-in duration-200 mb-3">
+            <div className="flex items-center gap-2 text-foreground font-semibold mb-1">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              Deployment Progress
+            </div>
+            <span className="text-muted-foreground font-mono whitespace-pre-line">
+              {deployStatus}
+            </span>
+          </div>
+        )}
         {error && (
           <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-md p-3 mb-3">
             {error}
@@ -763,6 +778,14 @@ export default function GlobalSplitGuard() {
                 try {
                   setError("");
                   setDeploying(true);
+                  if (typeof window !== "undefined") {
+                    (window as any).__pp_deploying = true;
+                  }
+                  setDeployStatus(isDual 
+                    ? "Step 1 of 2: Deploying Debit Card Split..."
+                    : "Deploying standard payment split contract..."
+                  );
+
                   // Pass agents if any found in preview (though usually this flow is for fresh deploys without agents)
                   const extraAgents = previewRecipients?.filter((r: any) =>
                     r.address.toLowerCase() !== meAddr &&
@@ -770,18 +793,26 @@ export default function GlobalSplitGuard() {
                     r.address.toLowerCase() !== platformRecipient
                   ).map((r: any) => ({ wallet: r.address, bps: r.sharesBps })) || [];
 
-
-
                   // Deploy standard (debit) split
+                  if (isDual) {
+                    setDeployStatus("Step 1 of 2: Deploying Debit Card Split (please confirm in your wallet)...");
+                  } else {
+                    setDeployStatus("Deploying standard payment split contract (please confirm in your wallet)...");
+                  }
                   const addr = await ensureSplitForWallet(account as any, brandKey, undefined, undefined, extraAgents, undefined, undefined, false, false);
                   
                   let addrCredit: string | undefined = undefined;
                   if (addr && isDual) {
+                    setDeployStatus("Cooldown pause to prevent rate-limits / nonce collisions...");
+                    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+                    setDeployStatus("Step 2 of 2: Deploying Credit & Crypto Split (please confirm in your wallet)...");
                     // Deploy credit split
                     addrCredit = await ensureSplitForWallet(account as any, brandKey, undefined, undefined, extraAgents, undefined, undefined, false, true);
                   }
 
                   if (addr && (!isDual || addrCredit)) {
+                    setDeployStatus("Setup completed successfully!");
                     setSplitExists(true);
                     // success: close modal
                     setOpen(false);
@@ -795,7 +826,13 @@ export default function GlobalSplitGuard() {
                 } catch (e: any) {
                   setError(e?.message || "Setup failed. Please try again or contact support.");
                 } finally {
+                  if (typeof window !== "undefined") {
+                    const w = window as any;
+                    w.__pp_last_deploy_time = Date.now();
+                    w.__pp_deploying = false;
+                  }
                   setDeploying(false);
+                  setDeployStatus("");
                 }
               }}
               disabled={deploying || (!splitExists && !platformValid) || !ack}

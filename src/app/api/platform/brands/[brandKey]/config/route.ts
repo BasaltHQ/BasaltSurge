@@ -27,6 +27,10 @@ type BrandConfigDoc = {
   appUrl?: string;
   contactEmail?: string; // contact email for the brand
   platformFeeBps?: number;
+  creditPlatformFeeBps?: number;
+  agentFeeBps?: number;
+  creditAgentFeeBps?: number;
+  primaryAgentWallet?: string;
   partnerFeeBps?: number;
   defaultMerchantFeeBps?: number;
   // Partner Split config
@@ -34,6 +38,7 @@ type BrandConfigDoc = {
   agents?: { wallet: string; bps: number }[];
   // Access control for partner containers
   accessMode?: "open" | "request"; // "open" = anyone can use, "request" = requires approval
+  unifiedFeeEnabled?: boolean;
   // Email Configuration
   email?: {
     senderName?: string;
@@ -85,6 +90,11 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     defaultMerchantFeeBps: 0,
     partnerWallet: "",
     apimCatalog: [],
+    unifiedFeeEnabled: false,
+    creditPlatformFeeBps: undefined,
+    agentFeeBps: undefined,
+    creditAgentFeeBps: undefined,
+    primaryAgentWallet: undefined,
   };
 
   const withDefaults = applyBrandDefaults(baseRaw);
@@ -126,6 +136,11 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     partnerWallet: typeof overrides.partnerWallet === "string" ? overrides.partnerWallet : (withDefaults as any).partnerWallet,
     agents: Array.isArray(overrides.agents) ? overrides.agents : withDefaults.agents || [],
     apimCatalog: Array.isArray(overrides.apimCatalog) ? overrides.apimCatalog : withDefaults.apimCatalog,
+    unifiedFeeEnabled: typeof overrides.unifiedFeeEnabled === "boolean" ? overrides.unifiedFeeEnabled : withDefaults.unifiedFeeEnabled,
+    creditPlatformFeeBps: typeof overrides.creditPlatformFeeBps === "number" ? overrides.creditPlatformFeeBps : withDefaults.creditPlatformFeeBps,
+    agentFeeBps: typeof overrides.agentFeeBps === "number" ? overrides.agentFeeBps : withDefaults.agentFeeBps,
+    creditAgentFeeBps: typeof overrides.creditAgentFeeBps === "number" ? overrides.creditAgentFeeBps : withDefaults.creditAgentFeeBps,
+    primaryAgentWallet: typeof overrides.primaryAgentWallet === "string" ? overrides.primaryAgentWallet : withDefaults.primaryAgentWallet,
   });
 
   return merged;
@@ -155,6 +170,19 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
 
   const plat = clampBps(raw?.platformFeeBps);
   if (typeof plat === "number") out.platformFeeBps = plat;
+
+  const credPlat = clampBps(raw?.creditPlatformFeeBps);
+  if (typeof credPlat === "number") out.creditPlatformFeeBps = credPlat;
+
+  const agentDebit = clampBps(raw?.agentFeeBps);
+  if (typeof agentDebit === "number") out.agentFeeBps = agentDebit;
+
+  const agentCredit = clampBps(raw?.creditAgentFeeBps);
+  if (typeof agentCredit === "number") out.creditAgentFeeBps = agentCredit;
+
+  if (typeof raw?.primaryAgentWallet === "string" && (raw.primaryAgentWallet === "" || isHexAddress(raw.primaryAgentWallet))) {
+    out.primaryAgentWallet = raw.primaryAgentWallet;
+  }
 
   const partner = clampBps(raw?.partnerFeeBps);
   if (typeof partner === "number") out.partnerFeeBps = partner;
@@ -249,6 +277,10 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
   // Access Mode for partner containers (open or request-based)
   if (raw?.accessMode === "open" || raw?.accessMode === "request") {
     out.accessMode = raw.accessMode;
+  }
+
+  if (typeof raw?.unifiedFeeEnabled === "boolean") {
+    out.unifiedFeeEnabled = raw.unifiedFeeEnabled;
   }
 
   // Thirdweb Keys

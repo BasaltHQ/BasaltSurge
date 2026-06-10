@@ -402,7 +402,7 @@ export async function GET(req: NextRequest) {
         } else {
           // Debit component
           const env = getEnv();
-          platformSharesBps = env.PLATFORM_BPS ?? 100;
+          platformSharesBps = env.PLATFORM_BPS ?? 125;
           partnerFeeBps = 0;
         }
       }
@@ -700,7 +700,7 @@ export async function POST(req: NextRequest) {
       } else {
         // Debit component (alternate split)
         const env = getEnv();
-        platformSharesBps = env.PLATFORM_BPS ?? 100;
+        platformSharesBps = env.PLATFORM_BPS ?? 125;
         partnerFeeBpsPost = 0;
       }
     } else {
