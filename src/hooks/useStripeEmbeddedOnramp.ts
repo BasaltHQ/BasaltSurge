@@ -86,6 +86,8 @@ export type UseStripeEmbeddedOnrampProps = {
   email?: string;
   /** Buyer's phone (E.164) */
   phone?: string;
+  /** Buyer's full/legal name */
+  fullName?: string;
   /** Split contract address — final destination for funds */
   splitAddress?: string;
   /** Credit split contract address */
@@ -138,7 +140,7 @@ export type UseStripeEmbeddedOnrampReturn = {
   /** The payment method element to render */
   paymentElement: HTMLElement | null;
   /** Start the full onramp flow */
-  startOnramp: (overrideEmail?: string, overridePhone?: string) => Promise<void>;
+  startOnramp: (overrideEmail?: string, overridePhone?: string, overrideName?: string) => Promise<void>;
   /** Reset state */
   reset: () => void;
   /** Submit phone number to resume registration */
@@ -220,6 +222,7 @@ export function formatToE164(phone: string, defaultCountryCode = "1"): string {
 export function useStripeEmbeddedOnramp({
   email,
   phone,
+  fullName,
   splitAddress,
   splitAddressCredit,
   amount,
@@ -477,7 +480,7 @@ export function useStripeEmbeddedOnramp({
     }
   }, []);
 
-  const startOnramp = useCallback(async (overrideEmail?: string, overridePhone?: string) => {
+  const startOnramp = useCallback(async (overrideEmail?: string, overridePhone?: string, overrideName?: string) => {
     if (isRunningRef.current) {
       console.warn("[EMBEDDED ONRAMP] Onramp flow is already running. Ignoring duplicate trigger.");
       return;
@@ -487,6 +490,7 @@ export function useStripeEmbeddedOnramp({
 
     const activeEmail = overrideEmail || email;
     const activePhone = overridePhone || phone || localPhone;
+    const activeName = overrideName || fullName;
     const formattedPhone = activePhone ? formatToE164(activePhone) : "";
 
     if (!enabled || !activeEmail || !splitAddress || !publishableKey) {
@@ -542,7 +546,7 @@ export function useStripeEmbeddedOnramp({
             activeEmail,
             formattedPhone,
             "US",
-            ""
+            activeName ? activeName.trim() : undefined
           );
 
           if (!registerResult.created) {

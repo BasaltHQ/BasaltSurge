@@ -2930,6 +2930,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     buyerWalletAddress: headlessBuyerWallet,
   } = useStripeEmbeddedOnramp({
     email: shipEmail || undefined,
+    fullName: shipName || undefined,
     splitAddress: sellerAddress as string,
     splitAddressCredit: sellerAddressCredit as string,
     amount: totalUsd,
@@ -3006,7 +3007,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         setHeadlessEmailPrompt(true);
       } else {
         setHeadlessInitiated(true);
-        startHeadlessOnramp(shipEmail);
+        startHeadlessOnramp(shipEmail, undefined, shipName || undefined);
       }
     } : undefined,
     interceptOnly: stripeHeadless, // Block redirect only, don't launch legacy modal
@@ -3328,7 +3329,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 setShipEmail(headlessEmailInput);
                 setHeadlessInitiated(true);
                 setHeadlessEmailPrompt(false);
-                startHeadlessOnramp(headlessEmailInput);
+                startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
               }}
             >
               Continue
