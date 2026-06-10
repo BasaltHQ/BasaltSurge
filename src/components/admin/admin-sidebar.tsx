@@ -73,6 +73,7 @@ export type AdminTabKey =
   | 'tables'
   | 'delivery'
   | 'reserve'
+  | 'onramps'
   | 'notificationsMerchant'
   | 'notificationsPartner'
   | 'notificationsPlatform'
@@ -486,6 +487,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
             // Split Config: Show only in OPEN mode (or superadmin debug), as Request mode configures per-split
             ...(!isRequestMode || isSuperadmin ? [{ title: 'Split Config', key: 'splitConfig' as AdminTabKey, icon: <GitMerge className="w-4 h-4" /> }] : []),
             { title: 'Branding', key: 'branding' as AdminTabKey, icon: <Palette className="w-4 h-4" /> },
+            { title: 'Onramps', key: 'onramps' as AdminTabKey, icon: <Plug className="w-4 h-4" /> },
             { title: 'Merchants', key: 'users' as AdminTabKey, icon: <Store className="w-4 h-4" /> },
             { title: 'SEO Pages', key: 'seoPages' as AdminTabKey, icon: <Search className="w-4 h-4" /> },
             { title: 'Plugins', key: 'plugins' as AdminTabKey, icon: <Puzzle className="w-4 h-4" /> },

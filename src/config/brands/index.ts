@@ -57,6 +57,13 @@ export type BrandConfig = {
   // Access Control
   accessMode?: "open" | "request"; // default: open
   unifiedFeeEnabled?: boolean;
+  presentedFeeBps?: number;
+  creditPresentedFeeBps?: number;
+
+  stripeOnrampEnabled?: boolean;
+  coinbaseOnrampEnabled?: boolean;
+  transakOnrampEnabled?: boolean;
+  rampnowOnrampEnabled?: boolean;
 };
 
 export const BRANDS: Record<string, BrandConfig> = {
@@ -278,6 +285,12 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     agentFeeBps: typeof raw.agentFeeBps === "number" ? raw.agentFeeBps : undefined,
     creditAgentFeeBps: typeof raw.creditAgentFeeBps === "number" ? raw.creditAgentFeeBps : undefined,
     primaryAgentWallet: raw.primaryAgentWallet,
+    presentedFeeBps: typeof raw.presentedFeeBps === "number" ? raw.presentedFeeBps : undefined,
+    creditPresentedFeeBps: typeof raw.creditPresentedFeeBps === "number" ? raw.creditPresentedFeeBps : undefined,
+    stripeOnrampEnabled: typeof raw.stripeOnrampEnabled === "boolean" ? raw.stripeOnrampEnabled : true,
+    coinbaseOnrampEnabled: typeof raw.coinbaseOnrampEnabled === "boolean" ? raw.coinbaseOnrampEnabled : false,
+    transakOnrampEnabled: typeof raw.transakOnrampEnabled === "boolean" ? raw.transakOnrampEnabled : false,
+    rampnowOnrampEnabled: typeof raw.rampnowOnrampEnabled === "boolean" ? raw.rampnowOnrampEnabled : false,
   };
 }
 

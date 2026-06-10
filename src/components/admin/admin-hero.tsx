@@ -107,7 +107,6 @@ export default function AdminHero() {
               client={client}
               chain={chain}
               wallets={wallets}
-              accountAbstraction={{ chain, sponsorGas: true }}
               theme={twTheme}
               connectButton={{
                 label: "Sign In",

@@ -1,3 +1,4 @@
+// Forced hot-reload trigger for Next.js Turbopack
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { isSupportedCurrency } from "@/lib/fx";
@@ -453,6 +454,29 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
         decimals: Number(process.env.NEXT_PUBLIC_BASE_SOL_DECIMALS || 9)
       }] : [])
     ];
+
+    // Fetch and apply brand config onramp options
+    try {
+      if (brandKeyForFees) {
+        const { brand: fetchedBrand } = await getBrandConfigFromCosmos(brandKeyForFees);
+        if (fetchedBrand) {
+          cfg.stripeOnrampEnabled = fetchedBrand.stripeOnrampEnabled ?? true;
+          cfg.coinbaseOnrampEnabled = fetchedBrand.coinbaseOnrampEnabled ?? false;
+          cfg.transakOnrampEnabled = fetchedBrand.transakOnrampEnabled ?? false;
+          cfg.rampnowOnrampEnabled = fetchedBrand.rampnowOnrampEnabled ?? false;
+        }
+      } else {
+        cfg.stripeOnrampEnabled = true;
+        cfg.coinbaseOnrampEnabled = false;
+        cfg.transakOnrampEnabled = false;
+        cfg.rampnowOnrampEnabled = false;
+      }
+    } catch {
+      cfg.stripeOnrampEnabled = true;
+      cfg.coinbaseOnrampEnabled = false;
+      cfg.transakOnrampEnabled = false;
+      cfg.rampnowOnrampEnabled = false;
+    }
 
     return cfg;
   } catch {

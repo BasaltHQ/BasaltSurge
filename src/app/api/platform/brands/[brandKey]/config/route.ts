@@ -39,6 +39,12 @@ type BrandConfigDoc = {
   // Access control for partner containers
   accessMode?: "open" | "request"; // "open" = anyone can use, "request" = requires approval
   unifiedFeeEnabled?: boolean;
+  presentedFeeBps?: number;
+  creditPresentedFeeBps?: number;
+  stripeOnrampEnabled?: boolean;
+  coinbaseOnrampEnabled?: boolean;
+  transakOnrampEnabled?: boolean;
+  rampnowOnrampEnabled?: boolean;
   // Email Configuration
   email?: {
     senderName?: string;
@@ -95,6 +101,8 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     agentFeeBps: undefined,
     creditAgentFeeBps: undefined,
     primaryAgentWallet: undefined,
+    presentedFeeBps: undefined,
+    creditPresentedFeeBps: undefined,
   };
 
   const withDefaults = applyBrandDefaults(baseRaw);
@@ -141,6 +149,12 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     agentFeeBps: typeof overrides.agentFeeBps === "number" ? overrides.agentFeeBps : withDefaults.agentFeeBps,
     creditAgentFeeBps: typeof overrides.creditAgentFeeBps === "number" ? overrides.creditAgentFeeBps : withDefaults.creditAgentFeeBps,
     primaryAgentWallet: typeof overrides.primaryAgentWallet === "string" ? overrides.primaryAgentWallet : withDefaults.primaryAgentWallet,
+    presentedFeeBps: typeof overrides.presentedFeeBps === "number" ? overrides.presentedFeeBps : withDefaults.presentedFeeBps,
+    creditPresentedFeeBps: typeof overrides.creditPresentedFeeBps === "number" ? overrides.creditPresentedFeeBps : withDefaults.creditPresentedFeeBps,
+    stripeOnrampEnabled: typeof overrides.stripeOnrampEnabled === "boolean" ? overrides.stripeOnrampEnabled : withDefaults.stripeOnrampEnabled,
+    coinbaseOnrampEnabled: typeof overrides.coinbaseOnrampEnabled === "boolean" ? overrides.coinbaseOnrampEnabled : withDefaults.coinbaseOnrampEnabled,
+    transakOnrampEnabled: typeof overrides.transakOnrampEnabled === "boolean" ? overrides.transakOnrampEnabled : withDefaults.transakOnrampEnabled,
+    rampnowOnrampEnabled: typeof overrides.rampnowOnrampEnabled === "boolean" ? overrides.rampnowOnrampEnabled : withDefaults.rampnowOnrampEnabled,
   });
 
   return merged;
@@ -183,6 +197,12 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
   if (typeof raw?.primaryAgentWallet === "string" && (raw.primaryAgentWallet === "" || isHexAddress(raw.primaryAgentWallet))) {
     out.primaryAgentWallet = raw.primaryAgentWallet;
   }
+
+  const presDebit = clampBps(raw?.presentedFeeBps);
+  if (typeof presDebit === "number") out.presentedFeeBps = presDebit;
+
+  const presCredit = clampBps(raw?.creditPresentedFeeBps);
+  if (typeof presCredit === "number") out.creditPresentedFeeBps = presCredit;
 
   const partner = clampBps(raw?.partnerFeeBps);
   if (typeof partner === "number") out.partnerFeeBps = partner;
@@ -281,6 +301,19 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
 
   if (typeof raw?.unifiedFeeEnabled === "boolean") {
     out.unifiedFeeEnabled = raw.unifiedFeeEnabled;
+  }
+
+  if (typeof raw?.stripeOnrampEnabled === "boolean") {
+    out.stripeOnrampEnabled = raw.stripeOnrampEnabled;
+  }
+  if (typeof raw?.coinbaseOnrampEnabled === "boolean") {
+    out.coinbaseOnrampEnabled = raw.coinbaseOnrampEnabled;
+  }
+  if (typeof raw?.transakOnrampEnabled === "boolean") {
+    out.transakOnrampEnabled = raw.transakOnrampEnabled;
+  }
+  if (typeof raw?.rampnowOnrampEnabled === "boolean") {
+    out.rampnowOnrampEnabled = raw.rampnowOnrampEnabled;
   }
 
   // Thirdweb Keys
