@@ -269,6 +269,9 @@ export function hasPermission(permission: AdminPermission, wallet?: string): boo
   const role = resolveWalletRole(wallet);
   if (!role) return false;
 
+  // Platform level admins have complete authority to make changes
+  if (role.startsWith('platform_')) return true;
+
   const customOverrides = getCustomRolePermissions();
   if (customOverrides && customOverrides[role]) {
     return customOverrides[role].includes(permission);
@@ -282,19 +285,19 @@ export function hasPermission(permission: AdminPermission, wallet?: string): boo
 // ------------------------------------------------------------------
 
 export function isPlatformSuperAdmin(wallet?: string): boolean {
-  return resolveWalletRole(wallet) === 'platform_super_admin';
+  const role = resolveWalletRole(wallet);
+  return role === 'platform_super_admin' || (!!role && role.startsWith('platform_'));
 }
 
 export function isPartnerOwner(wallet?: string): boolean {
   const role = resolveWalletRole(wallet);
-  return role === 'partner_owner' || role === 'platform_super_admin';
+  if (!role) return false;
+  return role === 'partner_owner' || role === 'platform_super_admin' || role.startsWith('platform_');
 }
 
 export function isPartnerAdmin(wallet?: string): boolean {
   const role = resolveWalletRole(wallet);
   if (!role) return false;
-  if (role === 'platform_super_admin') return true;
-  if (role.startsWith('platform_')) return false;
   return true;
 }
 
@@ -311,6 +314,11 @@ export const isPartnerCtx = (): boolean => isPartnerContext();
 export function canAccessPanel(panel: AdminPanel, wallet?: string): boolean {
   const role = resolveWalletRole(wallet);
   if (!role) return false;
+
+  // Platform level admins have complete authority to see any panel and make changes
+  if (role.startsWith('platform_')) {
+    return true;
+  }
 
   // Platform-only panels restricted strictly to platform admin team
   const PLATFORM_PANELS: string[] = [

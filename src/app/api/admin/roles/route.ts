@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 
         // Resolve Role in Context
         const role = await resolveAdminRole(wallet || undefined, targetPartition);
-        const authorized = role === 'platform_super_admin' || role === 'platform_admin' || role === 'partner_admin' || role === 'partner_owner';
+        const authorized = role && (role.startsWith('platform_') || role === 'partner_admin' || role === 'partner_owner');
 
         if (!wallet || !authorized) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -103,9 +103,8 @@ export async function POST(req: NextRequest) {
         // Partner Owner/Admin: Can edit THEIR OWN partner list.
 
         let canEdit = false;
-        if (role === 'platform_super_admin') canEdit = true;
-        if (role === 'platform_admin') canEdit = true; // Platform admins can edit any list
-        if (!isPlatform && (role === 'partner_owner' || role === 'partner_admin')) canEdit = true;
+        if (role && role.startsWith('platform_')) canEdit = true; // Platform level admins can edit any list
+        if (!isPlatform && role && (role === 'partner_owner' || role === 'partner_admin')) canEdit = true;
 
         if (!wallet || !canEdit) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
