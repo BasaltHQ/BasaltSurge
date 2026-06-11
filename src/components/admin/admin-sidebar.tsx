@@ -65,6 +65,8 @@ import { useBrand } from '@/contexts/BrandContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { cachedFetch } from '@/lib/client-api-cache';
 import { getDefaultBrandSymbol, resolveBrandSymbol, getEffectiveBrandKey, resolveBrandAppLogo } from '@/lib/branding';
+import { useActiveAccount } from 'thirdweb/react';
+import { canAccessPanel, isPlatformSuperAdmin } from '@/lib/authz';
 
 export type AdminTabKey =
   | 'terminal'
@@ -279,7 +281,10 @@ function NavGroup({ item, activeTab, onChangeTab }: { item: NavItem; activeTab: 
   );
 }
 
-export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding, canMerchants, isSuperadmin, canAdmins, onCollapseChange, disabledMerchantModules = [] }: AdminSidebarProps) {
+export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding, canMerchants, isSuperadmin: isSuperadminProp, canAdmins, onCollapseChange, disabledMerchantModules = [] }: AdminSidebarProps) {
+  const account = useActiveAccount();
+  const wallet = (account?.address || "").toLowerCase();
+  const isSuperadmin = isPlatformSuperAdmin(wallet);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const brand = useBrand();
   const { theme } = useTheme();
@@ -421,8 +426,6 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
   };
 
   const groups: NavItem[] = [
-
-
     {
       title: 'General',
       icon: <LayoutDashboard className="w-4 h-4" />,
@@ -471,79 +474,58 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
           { title: 'Tables', key: 'tables' as AdminTabKey, icon: <Armchair className="w-4 h-4" />, badge: getIndustryPackBadge('restaurant') },
           { title: 'Delivery', key: 'delivery' as AdminTabKey, icon: <Truck className="w-4 h-4" />, badge: getIndustryPackBadge('restaurant') }
         ] : []),
-
         ...(industryPack === 'hotel' ? [{ title: 'PMS', key: 'pms' as AdminTabKey, icon: <Hotel className="w-4 h-4" />, badge: getIndustryPackBadge('hotel') }] : []),
         ...(industryPack === 'publishing' ? [{ title: "Writer's Workshop", key: 'writersWorkshop' as AdminTabKey, icon: <PenTool className="w-4 h-4" />, badge: getIndustryPackBadge('publishing') }] : []),
         ...(industryPack === 'cannabis' ? [{ title: 'Compliance', key: 'cannabisCompliance' as AdminTabKey, icon: <ShieldCheck className="w-4 h-4" />, badge: getIndustryPackBadge('cannabis') }] : []),
       ],
     },
-    ...(canBranding || isSuperadmin || canAdmins
-      ? [
-        {
-          title: 'Partner/Admin',
-          icon: <Brush className="w-4 h-4" />,
-          items: [
-            { title: 'Devices', key: 'devices' as AdminTabKey, icon: <Smartphone className="w-4 h-4" /> },
-            // Split Config: Show only in OPEN mode (or superadmin debug), as Request mode configures per-split
-            ...(!isRequestMode || isSuperadmin ? [{ title: 'Split Config', key: 'splitConfig' as AdminTabKey, icon: <GitMerge className="w-4 h-4" /> }] : []),
-            { title: 'Branding', key: 'branding' as AdminTabKey, icon: <Palette className="w-4 h-4" /> },
-            { title: 'Onramps', key: 'onramps' as AdminTabKey, icon: <Plug className="w-4 h-4" /> },
-            { title: 'Merchants', key: 'users' as AdminTabKey, icon: <Store className="w-4 h-4" /> },
-            { title: 'SEO Pages', key: 'seoPages' as AdminTabKey, icon: <Search className="w-4 h-4" /> },
-            { title: 'Plugins', key: 'plugins' as AdminTabKey, icon: <Puzzle className="w-4 h-4" /> },
-            ...((canBranding || isSuperadmin) ? [{ title: 'Custom Auth Wallets', key: 'customAuthWallets' as AdminTabKey, icon: <ShieldCheck className="w-4 h-4" /> }] : []),
-            // Client Requests & Agent Requests: Show for all admins now that platform requires approval
-            ...((canBranding || isSuperadmin) ? [{ title: 'Client Requests', key: 'clientRequests' as AdminTabKey, icon: <FileQuestion className="w-4 h-4" /> }] : []),
-            ...((canBranding || isSuperadmin) ? [{ title: 'Agent Requests', key: 'agentRequests' as AdminTabKey, icon: <Bot className="w-4 h-4" /> }] : []),
-            ...((canBranding || isSuperadmin) ? [{ title: 'Driver Requests', key: 'driverRequests' as AdminTabKey, icon: <Truck className="w-4 h-4" /> }] : []),
-            ...(canAdmins ? [
-              { title: 'Admin Users', key: 'admins' as AdminTabKey, icon: <Shield className="w-4 h-4" /> },
-            ] : []),
-            { title: 'Reports', key: 'reportsPartner' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
-            { title: 'Roadmap', key: 'roadmap' as AdminTabKey, icon: <LayoutGrid className="w-4 h-4" /> },
-            { title: 'Modules', key: 'modules' as AdminTabKey, icon: <Blocks className="w-4 h-4" /> },
-            { title: 'Notifications', key: 'notificationsPartner' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
-          ],
-        } as NavItem,
-      ]
-      : []),
-    ...(canMerchants || isSuperadmin
-      ? [
-        {
-          title: 'Platform',
-          icon: <Building2 className="w-4 h-4" />,
-          items: [
-            { title: 'Publications', key: 'publications' as AdminTabKey, icon: <BookOpen className="w-4 h-4" /> },
-            { title: 'Updates', key: 'updates' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
-            ...(isSuperadmin
-              ? [
-                { title: 'Loyalty Config', key: 'loyaltyConfig' as AdminTabKey, icon: <Medal className="w-4 h-4" /> },
-                { title: 'Applications', key: 'applications' as AdminTabKey, icon: <LayoutGrid className="w-4 h-4" /> },
-                { title: 'Partners', key: 'partners' as AdminTabKey, icon: <Handshake className="w-4 h-4" /> },
-                { title: 'Contracts', key: 'contracts' as AdminTabKey, icon: <FileSignature className="w-4 h-4" /> },
-                { title: 'Plugin Studio', key: 'pluginStudio' as AdminTabKey, icon: <Code className="w-4 h-4" /> },
-                { title: 'Support Admin', key: 'supportAdmin' as AdminTabKey, icon: <LifeBuoy className="w-4 h-4" /> },
-                { title: 'Agent University', key: 'agentUniversity' as AdminTabKey, icon: <GraduationCap className="w-4 h-4" /> },
-                { title: 'Reports', key: 'reportsPlatform' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
-                { title: 'Notifications', key: 'notificationsPlatform' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
-                ...(process.env.NEXT_PUBLIC_DECENTRALIZATION?.toUpperCase() === 'TRUE' ? [{ title: 'Node Operators', key: 'nodeOperators' as AdminTabKey, icon: <Server className="w-4 h-4" /> }] : []),
-              ]
-              : []),
-          ],
-        } as NavItem,
-      ]
-      : []),
-    ...(isSuperadmin
-      ? [
-        {
-          title: 'Nodes',
-          icon: <Server className="w-4 h-4" />,
-          items: [
-            { title: 'Dashboard', key: 'nodeDashboard' as AdminTabKey, icon: <LayoutDashboard className="w-4 h-4" /> },
-          ],
-        } as NavItem,
-      ]
-      : []),
+    {
+      title: 'Partner/Admin',
+      icon: <Brush className="w-4 h-4" />,
+      items: [
+        { title: 'Devices', key: 'devices' as AdminTabKey, icon: <Smartphone className="w-4 h-4" /> },
+        ...(!isRequestMode || isSuperadmin ? [{ title: 'Split Config', key: 'splitConfig' as AdminTabKey, icon: <GitMerge className="w-4 h-4" /> }] : []),
+        { title: 'Branding', key: 'branding' as AdminTabKey, icon: <Palette className="w-4 h-4" /> },
+        { title: 'Onramps', key: 'onramps' as AdminTabKey, icon: <Plug className="w-4 h-4" /> },
+        { title: 'Merchants', key: 'users' as AdminTabKey, icon: <Store className="w-4 h-4" /> },
+        { title: 'SEO Pages', key: 'seoPages' as AdminTabKey, icon: <Search className="w-4 h-4" /> },
+        { title: 'Plugins', key: 'plugins' as AdminTabKey, icon: <Puzzle className="w-4 h-4" /> },
+        { title: 'Custom Auth Wallets', key: 'customAuthWallets' as AdminTabKey, icon: <ShieldCheck className="w-4 h-4" /> },
+        { title: 'Client Requests', key: 'clientRequests' as AdminTabKey, icon: <FileQuestion className="w-4 h-4" /> },
+        { title: 'Agent Requests', key: 'agentRequests' as AdminTabKey, icon: <Bot className="w-4 h-4" /> },
+        { title: 'Driver Requests', key: 'driverRequests' as AdminTabKey, icon: <Truck className="w-4 h-4" /> },
+        { title: 'Admin Users', key: 'admins' as AdminTabKey, icon: <Shield className="w-4 h-4" /> },
+        { title: 'Reports', key: 'reportsPartner' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
+        { title: 'Roadmap', key: 'roadmap' as AdminTabKey, icon: <LayoutGrid className="w-4 h-4" /> },
+        { title: 'Modules', key: 'modules' as AdminTabKey, icon: <Blocks className="w-4 h-4" /> },
+        { title: 'Notifications', key: 'notificationsPartner' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
+      ].filter((item) => canAccessPanel(item.key as any, wallet)),
+    },
+    {
+      title: 'Platform',
+      icon: <Building2 className="w-4 h-4" />,
+      items: [
+        { title: 'Publications', key: 'publications' as AdminTabKey, icon: <BookOpen className="w-4 h-4" /> },
+        { title: 'Updates', key: 'updates' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
+        { title: 'Loyalty Config', key: 'loyaltyConfig' as AdminTabKey, icon: <Medal className="w-4 h-4" /> },
+        { title: 'Applications', key: 'applications' as AdminTabKey, icon: <LayoutGrid className="w-4 h-4" /> },
+        { title: 'Partners', key: 'partners' as AdminTabKey, icon: <Handshake className="w-4 h-4" /> },
+        { title: 'Contracts', key: 'contracts' as AdminTabKey, icon: <FileSignature className="w-4 h-4" /> },
+        { title: 'Plugin Studio', key: 'pluginStudio' as AdminTabKey, icon: <Code className="w-4 h-4" /> },
+        { title: 'Support Admin', key: 'supportAdmin' as AdminTabKey, icon: <LifeBuoy className="w-4 h-4" /> },
+        { title: 'Agent University', key: 'agentUniversity' as AdminTabKey, icon: <GraduationCap className="w-4 h-4" /> },
+        { title: 'Reports', key: 'reportsPlatform' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
+        { title: 'Notifications', key: 'notificationsPlatform' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
+        ...(process.env.NEXT_PUBLIC_DECENTRALIZATION?.toUpperCase() === 'TRUE' ? [{ title: 'Node Operators', key: 'nodeOperators' as AdminTabKey, icon: <Server className="w-4 h-4" /> }] : []),
+      ].filter((item) => canAccessPanel(item.key as any, wallet)),
+    },
+    {
+      title: 'Nodes',
+      icon: <Server className="w-4 h-4" />,
+      items: [
+        { title: 'Dashboard', key: 'nodeDashboard' as AdminTabKey, icon: <LayoutDashboard className="w-4 h-4" /> },
+      ].filter((item) => canAccessPanel(item.key as any, wallet)),
+    },
     {
       title: 'Manuals',
       icon: <BookOpen className="w-4 h-4" />,

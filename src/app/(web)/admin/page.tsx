@@ -46,7 +46,7 @@ import AdminHero from "@/components/admin/admin-hero";
 import InstallerPackagesPanel from "@/app/(web)/admin/panels/InstallerPackagesPanel";
 import DeviceInstallerPanel from "@/app/(web)/admin/panels/DeviceInstallerPanel";
 import TouchpointMonitoringPanel from "@/app/(web)/admin/panels/TouchpointMonitoringPanel";
-import AdminManagementPanel from "@/app/(web)/admin/panels/AdminManagementPanel";
+import AdminManagementPanel from "./panels/AdminManagementPanel";
 import IntegrationsPanel from "@/app/(web)/admin/panels/IntegrationsPanel";
 import PlatformPluginsPanel from "@/app/(web)/admin/panels/PlatformPluginsPanel";
 import PartnerPluginsPanel from "@/app/(web)/admin/panels/PartnerPluginsPanel";
@@ -11093,7 +11093,7 @@ export default function AdminPage() {
         {activeTab === "notificationsPartner" && (
           <NotificationsPanel level="partner" />
         )}
-        {activeTab === "notificationsPlatform" && (
+        {activeTab === "notificationsPlatform" && canAccessPanel("notificationsPlatform", wallet) && (
           <NotificationsPanel level="platform" />
         )}
         {activeTab === "devices" && (
@@ -11110,7 +11110,7 @@ export default function AdminPage() {
         {activeTab === "shopSetup" && <ShopPanel />}
         {activeTab === "profileSetup" && <ProfilePanel />}
         {activeTab === "roadmap" && <RoadmapPanel brandKey={getEffectiveBrandKey()} />}
-        {activeTab === "updates" && <UpdatesPanel brandKey={getEffectiveBrandKey()} />}
+        {activeTab === "updates" && canAccessPanel("updates", wallet) && <UpdatesPanel brandKey={getEffectiveBrandKey()} />}
 
         {activeTab === "manualWithdrawal" && (
           <div className="w-full space-y-6 pb-24 admin-panel-enter">
@@ -11163,13 +11163,13 @@ export default function AdminPage() {
         {activeTab === "onramps" && (
           <OnrampsPanel />
         )}
-        {activeTab === "splitConfig" && ((canBranding && containerType === "partner" && !isRequestMode) || (isPlatform && isSuperadmin)) && (
+        {activeTab === "splitConfig" && canAccessPanel("splitConfig", wallet) && (
           <SplitConfigPanelExt />
         )}
-        {activeTab === "applications" && isPlatform && isSuperadmin && (
+        {activeTab === "applications" && canAccessPanel("applications", wallet) && (
           <ApplicationsPanelExt />
         )}
-        {activeTab === "partners" && isPlatform && isSuperadmin && (
+        {activeTab === "partners" && canAccessPanel("partners", wallet) && (
           <PartnerManagementPanelExt />
         )}
 
@@ -11202,7 +11202,7 @@ export default function AdminPage() {
           <TerminalPanel />
         )}
 
-        {activeTab === "users" && (canMerchants || canBranding || isSuperadmin) && (
+        {activeTab === "users" && canAccessPanel("users", wallet) && (
           <UsersPanel />
         )}
 
@@ -11222,39 +11222,39 @@ export default function AdminPage() {
           <CannabisCompliancePanel />
         )}
 
-        {activeTab === "admins" && canAdmins && (
+        {activeTab === "admins" && canAccessPanel("admins", wallet) && (
           <AdminManagementPanel />
         )}
 
-        {activeTab === "seoPages" && (canBranding || isSuperadmin) && (
+        {activeTab === "seoPages" && canAccessPanel("seoPages", wallet) && (
           <SEOLandingPagesPanel />
         )}
-        {activeTab === "plugins" && (canBranding || isSuperadmin) && (
+        {activeTab === "plugins" && canAccessPanel("plugins", wallet) && (
           <PartnerPluginsPanel />
         )}
-        {activeTab === "pluginStudio" && isPlatform && isSuperadmin && (
+        {activeTab === "pluginStudio" && canAccessPanel("pluginStudio", wallet) && (
           <PlatformPluginsPanel />
         )}
 
-        {activeTab === "clientRequests" && (canBranding || isSuperadmin) && (isRequestMode || isSuperadmin) && (
+        {activeTab === "clientRequests" && canAccessPanel("clientRequests", wallet) && (
           <ClientRequestsPanel />
         )}
-        {activeTab === "agentRequests" && (canBranding || isSuperadmin) && (isRequestMode || isSuperadmin) && (
+        {activeTab === "agentRequests" && canAccessPanel("agentRequests", wallet) && (
           <AgentRequestsPanel />
         )}
-        {activeTab === "driverRequests" && (canBranding || isSuperadmin) && (
+        {activeTab === "driverRequests" && canAccessPanel("driverRequests", wallet) && (
           <DriverRequestsPanel />
         )}
-        {activeTab === "modules" && (canBranding || isSuperadmin) && (
+        {activeTab === "modules" && canAccessPanel("modules", wallet) && (
           <ModulesPanel />
         )}
-        {activeTab === "customAuthWallets" && (canBranding || isSuperadmin) && (
+        {activeTab === "customAuthWallets" && canAccessPanel("customAuthWallets", wallet) && (
           <CustomAuthWalletsPanel />
         )}
         {activeTab === "support" && (
           <GetSupportPanel />
         )}
-        {activeTab === "supportAdmin" && canAdmins && (
+        {activeTab === "supportAdmin" && canAccessPanel("supportAdmin", wallet) && (
           <div className="h-[calc(100vh-180px)] md:h-[calc(100vh-120px)] -mt-4 -mx-4 p-4 md:p-6">
             <div className="h-full glass-pane rounded-2xl border overflow-hidden flex flex-col shadow-2xl relative">
               {/* Subtle background glow for the container */}
@@ -11275,13 +11275,13 @@ export default function AdminPage() {
         {activeTab === "globalArt" && (
           <GlobalArtPanel />
         )}
-        {activeTab === "contracts" && isPlatform && isSuperadmin && (
+        {activeTab === "contracts" && canAccessPanel("contracts", wallet) && (
           <ContractsPanel />
         )}
         {activeTab === "writersWorkshop" && (
           <WritersWorkshopPanelExt />
         )}
-        {activeTab === "publications" && (
+        {activeTab === "publications" && canAccessPanel("publications", wallet) && (
           <PublicationsPanelExt />
         )}
         {activeTab === "endpoints" && (
@@ -11296,19 +11296,19 @@ export default function AdminPage() {
         {activeTab === "reports" && (
           <ReportsPanelMerchant />
         )}
-        {activeTab === "reportsPartner" && (canBranding || isSuperadmin) && (
+        {activeTab === "reportsPartner" && canAccessPanel("reportsPartner", wallet) && (
           <ReportsPanelPartner />
         )}
-        {activeTab === "reportsPlatform" && isPlatform && isSuperadmin && (
+        {activeTab === "reportsPlatform" && canAccessPanel("reportsPlatform", wallet) && (
           <ReportsPanelPlatform />
         )}
-        {activeTab === "nodeOperators" && isPlatform && isSuperadmin && (
+        {activeTab === "nodeOperators" && canAccessPanel("nodeOperators", wallet) && (
           <NodeOperatorsPanel />
         )}
-        {activeTab === "nodeDashboard" && isSuperadmin && (
+        {activeTab === "nodeDashboard" && canAccessPanel("nodeDashboard", wallet) && (
           <NodeDashboardPanel />
         )}
-        {activeTab === "agentUniversity" && isPlatform && isSuperadmin && (
+        {activeTab === "agentUniversity" && canAccessPanel("agentUniversity", wallet) && (
           <div className="animate-in fade-in zoom-in-95 duration-300">
             <AgentUniversityPanelExt />
           </div>

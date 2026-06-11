@@ -685,6 +685,55 @@ export default async function RootLayout({
 
   const isCustomDomainServer = !!hostForNavbar && !isMainDomainHost(hostForNavbar);
 
+  // Load and merge database roles for the current partition to pass to client
+  let dbAdminRoles: Record<string, string> = {};
+  let dbAdminWalletsList: string[] = [];
+  let dbRolePermissions: Record<string, string[]> = {};
+  let dbCustomRoles: any[] = [];
+  try {
+    const { getContainer } = require("@/lib/cosmos");
+    const c = await getContainer();
+    const isPartner = containerIdentity.containerType === "partner";
+    const targetPartition = (isPartner && brand.key) ? brand.key : "global";
+    const { resource } = await c.item("admin_roles", targetPartition).read();
+    if (resource) {
+      if (Array.isArray(resource.admins)) {
+        resource.admins.forEach((a: any) => {
+          const w = String(a.wallet || "").toLowerCase().trim();
+          const role = String(a.role || (isPartner ? "partner_admin" : "platform_admin"));
+          if (/^0x[a-f0-9]{40}$/.test(w)) {
+            dbAdminRoles[w] = role;
+            dbAdminWalletsList.push(w);
+          }
+        });
+      }
+      if (resource.roleOverrides && typeof resource.roleOverrides === "object") {
+        dbRolePermissions = resource.roleOverrides;
+      }
+      if (Array.isArray(resource.customRoles)) {
+        dbCustomRoles = resource.customRoles;
+      }
+    }
+  } catch (e) {
+    // DB document might not exist yet
+  }
+
+  // Add bootstrap roles for owner and partnerWallet
+  const ownerWallet = String(getEnv().NEXT_PUBLIC_OWNER_WALLET || "").toLowerCase().trim();
+  if (/^0x[a-f0-9]{40}$/.test(ownerWallet)) {
+    dbAdminRoles[ownerWallet] = "platform_super_admin";
+  }
+  const platformWalletForLayout = String(getEnv().NEXT_PUBLIC_PLATFORM_WALLET || "").toLowerCase().trim();
+  if (/^0x[a-f0-9]{40}$/.test(platformWalletForLayout)) {
+    dbAdminRoles[platformWalletForLayout] = "platform_super_admin";
+  }
+  const partnerWalletForLayout = String(brand.partnerWallet || "").toLowerCase().trim();
+  if (/^0x[a-f0-9]{40}$/.test(partnerWalletForLayout)) {
+    if (containerIdentity.containerType === "partner") {
+      dbAdminRoles[partnerWalletForLayout] = "partner_owner";
+    }
+  }
+
   return (
     <html
       lang="en"
@@ -693,7 +742,10 @@ export default async function RootLayout({
       data-pp-brand-key={brand.key}
       data-pp-brand-name={brand.name}
       data-pp-owner-wallet={getEnv().NEXT_PUBLIC_OWNER_WALLET}
-      data-pp-admin-wallets={(getEnv().ADMIN_WALLETS || []).join(",")}
+      data-pp-admin-wallets={[...(getEnv().ADMIN_WALLETS || []), ...dbAdminWalletsList].join(",")}
+      data-pp-admin-roles={JSON.stringify(dbAdminRoles)}
+      data-pp-role-permissions={JSON.stringify(dbRolePermissions)}
+      data-pp-custom-roles={JSON.stringify(dbCustomRoles)}
       data-pp-brand-primary={brand.colors.primary}
       data-pp-brand-accent={brand.colors.accent}
       data-pp-brand-body="#e5e7eb"
