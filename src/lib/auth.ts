@@ -195,6 +195,32 @@ export async function requireThirdwebAuth(req?: NextRequest): Promise<{ wallet: 
 				// Elevate to admin if wallet is configured in server-only ADMIN_WALLETS
 				if (isAdminWallet(wallet) && !roles.includes("admin")) roles.push("admin");
 
+				// Query Cosmos DB for database-configured roles to dynamically elevate roles array
+				try {
+					const { resolveAdminRole } = await import("@/lib/authz-server");
+					let brandKey = "";
+					if (req) {
+						brandKey = req.headers.get("x-brand-key") || "";
+					}
+					if (!brandKey) {
+						brandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
+					}
+					const dbRole = await resolveAdminRole(wallet, brandKey || undefined);
+					if (dbRole) {
+						if (!roles.includes("admin")) {
+							roles.push("admin");
+						}
+						if ((dbRole === "platform_super_admin" || dbRole === "partner_owner") && !roles.includes("superadmin")) {
+							roles.push("superadmin");
+						}
+						if (!roles.includes(dbRole)) {
+							roles.push(dbRole);
+						}
+					}
+				} catch (dbErr) {
+					console.error("[requireThirdwebAuth] failed to resolve db role:", dbErr);
+				}
+
 				return { wallet, roles };
 			}
 		}
@@ -230,6 +256,32 @@ export async function requireThirdwebAuth(req?: NextRequest): Promise<{ wallet: 
 
 							// Elevate to admin if wallet is configured in server-only ADMIN_WALLETS
 							if (isAdminWallet(wallet) && !roles.includes("admin")) roles.push("admin");
+
+							// Query Cosmos DB for database-configured roles to dynamically elevate roles array
+							try {
+								const { resolveAdminRole } = await import("@/lib/authz-server");
+								let brandKey = "";
+								if (req) {
+									brandKey = req.headers.get("x-brand-key") || "";
+								}
+								if (!brandKey) {
+									brandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
+								}
+								const dbRole = await resolveAdminRole(wallet, brandKey || undefined);
+								if (dbRole) {
+									if (!roles.includes("admin")) {
+										roles.push("admin");
+									}
+									if ((dbRole === "platform_super_admin" || dbRole === "partner_owner") && !roles.includes("superadmin")) {
+										roles.push("superadmin");
+									}
+									if (!roles.includes(dbRole)) {
+										roles.push(dbRole);
+									}
+								}
+							} catch (dbErr) {
+								console.error("[requireThirdwebAuth Fallback] failed to resolve db role:", dbErr);
+							}
 
 							return { wallet, roles };
 						}
