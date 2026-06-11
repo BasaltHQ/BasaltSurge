@@ -67,6 +67,8 @@ export function AutoTranslateProvider({ children }: { children: React.ReactNode 
   const isApplyingRef = useRef(false); // guards MutationObserver during DOM writes
   const lastPathnameRef = useRef(pathname);
   const originalAttrsRef = useRef<Map<Element, Map<string, string>>>(new Map());
+  const serverCooldownUntilRef = useRef<number>(0);
+  const runTimesRef = useRef<number[]>([]);
   const ATTRS_TO_TRANSLATE = ['placeholder', 'title', 'aria-label', 'alt'];
 
   useEffect(() => {
@@ -193,6 +195,33 @@ export function AutoTranslateProvider({ children }: { children: React.ReactNode 
     return false;
   }
 
+  function isTranslatable(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+
+    // Must contain at least one English/Latin letter to be an English text worth translating
+    if (!/[a-zA-Z]/.test(trimmed)) return false;
+
+    // Skip EVM addresses (0x followed by 40 hex chars)
+    if (/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return false;
+
+    // Skip transaction hashes (0x followed by 64 hex chars)
+    if (/^0x[a-fA-F0-9]{64}$/.test(trimmed)) return false;
+
+    // Skip Solana or other base58 public keys (typically 32 to 44 alphanumeric characters)
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmed)) return false;
+
+    // Skip pure date/time strings (e.g., "12:34", "2026-06-11", "06/11/2026", "10:15:30")
+    if (/^\d+[\/:\-]\d+([\/:\-]\d+)?$/.test(trimmed)) return false;
+
+    // Skip strings that are just currency amounts, percentages, or numbers (e.g. "$123.45", "100.00", "+5%", "0.005 ETH")
+    const cryptoTokenRegex = /\b(ETH|BTC|SOL|USDC|USDT|BASE|POL)\b/i;
+    const withoutToken = trimmed.replace(cryptoTokenRegex, '').trim();
+    if (/^[+\-]?[\d\s\.,$%€£¥₩]+$/.test(withoutToken)) return false;
+
+    return true;
+  }
+
   function collectTextNodes(root: Node, textNodes: Array<{ node: Node; text: string }> = []): Array<{ node: Node; text: string }> {
     const walker = document.createTreeWalker(
       root,
@@ -227,7 +256,7 @@ export function AutoTranslateProvider({ children }: { children: React.ReactNode 
           }
           // Use the ORIGINAL English text as the source, not current DOM content
           const sourceText = (originalTextsRef.current.get(node) || node.textContent || '').trim();
-          if (sourceText) {
+          if (sourceText && isTranslatable(sourceText)) {
             textNodes.push({ node, text: sourceText });
           }
         }
@@ -268,7 +297,9 @@ export function AutoTranslateProvider({ children }: { children: React.ReactNode 
                 }
                 // Use the ORIGINAL English attribute value as the source
                 const sourceVal = (m.get(attr) || val).trim();
-                out.push({ element: el, attr, text: sourceVal });
+                if (sourceVal && isTranslatable(sourceVal)) {
+                  out.push({ element: el, attr, text: sourceVal });
+                }
               }
             }
           }
@@ -281,16 +312,27 @@ export function AutoTranslateProvider({ children }: { children: React.ReactNode 
   async function translatePageContent(targetLocale: Locale) {
     if (isTranslatingRef.current) return;
 
+    // Rate limiter: detect loops
+    const now = Date.now();
+    runTimesRef.current = runTimesRef.current.filter(t => now - t < 10000);
+    if (runTimesRef.current.length >= 10) {
+      console.warn('[AutoTranslate] ⚠️ Translation loop detected! Pausing auto-translator to prevent browser lockup.');
+      serverCooldownUntilRef.current = now + 60000; // 1 min server cooldown
+      return;
+    }
+    runTimesRef.current.push(now);
+
     isTranslatingRef.current = true;
 
     try {
       const textNodes = collectTextNodes(document.body);
-      if (textNodes.length === 0) {
+      const attrEntries = collectAttributeTexts(document.body);
+
+      if (textNodes.length === 0 && attrEntries.length === 0) {
         isTranslatingRef.current = false;
         return;
       }
 
-      const attrEntries = collectAttributeTexts(document.body);
       const allTexts = Array.from(new Set([
         ...textNodes.map(tn => tn.text),
         ...attrEntries.map(ae => ae.text)
@@ -324,46 +366,52 @@ export function AutoTranslateProvider({ children }: { children: React.ReactNode 
 
       // ─── Layer 2+3: Fetch uncached from server ─────────────────────
       if (uncachedTexts.length > 0) {
-        try {
-          const response = await fetch('/api/translate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            cache: 'no-store',
-            body: JSON.stringify({
-              texts: uncachedTexts,
-              targetLang: targetCode,
-              sourceLang: sourceCode,
-            }),
-          });
+        const serverOnCooldown = Date.now() < serverCooldownUntilRef.current;
+        if (serverOnCooldown) {
+          console.warn('[AutoTranslate] Server translation is currently on cooldown due to previous failures. Skipping fetch.');
+        } else {
+          try {
+            const response = await fetch('/api/translate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              cache: 'no-store',
+              body: JSON.stringify({
+                texts: uncachedTexts,
+                targetLang: targetCode,
+                sourceLang: sourceCode,
+              }),
+            });
 
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            if (errorData.failedLanguage) {
-              window.dispatchEvent(new CustomEvent('pp:translation:failed', {
-                detail: { language: errorData.failedLanguage }
-              }));
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => ({}));
+              if (errorData.failedLanguage) {
+                window.dispatchEvent(new CustomEvent('pp:translation:failed', {
+                  detail: { language: errorData.failedLanguage }
+                }));
+              }
+              throw new Error(`Server returned ${response.status}`);
             }
-            throw new Error('Translation failed');
-          }
 
-          const data = await response.json();
-          const serverTranslations: Record<string, string> = data.translations;
+            const data = await response.json();
+            const serverTranslations: Record<string, string> = data.translations;
 
-          // Merge server results into translations + client cache
-          for (const [src, translated] of Object.entries(serverTranslations)) {
-            translations[src] = translated;
-            if (translated !== src) {
-              setCachedTranslation(src, targetCode, translated);
+            // Merge server results into translations + client cache
+            for (const [src, translated] of Object.entries(serverTranslations)) {
+              translations[src] = translated;
+              if (translated !== src) {
+                setCachedTranslation(src, targetCode, translated);
+              }
             }
+
+            // Persist updated cache to sessionStorage
+            persistCacheToStorage();
+
+            console.log(`[AutoTranslate] Server returned ${Object.keys(serverTranslations).length} translations (cached: ${data.cached || 0})`);
+          } catch (error) {
+            console.error('[AutoTranslate] Server translation failed. Entering 30s cooldown:', error);
+            serverCooldownUntilRef.current = Date.now() + 30000; // 30s cooldown
+            // Continue with whatever we have from client cache
           }
-
-          // Persist updated cache to sessionStorage
-          persistCacheToStorage();
-
-          console.log(`[AutoTranslate] Server returned ${Object.keys(serverTranslations).length} translations (cached: ${data.cached || 0})`);
-        } catch (error) {
-          console.error('[AutoTranslate] Server translation failed:', error);
-          // Continue with whatever we have from client cache
         }
       }
 
@@ -377,8 +425,10 @@ export function AutoTranslateProvider({ children }: { children: React.ReactNode 
       textNodes.forEach(({ node, text }) => {
         const translated = translations[text];
         if (translated && translated !== text) {
-          node.textContent = translated;
-          updatedCount++;
+          if (node.textContent !== translated) {
+            node.textContent = translated;
+            updatedCount++;
+          }
         }
       });
 
@@ -386,8 +436,10 @@ export function AutoTranslateProvider({ children }: { children: React.ReactNode 
         attrEntries.forEach(({ element, attr, text }) => {
           const translated = translations[text];
           if (translated && translated !== text) {
-            element.setAttribute(attr, translated);
-            updatedAttrs++;
+            if (element.getAttribute(attr) !== translated) {
+              element.setAttribute(attr, translated);
+              updatedAttrs++;
+            }
           }
         });
       } catch {}
@@ -397,7 +449,9 @@ export function AutoTranslateProvider({ children }: { children: React.ReactNode 
         isApplyingRef.current = false;
       });
 
-      console.log(`[AutoTranslate] ✅ Applied ${updatedCount} text nodes + ${updatedAttrs} attributes`);
+      if (updatedCount > 0 || updatedAttrs > 0) {
+        console.log(`[AutoTranslate] ✅ Applied ${updatedCount} text nodes + ${updatedAttrs} attributes`);
+      }
     } catch (error) {
       console.error('[AutoTranslate] Failed:', error);
     } finally {
