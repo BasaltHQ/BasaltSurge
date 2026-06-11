@@ -23,16 +23,17 @@ export default function AdminDevicesPage() {
   const isSuperadmin = isPlatformSuperAdmin(wallet);
   const canMerchants = canAccessPanel("merchants", wallet);
   const canPartners = canAccessPanel("partners", wallet);
+  const canDevices = canAccessPanel("devices", wallet);
   const canBranding = canAccessPanel("branding", wallet);
 
-  // Admin-only guard: restricted to Admin and Superadmin
-  if (!(isSuperadmin || canBranding)) {
+  // Admin-only guard: restricted to Dev, Owner and Superadmin
+  if (!canDevices) {
     return (
       <div className="max-w-6xl mx-auto px-4 py-10">
         <div className="admin-card p-6">
           <h2 className="text-xl font-semibold text-white/90">Access Denied</h2>
           <div className="text-[10px] text-white/40 uppercase tracking-widest font-medium mt-1">
-            Android Device Installer is restricted to Admin and Superadmin.
+            Android Device Installer is restricted to Developer, Owner and Superadmin.
           </div>
         </div>
       </div>

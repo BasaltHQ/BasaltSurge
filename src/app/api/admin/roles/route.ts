@@ -56,13 +56,30 @@ export async function GET(req: NextRequest) {
                 return NextResponse.json({ admins: bootstrapList, source: "env" });
             }
 
-            // For Partner: Return empty list (or could bootstrap from Owner if needed)
-            // But we shouldn't automatically add the Owner to the DB list just by viewing, 
-            // unless we want to show them effectively.
+            // For Partner: Return empty list (or bootstrap from partner config if partnerWallet exists)
+            if (!isPlatform) {
+                try {
+                    const { readBrandOverridesCached } = await import("@/lib/brand-config");
+                    const brandCfg = await readBrandOverridesCached(targetPartition);
+                    const pWallet = String(brandCfg?.partnerWallet || "").toLowerCase().trim();
+                    if (pWallet && /^0x[a-f0-9]{40}$/.test(pWallet)) {
+                        return NextResponse.json({
+                            admins: [{ wallet: pWallet, role: "partner_owner", name: "Partner Owner" }],
+                            source: "bootstrap"
+                        });
+                    }
+                } catch { }
+            }
+
             return NextResponse.json({ admins: [], source: "empty" });
         }
 
-        return NextResponse.json({ admins: resource.admins, source: "db" });
+        return NextResponse.json({
+            admins: resource.admins || [],
+            customRoles: resource.customRoles || [],
+            roleOverrides: resource.roleOverrides || {},
+            source: "db"
+        });
     } catch (e: any) {
         return NextResponse.json({ error: e.message }, { status: 500 });
     }
@@ -95,7 +112,7 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { admins } = body;
+        const { admins, customRoles, roleOverrides } = body;
 
         if (!Array.isArray(admins)) {
             return NextResponse.json({ error: "Invalid body: admins must be an array" }, { status: 400 });
@@ -107,6 +124,44 @@ export async function POST(req: NextRequest) {
             if (superAdmins.length === 0) {
                 return NextResponse.json({ error: "Cannot remove the last Super Admin" }, { status: 400 });
             }
+        } else {
+            // Validation: Ensure at least one Partner Owner remains (Partner Only)
+            const partnerOwners = admins.filter((a: any) => a.role === "partner_owner");
+            if (partnerOwners.length === 0) {
+                return NextResponse.json({ error: "Cannot remove the last Partner Owner" }, { status: 400 });
+            }
+        }
+
+        // Sanitize role overrides: enforce valid permission arrays
+        const sanitizedOverrides: Record<string, string[]> = {};
+        if (roleOverrides && typeof roleOverrides === "object") {
+            for (const [rKey, pList] of Object.entries(roleOverrides)) {
+                if (Array.isArray(pList)) {
+                    sanitizedOverrides[rKey] = pList.map(p => String(p).trim()).filter(Boolean);
+                }
+            }
+        }
+
+        // Sanitize custom roles: key, name, description, color, permissions
+        const sanitizedCustomRoles: any[] = [];
+        if (Array.isArray(customRoles)) {
+            customRoles.forEach((cr: any) => {
+                const key = String(cr.key || "").trim().toLowerCase().replace(/[^a-z0-9_]/g, "");
+                const name = String(cr.name || "").trim().slice(0, 100);
+                const description = String(cr.description || "").trim().slice(0, 200);
+                const color = String(cr.color || "blue").trim().toLowerCase().replace(/[^a-z-]/g, "");
+                if (key && name) {
+                    sanitizedCustomRoles.push({
+                        key,
+                        name,
+                        description,
+                        color,
+                        permissions: Array.isArray(cr.permissions) 
+                            ? cr.permissions.map((p: any) => String(p).trim()).filter(Boolean) 
+                            : []
+                    });
+                }
+            });
         }
 
         const doc = {
@@ -121,7 +176,9 @@ export async function POST(req: NextRequest) {
                 role: String(a.role || (isPlatform ? "platform_admin" : "partner_admin")),
                 name: String(a.name || "").slice(0, 100),
                 email: String(a.email || "").slice(0, 100)
-            })).filter((a: any) => /^0x[a-f0-9]{40}$/.test(a.wallet))
+            })).filter((a: any) => /^0x[a-f0-9]{40}$/.test(a.wallet)),
+            customRoles: sanitizedCustomRoles,
+            roleOverrides: sanitizedOverrides
         };
 
         const c = await getContainer();
@@ -141,7 +198,7 @@ export async function POST(req: NextRequest) {
 
         const changes: string[] = [];
 
-        // Check for additions and updates
+        // 1. Check for additions and updates to admins
         for (const [w, newUser] of newMap.entries()) {
             const oldUser = oldMap.get(w);
             if (!oldUser) {
@@ -159,10 +216,69 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // Check for removals
+        // Check for removals of admins
         for (const [w, oldUser] of oldMap.entries()) {
             if (!newMap.has(w)) {
                 changes.push(`Removed admin ${oldUser.name || w}`);
+            }
+        }
+
+        // 2. Check for Role Overrides changes (Matrix toggles)
+        const oldOverrides = prevResource?.roleOverrides && typeof prevResource.roleOverrides === "object" ? prevResource.roleOverrides : {};
+        const allRoleKeys = Array.from(new Set([
+            ...Object.keys(oldOverrides),
+            ...Object.keys(sanitizedOverrides)
+        ]));
+
+        for (const roleKey of allRoleKeys) {
+            const oldPerms: string[] = Array.isArray(oldOverrides[roleKey]) ? oldOverrides[roleKey] : [];
+            const newPerms: string[] = Array.isArray(sanitizedOverrides[roleKey]) ? sanitizedOverrides[roleKey] : [];
+            
+            const added = newPerms.filter(p => !oldPerms.includes(p));
+            const removed = oldPerms.filter(p => !newPerms.includes(p));
+
+            if (added.length > 0 || removed.length > 0) {
+                const parts: string[] = [];
+                if (added.length > 0) parts.push(`granted [${added.join(", ")}]`);
+                if (removed.length > 0) parts.push(`revoked [${removed.join(", ")}]`);
+                changes.push(`Updated matrix permissions for role "${formatRole(roleKey)}": ${parts.join(" and ")}`);
+            }
+        }
+
+        // 3. Check for Custom Roles changes
+        const oldCustomRoles = Array.isArray(prevResource?.customRoles) ? prevResource.customRoles : [];
+        const oldCustomMap = new Map<string, any>(oldCustomRoles.map((r: any) => [r.key.toLowerCase(), r]));
+        const newCustomMap = new Map<string, any>(sanitizedCustomRoles.map((r: any) => [r.key.toLowerCase(), r]));
+
+        for (const [key, newRole] of newCustomMap.entries()) {
+            const oldRole = oldCustomMap.get(key);
+            if (!oldRole) {
+                changes.push(`Created custom role "${newRole.name}" (${newRole.key}) with permissions: [${newRole.permissions.join(", ")}]`);
+            } else {
+                const nameChanged = oldRole.name !== newRole.name;
+                const descChanged = oldRole.description !== newRole.description;
+                const colorChanged = oldRole.color !== newRole.color;
+                const oldPerms: string[] = Array.isArray(oldRole.permissions) ? oldRole.permissions : [];
+                const newPerms: string[] = Array.isArray(newRole.permissions) ? newRole.permissions : [];
+                const added = newPerms.filter(p => !oldPerms.includes(p));
+                const removed = oldPerms.filter(p => !newPerms.includes(p));
+
+                const roleUpdates: string[] = [];
+                if (nameChanged) roleUpdates.push(`renamed to "${newRole.name}"`);
+                if (descChanged) roleUpdates.push(`description updated`);
+                if (colorChanged) roleUpdates.push(`color theme changed to ${newRole.color}`);
+                if (added.length > 0) roleUpdates.push(`granted [${added.join(", ")}]`);
+                if (removed.length > 0) roleUpdates.push(`revoked [${removed.join(", ")}]`);
+
+                if (roleUpdates.length > 0) {
+                    changes.push(`Modified custom role "${newRole.name}" (${newRole.key}): ${roleUpdates.join(", ")}`);
+                }
+            }
+        }
+
+        for (const [key, oldRole] of oldCustomMap.entries()) {
+            if (!newCustomMap.has(key)) {
+                changes.push(`Deleted custom role "${oldRole.name}" (${oldRole.key})`);
             }
         }
 
@@ -175,7 +291,12 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        return NextResponse.json({ success: true, admins: resource?.admins || [] });
+        return NextResponse.json({
+            success: true,
+            admins: resource?.admins || [],
+            customRoles: resource?.customRoles || [],
+            roleOverrides: resource?.roleOverrides || {}
+        });
     } catch (e: any) {
         return NextResponse.json({ error: e.message }, { status: 500 });
     }

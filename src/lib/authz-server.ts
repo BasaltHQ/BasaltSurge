@@ -87,6 +87,16 @@ export async function resolveAdminRole(wallet?: string, contextBrandKey?: string
                     }
                 }
             } catch { }
+
+            // Bootstrap Fallback: If not in DB roles, check if they are the partner's partnerWallet
+            try {
+                const { readBrandOverridesCached } = await import('@/lib/brand-config');
+                const brandCfg = await readBrandOverridesCached(contextBrandKey);
+                const pWallet = String(brandCfg?.partnerWallet || '').toLowerCase().trim();
+                if (pWallet && w === pWallet) {
+                    return 'partner_owner';
+                }
+            } catch { }
         }
 
     } catch { /* DB connect failed */ }
