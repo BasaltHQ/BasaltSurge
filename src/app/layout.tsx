@@ -694,6 +694,26 @@ export default async function RootLayout({
     const { getContainer } = require("@/lib/cosmos");
     const c = await getContainer();
     const isPartner = containerIdentity.containerType === "partner";
+
+    // If in a partner container, load global platform admins so they inherit their permissions
+    if (isPartner) {
+      try {
+        const { resource: globalResource } = await c.item("admin_roles", "global").read();
+        if (globalResource && Array.isArray(globalResource.admins)) {
+          globalResource.admins.forEach((a: any) => {
+            const w = String(a.wallet || "").toLowerCase().trim();
+            const role = String(a.role || "platform_admin");
+            if (/^0x[a-f0-9]{40}$/.test(w)) {
+              dbAdminRoles[w] = role;
+              dbAdminWalletsList.push(w);
+            }
+          });
+        }
+      } catch {
+        // Global document read failed
+      }
+    }
+
     const targetPartition = (isPartner && brand.key) ? brand.key : "global";
     const { resource } = await c.item("admin_roles", targetPartition).read();
     if (resource) {
@@ -702,8 +722,15 @@ export default async function RootLayout({
           const w = String(a.wallet || "").toLowerCase().trim();
           const role = String(a.role || (isPartner ? "partner_admin" : "platform_admin"));
           if (/^0x[a-f0-9]{40}$/.test(w)) {
-            dbAdminRoles[w] = role;
-            dbAdminWalletsList.push(w);
+            // Do not overwrite inherited platform roles with lower partner roles
+            if (dbAdminRoles[w] && dbAdminRoles[w].startsWith("platform_") && !role.startsWith("platform_")) {
+              // Maintain platform role
+            } else {
+              dbAdminRoles[w] = role;
+            }
+            if (!dbAdminWalletsList.includes(w)) {
+              dbAdminWalletsList.push(w);
+            }
           }
         });
       }
