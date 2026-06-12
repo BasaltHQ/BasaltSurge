@@ -138,7 +138,7 @@ export async function POST(
       if (seg.method === 'card') {
         const receiptId = `pms_${segmentId}`;
         segment.receiptId = receiptId;
-        segment.portalUrl = `/portal/${receiptId}`;
+        segment.portalUrl = `/portal/${receiptId}?recipient=${encodeURIComponent(instance.wallet)}`;
       }
       
       return segment;
