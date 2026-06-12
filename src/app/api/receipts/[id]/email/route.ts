@@ -158,7 +158,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                     ${itemsHtml}
 
                     <div style="margin-top: 32px; text-align: center;">
-                        <a href="${req.nextUrl.origin}/portal/${id.replace('receipt:', '')}?wallet=${wallet}" style="display: inline-block; padding: 14px 28px; background-color: ${brandColor}; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">
+                        <a href="${req.nextUrl.origin}/portal/${id.replace('receipt:', '')}?recipient=${encodeURIComponent(wallet)}" style="display: inline-block; padding: 14px 28px; background-color: ${brandColor}; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">
                             View Receipt Online
                         </a>
                     </div>

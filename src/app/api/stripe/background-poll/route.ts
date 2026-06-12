@@ -287,7 +287,7 @@ async function runBackgroundPoll(params: {
           { label: "Reason", value: "Onramp transaction failed or timed out" },
         ],
         ctaText: "Try Payment Again",
-        ctaUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001"}/portal/${receiptId}`,
+        ctaUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001"}/portal/${receiptId}?recipient=${encodeURIComponent(merchantWallet)}`,
       });
 
       await sendEmail({
