@@ -190,7 +190,9 @@ Fields:
 | `lineItems` | array | Yes | Array of `{ label, priceUsd, qty? }` items |
 | `totalUsd` | number | Yes | Order total in USD |
 | `redirect_url` | string | No | HTTPS URL passed through to the Stripe Crypto Onramp session. After the buyer completes the Stripe-hosted flow, Stripe redirects them to this URL. Only applies to Stripe; other onramp providers do not support external redirects. Also accepted as `redirectUrl`. |
+| `returnUrl` | string | No | Optional redirect URL. Customer's browser will be redirected here after successful payment (also accepted as `return_url`) |
 | `webhook_url` | string | No | HTTPS endpoint to receive push notifications when receipt status changes. Webhooks are signed with your API key (same `Ocp-Apim-Subscription-Key` used for authentication). Also accepted as `webhookUrl`. See [Webhooks Guide](./webhooks.md). |
+| `onSuccess` | string | No | Optional custom logic. Can be a redirect URL or a raw JavaScript code snippet string to be evaluated after successful payment |
 
 Example Requests:
 

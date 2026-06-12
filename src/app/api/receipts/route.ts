@@ -243,9 +243,16 @@ export async function POST(req: NextRequest) {
     const rawRedirectUrl = String(body?.redirect_url || body?.redirectUrl || "").trim();
     const redirectUrl = rawRedirectUrl && isValidRedirectUrl(rawRedirectUrl) ? rawRedirectUrl : undefined;
 
+    // Optional return_url — customer is redirected here on successful payment
+    const rawReturnUrl = String(body?.return_url || body?.returnUrl || "").trim();
+    const returnUrl = rawReturnUrl && isValidRedirectUrl(rawReturnUrl) ? rawReturnUrl : undefined;
+
     // Optional webhook_url — developer endpoint receives push notifications on status change
     const rawWebhookUrl = String(body?.webhook_url || body?.webhookUrl || "").trim();
     const webhookUrl = rawWebhookUrl && isValidWebhookUrl(rawWebhookUrl) ? rawWebhookUrl : undefined;
+
+    // Optional onSuccess — custom javascript logic or URL to execute on successful payment
+    const onSuccess = typeof body?.onSuccess === "string" ? String(body.onSuccess).trim() : undefined;
 
 
     // Compute split breakdown and effective processing fee
@@ -283,6 +290,8 @@ export async function POST(req: NextRequest) {
       ttl: 3600, // Auto-expire in 1h if not paid (User Request)
       // Developer-configured redirect and webhook URLs
       ...(redirectUrl ? { redirectUrl } : {}),
+      ...(returnUrl ? { returnUrl } : {}),
+      ...(onSuccess ? { onSuccess } : {}),
       ...(webhookUrl ? {
         webhookUrl,
         // Use the developer's own API key as the HMAC signing secret.
@@ -322,13 +331,22 @@ export async function POST(req: NextRequest) {
     const proto = xfProto || (process.env.NODE_ENV === "production" ? "https" : "http");
     const h = xfHost || host || "";
     const origin = h ? `${proto}://${h}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
-    let paymentUrl = `${origin}/portal/${encodeURIComponent(id)}?recipient=${encodeURIComponent(wallet)}`;
-    // Append redirect_url to the portal URL so the portal page can read it from search params
-    if (redirectUrl) {
-      paymentUrl += `&redirect_url=${encodeURIComponent(redirectUrl)}`;
-    }
+    const tParams = new URLSearchParams();
+    tParams.set("recipient", wallet);
+    if (redirectUrl) tParams.set("redirect_url", redirectUrl);
+    if (returnUrl) tParams.set("returnUrl", returnUrl);
+    if (onSuccess) tParams.set("onSuccess", onSuccess);
+    const paymentUrl = `${origin}/portal/${encodeURIComponent(id)}?${tParams.toString()}`;
     return NextResponse.json(
-      { id, paymentUrl, status: "pending", ...(redirectUrl ? { redirectUrl } : {}), ...(webhookUrl ? { webhookUrl } : {}) },
+      {
+        id,
+        paymentUrl,
+        status: "pending",
+        ...(redirectUrl ? { redirectUrl } : {}),
+        ...(returnUrl ? { returnUrl } : {}),
+        ...(onSuccess ? { onSuccess } : {}),
+        ...(webhookUrl ? { webhookUrl } : {})
+      },
       { status: 201, headers: { "x-correlation-id": correlationId } }
     );
   } catch (e: any) {
