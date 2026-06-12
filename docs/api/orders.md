@@ -64,6 +64,9 @@ Body Parameters:
 | `jurisdictionCode` | string | No | Tax jurisdiction code (e.g., "US-CA") |
 | `taxRate` | number | No | Manual tax rate override (0-1) |
 | `taxComponents` | string[] | No | Specific tax components to apply |
+| `redirect_url` | string | No | Optional redirect URL for custom Stripe Crypto Onramp redirect (also accepted as `redirectUrl`) |
+| `returnUrl` | string | No | Optional redirect URL. Customer's browser will be redirected here after successful payment (also accepted as `return_url`) |
+| `onSuccess` | string | No | Optional custom logic. Can be a redirect URL or a raw JavaScript code snippet string to be evaluated after successful payment |
 
 Example Requests:
 

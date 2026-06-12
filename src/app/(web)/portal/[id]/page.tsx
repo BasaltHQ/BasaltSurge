@@ -107,6 +107,9 @@ type Receipt = {
   shippingAddress?: { name?: string; line1?: string; line2?: string; city?: string; state?: string; zip?: string; country?: string; email?: string; phone?: string };
   shippingMethod?: string;
   shippingCostUsd?: number;
+  redirectUrl?: string;
+  returnUrl?: string;
+  onSuccess?: string;
 };
 
 // Helper to determine if receipt is already paid/settled
@@ -187,6 +190,21 @@ function getBuildTimeTokens(): TokenDef[] {
 function isValidHexAddress(addr: string): boolean {
   try {
     return /^0x[a-fA-F0-9]{40}$/.test(String(addr || "").trim());
+  } catch {
+    return false;
+  }
+}
+
+function isValidRedirectUrl(url: string): boolean {
+  try {
+    const trimmed = (url || "").trim();
+    if (!trimmed) return false;
+    const lower = trimmed.toLowerCase();
+    if (lower.startsWith("javascript:")) return false;
+    if (lower.startsWith("data:")) return false;
+    if (trimmed.startsWith("//")) return false;
+    const parsed = new URL(trimmed);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
   } catch {
     return false;
   }
@@ -2592,6 +2610,57 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       }).catch(() => setClaimStatus("error"));
     }
   }, [paymentConfirmed, receipt, receiptId, account?.address, claimStatus]);
+
+  // Redirect to success page / custom onSuccess logic when payment is confirmed
+  useEffect(() => {
+    const isPaid = paymentConfirmed || (receipt && isSettled(receipt.status));
+    let timer: NodeJS.Timeout | undefined;
+
+    if (isPaid) {
+      // 1. PostMessage to parent
+      try {
+        window.parent.postMessage({
+          type: "portalpay-payment-success",
+          receiptId,
+          correlationId,
+          recipient: merchantWallet || recipient,
+          txHash: paymentConfirmed?.txHash || (receipt as any)?.transactionHash || ""
+        }, targetOrigin);
+      } catch { }
+
+      // 2. Perform redirect or onSuccess custom logic
+      const returnUrl = searchParams?.get("returnUrl") || receipt?.returnUrl || (receipt as any)?.returnUrl;
+      const redirectUrl = searchParams?.get("redirect_url") || searchParams?.get("redirectUrl") || receipt?.redirectUrl || (receipt as any)?.redirectUrl;
+      
+      const targetUrl = returnUrl || redirectUrl;
+      if (targetUrl && isValidRedirectUrl(targetUrl)) {
+        timer = setTimeout(() => {
+          window.location.href = targetUrl;
+        }, 2000); // 2-second delay to let the user see the success confirmation screen
+      } else {
+        const onSuccess = searchParams?.get("onSuccess") || receipt?.onSuccess || (receipt as any)?.onSuccess;
+        if (onSuccess) {
+          timer = setTimeout(() => {
+            try {
+              if (isValidRedirectUrl(onSuccess)) {
+                window.location.href = onSuccess;
+              } else {
+                // Execute custom javascript snippet
+                const fn = new Function(onSuccess);
+                fn();
+              }
+            } catch (err) {
+              console.error("Failed to execute onSuccess custom logic:", err);
+            }
+          }, 2000);
+        }
+      }
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [paymentConfirmed, receipt, receiptId, correlationId, merchantWallet, recipient, targetOrigin, searchParams]);
 
 
   async function postStatus(status: string, extra?: any) {

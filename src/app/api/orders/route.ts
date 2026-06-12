@@ -6,6 +6,7 @@ import { isPartnerContext } from "@/lib/env";
 import { getInventoryItems, type InventoryItemMem } from "@/lib/inventory-mem";
 import { pushReceipts } from "@/lib/receipts-mem";
 import { requireApimOrJwt } from "@/lib/gateway-auth";
+import { isValidRedirectUrl, isValidWebhookUrl } from "@/lib/webhook-dispatch";
 
 /**
  * Orders API
@@ -238,6 +239,18 @@ export async function POST(req: NextRequest) {
     const servedBy = typeof body?.servedBy === "string" ? body.servedBy : undefined;
     const sessionId = typeof body?.sessionId === "string" ? body.sessionId : undefined;
     const paymentMethod = typeof body?.paymentMethod === "string" ? body.paymentMethod : undefined;
+
+    // Optional redirect/webhook/onSuccess fields
+    const rawRedirectUrl = String(body?.redirect_url || body?.redirectUrl || "").trim();
+    const redirectUrl = rawRedirectUrl && isValidRedirectUrl(rawRedirectUrl) ? rawRedirectUrl : undefined;
+
+    const rawReturnUrl = String(body?.return_url || body?.returnUrl || "").trim();
+    const returnUrl = rawReturnUrl && isValidRedirectUrl(rawReturnUrl) ? rawReturnUrl : undefined;
+
+    const rawWebhookUrl = String(body?.webhook_url || body?.webhookUrl || "").trim();
+    const webhookUrl = rawWebhookUrl && isValidWebhookUrl(rawWebhookUrl) ? rawWebhookUrl : undefined;
+
+    const onSuccess = typeof body?.onSuccess === "string" ? String(body.onSuccess).trim() : undefined;
 
     // Fetch site config for brand, processing fee, tax presets, and fallback default token (prefer per-wallet, fallback global)
     const cfg = await getSiteConfigForWallet(wallet).catch(() => null as any);
@@ -990,7 +1003,18 @@ export async function POST(req: NextRequest) {
       source,
       servedBy,
       note,
-      sessionId
+      sessionId,
+
+      // Developer/Redirect/Webhook Fields
+      redirectUrl,
+      returnUrl,
+      webhookUrl,
+      onSuccess,
+      ...(webhookUrl ? {
+        webhookSigningSecret: String(
+          req.headers.get("x-api-key") || req.headers.get("ocp-apim-subscription-key") || ""
+        ).trim()
+      } : {})
     };
 
     // Derive origin from request headers so partner containers get their own domain
@@ -1026,6 +1050,9 @@ export async function POST(req: NextRequest) {
       const theme = cfg?.theme || {};
       const tParams = new URLSearchParams();
       tParams.set("recipient", wallet);
+      if (redirectUrl) tParams.set("redirect_url", redirectUrl);
+      if (returnUrl) tParams.set("returnUrl", returnUrl);
+      if (onSuccess) tParams.set("onSuccess", onSuccess);
 
       const portalLink = `${orderOrigin}/portal/${receiptId}?${tParams.toString()}`;
 
@@ -1037,7 +1064,12 @@ export async function POST(req: NextRequest) {
     } catch (e: any) {
       // Graceful degrade when Cosmos isn't configured/available
       pushReceipts([{ ...receipt, wallet, brandKey } as any]);
-      const portalLink = `${orderOrigin}/portal/${receiptId}?recipient=${wallet}`;
+      const tParams = new URLSearchParams();
+      tParams.set("recipient", wallet);
+      if (redirectUrl) tParams.set("redirect_url", redirectUrl);
+      if (returnUrl) tParams.set("returnUrl", returnUrl);
+      if (onSuccess) tParams.set("onSuccess", onSuccess);
+      const portalLink = `${orderOrigin}/portal/${receiptId}?${tParams.toString()}`;
       return NextResponse.json(
         { ok: true, degraded: true, reason: e?.message || "cosmos_unavailable", receipt, portalLink },
         { status: 200, headers: { "x-correlation-id": correlationId } }
