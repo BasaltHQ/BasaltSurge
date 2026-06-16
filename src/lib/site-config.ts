@@ -159,6 +159,47 @@ function normalize(raw?: any, targetWallet?: string): SiteConfig {
     base.splitConfigCredit = raw.splitConfigCredit;
   }
 
+  // Generate splitConfig if missing - compute from recipients (nested or root-level)
+  if (!base.splitConfig) {
+    const recipientsForConfig = cfg?.split?.recipients || cfg?.recipients || base.split?.recipients || base.recipients || [];
+    if (Array.isArray(recipientsForConfig) && recipientsForConfig.length > 0) {
+      const PLATFORM_WALLET = String(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.PLATFORM_WALLET || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e").toLowerCase();
+      let merchantBps = 0;
+      let platformBps = 0;
+      let partnerBps = 0;
+      const merchantWallet = String(base.wallet || "").toLowerCase();
+      for (const r of recipientsForConfig) {
+        const addr = String(r?.address || "").toLowerCase();
+        const bps = Number(r?.sharesBps || 0);
+        if (addr === PLATFORM_WALLET) {
+          platformBps = bps;
+        } else if (addr === merchantWallet) {
+          merchantBps = bps;
+        } else {
+          partnerBps += bps; // Any other recipient is partner/agent
+        }
+      }
+      base.splitConfig = {
+        merchantBps,
+        partnerBps,
+        platformBps,
+        agents: []
+      };
+    }
+  }
+
+  // Calculate basePlatformFeePct to ensure consistency
+  if (base.splitConfig && typeof base.splitConfig === "object") {
+    const partnerBps = typeof base.splitConfig.partnerBps === "number" ? base.splitConfig.partnerBps : 0;
+    const platformBps = typeof base.splitConfig.platformBps === "number" ? base.splitConfig.platformBps : 0;
+    const agentBps = Array.isArray(base.splitConfig.agents)
+      ? base.splitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+      : 0;
+    base.basePlatformFeePct = (partnerBps + platformBps + agentBps) / 100;
+  } else {
+    base.basePlatformFeePct = typeof raw?.basePlatformFeePct === "number" ? raw.basePlatformFeePct : 0.5;
+  }
+
   return base as SiteConfig;
 }
 

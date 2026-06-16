@@ -557,9 +557,12 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
         recipients: Array.isArray(nestedSplit.recipients) ? nestedSplit.recipients : (nestedRecipients || [])
       };
     }
-    // Generate splitConfig if missing - compute from recipients
-    const recipientsForConfig = nestedSplit.recipients || nestedRecipients || [];
-    if (!config.splitConfig && Array.isArray(recipientsForConfig) && recipientsForConfig.length > 0) {
+  }
+
+  // Generate splitConfig if missing - compute from recipients (nested or root-level)
+  if (!config.splitConfig) {
+    const recipientsForConfig = nestedSplit?.recipients || nestedRecipients || config.split?.recipients || config.recipients || [];
+    if (Array.isArray(recipientsForConfig) && recipientsForConfig.length > 0) {
       const PLATFORM_WALLET = String(process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.PLATFORM_WALLET || "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e").toLowerCase();
       let merchantBps = 0;
       let platformBps = 0;
