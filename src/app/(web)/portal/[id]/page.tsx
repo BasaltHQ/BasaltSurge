@@ -2305,6 +2305,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [coinbaseOnrampEnabled, setCoinbaseOnrampEnabled] = useState<boolean>(false);
   const [transakOnrampEnabled, setTransakOnrampEnabled] = useState<boolean>(false);
   const [rampnowOnrampEnabled, setRampnowOnrampEnabled] = useState<boolean>(false);
+  const [userOptedOutOfStripeBypass, setUserOptedOutOfStripeBypass] = useState<boolean>(false);
 
   // Consolidated site-config fetch (single call) to set fee, default token, and seller/split address
   useEffect(() => {
@@ -3107,7 +3108,44 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return () => clearInterval(timer);
   }, [headlessStep]);
 
+  // Autostart Stripe headless flow if it's the only active onramp, payment is ready, and user hasn't opted out
+  useEffect(() => {
+    const isStripeOnly = stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled;
+    const paymentReady = !shippingRequired || shippingComplete;
 
+    if (
+      stripeHeadless &&
+      isStripeOnly &&
+      paymentReady &&
+      !userOptedOutOfStripeBypass &&
+      !headlessEmailPrompt &&
+      !headlessActive &&
+      !headlessInitiated
+    ) {
+      console.log("[PORTAL PAGE] Stripe is the only active onramp. Autostarting direct flow.");
+      if (!shipEmail) {
+        setHeadlessEmailPrompt(true);
+      } else {
+        setHeadlessInitiated(true);
+        startHeadlessOnramp(shipEmail, undefined, shipName || undefined);
+      }
+    }
+  }, [
+    stripeHeadless,
+    stripeOnrampEnabled,
+    coinbaseOnrampEnabled,
+    transakOnrampEnabled,
+    rampnowOnrampEnabled,
+    shippingRequired,
+    shippingComplete,
+    userOptedOutOfStripeBypass,
+    shipEmail,
+    shipName,
+    headlessEmailPrompt,
+    headlessActive,
+    headlessInitiated,
+    startHeadlessOnramp
+  ]);
 
   // Interceptor: ALWAYS active to block crypto.link.com redirects from Thirdweb's CheckoutWidget.
   // In headless mode: interceptOnly=true → blocks redirect, calls onIntercept → startHeadlessOnramp()
@@ -3516,11 +3554,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             <button
               className="flex-1 py-2.5 rounded-xl bg-white/[0.03] text-white/80 font-semibold border border-white/5 hover:bg-white/[0.07] hover:text-white transition-all text-xs"
               onClick={() => {
+                setUserOptedOutOfStripeBypass(true);
                 setHeadlessEmailPrompt(false);
                 setHeadlessInitiated(false);
               }}
             >
-              Cancel
+              {stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled
+                ? "Pay with Crypto Wallet"
+                : "Cancel"}
             </button>
             <button
               className="flex-1 py-2.5 rounded-xl font-semibold transition-all text-xs text-white !text-white hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 border border-transparent shadow-md"
