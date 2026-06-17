@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { requireRole } from "@/lib/auth";
 import { auditEvent } from "@/lib/audit";
+import { getContainerIdentity } from "@/lib/brand-config";
 import crypto from "node:crypto";
 
 export async function GET(req: NextRequest) {
@@ -9,13 +10,28 @@ export async function GET(req: NextRequest) {
   try {
     const caller = await requireRole(req, "admin");
 
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+    const containerIdentity = getContainerIdentity(host);
+    const isPartner = containerIdentity.containerType === "partner";
+
+    let query = `
+      SELECT c.id, c.wallet, c.displayName, c.contact, c.firstSeen, c.lastSeen, c.xp
+      FROM c
+      WHERE c.type = 'user' AND IS_DEFINED(c.contact) AND IS_DEFINED(c.contact.email)
+    `;
+
+    const parameters: { name: string; value: any }[] = [];
+
+    if (isPartner) {
+      const brandKey = containerIdentity.brandKey.toLowerCase();
+      query += ` AND c.id = CONCAT(c.wallet, ':user:', @brandKey)`;
+      parameters.push({ name: "@brandKey", value: brandKey });
+    }
+
     const container = await getContainer();
     const querySpec = {
-      query: `
-        SELECT c.id, c.wallet, c.displayName, c.contact, c.firstSeen, c.lastSeen, c.xp
-        FROM c
-        WHERE c.type = 'user' AND IS_DEFINED(c.contact) AND IS_DEFINED(c.contact.email)
-      `
+      query,
+      parameters
     };
 
     const { resources } = await container.items.query(querySpec).fetchAll();
@@ -90,6 +106,15 @@ export async function DELETE(req: NextRequest) {
 
     if (!id || !wallet) {
       return NextResponse.json({ error: "missing id or wallet" }, { status: 400 });
+    }
+
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+    const containerIdentity = getContainerIdentity(host);
+    if (containerIdentity.containerType === "partner") {
+      const expectedId = `${wallet.toLowerCase()}:user:${containerIdentity.brandKey.toLowerCase()}`;
+      if (id.toLowerCase() !== expectedId) {
+        return NextResponse.json({ error: "Access denied: cannot delete user outside this container" }, { status: 403 });
+      }
     }
 
     const container = await getContainer();

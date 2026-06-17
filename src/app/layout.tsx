@@ -306,6 +306,7 @@ export async function generateMetadata(): Promise<Metadata> {
       const isPartner = String(envMeta.CONTAINER_TYPE || "").toLowerCase() === "partner";
       runtimeBrand = {
         ...baseBrand,
+        ...b,
         name: typeof b.name === "string" && b.name ? b.name : baseBrand.name,
         colors: b.colors && typeof b.colors === "object" ? b.colors : baseBrand.colors,
         // For partners, ALWAYS prefer Cosmos DB logos (b.logos) since static baseBrand.logos is empty
@@ -313,13 +314,7 @@ export async function generateMetadata(): Promise<Metadata> {
         logos: isPartner
           ? (b.logos && typeof b.logos === "object" ? { ...baseBrand.logos, ...b.logos } : baseBrand.logos)
           : (b.logos && typeof b.logos === "object" ? { ...baseBrand.logos, ...b.logos } : baseBrand.logos),
-        appUrl: typeof b.appUrl === "string" && b.appUrl ? b.appUrl : baseBrand.appUrl,
-        partnerFeeBps: typeof b.partnerFeeBps === "number" ? b.partnerFeeBps : baseBrand.partnerFeeBps,
-        defaultMerchantFeeBps: typeof b.defaultMerchantFeeBps === "number" ? b.defaultMerchantFeeBps : baseBrand.defaultMerchantFeeBps,
-        partnerWallet: typeof b.partnerWallet === "string" && b.partnerWallet ? b.partnerWallet : baseBrand.partnerWallet,
-        apimCatalog: Array.isArray(b.apimCatalog) ? b.apimCatalog : baseBrand.apimCatalog,
         meta: b.meta && typeof b.meta === "object" ? b.meta : baseBrand.meta,
-        accessMode: typeof b.accessMode === "string" ? b.accessMode : baseBrand.accessMode,
       };
     }
   } catch { }
@@ -640,6 +635,7 @@ export default async function RootLayout({
       const isPartnerLayout = String(envLayout.CONTAINER_TYPE || "").toLowerCase() === "partner";
       runtimeBrand = {
         ...baseBrand,
+        ...b,
         name: typeof b.name === "string" && b.name ? b.name : baseBrand.name,
         colors: b.colors && typeof b.colors === "object" ? b.colors : baseBrand.colors,
         // Sanitize logos from Cosmos DB to ensure legacy assets are replaced in Basalt context
@@ -649,14 +645,7 @@ export default async function RootLayout({
           app: resolveBrandAppLogo(b.logos?.app || baseBrand.logos.app, effectiveBrandKeyForFetch),
           symbol: resolveBrandSymbol(b.logos?.symbol || b.logos?.app || baseBrand.logos.symbol || baseBrand.logos.app, effectiveBrandKeyForFetch),
         },
-        appUrl: typeof b.appUrl === "string" && b.appUrl ? b.appUrl : baseBrand.appUrl,
-        contactEmail: typeof b.contactEmail === "string" && b.contactEmail ? b.contactEmail : (baseBrand as any).contactEmail,
-        partnerFeeBps: typeof b.partnerFeeBps === "number" ? b.partnerFeeBps : baseBrand.partnerFeeBps,
-        defaultMerchantFeeBps: typeof b.defaultMerchantFeeBps === "number" ? b.defaultMerchantFeeBps : baseBrand.defaultMerchantFeeBps,
-        partnerWallet: typeof b.partnerWallet === "string" && b.partnerWallet ? b.partnerWallet : baseBrand.partnerWallet,
-        apimCatalog: Array.isArray(b.apimCatalog) ? b.apimCatalog : baseBrand.apimCatalog,
         meta: b.meta && typeof b.meta === "object" ? b.meta : baseBrand.meta,
-        accessMode: typeof b.accessMode === "string" ? b.accessMode : baseBrand.accessMode,
       };
     }
   } catch { }

@@ -2921,7 +2921,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             }
             
             // Rampnow / Ramp Network
-            if (!rampnowOnrampEnabled && (txt === 'Ramp' || txt === 'Ramp Network' || (txtLower === 'ramp' && el.children.length === 0))) {
+            if (!rampnowOnrampEnabled && (txt.length < 30 && (/\bramp\b/i.test(txt) || txtLower.includes('rampnow')))) {
               hideProvider(el);
             }
           });

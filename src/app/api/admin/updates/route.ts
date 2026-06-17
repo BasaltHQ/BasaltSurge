@@ -7,13 +7,13 @@ import { SystemUpdate } from "@/types/updates";
 export async function GET(req: NextRequest) {
     try {
         const caller = await requireRole(req, "admin");
-        const container = await getContainer("SystemUpdates");
+        const container = await getContainer();
 
         const url = new URL(req.url);
         const brandKey = url.searchParams.get("brandKey");
         const isPlatform = !brandKey || brandKey.toLowerCase() === "basaltsurge";
 
-        let query = "SELECT * FROM c WHERE c.type='system_update'";
+        let query = "SELECT * FROM c WHERE c.wallet = 'system' AND c.type='system_update'";
         const parameters: any[] = [];
 
         // If not platform, only show 'ALL' targeted updates, or updates specifically for this partner
@@ -46,11 +46,12 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const container = await getContainer("SystemUpdates");
+        const container = await getContainer();
 
-        const update: SystemUpdate & { type: string } = {
+        const update: any = {
             id: body.id || crypto.randomUUID(),
             type: "system_update",
+            wallet: "system",
             title: body.title,
             content: body.content,
             category: body.category || 'ANNOUNCEMENT',
@@ -85,8 +86,8 @@ export async function DELETE(req: NextRequest) {
         const id = url.searchParams.get("id");
         if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-        const container = await getContainer("SystemUpdates");
-        await container.item(id, id).delete(); // partition key is id in this case, or omitted if not partitioned by it
+        const container = await getContainer();
+        await container.item(id, "system").delete();
 
         return NextResponse.json({ ok: true });
     } catch (e: any) {
