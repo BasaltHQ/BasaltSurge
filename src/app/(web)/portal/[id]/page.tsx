@@ -754,13 +754,19 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           .pp-portal-container [data-theme],
           .pp-portal-container [class*="rounded"][class*="border"][class*="shadow"],
           .pp-portal-container [class*="glass"],
-          .pp-portal-container [class*="backdrop"],
-          .pp-portal-container .pp-currency-menu {
+          .pp-portal-container [class*="backdrop"] {
             background: ${cardBg} !important;
             border-color: ${cardBorder} !important;
             border-radius: ${radius} !important;
             backdrop-filter: blur(${blur}) !important;
             -webkit-backdrop-filter: blur(${blur}) !important;
+          }
+
+          .pp-portal-container .pp-currency-menu {
+            background: ${cardBg || t.surfaceBg || (isThemeDark ? '#0c0d14' : '#ffffff')} !important;
+            border-color: ${cardBorder || (isThemeDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)')} !important;
+            border-radius: ${radius} !important;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4) !important;
           }
 
           /* All borders */
@@ -2107,6 +2113,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + processingFeeUsd).toFixed(2);
   }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd]);
 
+  const stripeProcessingFeeUsd = useMemo(() => {
+    const feePctFraction = Math.max(0, effectiveBasePlatformFeePct / 100);
+    return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
+  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, effectiveBasePlatformFeePct]);
+
+  const stripeTotalUsd = useMemo(() => {
+    if (!receipt) return 0;
+    return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + stripeProcessingFeeUsd).toFixed(2);
+  }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, stripeProcessingFeeUsd]);
+
   // Compute receipt readiness (loaded and has a positive total)
   useEffect(() => {
     const ok = !loadingReceipt && !!receipt && totalUsd > 0;
@@ -2553,6 +2569,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const usdRounded = totalUsd > 0 ? Number(totalUsd.toFixed(2)) : 0;
     return usdRounded > 0 ? usdRounded.toFixed(2) : "0";
   }, [widgetCurrency, totalUsd]);
+
+  const stripeWidgetFiatAmount = useMemo(() => {
+    if (!widgetCurrency) return null;
+    const usdRounded = stripeTotalUsd > 0 ? Number(stripeTotalUsd.toFixed(2)) : 0;
+    return usdRounded > 0 ? usdRounded.toFixed(2) : "0";
+  }, [widgetCurrency, stripeTotalUsd]);
   const widgetSupported =
     // Relaxed chain check to allow dev/prod variances (client defaults to Base anyway)
     // (chainId === 8453 || chainId === 84532) &&
@@ -2731,6 +2753,39 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return "0";
   }, [token, tokenDef?.decimals, tokenDef?.symbol, ethAmount, totalUsd, btcUsd, xrpUsd, usdRates]);
 
+  const stripeEthAmount = useMemo(() => {
+    if (!usdRate || usdRate <= 0) return 0;
+    return +(stripeTotalUsd / usdRate).toFixed(9);
+  }, [stripeTotalUsd, usdRate]);
+
+  const stripeWidgetAmount = useMemo(() => {
+    if (token === "ETH") {
+      return stripeEthAmount > 0 ? stripeEthAmount.toFixed(6) : "0";
+    }
+    const decimals = Number(tokenDef?.decimals || (tokenDef?.symbol === "cbBTC" ? 8 : 6));
+    if (tokenDef?.symbol === "USDC" || tokenDef?.symbol === "USDT") {
+      return stripeTotalUsd > 0 ? stripeTotalUsd.toFixed(decimals) : "0";
+    }
+    if (tokenDef?.symbol === "cbBTC") {
+      if (!btcUsd || btcUsd <= 0) return "0";
+      const units = stripeTotalUsd / btcUsd;
+      return units > 0 ? units.toFixed(decimals) : "0";
+    }
+    if (tokenDef?.symbol === "cbXRP") {
+      if (!xrpUsd || xrpUsd <= 0) return "0";
+      const units = stripeTotalUsd / xrpUsd;
+      return units > 0 ? units.toFixed(decimals) : "0";
+    }
+    if (tokenDef?.symbol === "SOL") {
+      const solPerUsd = Number(usdRates["SOL"] || 0);
+      if (!solPerUsd || solPerUsd <= 0) return "0";
+      const solUsd = 1 / solPerUsd; // USD per SOL
+      const units = stripeTotalUsd / solUsd;
+      return units > 0 ? units.toFixed(decimals) : "0";
+    }
+    return "0";
+  }, [token, tokenDef?.decimals, tokenDef?.symbol, stripeEthAmount, stripeTotalUsd, btcUsd, xrpUsd, usdRates]);
+
   useEffect(() => {
     let active = true;
     let timer: NodeJS.Timeout;
@@ -2746,7 +2801,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             wallet: merchantWallet,
             receiptId: receiptId,
             since: receipt.createdAt,
-            amount: Number(widgetAmount),
+            amount: Number(stripeWidgetAmount),
             currency: token
           })
         });
@@ -2773,7 +2828,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
 
     return () => { active = false; clearInterval(timer); };
-  }, [receipt, paymentConfirmed, loadingReceipt, merchantWallet, receiptId, totalUsd, widgetAmount, token]);
+  }, [receipt, paymentConfirmed, loadingReceipt, merchantWallet, receiptId, totalUsd, stripeWidgetAmount, token]);
 
   const amountReady = useMemo(() => {
     if (isFiatFlow && widgetFiatAmount) {
@@ -3002,7 +3057,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     fullName: shipName || undefined,
     splitAddress: sellerAddress as string,
     splitAddressCredit: sellerAddressCredit as string,
-    amount: totalUsd,
+    amount: stripeTotalUsd,
     receiptId,
     merchantWallet: (merchantWallet || resolvedRecipient || recipient) as string,
     brandKey: theme.brandKey || process.env.NEXT_PUBLIC_BRAND_KEY || "basaltsurge",
@@ -3059,7 +3114,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // In legacy mode: interceptOnly=false → blocks redirect, launches legacy Stripe modal
   useStripeOnrampInterceptor({
     walletAddress: sellerAddress as string,
-    amount: totalUsd,
+    amount: stripeTotalUsd,
     receiptId,
     merchantWallet: (merchantWallet || resolvedRecipient || recipient) as string,
     brandKey: theme.brandKey || process.env.NEXT_PUBLIC_BRAND_KEY || "basaltsurge",
@@ -3168,18 +3223,97 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     });
   }, [isEmbedded]);
 
-  // ── CheckoutWidget Label Mutator ──
+  // ── CheckoutWidget Label & Amount Mutator ──
   // Thirdweb's CheckoutWidget doesn't expose a prop for the "Price" label.
-  // We use a dedicated MutationObserver to dynamically replace it with "Price in USD".
+  // We use a dedicated MutationObserver to dynamically replace it with "Price in USD"
+  // and override Stripe-adjusted background amounts with presented user-facing totals.
   useEffect(() => {
+    const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
     const applyLabelOverrides = () => {
       try {
+        // Price label override
         document.body.querySelectorAll<HTMLElement>("span").forEach(el => {
           if (el.textContent === "Price") {
             el.textContent = `Price in USD`;
           }
         });
-      } catch { }
+
+        const targets: { pattern: RegExp; replacement: string }[] = [
+          {
+            pattern: new RegExp(`\\b${escapeRegExp(stripeTotalUsd.toFixed(2))}\\b`, "g"),
+            replacement: totalUsd.toFixed(2)
+          },
+          {
+            pattern: new RegExp(`\\b${escapeRegExp(stripeTotalUsd.toString())}\\b`, "g"),
+            replacement: totalUsd.toString()
+          }
+        ];
+
+        if (stripeWidgetAmount && widgetAmount && stripeWidgetAmount !== "0") {
+          targets.push({
+            pattern: new RegExp(`\\b${escapeRegExp(stripeWidgetAmount)}\\b`, "g"),
+            replacement: widgetAmount
+          });
+          const stripeFloat = parseFloat(stripeWidgetAmount);
+          const widgetFloat = parseFloat(widgetAmount);
+          if (!isNaN(stripeFloat) && !isNaN(widgetFloat) && stripeFloat !== widgetFloat) {
+            targets.push({
+              pattern: new RegExp(`\\b${escapeRegExp(stripeFloat.toString())}\\b`, "g"),
+              replacement: widgetFloat.toString()
+            });
+            const partsStripe = stripeWidgetAmount.split('.');
+            const partsWidget = widgetAmount.split('.');
+            if (partsStripe.length > 1 && partsWidget.length > 1) {
+              const len = partsStripe[1].length;
+              targets.push({
+                pattern: new RegExp(`\\b${escapeRegExp(stripeFloat.toFixed(len))}\\b`, "g"),
+                replacement: widgetFloat.toFixed(len)
+              });
+            }
+          }
+        }
+
+        if (stripeWidgetFiatAmount && widgetFiatAmount) {
+          targets.push({
+            pattern: new RegExp(`\\b${escapeRegExp(stripeWidgetFiatAmount)}\\b`, "g"),
+            replacement: widgetFiatAmount
+          });
+        }
+
+        const visited = new Set<Node>();
+        const replaceInNode = (node: Node) => {
+          if (node.nodeType === Node.TEXT_NODE) {
+            if (visited.has(node)) return;
+            visited.add(node);
+            let text = node.nodeValue || "";
+            let modified = false;
+            for (const { pattern, replacement } of targets) {
+              if (pattern.test(text)) {
+                text = text.replace(pattern, replacement);
+                modified = true;
+              }
+            }
+            if (modified) {
+              node.nodeValue = text;
+            }
+          } else {
+            const name = node.nodeName.toLowerCase();
+            if (name !== "script" && name !== "style") {
+              for (let i = 0; i < node.childNodes.length; i++) {
+                replaceInNode(node.childNodes[i]);
+              }
+            }
+          }
+        };
+
+        const thirdwebContainers = Array.from(document.body.querySelectorAll<HTMLElement>('[data-theme], [class*="tw-"]'));
+        thirdwebContainers.forEach(container => {
+          replaceInNode(container);
+        });
+      } catch (e) {
+        console.error("[Label Mutator Error]", e);
+      }
     };
 
     applyLabelOverrides();
@@ -3189,7 +3323,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return () => {
       try { mo.disconnect(); } catch { }
     };
-  }, []);
+  }, [totalUsd, stripeTotalUsd, widgetAmount, stripeWidgetAmount, widgetFiatAmount, stripeWidgetFiatAmount]);
 
   // ── Touchpoint theme DOM mutator ──
   // Triggered AFTER applyThemeVars runs (via tpThemeApplied state).
@@ -3738,13 +3872,19 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             .pp-portal-container [data-theme],
             .pp-portal-container [class*="rounded"][class*="border"][class*="shadow"],
             .pp-portal-container [class*="glass"],
-            .pp-portal-container [class*="backdrop"],
-            .pp-portal-container .pp-currency-menu {
+            .pp-portal-container [class*="backdrop"] {
               ${theme.pageBg ? `background: ${theme.pageBg} !important;` : ''}
               ${theme.borderColor ? `border-color: ${theme.borderColor} !important;` : ''}
               ${(theme as any).borderRadius ? `border-radius: ${(theme as any).borderRadius} !important;` : ''}
             }
             ` : ''}
+
+            .pp-portal-container .pp-currency-menu {
+              background: ${theme.pageBg || theme.surfaceBg || theme.primaryBg || (isLightText ? '#0c0d14' : '#ffffff')} !important;
+              border-color: ${theme.borderColor || (isLightText ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)')} !important;
+              border-radius: ${(theme as any).borderRadius || '12px'} !important;
+              box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4) !important;
+            }
 
             ${theme.borderColor || (theme as any).bodyTextColor ? `
             .pp-portal-container input,
@@ -4008,7 +4148,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           <span className="ml-auto opacity-70">▾</span>
                         </button>
                         {currencyOpen && (
-                          <div className="pp-currency-menu absolute z-[20005] mt-1 w-full border p-1 max-h-64 overflow-hidden">
+                          <div className="pp-currency-menu absolute z-[20005] mt-1 w-full border p-1 max-h-64 overflow-y-auto">
                             {availableFiatCurrencies.map((c) => (
                               <button
                                 key={c.code}
@@ -4437,7 +4577,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           client={client}
                                           chain={chain}
                                           currency={widgetCurrency as any}
-                                          amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
+                                          amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                           seller={sellerAddress || merchantWallet || recipient}
                                           tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                           showThirdwebBranding={false}
@@ -4518,7 +4658,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   client={client}
                                   chain={chain}
                                   currency={widgetCurrency as any}
-                                  amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
+                                  amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                   seller={sellerAddress || merchantWallet || recipient}
                                   tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                   showThirdwebBranding={false}
@@ -5078,7 +5218,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         client={client}
                                         chain={base}
                                         currency={currency as any}
-                                        amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
+                                        amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                         seller={sellerAddress || merchantWallet || recipient}
                                         tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                         showThirdwebBranding={false}
@@ -5134,7 +5274,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 client={client}
                                 chain={base}
                                 currency={currency as any}
-                                amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
+                                amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                 seller={sellerAddress || merchantWallet || recipient}
                                 tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                 showThirdwebBranding={false}
