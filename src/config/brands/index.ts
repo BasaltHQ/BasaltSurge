@@ -226,13 +226,13 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
   const hasEnvPartner =
     typeof process.env.PARTNER_SPLIT_BPS === "string" && process.env.PARTNER_SPLIT_BPS.trim() !== "";
   const platformFeeBps =
-    hasEnvPlatform && typeof split?.platform === "number"
-      ? split.platform
-      : (typeof raw.platformFeeBps === "number" ? raw.platformFeeBps : 50);
+    typeof raw.platformFeeBps === "number"
+      ? raw.platformFeeBps
+      : (hasEnvPlatform && typeof split?.platform === "number" ? split.platform : 50);
   const partnerFeeBps =
-    hasEnvPartner && typeof split?.partner === "number"
-      ? split.partner
-      : (typeof raw.partnerFeeBps === "number" ? raw.partnerFeeBps : 0);
+    typeof raw.partnerFeeBps === "number"
+      ? raw.partnerFeeBps
+      : (hasEnvPartner && typeof split?.partner === "number" ? split.partner : 0);
   const defaultMerchantFeeBps =
     typeof raw.defaultMerchantFeeBps === "number" ? raw.defaultMerchantFeeBps : 0;
 

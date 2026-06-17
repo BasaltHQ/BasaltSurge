@@ -1292,7 +1292,14 @@ export default function ClientRequestsPanel() {
                                                         )}
                                                     </div>
                                                     <div>
-                                                        <div className="font-semibold text-white">{req.shopName}</div>
+                                                        <div className="font-semibold text-white">
+                                                            {req.legalBusinessName || req.shopName || "Unnamed Merchant"}
+                                                        </div>
+                                                        {req.legalBusinessName && req.shopName && req.legalBusinessName !== req.shopName && (
+                                                            <div className="text-xs text-muted-foreground/80 mt-0.5">
+                                                                DBA: {req.shopName}
+                                                            </div>
+                                                        )}
                                                         <div className="text-xs text-muted-foreground font-mono">{req.wallet.slice(0, 6)}...{req.wallet.slice(-4)}</div>
                                                         <button
                                                             onClick={() => toggleExpand(req.id)}
