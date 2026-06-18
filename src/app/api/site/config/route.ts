@@ -46,7 +46,7 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
     // NOTE: basaltsurge is now its own platform brand, no longer aliased to portalpay
 
     // Pre-fetch brand config for fees (will be used at the end regardless of merchant vs global config)
-    let brandFeesConfig: { platformFeeBps?: number; partnerFeeBps?: number } = {};
+    let brandFeesConfig: { platformFeeBps?: number; partnerFeeBps?: number; presentedFeeBps?: number; creditPresentedFeeBps?: number } = {};
     try {
       if (brandKeyForFees) {
         const { brand: fetchedBrand, overrides: fetchedOverrides } = await getBrandConfigFromCosmos(brandKeyForFees);
@@ -57,6 +57,10 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
           : (typeof (fb as any)?.platformFeeBps === "number" ? (fb as any).platformFeeBps : 50);
         brandFeesConfig.partnerFeeBps = typeof ov?.partnerFeeBps === "number" ? ov.partnerFeeBps
           : (typeof (fb as any)?.partnerFeeBps === "number" ? (fb as any).partnerFeeBps : 0);
+        brandFeesConfig.presentedFeeBps = typeof ov?.presentedFeeBps === "number" ? ov.presentedFeeBps
+          : (typeof (fb as any)?.presentedFeeBps === "number" ? (fb as any).presentedFeeBps : undefined);
+        brandFeesConfig.creditPresentedFeeBps = typeof ov?.creditPresentedFeeBps === "number" ? ov.creditPresentedFeeBps
+          : (typeof (fb as any)?.creditPresentedFeeBps === "number" ? (fb as any).creditPresentedFeeBps : undefined);
       }
     } catch {
       // Default platform fee is 50 bps (0.5%), partner fee is 0
@@ -78,6 +82,14 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
     const partnerBps = typeof splitConf.partnerBps === "number" ? splitConf.partnerBps : (brandFeesConfig.partnerFeeBps ?? 0);
 
     (cfg as any).basePlatformFeePct = (platformBps + partnerBps + agentBps) / 100;
+
+    // Attach presented fees if defined in brandFeesConfig
+    if (typeof brandFeesConfig.presentedFeeBps === "number") {
+      (cfg as any).presentedFeeBps = brandFeesConfig.presentedFeeBps;
+    }
+    if (typeof brandFeesConfig.creditPresentedFeeBps === "number") {
+      (cfg as any).creditPresentedFeeBps = brandFeesConfig.creditPresentedFeeBps;
+    }
 
     // For per-merchant configs, check if they have customized their theme
     // If not, they should inherit partner brand defaults

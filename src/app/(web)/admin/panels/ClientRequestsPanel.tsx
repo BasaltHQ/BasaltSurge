@@ -1010,7 +1010,8 @@ export default function ClientRequestsPanel() {
                     agents,
                     partnerWallet, // Pass explicit partner wallet override
                     platformBps, // Pass explicit platform fee override
-                    force // forceRedeploy
+                    force, // forceRedeploy
+                    false // isCreditOverride explicitly false for Credit/Crypto Split
                 );
             }
 
@@ -1405,7 +1406,7 @@ export default function ClientRequestsPanel() {
                                                         <>
                                                             <button
                                                                 className="px-3 py-1.5 rounded-lg bg-green-500/10 hover:bg-green-500/20 text-green-500 border border-green-500/20 text-xs font-semibold transition-colors"
-                                                                onClick={() => openApprovalModal(req.wallet, req.splitConfig, req.splitConfigCredit)}
+                                                                onClick={() => openApprovalModal(req.wallet, req.splitConfigCredit, req.splitConfig)}
                                                             >
                                                                 Approve
                                                             </button>
@@ -1421,7 +1422,7 @@ export default function ClientRequestsPanel() {
                                                         <>
                                                             <button
                                                                 className="px-4 py-2.5 rounded-xl bg-blue-500/5 hover:bg-blue-500/10 text-blue-400 border border-blue-500/15 hover:border-blue-500/30 text-xs font-semibold shadow-sm hover:shadow-md hover:shadow-blue-500/5 hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 flex items-center gap-2.5 group cursor-pointer"
-                                                                onClick={() => openApprovalModal(req.wallet, req.splitConfig, req.splitConfigCredit)}
+                                                                onClick={() => openApprovalModal(req.wallet, req.splitConfigCredit, req.splitConfig)}
                                                                 title="Update Revenue Split"
                                                             >
                                                                 <span>
@@ -1807,7 +1808,7 @@ export default function ClientRequestsPanel() {
                                                         const fallbackFeeBps = unifiedServiceFeeBps + currentPartnerBps + customAgentsBps;
                                                         const basePresentedFeeBps = (isDebitTab ? presentedFeeBps : creditPresentedFeeBps);
                                                         const activePresentedFeeBps = basePresentedFeeBps !== undefined
-                                                            ? (basePresentedFeeBps + currentPartnerBps + customAgentsBps)
+                                                            ? (basePresentedFeeBps + currentPartnerBps)
                                                             : fallbackFeeBps;
                                                         return (
                                                             <div className={`p-6 rounded-2xl border bg-gradient-to-br ${
@@ -1985,14 +1986,6 @@ export default function ClientRequestsPanel() {
                                                                 })()}
                                                             </div>
                                                             {(() => {
-                                                                const resStr = isDebitTab ? deployResultDebit : deployResult;
-                                                                if (resStr) {
-                                                                    return (
-                                                                        <span className={`text-xs font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
-                                                                            {resStr.startsWith("Deployed") || resStr.startsWith("Verified") ? "Active" : "Error"}
-                                                                        </span>
-                                                                    );
-                                                                }
                                                                 const _req = items.find(r => r.wallet === approvingId);
                                                                 if (!_req) return <span className="text-xs font-mono text-zinc-600">Not Deployed</span>;
                                                                 const addr = isDebitTab
@@ -2000,9 +1993,41 @@ export default function ClientRequestsPanel() {
                                                                     : (_req.deployedSplitAddress || (_req.splitHistory || []).find(h => !h.isCredit)?.address || "");
                                                                 if (addr) {
                                                                     return (
-                                                                        <span className={`text-xs font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`} title={addr}>
-                                                                            {addr.slice(0, 6)}...{addr.slice(-4)}
-                                                                        </span>
+                                                                        <div className="flex items-center gap-1.5">
+                                                                            <span className={`text-xs font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`} title={addr}>
+                                                                                {addr.slice(0, 6)}...{addr.slice(-4)}
+                                                                            </span>
+                                                                            <button
+                                                                                type="button"
+                                                                                disabled={deploying}
+                                                                                onClick={async (e) => {
+                                                                                    e.stopPropagation();
+                                                                                    setDeploying(true);
+                                                                                    if (isDebitTab) setDeployResultDebit("Verifying...");
+                                                                                    else setDeployResult("Verifying...");
+                                                                                    try {
+                                                                                        const verified = await verifyContractByAddress(_req, addr, isDebitTab);
+                                                                                        if (isDebitTab) {
+                                                                                            setDeployResultDebit(verified ? `Verified: ${addr.slice(0,6)}...` : "Error: Verification Failed");
+                                                                                        } else {
+                                                                                            setDeployResult(verified ? `Verified: ${addr.slice(0,6)}...` : "Error: Verification Failed");
+                                                                                        }
+                                                                                    } catch (err: any) {
+                                                                                        if (isDebitTab) setDeployResultDebit("Error: " + err.message);
+                                                                                        else setDeployResult("Error: " + err.message);
+                                                                                    } finally {
+                                                                                        setDeploying(false);
+                                                                                    }
+                                                                                }}
+                                                                                className={`px-1.5 py-0.5 rounded border text-[10px] font-mono transition-colors ${
+                                                                                    isDebitTab 
+                                                                                        ? "bg-purple-600/20 hover:bg-purple-600/40 text-purple-400 border-purple-500/30" 
+                                                                                        : "bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border-emerald-500/30"
+                                                                                }`}
+                                                                            >
+                                                                                {deploying ? "..." : "Verify"}
+                                                                            </button>
+                                                                        </div>
                                                                     );
                                                                 }
                                                                 return <span className="text-xs font-mono text-zinc-600">Not Deployed</span>;
