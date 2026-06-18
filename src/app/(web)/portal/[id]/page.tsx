@@ -163,7 +163,7 @@ function isColorLight(color: string | undefined): boolean {
         return (r * 299 + g * 587 + b * 114) / 1000 > 128;
       }
     }
-  } catch {}
+  } catch { }
   return false;
 }
 
@@ -410,7 +410,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       const mode = String(searchParams?.get("mode") || "").toLowerCase();
       if (mode === "light") return true;
       if (mode === "dark") return false;
-    } catch {}
+    } catch { }
 
     const bgCandidate = theme.pageBg || theme.surfaceBg || theme.primaryBg;
     if (bgCandidate) {
@@ -2807,7 +2807,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       // 2. Perform redirect or onSuccess custom logic
       const returnUrl = searchParams?.get("returnUrl") || receipt?.returnUrl || (receipt as any)?.returnUrl;
       const redirectUrl = searchParams?.get("redirect_url") || searchParams?.get("redirectUrl") || receipt?.redirectUrl || (receipt as any)?.redirectUrl;
-      
+
       const targetUrl = returnUrl || redirectUrl;
       if (targetUrl && isValidRedirectUrl(targetUrl)) {
         timer = setTimeout(() => {
@@ -3043,7 +3043,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           els.forEach((el: any) => {
             const txt = (el.textContent || '').trim();
             const txtLower = txt.toLowerCase();
-            
+
             const hideProvider = (node: HTMLElement) => {
               let target: HTMLElement | null = node;
               for (let j = 0; j < 6 && target; j++) {
@@ -3063,17 +3063,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             if (!coinbaseOnrampEnabled && (txt === 'Coinbase Pay' || (txtLower === 'coinbase' && el.children.length === 0 && !el.closest('button')?.textContent?.toLowerCase().includes('wallet')))) {
               hideProvider(el);
             }
-            
+
             // Stripe
             if (!stripeOnrampEnabled && (txt === 'Stripe' || txt === 'Stripe Link' || (txtLower === 'stripe' && el.children.length === 0))) {
               hideProvider(el);
             }
-            
+
             // Transak
             if (!transakOnrampEnabled && (txt === 'Transak' || (txtLower === 'transak' && el.children.length === 0))) {
               hideProvider(el);
             }
-            
+
             // Rampnow / Ramp Network
             if (!rampnowOnrampEnabled && (txt.length < 30 && (/\bramp\b/i.test(txt) || txtLower.includes('rampnow')))) {
               hideProvider(el);
@@ -3179,16 +3179,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Otherwise → Legacy iframe-based Stripe Crypto Onramp interceptor
   const stripeHeadless = String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE";
 
-  // eCommerce mode check: checks for ?=e or ?e (both next.js searchParams and raw window.location.search fallback)
+  // eCommerce mode check: default is true (e=1 behavior). Can be disabled/forced to full flow with ?f=1 or ?f
   const isEcommerceMode = (() => {
     if (typeof window !== "undefined") {
       const search = window.location.search;
-      if (search.includes("=e") || search === "?e" || search.includes("&e") || search.includes("?e&")) return true;
+      if (search.includes("=f") || search === "?f" || search.includes("&f") || search.includes("?f&")) return false;
     }
     if (searchParams) {
-      if (searchParams.get("") === "e" || searchParams.has("e")) return true;
+      if (searchParams.get("") === "f" || searchParams.has("f")) return false;
     }
-    return false;
+    return true;
   })();
 
   console.log("[PORTAL PAGE] isEcommerceMode:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
@@ -3693,30 +3693,34 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     <div className="w-full flex flex-col items-stretch justify-start animate-in fade-in duration-300">
       {headlessEmailPrompt ? (
         <div className={`w-full rounded-xl border p-5 flex flex-col items-stretch animate-in zoom-in duration-300 backdrop-blur-xl ${isLightText ? 'border-white/5 bg-white/[0.02]' : 'border-black/5 bg-black/[0.02]'}`}>
-          <div className="flex justify-between items-start mb-1 gap-4">
+          <div className="flex justify-between items-center mb-1">
             <h3 className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>Stripe Quick Checkout</h3>
-            <span className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>{payLabel}</span>
           </div>
           <p className={`text-xs mb-4 ${isLightText ? 'text-white/60' : 'text-black/60'}`}>Verify your identity with Stripe Link to complete your payment.</p>
+          <div className={`flex items-center justify-between p-5 rounded-2xl mb-4 border ${isLightText
+              ? 'bg-white/[0.03] border-white/5 text-white'
+              : 'bg-black/[0.03] border-black/5 text-black'
+            }`}>
+            <span className={`text-[13px] font-bold uppercase tracking-wider ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Total Amount</span>
+            <span className={`text-3xl font-black tracking-tight`}>{payLabel}</span>
+          </div>
           <input
             type="email"
             placeholder="Email address"
-            className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${
-              isLightText 
-                ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20' 
+            className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${isLightText
+                ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
                 : 'bg-black/5 border border-black/10 text-black placeholder-black/30 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
-            }`}
+              }`}
             value={headlessEmailInput}
             onChange={(e) => setHeadlessEmailInput(e.target.value)}
             autoFocus
           />
           <div className="flex gap-3">
             <button
-              className={`flex-1 py-2.5 rounded-xl font-semibold border transition-all text-xs ${
-                isLightText
+              className={`flex-1 py-2.5 rounded-xl font-semibold border transition-all text-xs ${isLightText
                   ? 'bg-white/[0.03] text-white/80 border-white/5 hover:bg-white/[0.07] hover:text-white'
                   : 'bg-black/[0.03] text-black/80 border-black/5 hover:bg-black/[0.07] hover:text-black'
-              }`}
+                }`}
               onClick={() => {
                 setUserOptedOutOfStripeBypass(true);
                 setHeadlessEmailPrompt(false);
@@ -3728,9 +3732,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 : "Cancel"}
             </button>
             <button
-              className={`flex-1 py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${
-                isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
-              }`}
+              className={`flex-1 py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                }`}
               style={{
                 backgroundColor: theme.primaryColor || "#635BFF",
               }}
@@ -3747,13 +3750,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
         </div>
       ) : (
-        <div className={`w-full flex flex-col relative transition-all duration-300 ${
-          (headlessAuthElement || headlessPaymentElement)
-            ? "border-0 bg-transparent shadow-none" 
-            : `rounded-xl shadow-xl backdrop-blur-xl overflow-hidden border ${
-                isLightText ? 'bg-white/[0.02] border-white/5' : 'bg-black/[0.02] border-black/5'
-              }`
-        }`}>
+        <div className={`w-full flex flex-col relative transition-all duration-300 ${(headlessAuthElement || headlessPaymentElement)
+            ? "border-0 bg-transparent shadow-none"
+            : `rounded-xl shadow-xl backdrop-blur-xl overflow-hidden border ${isLightText ? 'bg-white/[0.02] border-white/5' : 'bg-black/[0.02] border-black/5'
+            }`
+          }`}>
           {/* Header */}
           {!(headlessAuthElement || headlessPaymentElement) && (
             <div className={`p-4 border-b flex items-center justify-between ${isLightText ? 'border-white/5' : 'border-black/5'}`}>
@@ -3764,11 +3765,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 <span className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>stripe</span>
               </span>
               {headlessStep === "error" && (
-                <button 
+                <button
                   onClick={() => window.location.reload()}
                   className={`transition-colors p-1 ${isLightText ? 'text-white/50 hover:text-white' : 'text-black/50 hover:text-black'}`}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
                 </button>
               )}
             </div>
@@ -3779,15 +3780,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             {headlessStep === "error" ? (
               <div className="text-center px-4 py-6 flex flex-col items-center w-full">
                 <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mb-4 text-red-500 border border-red-500/20">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></svg>
                 </div>
                 <h3 className={`text-base font-bold mb-1.5 ${isLightText ? 'text-white' : 'text-black'}`}>Payment Failed</h3>
                 <p className={`text-xs mb-6 max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>{headlessError}</p>
-                <button 
+                <button
                   onClick={() => window.location.reload()}
-                  className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 shadow-md ${
-                    isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
-                  }`}
+                  className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 shadow-md ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                    }`}
                   style={{
                     backgroundColor: theme.primaryColor || "#635BFF",
                   }}
@@ -3798,15 +3798,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             ) : headlessStep === "completed" ? (
               <div className="text-center px-4 py-6 flex flex-col items-center w-full">
                 <div className="w-14 h-14 bg-green-500/10 rounded-full flex items-center justify-center mb-4 text-green-500 border border-green-500/20">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
                 </div>
                 <h3 className={`text-base font-bold mb-1.5 ${isLightText ? 'text-white' : 'text-black'}`}>Payment Complete</h3>
                 <p className={`text-xs mb-6 max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>USDC has been transferred successfully.</p>
-                <button 
+                <button
                   onClick={() => window.location.reload()}
-                  className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 shadow-md ${
-                    isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
-                  }`}
+                  className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 shadow-md ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                    }`}
                   style={{
                     backgroundColor: theme.primaryColor || "#635BFF",
                   }}
@@ -3821,19 +3820,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 <input
                   type="tel"
                   placeholder="Phone number (+1 555-555-5555)"
-                  className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${
-                    isLightText 
-                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20' 
+                  className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${isLightText
+                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
                       : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
-                  }`}
+                    }`}
                   value={headlessPhoneInput}
                   onChange={(e) => setHeadlessPhoneInput(e.target.value)}
                   autoFocus
                 />
                 <button
-                  className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${
-                    isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
-                  }`}
+                  className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                    }`}
                   style={{
                     backgroundColor: theme.primaryColor || "#635BFF",
                   }}
@@ -3846,8 +3843,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 </button>
               </div>
             ) : headlessAuthElement || headlessPaymentElement ? (
-              <div 
-                className="w-full h-full flex flex-col items-stretch stripe-embedded-container animate-in fade-in duration-300" 
+              <div
+                className="w-full h-full flex flex-col items-stretch stripe-embedded-container animate-in fade-in duration-300"
                 ref={(el) => {
                   if (el) {
                     const elementToMount = headlessAuthElement || headlessPaymentElement;
@@ -3856,7 +3853,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       el.appendChild(elementToMount);
                     }
                   }
-                }} 
+                }}
               />
             ) : (
               <div className="text-center flex flex-col items-center px-4 py-10 w-full animate-in fade-in duration-300">
@@ -3866,7 +3863,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   {/* Glowing Core */}
                   <div className={`w-9 h-9 rounded-full border flex items-center justify-center ${isLightText ? 'bg-white/[0.02] border-white/10' : 'bg-black/[0.02] border-black/10'}`}>
                     <svg className={`h-4.5 w-4.5 animate-pulse ${isLightText ? 'text-white/80' : 'text-black/80'}`} viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.25z"/>
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.25z" />
                     </svg>
                   </div>
                 </div>
@@ -3874,7 +3871,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 {headlessStep === "awaiting_funds" ? (
                   <div className="w-full max-w-xs mt-6 flex flex-col items-stretch px-2 animate-in fade-in zoom-in duration-500">
                     <div className={`w-full h-2 rounded-full overflow-hidden relative ${isLightText ? 'bg-white/10' : 'bg-black/10'}`}>
-                      <div 
+                      <div
                         className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-1000 ease-linear rounded-full"
                         style={{ width: `${((40 - awaitingFundsSeconds) / 40) * 100}%` }}
                       />
@@ -3903,15 +3900,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             navigator.clipboard.writeText(headlessBuyerWallet);
                             setCopiedWallet(true);
                             setTimeout(() => setCopiedWallet(false), 2000);
-                          } catch {}
+                          } catch { }
                         }}
                         className={`transition-all p-1.5 rounded-md ${isLightText ? 'text-white/40 hover:text-white/80 hover:bg-white/5' : 'text-black/40 hover:text-black/80 hover:bg-black/5'}`}
                         title="Copy wallet address"
                       >
                         {copiedWallet ? (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
                         ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></svg>
                         )}
                       </button>
                     </div>
@@ -3920,12 +3917,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               </div>
             )}
           </div>
-          
+
           {/* Footer */}
           {!(headlessAuthElement || headlessPaymentElement) && (
             <div className={`p-4 border-t text-center ${isLightText ? 'border-white/5 bg-white/[0.01]' : 'border-black/5 bg-black/[0.01]'}`}>
               <p className={`text-xs flex items-center justify-center gap-1.5 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
                 Secure connection to Stripe
               </p>
             </div>
@@ -3934,6 +3931,57 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       )}
     </div>
   ) : null;
+
+  const rightSideBackground = useMemo(() => {
+    if (!isTwoColumnLayout || !isInvoiceLayout) return undefined;
+
+    // Helper to safely parse color to rgba
+    const getRgba = (colorStr: string, opacity: number): string => {
+      try {
+        const cleaned = String(colorStr || "").trim().toLowerCase();
+
+        // Handle rgba/rgb directly
+        if (cleaned.startsWith("rgb")) {
+          if (cleaned.startsWith("rgba")) {
+            return cleaned.replace(/[\d\.]+\)$/, `${opacity})`);
+          }
+          return cleaned.replace("rgb", "rgba").replace(/\)$/, `, ${opacity})`);
+        }
+
+        // Handle hex
+        let hex = cleaned.startsWith("#") ? cleaned.slice(1) : cleaned;
+        if (hex.length === 3) {
+          hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+        }
+
+        if (hex.length === 6) {
+          const r = parseInt(hex.slice(0, 2), 16);
+          const g = parseInt(hex.slice(2, 4), 16);
+          const b = parseInt(hex.slice(4, 6), 16);
+          if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+            return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+          }
+        }
+      } catch (e) {
+        console.error("[PORTAL PAGE] Error parsing theme color to RGBA:", e);
+      }
+      // Safe fallback
+      return `rgba(99, 91, 255, ${opacity})`;
+    };
+
+    const primaryColor = theme.primaryColor || '#635BFF';
+    const accentColor = theme.secondaryColor || primaryColor;
+
+    if (isLightBackground) {
+      const startColor = getRgba(primaryColor, 0.03);
+      const endColor = getRgba(accentColor, 0.08);
+      return `linear-gradient(135deg, ${startColor} 0%, ${endColor} 100%)`;
+    } else {
+      const startColor = getRgba(primaryColor, 0.08);
+      const endColor = getRgba(accentColor, 0.15);
+      return `linear-gradient(135deg, rgba(10,11,16,0.98) 0%, rgba(10,11,16,0.92) 100%), linear-gradient(135deg, ${startColor} 0%, ${endColor} 100%)`;
+    }
+  }, [isTwoColumnLayout, isInvoiceLayout, theme.primaryColor, theme.secondaryColor, isLightBackground]);
 
   // Dynamically resolved color values for contrast & theme consistency
   const headerColor = isLightBackground
@@ -3977,11 +4025,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           borderColor: borderColor,
           backgroundColor: isLightBackground
             ? (
-                (theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") ||
-                (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") ||
-                (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") ||
-                (isEmbedded ? "transparent" : "rgba(255,255,255,0.85)")
-              )
+              (theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") ||
+              (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") ||
+              (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") ||
+              (isEmbedded ? "transparent" : "rgba(255,255,255,0.85)")
+            )
             : (theme.pageBg || theme.surfaceBg || theme.primaryBg || (isEmbedded ? "transparent" : "rgba(10,11,16,0.6)")),
           borderRadius: (theme as any).borderRadius || undefined,
           boxShadow: (theme as any).shadowIntensity === 'none' ? 'none' : ((theme as any).shadowIntensity === 'soft' ? '0 4px 20px -2px rgba(0,0,0,0.05)' : ((theme as any).shadowIntensity === 'strong' ? '0 20px 40px -10px rgba(0,0,0,0.2)' : undefined)),
@@ -4116,16 +4164,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             .pp-portal-container [class*="glass"],
             .pp-portal-container [class*="backdrop"] {
               background: ${isLightBackground
-                ? ((theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") || (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") || (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") || "rgba(255,255,255,0.85)")
-                : (theme.pageBg || theme.surfaceBg || theme.primaryBg || "rgba(10,11,16,0.6)")} !important;
+              ? ((theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") || (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") || (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") || "rgba(255,255,255,0.85)")
+              : (theme.pageBg || theme.surfaceBg || theme.primaryBg || "rgba(10,11,16,0.6)")} !important;
               border-color: ${borderColor} !important;
               ${(theme as any).borderRadius ? `border-radius: ${(theme as any).borderRadius} !important;` : ''}
             }
 
             .pp-portal-container .pp-currency-menu {
               background: ${isLightBackground
-                ? ((theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") || (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") || (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") || '#ffffff')
-                : (theme.pageBg || theme.surfaceBg || theme.primaryBg || '#0c0d14')} !important;
+              ? ((theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") || (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") || (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") || '#ffffff')
+              : (theme.pageBg || theme.surfaceBg || theme.primaryBg || '#0c0d14')} !important;
               border-color: ${borderColor} !important;
               border-radius: ${(theme as any).borderRadius || '12px'} !important;
               box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4) !important;
@@ -4290,44 +4338,44 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
         {/* Floating login button (top-right, hidden when embedded) */}
         {wallets.length > 0 && (
-        <div className="hidden sm:block fixed top-2 right-2 z-[20002]" style={{ display: isEmbedded ? "none" : undefined }}>
-          <ConnectButton
-            client={client}
-            chain={chain}
-            wallets={wallets}
-            connectButton={{
-              label: <span className="microtext drop-shadow-[0_1.2px_1.2px_rgba(0,0,0,0.8)]">Login</span>,
-              className: connectButtonClass,
-              style: getConnectButtonStyle(),
-            }}
-            signInButton={{
-              label: "Authenticate",
-              className: connectButtonClass,
-              style: getConnectButtonStyle(),
-            }}
-            detailsButton={{
-              displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
-            }}
-            connectModal={{
-              showThirdwebBranding: false,
-              title: "Login",
-              titleIcon: (() => {
-                const c = (theme.brandLogoUrl || "").trim();
-                const a = (theme.symbolLogoUrl || "").trim();
-                const b = (theme.brandFaviconUrl || "").trim();
-                return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
-              })(),
-              size: "compact",
-            }}
-            theme={twTheme}
-          />
-        </div>
+          <div className="hidden sm:block fixed top-2 right-2 z-[20002]" style={{ display: isEmbedded ? "none" : undefined }}>
+            <ConnectButton
+              client={client}
+              chain={chain}
+              wallets={wallets}
+              connectButton={{
+                label: <span className="microtext drop-shadow-[0_1.2px_1.2px_rgba(0,0,0,0.8)]">Login</span>,
+                className: connectButtonClass,
+                style: getConnectButtonStyle(),
+              }}
+              signInButton={{
+                label: "Authenticate",
+                className: connectButtonClass,
+                style: getConnectButtonStyle(),
+              }}
+              detailsButton={{
+                displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+              }}
+              connectModal={{
+                showThirdwebBranding: false,
+                title: "Login",
+                titleIcon: (() => {
+                  const c = (theme.brandLogoUrl || "").trim();
+                  const a = (theme.symbolLogoUrl || "").trim();
+                  const b = (theme.brandFaviconUrl || "").trim();
+                  return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
+                })(),
+                size: "compact",
+              }}
+              theme={twTheme}
+            />
+          </div>
         )}
 
         {/* Scrollable content (centered) */}
         <div
           ref={contentRef}
-          className={`flex-1 flex flex-col ${isTwoColumnLayout ? ("items-stretch justify-start py-6 md:py-10 w-full " + (isInvoiceLayout ? "max-w-6xl" : "max-w-6xl")) : "items-center justify-start max-w-[428px]"} ${isEmbedded && !isTwoColumnLayout ? "px-3" : "px-3"} mx-auto`}
+          className={`flex-1 flex flex-col ${isTwoColumnLayout ? ("items-stretch justify-start py-6 md:py-10 w-full " + (isInvoiceLayout ? "max-w-none !max-w-none !p-0 !py-0" : "max-w-6xl")) : "items-center justify-start max-w-[428px]"} ${isEmbedded && !isTwoColumnLayout ? "px-3" : "px-3"} mx-auto`}
           style={{
             backdropFilter: "saturate(1.02) contrast(1.02)",
             paddingTop: isEmbedded ? "8px" : undefined,
@@ -4349,667 +4397,677 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           {isTwoColumnLayout ? (
             <>
 
-              <div className={`${isTwoColumnLayout ? (isEmbedded ? "mt-4 mb-2 w-full" : "mt-8 md:mt-12 mb-4 md:mb-6 w-full") : "my-auto"} grid ${isTwoColumnLayout ? "grid-cols-2" : "grid-cols-1"} gap-3 items-stretch md:gap-6`}>
-                <div className="relative overflow-visible p-3 md:p-4 h-full flex flex-col justify-center">
-                  {/* Currency equivalents selector */}
-                  <div className="p-3" ref={currencyRef}>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-semibold">Order Preview</div>
+              <div className={`${isTwoColumnLayout ? (isEmbedded ? "mt-4 mb-2 w-full" : (isInvoiceLayout ? "w-full min-h-screen md:min-h-[calc(100vh-64px)] m-0 md:m-0" : "mt-8 md:my-auto md:py-4 mb-4 w-full")) : "my-auto"} grid ${isTwoColumnLayout ? "grid-cols-2" : "grid-cols-1"} ${isTwoColumnLayout && isInvoiceLayout ? "gap-0 md:gap-0" : "gap-3 md:gap-6"} items-stretch`}>
+                <div className={`relative overflow-visible p-3 h-full flex flex-col justify-center ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : "md:p-4"}`}>
+                  <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-xl md:ml-auto" : "w-full"}>
+                    {/* Currency equivalents selector */}
+                    <div className="p-3" ref={currencyRef}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-semibold">Order Preview</div>
+                          <div className="microtext text-muted-foreground">
+                            Totals are shown in the selected currency. USD equivalent is shown when applicable.
+                          </div>
+                        </div>
                         <div className="microtext text-muted-foreground">
-                          Totals are shown in the selected currency. USD equivalent is shown when applicable.
+                          {ratesUpdatedAt ? `Rates ${ratesUpdatedAt.toLocaleTimeString()}` : "Loading rates…"}
                         </div>
                       </div>
-                      <div className="microtext text-muted-foreground">
-                        {ratesUpdatedAt ? `Rates ${ratesUpdatedAt.toLocaleTimeString()}` : "Loading rates…"}
-                      </div>
-                    </div>
 
-                    <div className="mt-3">
-                      <label className="text-xs text-muted-foreground">Select currency</label>
-                      <div className="relative mt-1">
-                        <button
-                          type="button"
-                          onClick={() => setCurrencyOpen((v) => !v)}
-                          className="pp-currency-btn h-10 px-3 text-left border transition-colors flex items-center gap-3 w-full"
-                          title="View currency equivalents"
-                        >
-                          <span className="inline-flex items-center justify-center">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              alt={currency}
-                              src={getCurrencyFlag(currency)}
-                              className="w-[18px] h-[14px] rounded-[2px] ring-1 ring-foreground/10"
-                            />
-                          </span>
-                          <span className="truncate">
-                            {currency} — {(availableFiatCurrencies as readonly any[]).find((x) => x.code === currency)?.name || ""}
-                          </span>
-                          <span className="ml-auto opacity-70">▾</span>
-                        </button>
-                        {currencyOpen && (
-                          <div className="pp-currency-menu absolute z-[20005] mt-1 w-full border p-1 max-h-64 overflow-y-auto">
-                            {availableFiatCurrencies.map((c) => (
-                              <button
-                                key={c.code}
-                                type="button"
-                                onClick={() => {
-                                  setCurrency(c.code);
-                                  setCurrencyOpen(false);
-                                }}
-                                className="w-full px-2 py-2 rounded-md hover:bg-white/10 flex items-center gap-2 text-sm transition-colors"
-                                style={{ color: isLightText ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.9)" }}
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  alt={c.code}
-                                  src={getCurrencyFlag(c.code)}
-                                  className="w-[18px] h-[14px] rounded-[2px] ring-1 ring-foreground/10"
-                                />
-                                <span className="font-medium">{c.code}</span>
-                                <span className="text-muted-foreground">— {c.name}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Receipt */}
-                  <div className="mt-2 p-3">
-                    <div className="flex items-center gap-3">
-                      {getSymbolLogo() && (
-                        <div data-pp-logo-wrapper="1" className={`${theme.brandLogoShape === "round" ? "rounded-full" : "rounded-lg"} w-10 h-10 bg-foreground/5 overflow-hidden grid place-items-center`}>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={getSymbolLogo()}
-                            alt="Logo"
-                            className="w-10 h-10 object-contain"
-                          />
-                        </div>
-                      )}
-                      <div>
-                        <div className="text-sm font-semibold">{effectiveBrandName || getDefaultBrandName(theme.brandKey)}</div>
-                        <div className="microtext text-muted-foreground">Digital Receipt</div>
-                      </div>
-                      <div className="ml-auto microtext text-muted-foreground">
-                        {loadingReceipt ? "Loading…" : "Live"}
-                      </div>
-                    </div>
-
-                    <div className="mt-3 space-y-2">
-                      {(() => {
-                        const displayItems = (items || []).filter((it) => {
-                          const label = String(it.label || "");
-                          return !/processing fee/i.test(label) && !/portal fee/i.test(label) && !/tax/i.test(label);
-                        });
-                        return displayItems.map((it, idx) => (
-                          <div key={idx} className="flex items-center justify-between text-sm">
-                            <span className="opacity-80">
-                              {it.label}
-                              {typeof it.qty === "number" && it.qty > 1 ? ` × ${it.qty}` : ""}
-                            </span>
-                            <span>{(() => {
-                              const usdVal = Number(it.priceUsd || 0);
-                              if (currency === "USD") {
-                                return formatCurrency(usdVal, "USD");
-                              }
-                              const converted = convertFromUsd(usdVal, currency, rates);
-                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(usdVal, "USD");
-                            })()}</span>
-                          </div>
-                        ));
-                      })()}
-
-                      {merchantTipEnabled && (
-                        <div className="mt-2">
-                          <div className="text-xs font-medium">Add a tip</div>
-                          <div className="mt-1 flex gap-2 flex-wrap">
-                            {[...merchantTipPresets.map(String), ...(merchantAllowCustom ? ["custom"] : [])].map((v) => (
-                              <button
-                                key={v}
-                                type="button"
-                                onClick={() => setTipChoice(v)}
-                                className={`pp-tip-btn px-2 py-1 rounded-md border text-xs transition-colors ${isLightText ? 'hover:bg-white/5' : 'hover:bg-black/5'} ${tipChoice === v ? (isLightText ? "bg-white/10 border-white/20" : "bg-black/10 border-black/20") : ""}`}
-                                title={v === "custom" ? "Custom tip amount" : `Tip ${v}%`}
-                              >
-                                {v === "custom" ? "Custom" : `${v}%`}
-                              </button>
-                            ))}
-                            {tipChoice === "custom" && (
-                              <input
-                                type="number"
-                                step="0.1"
-                                min="0"
-                                max="100"
-                                value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
-                                onChange={(e) => setTipCustomPct(Number(e.target.value))}
-                                placeholder="%"
-                                className={`h-7 px-2 rounded-md border text-xs w-20 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/30' : 'bg-black/5 border-black/10 text-black placeholder-black/30'}`}
-                                title="Enter tip percentage"
+                      <div className="mt-3">
+                        <label className="text-xs text-muted-foreground">Select currency</label>
+                        <div className="relative mt-1">
+                          <button
+                            type="button"
+                            onClick={() => setCurrencyOpen((v) => !v)}
+                            className="pp-currency-btn h-10 px-3 text-left border transition-colors flex items-center gap-3 w-full"
+                            title="View currency equivalents"
+                          >
+                            <span className="inline-flex items-center justify-center">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                alt={currency}
+                                src={getCurrencyFlag(currency)}
+                                className="w-[18px] h-[14px] rounded-[2px] ring-1 ring-foreground/10"
                               />
-                            )}
-                          </div>
-                          <div className="microtext text-muted-foreground mt-1">
-                            Tip applies to subtotal before tax and fees.
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="border-t border-dashed my-2" />
-                      <div className="flex items-center justify-between text-sm">
-                        <span>Subtotal</span>
-                        <span>{(() => {
-                          if (currency === "USD") {
-                            return formatCurrency(itemsSubtotalUsd, "USD");
-                          }
-                          const converted = convertFromUsd(itemsSubtotalUsd, currency, rates);
-                          const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                          return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(itemsSubtotalUsd, "USD");
-                        })()}</span>
-                      </div>
-                      {tipUsd > 0 && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="opacity-80">Tip</span>
-                          <span>{(() => {
-                            if (currency === "USD") {
-                              return formatCurrency(tipUsd, "USD");
-                            }
-                            const converted = convertFromUsd(tipUsd, currency, rates);
-                            const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                            return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(tipUsd, "USD");
-                          })()}</span>
-                        </div>
-                      )}
-                      {taxUsd > 0 && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="opacity-80">Tax</span>
-                          <span>{(() => {
-                            if (currency === "USD") {
-                              return formatCurrency(taxUsd, "USD");
-                            }
-                            const converted = convertFromUsd(taxUsd, currency, rates);
-                            const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                            return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(taxUsd, "USD");
-                          })()}</span>
-                        </div>
-                      )}
-                      {processingFeeUsd > 0 && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
-                            <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0)).toFixed(2)}%)</span>
-                            {detectedCardFunding && (
-                              <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
-                                {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
-                              </span>
-                            )}
-                          </span>
-                          <span>{(() => {
-                            if (currency === "USD") {
-                              return formatCurrency(processingFeeUsd, "USD");
-                            }
-                            const converted = convertFromUsd(processingFeeUsd, currency, rates);
-                            const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                            return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(processingFeeUsd, "USD");
-                          })()}</span>
-                        </div>
-                      )}
-                      {detectedCardFunding !== "credit" && (
-                        <div className="microtext text-muted-foreground opacity-70 text-right mt-1.5">
-                          * Credit card payments subject to a {creditFeePct.toFixed(2)}% fee
-                        </div>
-                      )}
-                      <div className="border-t border-dashed my-2" />
-                    </div>
-                  </div>
-                </div>
-                <div className="h-full flex flex-col justify-center">
-                  {/* Payment Section */}
-                  <div ref={payRef} className={`mt-0 md:mt-0 ${isEmbedded ? "rounded-none border-0 p-0 bg-transparent" : "rounded-2xl border p-3 bg-background/70"} flex flex-col`}>
-                    <div ref={widgetRootRef} className={isEmbedded ? "mt-0 rounded-2xl p-3" : "mt-0 rounded-2xl p-3"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
-                      {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
-                        <>
-                          {/* Payment Complete State - Blocks Double Payment */}
-                          {(paymentConfirmed || isSettled(receipt.status)) ? (
-                            <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
-                              <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
-                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                </svg>
-                              </div>
-                              <div className="space-y-1">
-                                <div className={`text-xl font-bold ${isLightText ? 'text-white' : 'text-black'}`}>Payment Complete</div>
-                                <div className={`text-sm ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
-                                  {formatCurrency(totalUsd, "USD")} • {receiptId}
-                                </div>
-                              </div>
-                              <div className={`p-4 rounded-xl border w-full max-w-[280px] mt-2 ${isLightText ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/10'}`}>
-                                <div className={`text-xs uppercase tracking-wider font-semibold mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
-                                  Proof of Payment
-                                </div>
-                                <div className={`text-lg font-bold break-all ${isLightText ? 'text-white' : 'text-black'}`}>
-                                  {(() => {
-                                    const tx = paymentConfirmed?.txHash || (receipt as any)?.transactionHash;
-                                    if (tx) return <span className="font-mono text-xs">{tx.slice(0, 10)}...{tx.slice(-8)}</span>;
-                                    return <span className="font-mono text-sm">{isSettled(receipt.status) ? "Confirmed" : "Validating..."}</span>;
-                                  })()}
-                                </div>
-                                <div className="text-xs text-emerald-400 font-medium mt-1">
-                                  Show this screen to merchant
-                                </div>
-                              </div>
-                              <div className="mt-4 flex gap-2">
-                                <button className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isLightText ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-black/10 hover:bg-black/20 text-black'}`} onClick={() => window.location.reload()}>
-                                  Refresh Receipt
+                            </span>
+                            <span className="truncate">
+                              {currency} — {(availableFiatCurrencies as readonly any[]).find((x) => x.code === currency)?.name || ""}
+                            </span>
+                            <span className="ml-auto opacity-70">▾</span>
+                          </button>
+                          {currencyOpen && (
+                            <div className="pp-currency-menu absolute z-[20005] mt-1 w-full border p-1 max-h-64 overflow-y-auto">
+                              {availableFiatCurrencies.map((c) => (
+                                <button
+                                  key={c.code}
+                                  type="button"
+                                  onClick={() => {
+                                    setCurrency(c.code);
+                                    setCurrencyOpen(false);
+                                  }}
+                                  className="w-full px-2 py-2 rounded-md hover:bg-white/10 flex items-center gap-2 text-sm transition-colors"
+                                  style={{ color: isLightText ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.9)" }}
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    alt={c.code}
+                                    src={getCurrencyFlag(c.code)}
+                                    className="w-[18px] h-[14px] rounded-[2px] ring-1 ring-foreground/10"
+                                  />
+                                  <span className="font-medium">{c.code}</span>
+                                  <span className="text-muted-foreground">— {c.name}</span>
                                 </button>
-                              </div>
-
-                              {/* Claim / Link Wallet Section */}
-                              <div className={`mt-8 pt-6 border-t w-full max-w-[320px] flex flex-col items-center animate-in slide-in-from-bottom-4 duration-500 ${isLightText ? 'border-white/10' : 'border-black/10'}`}>
-                                {!account ? (
-                                  <>
-                                    <div className="text-sm font-medium text-pink-500 dark:text-pink-200 mb-2">Claim Loyalty Points</div>
-                                    <div className={`text-xs mb-3 max-w-[240px] ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
-                                      Connect your wallet to link this purchase and earn rewards.
-                                    </div>
-                                    {wallets.length > 0 && (
-                                    <ConnectButton
-                                      client={client}
-                                      chain={chain}
-                                      wallets={wallets}
-                                      connectButton={{
-                                        label: <span className="microtext">Login to Claim</span>,
-                                        className: connectButtonClass,
-                                        style: getConnectButtonStyle(),
-                                      }}
-                                      signInButton={{
-                                        label: "Authenticate",
-                                        className: connectButtonClass,
-                                        style: getConnectButtonStyle(),
-                                      }}
-                                      detailsButton={{
-                                        displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
-                                      }}
-                                      connectModal={{
-                                        showThirdwebBranding: false,
-                                        title: "Login",
-                                        titleIcon: (() => {
-                                          const c = (theme.brandLogoUrl || "").trim();
-                                          const a = (theme.symbolLogoUrl || "").trim();
-                                          const b = (theme.brandFaviconUrl || "").trim();
-                                          return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
-                                        })(),
-                                        size: "compact",
-                                      }}
-                                      theme={twTheme}
-                                    />
-                                    )}
-                                  </>
-                                ) : (
-                                  <div className="text-center">
-                                    {claimStatus === "claiming" && (
-                                      <div className={`text-sm animate-pulse ${isLightText ? 'text-white/80' : 'text-black/80'}`}>Linking to wallet...</div>
-                                    )}
-                                    {(claimStatus === "success" || claimStatus === "base_registered") && (
-                                      <>
-                                        <div className="space-y-1">
-                                          <div className="flex items-center justify-center gap-2 text-green-400 font-bold">
-                                            <span>✓</span> <span>Purchase Claimed</span>
-                                          </div>
-                                          {claimStatus === "base_registered" && (
-                                            <div className="text-xs text-purple-600 dark:text-purple-200 animate-in fade-in zoom-in">
-                                              You are now registered at {effectiveBrandName}
-                                            </div>
-                                          )}
-                                          <div className={`text-xs pt-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
-                                            Linked to {account.address.slice(0, 6)}...{account.address.slice(-4)}
-                                          </div>
-                                        </div>
-                                        <div className="mt-4 flex flex-col gap-2 w-full">
-                                          <a
-                                            href="/"
-                                            className="px-4 py-2 rounded-lg text-white text-sm font-medium text-center transition-colors hover:opacity-90"
-                                            style={{ backgroundColor: "var(--pp-secondary, #10b981)" }}
-                                          >
-                                            Continue Shopping
-                                          </a>
-                                          <a
-                                            href="/admin?tab=purchases"
-                                            className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-medium text-center transition-colors"
-                                          >
-                                            View My Purchases
-                                          </a>
-                                        </div>
-                                      </>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-
+                              ))}
                             </div>
-                          ) : (
-                            <>
-                              {/* ── SHIPPING ACCORDION ── */}
-                              {shippingRequired && (
-                                <div className="w-full mb-4">
-                                  {/* Step 1: Shipping Details */}
-                                  <div className="rounded-xl border overflow-hidden mb-3" style={{ borderColor: isLightText ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', background: isLightText ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)' }}>
-                                    <button
-                                      type="button"
-                                      className="w-full flex items-center justify-between px-4 py-3 text-left"
-                                      onClick={() => { if (shippingComplete) setShippingComplete(false); }}
-                                      style={{ cursor: shippingComplete ? 'pointer' : 'default' }}
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${shippingComplete ? 'bg-green-500 text-white' : (isLightText ? 'bg-white/10 text-white' : 'bg-black/10 text-black')}`}>
-                                          {shippingComplete ? '✓' : '1'}
-                                        </div>
-                                        <span className={`text-sm font-semibold ${isLightText ? 'text-white' : 'text-black'}`}>Shipping Details</span>
-                                      </div>
-                                      {shippingComplete && (
-                                        <span className={`text-xs ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Click to edit</span>
-                                      )}
-                                    </button>
-
-                                    {/* Collapsed summary when complete */}
-                                    {shippingComplete && (
-                                      <div className={`px-4 pb-3 text-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
-                                        <div>{shipName} · {shipLine1}{shipLine2 ? `, ${shipLine2}` : ''}</div>
-                                        <div>{shipCity}, {shipState} {shipZip} {shipCountry}</div>
-                                        <div className="mt-1 capitalize">{shipMethod} Shipping{shippingCostUsd > 0 ? ` · $${shippingCostUsd.toFixed(2)}` : ' · Free'}</div>
-                                      </div>
-                                    )}
-
-                                    {/* Expanded form when not complete */}
-                                    {!shippingComplete && (
-                                      <div className="px-4 pb-4 pt-3 space-y-3">
-                                        {/* Login gate — require wallet connection before shipping */}
-                                        {!account?.address ? (
-                                          <div className={`flex flex-col items-center gap-3 py-6 text-center`}>
-                                            <div className={`text-sm ${isLightText ? 'text-white/70' : 'text-black/70'}`}>Please log in to continue with shipping</div>
-                                            {wallets.length > 0 && (
-                                            <ConnectButton
-                                              client={client}
-                                              chain={chain}
-                                              wallets={wallets}
-                                              connectButton={{
-                                                label: <span className="microtext">Login to Continue</span>,
-                                                className: connectButtonClass,
-                                                style: getConnectButtonStyle(),
-                                              }}
-                                              connectModal={{
-                                                showThirdwebBranding: false,
-                                                title: "Login",
-                                                size: "compact",
-                                              }}
-                                              theme={twTheme}
-                                            />
-                                            )}
-                                          </div>
-                                        ) : (
-                                          <>
-                                            <div className="grid grid-cols-1 gap-2">
-                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Email Address *" type="email" value={shipEmail} onChange={(e) => setShipEmail(e.target.value)} />
-                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Full Name *" value={shipName} onChange={(e) => setShipName(e.target.value)} />
-                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Address Line 1 *" value={shipLine1} onChange={(e) => setShipLine1(e.target.value)} />
-                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Address Line 2 (optional)" value={shipLine2} onChange={(e) => setShipLine2(e.target.value)} />
-                                              <div className="grid grid-cols-2 gap-2">
-                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="City *" value={shipCity} onChange={(e) => setShipCity(e.target.value)} />
-                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="State/Province" value={shipState} onChange={(e) => setShipState(e.target.value)} />
-                                              </div>
-                                              <div className="grid grid-cols-2 gap-2">
-                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="ZIP / Postal *" value={shipZip} onChange={(e) => setShipZip(e.target.value)} />
-                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Country" value={shipCountry} onChange={(e) => setShipCountry(e.target.value.toUpperCase().slice(0, 2))} maxLength={2} />
-                                              </div>
-                                            </div>
-
-                                            {/* Shipping method selector with prices */}
-                                            <div>
-                                              <div className={`text-xs mb-2 font-medium ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Select Shipping Method</div>
-                                              <div className="space-y-1.5">
-                                                {shippingOptions.methods.map((m) => {
-                                                  const price = shippingOptions.pricing[m] || 0;
-                                                  const isFree = (() => {
-                                                    const threshold = items.reduce((max, it) => {
-                                                      if (it.requiresShipping && it.shippingConfig?.freeShippingThreshold) return Math.max(max, it.shippingConfig.freeShippingThreshold);
-                                                      return max;
-                                                    }, 0);
-                                                    return threshold > 0 && itemsSubtotalUsd >= threshold;
-                                                  })();
-                                                  return (
-                                                    <label key={m} className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors ${shipMethod === m ? (isLightText ? 'bg-white/10 border border-white/20' : 'bg-black/10 border border-black/20') : (isLightText ? 'border border-transparent hover:bg-white/5' : 'border border-transparent hover:bg-black/5')}`}>
-                                                      <div className="flex items-center gap-2">
-                                                        <input type="radio" name="shipMethod" value={m} checked={shipMethod === m} onChange={() => setShipMethod(m)} className="accent-emerald-500" />
-                                                        <span className={`text-sm capitalize ${isLightText ? 'text-white' : 'text-black'}`}>{m}</span>
-                                                      </div>
-                                                      <span className={`text-sm font-medium ${isLightText ? 'text-white' : 'text-black'}`}>{isFree ? 'Free' : price > 0 ? `$${price.toFixed(2)}` : 'Free'}</span>
-                                                    </label>
-                                                  );
-                                                })}
-                                              </div>
-                                            </div>
-
-                                            {shippingError && <div className="text-xs text-red-400">{shippingError}</div>}
-
-                                            <button
-                                              type="button"
-                                              disabled={!shippingAddressValid || !shipMethod || shippingSaving}
-                                              onClick={handleShippingSubmit}
-                                              className={`w-full h-10 rounded-lg text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${isLightText ? 'text-white' : 'text-white'}`}
-                                              style={{ backgroundColor: shippingAddressValid && shipMethod ? (theme.primaryColor || '#10b981') : (isLightText ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'), color: shippingAddressValid && shipMethod ? (isColorLight(theme.primaryColor || '#10b981') ? '#111827' : '#ffffff') : (isLightText ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.4)') }}
-                                            >
-                                              {shippingSaving ? 'Saving…' : 'Continue to Payment →'}
-                                            </button>
-                                          </>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  {/* Step 2: Payment (visible only when shipping is complete) */}
-                                  <div className={`rounded-xl border overflow-hidden transition-all duration-300 ${shippingComplete ? (isLightText ? 'border-white/10' : 'border-black/10') + ' opacity-100 max-h-[2000px]' : 'border-transparent opacity-40 max-h-12 pointer-events-none'}`} style={{ background: shippingComplete ? (isLightText ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)') : 'transparent' }}>
-                                    <div className="flex items-center gap-2 px-4 py-3">
-                                      <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${shippingComplete ? (isLightText ? 'bg-white/10 text-white' : 'bg-black/10 text-black') : (isLightText ? 'bg-white/5 text-white/40' : 'bg-black/5 text-black/40')}`}>2</div>
-                                      <span className={`text-sm font-semibold ${shippingComplete ? (isLightText ? 'text-white' : 'text-black') : (isLightText ? 'text-white/40' : 'text-black/40')}`}>Payment</span>
-                                    </div>
-                                    {shippingComplete && (
-                                      <div className="px-2 pb-2">
-                                        {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
-                                        <CheckoutWidget
-                                          key={`${token}-${currency}`}
-                                          className="w-full"
-                                          name={`Total (${currency})`}
-                                          client={client}
-                                          chain={chain}
-                                          currency={widgetCurrency as any}
-                                          amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
-                                          seller={sellerAddress || merchantWallet || recipient}
-                                          tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
-                                          showThirdwebBranding={false}
-                                          theme={widgetTheme}
-                                          style={{
-                                            width: "100%",
-                                            maxWidth: "100%",
-                                            background: "transparent",
-                                            border: "none",
-                                            borderRadius: 0,
-                                          }}
-                                          connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
-                                          purchaseData={{
-                                            productId: `portal:${receiptId}`,
-                                            meta: {
-                                              token,
-                                              currency,
-                                              usd: totalUsd,
-                                              tipUsd,
-                                              itemsSubtotalUsd,
-                                              taxUsd,
-                                              processingFeeUsd,
-                                              feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
-                                              shipping: {
-                                                name: shipName,
-                                                line1: shipLine1,
-                                                line2: shipLine2,
-                                                city: shipCity,
-                                                state: shipState,
-                                                zip: shipZip,
-                                                country: shipCountry,
-                                                method: shipMethod,
-                                                costUsd: shippingCostUsd,
-                                              }
-                                            },
-                                          }}
-                                          onSuccess={(result: any) => {
-                                            console.log("[CHECKOUT] Success:", result);
-                                            const txHash = result?.transactionHash || result?.hash;
-                                            const buyer = (account?.address || "").toLowerCase();
-                                            setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
-                                            if (txHash && receiptId) {
-                                              postStatus("paid", { buyerWallet: buyer, txHash }).catch(e => console.error("[CHECKOUT] Failed:", e));
-                                            } else {
-                                              postStatus("checkout_success", { buyer });
-                                            }
-                                            try {
-                                              fetch("/api/billing/purchase", {
-                                                method: "POST",
-                                                headers: { "Content-Type": "application/json", "x-wallet": buyer, "x-recipient": merchantWallet || recipient },
-                                                body: JSON.stringify({ seconds: 1, usd: Number(totalUsd.toFixed(2)), token, wallet: buyer, receiptId, recipient: merchantWallet || recipient, idempotencyKey: `portal:${receiptId}:${buyer}:${Date.now()}` }),
-                                              }).catch(() => { });
-                                              try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
-                                              try {
-                                                if (typeof window !== "undefined" && window.parent && window.parent !== window) {
-                                                  const confirmToken = `ppc_${receiptId}_${Date.now()}`;
-                                                  window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                                  window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                                }
-                                              } catch { }
-                                            } catch { }
-                                          }}
-                                        />
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                              {/* Non-shipping: render CheckoutWidget directly */}
-                              {!shippingRequired && (
-                                <>
-                                  {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
-                                  <CheckoutWidget
-                                  key={`noshp-${token}-${currency}`}
-                                  className="w-full"
-                                  name={`Total (${currency})`}
-                                  client={client}
-                                  chain={chain}
-                                  currency={widgetCurrency as any}
-                                  amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
-                                  seller={sellerAddress || merchantWallet || recipient}
-                                  tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
-                                  showThirdwebBranding={false}
-                                  theme={widgetTheme}
-                                  style={{
-                                    width: "100%",
-                                    maxWidth: "100%",
-                                    background: "transparent",
-                                    border: "none",
-                                    borderRadius: 0,
-                                  }}
-                                  connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
-                                  purchaseData={{
-                                    productId: `portal:${receiptId}`,
-                                    meta: {
-                                      token,
-                                      currency,
-                                      usd: totalUsd,
-                                      tipUsd,
-                                      itemsSubtotalUsd,
-                                      taxUsd,
-                                      processingFeeUsd,
-                                      feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
-                                    },
-                                  }}
-                                  onSuccess={(result: any) => {
-                                    console.log("[CHECKOUT] Success:", result);
-                                    const txHash = result?.transactionHash || result?.hash;
-                                    const buyer = (account?.address || "").toLowerCase();
-                                    setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
-                                    if (txHash && receiptId) {
-                                      postStatus("paid", { buyerWallet: buyer, txHash }).catch(e => console.error("[CHECKOUT] Failed:", e));
-                                    } else {
-                                      postStatus("checkout_success", { buyer });
-                                    }
-                                    try {
-                                      fetch("/api/billing/purchase", {
-                                        method: "POST",
-                                        headers: { "Content-Type": "application/json", "x-wallet": buyer, "x-recipient": merchantWallet || recipient },
-                                        body: JSON.stringify({ seconds: 1, usd: Number(totalUsd.toFixed(2)), token, wallet: buyer, receiptId, recipient: merchantWallet || recipient, idempotencyKey: `portal:${receiptId}:${buyer}:${Date.now()}` }),
-                                      }).catch(() => { });
-                                      try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
-                                      try {
-                                        if (typeof window !== "undefined" && window.parent && window.parent !== window) {
-                                          const confirmToken = `ppc_${receiptId}_${Date.now()}`;
-                                          window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                          window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                        }
-                                      } catch { }
-                                    } catch { }
-                                  }}
-                                />
-                                  )}
-                                </>
-                              )}
-                            </>
                           )}
-                        </>
-                      ) : (
-                        <div className="w-full flex flex-col items-center justify-center gap-3 py-8 text-center min-h-[240px]">
-                          {getSymbolLogo() && (
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Receipt */}
+                    <div className="mt-2 p-3">
+                      <div className="flex items-center gap-3">
+                        {getSymbolLogo() && (
+                          <div data-pp-logo-wrapper="1" className={`${theme.brandLogoShape === "round" ? "rounded-full" : "rounded-lg"} w-10 h-10 bg-foreground/5 overflow-hidden grid place-items-center`}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={getSymbolLogo()}
                               alt="Logo"
-                              className="w-16 h-16 rounded-lg object-contain"
+                              className="w-10 h-10 object-contain"
                             />
-                          )}
-                          <div className="text-sm text-muted-foreground">
-                            {loadingReceipt
-                              ? "Loading receipt…"
-                              : totalUsd <= 0
-                                ? "Invalid amount"
-                                : !merchantWallet
-                                  ? "Recipient not configured"
-                                  : !widgetSupported
-                                    ? "Unsupported token/network"
-                                    : !amountReady
-                                      ? "Loading rates…"
-                                      : (!tokenDef || !hasTokenAddr)
-                                        ? "Token not configured"
-                                        : "Preparing checkout…"}
                           </div>
+                        )}
+                        <div>
+                          <div className="text-sm font-semibold">{effectiveBrandName || getDefaultBrandName(theme.brandKey)}</div>
+                          <div className="microtext text-muted-foreground">Digital Receipt</div>
                         </div>
-                      )}
+                        <div className="ml-auto microtext text-muted-foreground">
+                          {loadingReceipt ? "Loading…" : "Live"}
+                        </div>
+                      </div>
 
-                      <div className="microtext text-muted-foreground text-center mt-3">
-                        Thank You For Shopping At {effectiveBrandName}
-                        {isClientSide && isIframe && !isMobileViewport ? (
+                      <div className="mt-3 space-y-2">
+                        {(() => {
+                          const displayItems = (items || []).filter((it) => {
+                            const label = String(it.label || "");
+                            return !/processing fee/i.test(label) && !/portal fee/i.test(label) && !/tax/i.test(label);
+                          });
+                          return displayItems.map((it, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-sm">
+                              <span className="opacity-80">
+                                {it.label}
+                                {typeof it.qty === "number" && it.qty > 1 ? ` × ${it.qty}` : ""}
+                              </span>
+                              <span>{(() => {
+                                const usdVal = Number(it.priceUsd || 0);
+                                if (currency === "USD") {
+                                  return formatCurrency(usdVal, "USD");
+                                }
+                                const converted = convertFromUsd(usdVal, currency, rates);
+                                const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
+                                return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(usdVal, "USD");
+                              })()}</span>
+                            </div>
+                          ));
+                        })()}
+
+                        {merchantTipEnabled && (
                           <div className="mt-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                try {
-                                  const msg = { type: "portalpay-card-cancel", correlationId, receiptId, recipient: merchantWallet || recipient };
-                                  window.parent.postMessage(msg, targetOrigin);
-                                } catch { }
-                              }}
-                              className="px-3 py-1.5 rounded-md border bg-background hover:bg-foreground/5 transition-colors text-xs"
-                              title="Cancel checkout"
-                            >
-                              Cancel checkout
-                            </button>
+                            <div className="text-xs font-medium">Add a tip</div>
+                            <div className="mt-1 flex gap-2 flex-wrap">
+                              {[...merchantTipPresets.map(String), ...(merchantAllowCustom ? ["custom"] : [])].map((v) => (
+                                <button
+                                  key={v}
+                                  type="button"
+                                  onClick={() => setTipChoice(v)}
+                                  className={`pp-tip-btn px-2 py-1 rounded-md border text-xs transition-colors ${isLightText ? 'hover:bg-white/5' : 'hover:bg-black/5'} ${tipChoice === v ? (isLightText ? "bg-white/10 border-white/20" : "bg-black/10 border-black/20") : ""}`}
+                                  title={v === "custom" ? "Custom tip amount" : `Tip ${v}%`}
+                                >
+                                  {v === "custom" ? "Custom" : `${v}%`}
+                                </button>
+                              ))}
+                              {tipChoice === "custom" && (
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  max="100"
+                                  value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
+                                  onChange={(e) => setTipCustomPct(Number(e.target.value))}
+                                  placeholder="%"
+                                  className={`h-7 px-2 rounded-md border text-xs w-20 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/30' : 'bg-black/5 border-black/10 text-black placeholder-black/30'}`}
+                                  title="Enter tip percentage"
+                                />
+                              )}
+                            </div>
+                            <div className="microtext text-muted-foreground mt-1">
+                              Tip applies to subtotal before tax and fees.
+                            </div>
                           </div>
-                        ) : null}
+                        )}
+
+                        <div className="border-t border-dashed my-2" />
+                        <div className="flex items-center justify-between text-sm">
+                          <span>Subtotal</span>
+                          <span>{(() => {
+                            if (currency === "USD") {
+                              return formatCurrency(itemsSubtotalUsd, "USD");
+                            }
+                            const converted = convertFromUsd(itemsSubtotalUsd, currency, rates);
+                            const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
+                            return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(itemsSubtotalUsd, "USD");
+                          })()}</span>
+                        </div>
+                        {tipUsd > 0 && (
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="opacity-80">Tip</span>
+                            <span>{(() => {
+                              if (currency === "USD") {
+                                return formatCurrency(tipUsd, "USD");
+                              }
+                              const converted = convertFromUsd(tipUsd, currency, rates);
+                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(tipUsd, "USD");
+                            })()}</span>
+                          </div>
+                        )}
+                        {taxUsd > 0 && (
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="opacity-80">Tax</span>
+                            <span>{(() => {
+                              if (currency === "USD") {
+                                return formatCurrency(taxUsd, "USD");
+                              }
+                              const converted = convertFromUsd(taxUsd, currency, rates);
+                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(taxUsd, "USD");
+                            })()}</span>
+                          </div>
+                        )}
+                        {processingFeeUsd > 0 && (
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
+                              <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0)).toFixed(2)}%)</span>
+                              {detectedCardFunding && (
+                                <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
+                                  {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
+                                </span>
+                              )}
+                            </span>
+                            <span>{(() => {
+                              if (currency === "USD") {
+                                return formatCurrency(processingFeeUsd, "USD");
+                              }
+                              const converted = convertFromUsd(processingFeeUsd, currency, rates);
+                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(processingFeeUsd, "USD");
+                            })()}</span>
+                          </div>
+                        )}
+                        {detectedCardFunding !== "credit" && (
+                          <div className="microtext text-muted-foreground opacity-70 text-right mt-1.5">
+                            * Credit card payments subject to a {creditFeePct.toFixed(2)}% fee
+                          </div>
+                        )}
+                        <div className="border-t border-dashed my-2" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div
+                  className={`h-full flex flex-col justify-center ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : ""}`}
+                  style={{
+                    background: rightSideBackground,
+                    borderLeft: isTwoColumnLayout && isInvoiceLayout ? (isLightText ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(0,0,0,0.06)") : undefined,
+                  }}
+                >
+                  <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-[428px] md:mr-auto" : "w-full"}>
+                    {/* Payment Section */}
+                    <div ref={payRef} className={`mt-0 md:mt-0 ${isEmbedded ? "rounded-none border-0 p-0 bg-transparent" : "rounded-2xl border p-3 bg-background/70"} flex flex-col`}>
+                      <div ref={widgetRootRef} className={isEmbedded ? "mt-0 rounded-2xl p-3" : "mt-0 rounded-2xl p-3"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
+                        {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
+                          <>
+                            {/* Payment Complete State - Blocks Double Payment */}
+                            {(paymentConfirmed || isSettled(receipt.status)) ? (
+                              <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
+                                <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
+                                  <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                                <div className="space-y-1">
+                                  <div className={`text-xl font-bold ${isLightText ? 'text-white' : 'text-black'}`}>Payment Complete</div>
+                                  <div className={`text-sm ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
+                                    {formatCurrency(totalUsd, "USD")} • {receiptId}
+                                  </div>
+                                </div>
+                                <div className={`p-4 rounded-xl border w-full max-w-[280px] mt-2 ${isLightText ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/10'}`}>
+                                  <div className={`text-xs uppercase tracking-wider font-semibold mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
+                                    Proof of Payment
+                                  </div>
+                                  <div className={`text-lg font-bold break-all ${isLightText ? 'text-white' : 'text-black'}`}>
+                                    {(() => {
+                                      const tx = paymentConfirmed?.txHash || (receipt as any)?.transactionHash;
+                                      if (tx) return <span className="font-mono text-xs">{tx.slice(0, 10)}...{tx.slice(-8)}</span>;
+                                      return <span className="font-mono text-sm">{isSettled(receipt.status) ? "Confirmed" : "Validating..."}</span>;
+                                    })()}
+                                  </div>
+                                  <div className="text-xs text-emerald-400 font-medium mt-1">
+                                    Show this screen to merchant
+                                  </div>
+                                </div>
+                                <div className="mt-4 flex gap-2">
+                                  <button className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isLightText ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-black/10 hover:bg-black/20 text-black'}`} onClick={() => window.location.reload()}>
+                                    Refresh Receipt
+                                  </button>
+                                </div>
+
+                                {/* Claim / Link Wallet Section */}
+                                <div className={`mt-8 pt-6 border-t w-full max-w-[320px] flex flex-col items-center animate-in slide-in-from-bottom-4 duration-500 ${isLightText ? 'border-white/10' : 'border-black/10'}`}>
+                                  {!account ? (
+                                    <>
+                                      <div className="text-sm font-medium text-pink-500 dark:text-pink-200 mb-2">Claim Loyalty Points</div>
+                                      <div className={`text-xs mb-3 max-w-[240px] ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+                                        Connect your wallet to link this purchase and earn rewards.
+                                      </div>
+                                      {wallets.length > 0 && (
+                                        <ConnectButton
+                                          client={client}
+                                          chain={chain}
+                                          wallets={wallets}
+                                          connectButton={{
+                                            label: <span className="microtext">Login to Claim</span>,
+                                            className: connectButtonClass,
+                                            style: getConnectButtonStyle(),
+                                          }}
+                                          signInButton={{
+                                            label: "Authenticate",
+                                            className: connectButtonClass,
+                                            style: getConnectButtonStyle(),
+                                          }}
+                                          detailsButton={{
+                                            displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+                                          }}
+                                          connectModal={{
+                                            showThirdwebBranding: false,
+                                            title: "Login",
+                                            titleIcon: (() => {
+                                              const c = (theme.brandLogoUrl || "").trim();
+                                              const a = (theme.symbolLogoUrl || "").trim();
+                                              const b = (theme.brandFaviconUrl || "").trim();
+                                              return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
+                                            })(),
+                                            size: "compact",
+                                          }}
+                                          theme={twTheme}
+                                        />
+                                      )}
+                                    </>
+                                  ) : (
+                                    <div className="text-center">
+                                      {claimStatus === "claiming" && (
+                                        <div className={`text-sm animate-pulse ${isLightText ? 'text-white/80' : 'text-black/80'}`}>Linking to wallet...</div>
+                                      )}
+                                      {(claimStatus === "success" || claimStatus === "base_registered") && (
+                                        <>
+                                          <div className="space-y-1">
+                                            <div className="flex items-center justify-center gap-2 text-green-400 font-bold">
+                                              <span>✓</span> <span>Purchase Claimed</span>
+                                            </div>
+                                            {claimStatus === "base_registered" && (
+                                              <div className="text-xs text-purple-600 dark:text-purple-200 animate-in fade-in zoom-in">
+                                                You are now registered at {effectiveBrandName}
+                                              </div>
+                                            )}
+                                            <div className={`text-xs pt-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
+                                              Linked to {account.address.slice(0, 6)}...{account.address.slice(-4)}
+                                            </div>
+                                          </div>
+                                          <div className="mt-4 flex flex-col gap-2 w-full">
+                                            <a
+                                              href="/"
+                                              className="px-4 py-2 rounded-lg text-white text-sm font-medium text-center transition-colors hover:opacity-90"
+                                              style={{ backgroundColor: "var(--pp-secondary, #10b981)" }}
+                                            >
+                                              Continue Shopping
+                                            </a>
+                                            <a
+                                              href="/admin?tab=purchases"
+                                              className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm font-medium text-center transition-colors"
+                                            >
+                                              View My Purchases
+                                            </a>
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+
+                              </div>
+                            ) : (
+                              <>
+                                {/* ── SHIPPING ACCORDION ── */}
+                                {shippingRequired && (
+                                  <div className="w-full mb-4">
+                                    {/* Step 1: Shipping Details */}
+                                    <div className="rounded-xl border overflow-hidden mb-3" style={{ borderColor: isLightText ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', background: isLightText ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)' }}>
+                                      <button
+                                        type="button"
+                                        className="w-full flex items-center justify-between px-4 py-3 text-left"
+                                        onClick={() => { if (shippingComplete) setShippingComplete(false); }}
+                                        style={{ cursor: shippingComplete ? 'pointer' : 'default' }}
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${shippingComplete ? 'bg-green-500 text-white' : (isLightText ? 'bg-white/10 text-white' : 'bg-black/10 text-black')}`}>
+                                            {shippingComplete ? '✓' : '1'}
+                                          </div>
+                                          <span className={`text-sm font-semibold ${isLightText ? 'text-white' : 'text-black'}`}>Shipping Details</span>
+                                        </div>
+                                        {shippingComplete && (
+                                          <span className={`text-xs ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Click to edit</span>
+                                        )}
+                                      </button>
+
+                                      {/* Collapsed summary when complete */}
+                                      {shippingComplete && (
+                                        <div className={`px-4 pb-3 text-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+                                          <div>{shipName} · {shipLine1}{shipLine2 ? `, ${shipLine2}` : ''}</div>
+                                          <div>{shipCity}, {shipState} {shipZip} {shipCountry}</div>
+                                          <div className="mt-1 capitalize">{shipMethod} Shipping{shippingCostUsd > 0 ? ` · $${shippingCostUsd.toFixed(2)}` : ' · Free'}</div>
+                                        </div>
+                                      )}
+
+                                      {/* Expanded form when not complete */}
+                                      {!shippingComplete && (
+                                        <div className="px-4 pb-4 pt-3 space-y-3">
+                                          {/* Login gate — require wallet connection before shipping */}
+                                          {!account?.address ? (
+                                            <div className={`flex flex-col items-center gap-3 py-6 text-center`}>
+                                              <div className={`text-sm ${isLightText ? 'text-white/70' : 'text-black/70'}`}>Please log in to continue with shipping</div>
+                                              {wallets.length > 0 && (
+                                                <ConnectButton
+                                                  client={client}
+                                                  chain={chain}
+                                                  wallets={wallets}
+                                                  connectButton={{
+                                                    label: <span className="microtext">Login to Continue</span>,
+                                                    className: connectButtonClass,
+                                                    style: getConnectButtonStyle(),
+                                                  }}
+                                                  connectModal={{
+                                                    showThirdwebBranding: false,
+                                                    title: "Login",
+                                                    size: "compact",
+                                                  }}
+                                                  theme={twTheme}
+                                                />
+                                              )}
+                                            </div>
+                                          ) : (
+                                            <>
+                                              <div className="grid grid-cols-1 gap-2">
+                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Email Address *" type="email" value={shipEmail} onChange={(e) => setShipEmail(e.target.value)} />
+                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Full Name *" value={shipName} onChange={(e) => setShipName(e.target.value)} />
+                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Address Line 1 *" value={shipLine1} onChange={(e) => setShipLine1(e.target.value)} />
+                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Address Line 2 (optional)" value={shipLine2} onChange={(e) => setShipLine2(e.target.value)} />
+                                                <div className="grid grid-cols-2 gap-2">
+                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="City *" value={shipCity} onChange={(e) => setShipCity(e.target.value)} />
+                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="State/Province" value={shipState} onChange={(e) => setShipState(e.target.value)} />
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="ZIP / Postal *" value={shipZip} onChange={(e) => setShipZip(e.target.value)} />
+                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Country" value={shipCountry} onChange={(e) => setShipCountry(e.target.value.toUpperCase().slice(0, 2))} maxLength={2} />
+                                                </div>
+                                              </div>
+
+                                              {/* Shipping method selector with prices */}
+                                              <div>
+                                                <div className={`text-xs mb-2 font-medium ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Select Shipping Method</div>
+                                                <div className="space-y-1.5">
+                                                  {shippingOptions.methods.map((m) => {
+                                                    const price = shippingOptions.pricing[m] || 0;
+                                                    const isFree = (() => {
+                                                      const threshold = items.reduce((max, it) => {
+                                                        if (it.requiresShipping && it.shippingConfig?.freeShippingThreshold) return Math.max(max, it.shippingConfig.freeShippingThreshold);
+                                                        return max;
+                                                      }, 0);
+                                                      return threshold > 0 && itemsSubtotalUsd >= threshold;
+                                                    })();
+                                                    return (
+                                                      <label key={m} className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors ${shipMethod === m ? (isLightText ? 'bg-white/10 border border-white/20' : 'bg-black/10 border border-black/20') : (isLightText ? 'border border-transparent hover:bg-white/5' : 'border border-transparent hover:bg-black/5')}`}>
+                                                        <div className="flex items-center gap-2">
+                                                          <input type="radio" name="shipMethod" value={m} checked={shipMethod === m} onChange={() => setShipMethod(m)} className="accent-emerald-500" />
+                                                          <span className={`text-sm capitalize ${isLightText ? 'text-white' : 'text-black'}`}>{m}</span>
+                                                        </div>
+                                                        <span className={`text-sm font-medium ${isLightText ? 'text-white' : 'text-black'}`}>{isFree ? 'Free' : price > 0 ? `$${price.toFixed(2)}` : 'Free'}</span>
+                                                      </label>
+                                                    );
+                                                  })}
+                                                </div>
+                                              </div>
+
+                                              {shippingError && <div className="text-xs text-red-400">{shippingError}</div>}
+
+                                              <button
+                                                type="button"
+                                                disabled={!shippingAddressValid || !shipMethod || shippingSaving}
+                                                onClick={handleShippingSubmit}
+                                                className={`w-full h-10 rounded-lg text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${isLightText ? 'text-white' : 'text-white'}`}
+                                                style={{ backgroundColor: shippingAddressValid && shipMethod ? (theme.primaryColor || '#10b981') : (isLightText ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'), color: shippingAddressValid && shipMethod ? (isColorLight(theme.primaryColor || '#10b981') ? '#111827' : '#ffffff') : (isLightText ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.4)') }}
+                                              >
+                                                {shippingSaving ? 'Saving…' : 'Continue to Payment →'}
+                                              </button>
+                                            </>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    {/* Step 2: Payment (visible only when shipping is complete) */}
+                                    <div className={`rounded-xl border overflow-hidden transition-all duration-300 ${shippingComplete ? (isLightText ? 'border-white/10' : 'border-black/10') + ' opacity-100 max-h-[2000px]' : 'border-transparent opacity-40 max-h-12 pointer-events-none'}`} style={{ background: shippingComplete ? (isLightText ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)') : 'transparent' }}>
+                                      <div className="flex items-center gap-2 px-4 py-3">
+                                        <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${shippingComplete ? (isLightText ? 'bg-white/10 text-white' : 'bg-black/10 text-black') : (isLightText ? 'bg-white/5 text-white/40' : 'bg-black/5 text-black/40')}`}>2</div>
+                                        <span className={`text-sm font-semibold ${shippingComplete ? (isLightText ? 'text-white' : 'text-black') : (isLightText ? 'text-white/40' : 'text-black/40')}`}>Payment</span>
+                                      </div>
+                                      {shippingComplete && (
+                                        <div className="px-2 pb-2">
+                                          {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                            <CheckoutWidget
+                                              key={`${token}-${currency}`}
+                                              className="w-full"
+                                              name={`Total (${currency})`}
+                                              client={client}
+                                              chain={chain}
+                                              currency={widgetCurrency as any}
+                                              amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                              seller={sellerAddress || merchantWallet || recipient}
+                                              tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
+                                              showThirdwebBranding={false}
+                                              theme={widgetTheme}
+                                              style={{
+                                                width: "100%",
+                                                maxWidth: "100%",
+                                                background: "transparent",
+                                                border: "none",
+                                                borderRadius: 0,
+                                              }}
+                                              connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
+                                              purchaseData={{
+                                                productId: `portal:${receiptId}`,
+                                                meta: {
+                                                  token,
+                                                  currency,
+                                                  usd: totalUsd,
+                                                  tipUsd,
+                                                  itemsSubtotalUsd,
+                                                  taxUsd,
+                                                  processingFeeUsd,
+                                                  feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
+                                                  shipping: {
+                                                    name: shipName,
+                                                    line1: shipLine1,
+                                                    line2: shipLine2,
+                                                    city: shipCity,
+                                                    state: shipState,
+                                                    zip: shipZip,
+                                                    country: shipCountry,
+                                                    method: shipMethod,
+                                                    costUsd: shippingCostUsd,
+                                                  }
+                                                },
+                                              }}
+                                              onSuccess={(result: any) => {
+                                                console.log("[CHECKOUT] Success:", result);
+                                                const txHash = result?.transactionHash || result?.hash;
+                                                const buyer = (account?.address || "").toLowerCase();
+                                                setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
+                                                if (txHash && receiptId) {
+                                                  postStatus("paid", { buyerWallet: buyer, txHash }).catch(e => console.error("[CHECKOUT] Failed:", e));
+                                                } else {
+                                                  postStatus("checkout_success", { buyer });
+                                                }
+                                                try {
+                                                  fetch("/api/billing/purchase", {
+                                                    method: "POST",
+                                                    headers: { "Content-Type": "application/json", "x-wallet": buyer, "x-recipient": merchantWallet || recipient },
+                                                    body: JSON.stringify({ seconds: 1, usd: Number(totalUsd.toFixed(2)), token, wallet: buyer, receiptId, recipient: merchantWallet || recipient, idempotencyKey: `portal:${receiptId}:${buyer}:${Date.now()}` }),
+                                                  }).catch(() => { });
+                                                  try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
+                                                  try {
+                                                    if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+                                                      const confirmToken = `ppc_${receiptId}_${Date.now()}`;
+                                                      window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
+                                                      window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
+                                                    }
+                                                  } catch { }
+                                                } catch { }
+                                              }}
+                                            />
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                                {/* Non-shipping: render CheckoutWidget directly */}
+                                {!shippingRequired && (
+                                  <>
+                                    {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                      <CheckoutWidget
+                                        key={`noshp-${token}-${currency}`}
+                                        className="w-full"
+                                        name={`Total (${currency})`}
+                                        client={client}
+                                        chain={chain}
+                                        currency={widgetCurrency as any}
+                                        amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                        seller={sellerAddress || merchantWallet || recipient}
+                                        tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
+                                        showThirdwebBranding={false}
+                                        theme={widgetTheme}
+                                        style={{
+                                          width: "100%",
+                                          maxWidth: "100%",
+                                          background: "transparent",
+                                          border: "none",
+                                          borderRadius: 0,
+                                        }}
+                                        connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
+                                        purchaseData={{
+                                          productId: `portal:${receiptId}`,
+                                          meta: {
+                                            token,
+                                            currency,
+                                            usd: totalUsd,
+                                            tipUsd,
+                                            itemsSubtotalUsd,
+                                            taxUsd,
+                                            processingFeeUsd,
+                                            feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
+                                          },
+                                        }}
+                                        onSuccess={(result: any) => {
+                                          console.log("[CHECKOUT] Success:", result);
+                                          const txHash = result?.transactionHash || result?.hash;
+                                          const buyer = (account?.address || "").toLowerCase();
+                                          setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
+                                          if (txHash && receiptId) {
+                                            postStatus("paid", { buyerWallet: buyer, txHash }).catch(e => console.error("[CHECKOUT] Failed:", e));
+                                          } else {
+                                            postStatus("checkout_success", { buyer });
+                                          }
+                                          try {
+                                            fetch("/api/billing/purchase", {
+                                              method: "POST",
+                                              headers: { "Content-Type": "application/json", "x-wallet": buyer, "x-recipient": merchantWallet || recipient },
+                                              body: JSON.stringify({ seconds: 1, usd: Number(totalUsd.toFixed(2)), token, wallet: buyer, receiptId, recipient: merchantWallet || recipient, idempotencyKey: `portal:${receiptId}:${buyer}:${Date.now()}` }),
+                                            }).catch(() => { });
+                                            try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
+                                            try {
+                                              if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+                                                const confirmToken = `ppc_${receiptId}_${Date.now()}`;
+                                                window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
+                                                window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
+                                              }
+                                            } catch { }
+                                          } catch { }
+                                        }}
+                                      />
+                                    )}
+                                  </>
+                                )}
+                              </>
+                            )}
+                          </>
+                        ) : (
+                          <div className="w-full flex flex-col items-center justify-center gap-3 py-8 text-center min-h-[240px]">
+                            {getSymbolLogo() && (
+                              <img
+                                src={getSymbolLogo()}
+                                alt="Logo"
+                                className="w-16 h-16 rounded-lg object-contain"
+                              />
+                            )}
+                            <div className="text-sm text-muted-foreground">
+                              {loadingReceipt
+                                ? "Loading receipt…"
+                                : totalUsd <= 0
+                                  ? "Invalid amount"
+                                  : !merchantWallet
+                                    ? "Recipient not configured"
+                                    : !widgetSupported
+                                      ? "Unsupported token/network"
+                                      : !amountReady
+                                        ? "Loading rates…"
+                                        : (!tokenDef || !hasTokenAddr)
+                                          ? "Token not configured"
+                                          : "Preparing checkout…"}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="microtext text-muted-foreground text-center mt-3">
+                          Thank You For Shopping At {effectiveBrandName}
+                          {isClientSide && isIframe && !isMobileViewport ? (
+                            <div className="mt-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  try {
+                                    const msg = { type: "portalpay-card-cancel", correlationId, receiptId, recipient: merchantWallet || recipient };
+                                    window.parent.postMessage(msg, targetOrigin);
+                                  } catch { }
+                                }}
+                                className="px-3 py-1.5 rounded-md border bg-background hover:bg-foreground/5 transition-colors text-xs"
+                                title="Cancel checkout"
+                              >
+                                Cancel checkout
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -5266,36 +5324,36 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     Connect your wallet to link this purchase and earn rewards.
                                   </div>
                                   {wallets.length > 0 && (
-                                  <ConnectButton
-                                    client={client}
-                                    chain={chain}
-                                    wallets={wallets}
-                                    connectButton={{
-                                      label: <span className="microtext">Login to Claim</span>,
-                                      className: connectButtonClass,
-                                      style: getConnectButtonStyle(),
-                                    }}
-                                    signInButton={{
-                                      label: "Authenticate",
-                                      className: connectButtonClass,
-                                      style: getConnectButtonStyle(),
-                                    }}
-                                    detailsButton={{
-                                      displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
-                                    }}
-                                    connectModal={{
-                                      showThirdwebBranding: false,
-                                      title: "Login",
-                                      titleIcon: (() => {
-                                        const c = (theme.brandLogoUrl || "").trim();
-                                        const a = (theme.symbolLogoUrl || "").trim();
-                                        const b = (theme.brandFaviconUrl || "").trim();
-                                        return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
-                                      })(),
-                                      size: "compact",
-                                    }}
-                                    theme={twTheme}
-                                  />
+                                    <ConnectButton
+                                      client={client}
+                                      chain={chain}
+                                      wallets={wallets}
+                                      connectButton={{
+                                        label: <span className="microtext">Login to Claim</span>,
+                                        className: connectButtonClass,
+                                        style: getConnectButtonStyle(),
+                                      }}
+                                      signInButton={{
+                                        label: "Authenticate",
+                                        className: connectButtonClass,
+                                        style: getConnectButtonStyle(),
+                                      }}
+                                      detailsButton={{
+                                        displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+                                      }}
+                                      connectModal={{
+                                        showThirdwebBranding: false,
+                                        title: "Login",
+                                        titleIcon: (() => {
+                                          const c = (theme.brandLogoUrl || "").trim();
+                                          const a = (theme.symbolLogoUrl || "").trim();
+                                          const b = (theme.brandFaviconUrl || "").trim();
+                                          return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
+                                        })(),
+                                        size: "compact",
+                                      }}
+                                      theme={twTheme}
+                                    />
                                   )}
                                 </>
                               ) : (
@@ -5379,22 +5437,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         <div className="flex flex-col items-center gap-3 py-6 text-center">
                                           <div className={`text-sm ${isLightText ? 'text-white/70' : 'text-black/70'}`}>Please log in to continue with shipping</div>
                                           {wallets.length > 0 && (
-                                          <ConnectButton
-                                            client={client}
-                                            chain={chain}
-                                            wallets={wallets}
-                                            connectButton={{
-                                              label: <span className="microtext">Login to Continue</span>,
-                                              className: connectButtonClass,
-                                              style: getConnectButtonStyle(),
-                                            }}
-                                            connectModal={{
-                                              showThirdwebBranding: false,
-                                              title: "Login",
-                                              size: "compact",
-                                            }}
-                                            theme={twTheme}
-                                          />
+                                            <ConnectButton
+                                              client={client}
+                                              chain={chain}
+                                              wallets={wallets}
+                                              connectButton={{
+                                                label: <span className="microtext">Login to Continue</span>,
+                                                className: connectButtonClass,
+                                                style: getConnectButtonStyle(),
+                                              }}
+                                              connectModal={{
+                                                showThirdwebBranding: false,
+                                                title: "Login",
+                                                size: "compact",
+                                              }}
+                                              theme={twTheme}
+                                            />
                                           )}
                                         </div>
                                       ) : (
@@ -5460,52 +5518,52 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   {shippingComplete && (
                                     <div className="px-2 pb-2">
                                       {(headlessEmailPrompt || headlessActive) ? stripeHeadlessUI : (
-                                      <CheckoutWidget
-                                        key={`ship-${token}-${currency}`}
-                                        className="w-full"
-                                        name={`Total (${currency})`}
-                                        client={client}
-                                        chain={base}
-                                        currency={currency as any}
-                                        amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
-                                        seller={sellerAddress || merchantWallet || recipient}
-                                        tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
-                                        showThirdwebBranding={false}
-                                        theme={widgetTheme}
-                                        style={{ width: "100%", maxWidth: "100%", background: "transparent", border: "none", borderRadius: 0 }}
-                                        connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
-                                        purchaseData={{
-                                          productId: `portal:${receiptId}`,
-                                          meta: { token, currency, usd: totalUsd, tipUsd, itemsSubtotalUsd, taxUsd, processingFeeUsd, feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)) },
-                                        }}
-                                        onSuccess={async (data: any) => {
-                                          try {
-                                            const wallet = (account?.address || "").toLowerCase();
-                                            let txHash = "";
-                                            const statuses = data?.status || [];
-                                            const txStatus = statuses.find((s: any) => s.transactionHash);
-                                            if (txStatus) txHash = txStatus.transactionHash;
-                                            if (!txHash && data?.transactionHash) txHash = data.transactionHash;
-                                            if (!txHash) txHash = "";
-                                            setPaymentConfirmed({ txHash, amount: totalUsd, token: currency });
-                                            await postStatus("paid", { buyerWallet: wallet, txHash });
-                                            await fetch("/api/billing/purchase", {
-                                              method: "POST",
-                                              headers: { "Content-Type": "application/json", "x-wallet": wallet, "x-recipient": merchantWallet || recipient },
-                                              body: JSON.stringify({ seconds: 1, usd: Number(totalUsd.toFixed(2)), token, wallet, receiptId, recipient: merchantWallet || recipient, idempotencyKey: `portal:${receiptId}:${wallet}:${Date.now()}` }),
-                                            });
-                                            try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
+                                        <CheckoutWidget
+                                          key={`ship-${token}-${currency}`}
+                                          className="w-full"
+                                          name={`Total (${currency})`}
+                                          client={client}
+                                          chain={base}
+                                          currency={currency as any}
+                                          amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                          seller={sellerAddress || merchantWallet || recipient}
+                                          tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
+                                          showThirdwebBranding={false}
+                                          theme={widgetTheme}
+                                          style={{ width: "100%", maxWidth: "100%", background: "transparent", border: "none", borderRadius: 0 }}
+                                          connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
+                                          purchaseData={{
+                                            productId: `portal:${receiptId}`,
+                                            meta: { token, currency, usd: totalUsd, tipUsd, itemsSubtotalUsd, taxUsd, processingFeeUsd, feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)) },
+                                          }}
+                                          onSuccess={async (data: any) => {
                                             try {
-                                              if (typeof window !== "undefined" && window.parent && window.parent !== window) {
-                                                const confirmToken = `ppc_${receiptId}_${Date.now()}`;
-                                                window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
-                                                window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                              }
-                                            } catch { }
-                                          } catch (err) { console.error("Checkout success handler error", err); }
-                                        }}
-                                        onError={(error) => { console.error("CheckoutWidget Error:", error); postStatus("checkout_error", { error: error.message }); }}
-                                      />
+                                              const wallet = (account?.address || "").toLowerCase();
+                                              let txHash = "";
+                                              const statuses = data?.status || [];
+                                              const txStatus = statuses.find((s: any) => s.transactionHash);
+                                              if (txStatus) txHash = txStatus.transactionHash;
+                                              if (!txHash && data?.transactionHash) txHash = data.transactionHash;
+                                              if (!txHash) txHash = "";
+                                              setPaymentConfirmed({ txHash, amount: totalUsd, token: currency });
+                                              await postStatus("paid", { buyerWallet: wallet, txHash });
+                                              await fetch("/api/billing/purchase", {
+                                                method: "POST",
+                                                headers: { "Content-Type": "application/json", "x-wallet": wallet, "x-recipient": merchantWallet || recipient },
+                                                body: JSON.stringify({ seconds: 1, usd: Number(totalUsd.toFixed(2)), token, wallet, receiptId, recipient: merchantWallet || recipient, idempotencyKey: `portal:${receiptId}:${wallet}:${Date.now()}` }),
+                                              });
+                                              try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
+                                              try {
+                                                if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+                                                  const confirmToken = `ppc_${receiptId}_${Date.now()}`;
+                                                  window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
+                                                  window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
+                                                }
+                                              } catch { }
+                                            } catch (err) { console.error("Checkout success handler error", err); }
+                                          }}
+                                          onError={(error) => { console.error("CheckoutWidget Error:", error); postStatus("checkout_error", { error: error.message }); }}
+                                        />
                                       )}
                                     </div>
                                   )}
@@ -5516,107 +5574,107 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             {!shippingRequired && (
                               <>
                                 {(headlessEmailPrompt || headlessActive) ? stripeHeadlessUI : (
-                                <CheckoutWidget
-                                key={`noshp-${token}-${currency}`}
-                                className="w-full"
-                                name={`Total (${currency})`}
-                                client={client}
-                                chain={base}
-                                currency={currency as any}
-                                amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
-                                seller={sellerAddress || merchantWallet || recipient}
-                                tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
-                                showThirdwebBranding={false}
-                                theme={widgetTheme}
-                                style={{
-                                  width: "100%",
-                                  maxWidth: "100%",
+                                  <CheckoutWidget
+                                    key={`noshp-${token}-${currency}`}
+                                    className="w-full"
+                                    name={`Total (${currency})`}
+                                    client={client}
+                                    chain={base}
+                                    currency={currency as any}
+                                    amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                    seller={sellerAddress || merchantWallet || recipient}
+                                    tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
+                                    showThirdwebBranding={false}
+                                    theme={widgetTheme}
+                                    style={{
+                                      width: "100%",
+                                      maxWidth: "100%",
 
-                                  background: "transparent",
-                                  border: "none",
-                                  borderRadius: 0,
-                                }}
-                                connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
+                                      background: "transparent",
+                                      border: "none",
+                                      borderRadius: 0,
+                                    }}
+                                    connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
 
-                                purchaseData={{
-                                  productId: `portal:${receiptId}`,
-                                  meta: {
-                                    token,
-                                    currency,
-                                    usd: totalUsd,
-                                    tipUsd,
-                                    itemsSubtotalUsd,
-                                    taxUsd,
-                                    processingFeeUsd: processingFeeUsd,
-                                    feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
-                                    employeeId: receipt?.employeeId,
-                                    sessionId: receipt?.sessionId,
-                                  },
-                                }}
-                                onSuccess={async (data: any) => {
-                                  try {
-                                    const wallet = (account?.address || "").toLowerCase();
-
-                                    // Robust txHash extraction from Thirdweb SDK response
-                                    // data: { quote: BridgePrepareResult; statuses: Array<CompletedStatusResult>; }
-                                    let txHash = "";
-                                    const statuses = Array.isArray(data?.statuses) ? data.statuses : [];
-
-                                    // 1. Try to find a transaction hash in statuses
-                                    const txStatus = statuses.find((s: any) => s.transactionHash);
-                                    if (txStatus) txHash = txStatus.transactionHash;
-
-                                    // 2. Fallback to top-level property (older SDK versions)
-                                    if (!txHash && data?.transactionHash) txHash = data.transactionHash;
-
-                                    // 3. Last resort fallback
-                                    if (!txHash) txHash = "";
-
-                                    setPaymentConfirmed({
-                                      txHash,
-                                      amount: totalUsd,
-                                      token: currency
-                                    });
-
-                                    await postStatus("paid", { buyerWallet: wallet, txHash });
-                                    await fetch("/api/billing/purchase", {
-                                      method: "POST",
-                                      headers: {
-                                        "Content-Type": "application/json",
-                                        "x-wallet": wallet,
-                                        "x-recipient": merchantWallet || recipient,
-                                      },
-                                      body: JSON.stringify({
-                                        seconds: 1,
-                                        usd: Number(totalUsd.toFixed(2)),
+                                    purchaseData={{
+                                      productId: `portal:${receiptId}`,
+                                      meta: {
                                         token,
-                                        wallet,
-                                        receiptId,
-                                        recipient: merchantWallet || recipient,
-                                        idempotencyKey: `portal:${receiptId}:${wallet}:${Date.now()}`,
-                                      }),
-                                    });
-                                    try {
-                                      window.postMessage({ type: "billing:refresh" }, "*");
-                                    } catch { }
-                                    try {
-                                      if (typeof window !== "undefined" && window.parent && window.parent !== window) {
-                                        const confirmToken = `ppc_${receiptId}_${Date.now()}`;
-                                        // New event name (primary)
-                                        window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
-                                        // DEPRECATED: Remove after 2026-04-30 - kept for backwards compatibility
-                                        window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
+                                        currency,
+                                        usd: totalUsd,
+                                        tipUsd,
+                                        itemsSubtotalUsd,
+                                        taxUsd,
+                                        processingFeeUsd: processingFeeUsd,
+                                        feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
+                                        employeeId: receipt?.employeeId,
+                                        sessionId: receipt?.sessionId,
+                                      },
+                                    }}
+                                    onSuccess={async (data: any) => {
+                                      try {
+                                        const wallet = (account?.address || "").toLowerCase();
+
+                                        // Robust txHash extraction from Thirdweb SDK response
+                                        // data: { quote: BridgePrepareResult; statuses: Array<CompletedStatusResult>; }
+                                        let txHash = "";
+                                        const statuses = Array.isArray(data?.statuses) ? data.statuses : [];
+
+                                        // 1. Try to find a transaction hash in statuses
+                                        const txStatus = statuses.find((s: any) => s.transactionHash);
+                                        if (txStatus) txHash = txStatus.transactionHash;
+
+                                        // 2. Fallback to top-level property (older SDK versions)
+                                        if (!txHash && data?.transactionHash) txHash = data.transactionHash;
+
+                                        // 3. Last resort fallback
+                                        if (!txHash) txHash = "";
+
+                                        setPaymentConfirmed({
+                                          txHash,
+                                          amount: totalUsd,
+                                          token: currency
+                                        });
+
+                                        await postStatus("paid", { buyerWallet: wallet, txHash });
+                                        await fetch("/api/billing/purchase", {
+                                          method: "POST",
+                                          headers: {
+                                            "Content-Type": "application/json",
+                                            "x-wallet": wallet,
+                                            "x-recipient": merchantWallet || recipient,
+                                          },
+                                          body: JSON.stringify({
+                                            seconds: 1,
+                                            usd: Number(totalUsd.toFixed(2)),
+                                            token,
+                                            wallet,
+                                            receiptId,
+                                            recipient: merchantWallet || recipient,
+                                            idempotencyKey: `portal:${receiptId}:${wallet}:${Date.now()}`,
+                                          }),
+                                        });
+                                        try {
+                                          window.postMessage({ type: "billing:refresh" }, "*");
+                                        } catch { }
+                                        try {
+                                          if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+                                            const confirmToken = `ppc_${receiptId}_${Date.now()}`;
+                                            // New event name (primary)
+                                            window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
+                                            // DEPRECATED: Remove after 2026-04-30 - kept for backwards compatibility
+                                            window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
+                                          }
+                                        } catch { }
+                                      } catch (err) {
+                                        console.error("Checkout success handler error", err);
                                       }
-                                    } catch { }
-                                  } catch (err) {
-                                    console.error("Checkout success handler error", err);
-                                  }
-                                }}
-                                onError={(error) => {
-                                  console.error("CheckoutWidget Error:", error);
-                                  postStatus("checkout_error", { error: error.message });
-                                }}
-                              />
+                                    }}
+                                    onError={(error) => {
+                                      console.error("CheckoutWidget Error:", error);
+                                      postStatus("checkout_error", { error: error.message });
+                                    }}
+                                  />
                                 )}
                               </>
                             )}
@@ -5773,36 +5831,36 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     Connect your wallet to link this purchase and earn rewards.
                   </div>
                   {wallets.length > 0 && (
-                  <ConnectButton
-                    client={client}
-                    chain={chain}
-                    wallets={wallets}
-                    connectButton={{
-                      label: <span className="microtext">Login to Claim</span>,
-                      className: connectButtonClass,
-                      style: getConnectButtonStyle(),
-                    }}
-                    signInButton={{
-                      label: "Authenticate",
-                      className: connectButtonClass,
-                      style: getConnectButtonStyle(),
-                    }}
-                    detailsButton={{
-                      displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
-                    }}
-                    connectModal={{
-                      showThirdwebBranding: false,
-                      title: "Login",
-                      titleIcon: (() => {
-                        const c = (theme.brandLogoUrl || "").trim();
-                        const a = (theme.symbolLogoUrl || "").trim();
-                        const b = (theme.brandFaviconUrl || "").trim();
-                        return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
-                      })(),
-                      size: "compact",
-                    }}
-                    theme={twTheme}
-                  />
+                    <ConnectButton
+                      client={client}
+                      chain={chain}
+                      wallets={wallets}
+                      connectButton={{
+                        label: <span className="microtext">Login to Claim</span>,
+                        className: connectButtonClass,
+                        style: getConnectButtonStyle(),
+                      }}
+                      signInButton={{
+                        label: "Authenticate",
+                        className: connectButtonClass,
+                        style: getConnectButtonStyle(),
+                      }}
+                      detailsButton={{
+                        displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+                      }}
+                      connectModal={{
+                        showThirdwebBranding: false,
+                        title: "Login",
+                        titleIcon: (() => {
+                          const c = (theme.brandLogoUrl || "").trim();
+                          const a = (theme.symbolLogoUrl || "").trim();
+                          const b = (theme.brandFaviconUrl || "").trim();
+                          return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
+                        })(),
+                        size: "compact",
+                      }}
+                      theme={twTheme}
+                    />
                   )}
                 </>
               ) : (
