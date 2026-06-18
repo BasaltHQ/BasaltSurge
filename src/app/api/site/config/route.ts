@@ -973,6 +973,11 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
       out.defaultTip = Math.max(0, Math.min(100, tc.defaultTip));
     }
     out.allowCustom = tc.allowCustom !== false;
+    if (typeof tc.enabled === "boolean") {
+      out.enabled = tc.enabled;
+    } else {
+      out.enabled = true;
+    }
     config.tipConfig = out;
   })();
 
@@ -1675,6 +1680,9 @@ export async function POST(req: NextRequest) {
       }
       if (typeof incoming.allowCustom === "boolean") {
         merged.allowCustom = incoming.allowCustom;
+      }
+      if (typeof incoming.enabled === "boolean") {
+        merged.enabled = incoming.enabled;
       }
       candidate.tipConfig = merged;
     }
