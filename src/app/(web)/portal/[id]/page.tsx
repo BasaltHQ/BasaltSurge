@@ -128,6 +128,46 @@ function isSettled(status?: string): boolean {
   );
 }
 
+// Helper to determine if a color is light
+function isColorLight(color: string | undefined): boolean {
+  if (!color) return false;
+  try {
+    const bg = color.trim().toLowerCase();
+    if (bg === "transparent" || bg === "rgba(0,0,0,0)" || bg === "rgba(0, 0, 0, 0)") {
+      return false;
+    }
+    if (bg === "white" || bg === "#fff" || bg === "#ffffff") {
+      return true;
+    }
+    if (bg === "black" || bg === "#000" || bg === "#000000") {
+      return false;
+    }
+    if (bg.startsWith("#")) {
+      const hex = bg.replace("#", "");
+      if (hex.length === 3 || hex.length === 6) {
+        const fullHex = hex.length === 3 ? hex.split("").map((x) => x + x).join("") : hex;
+        const r = parseInt(fullHex.substring(0, 2), 16);
+        const g = parseInt(fullHex.substring(2, 4), 16);
+        const b = parseInt(fullHex.substring(4, 6), 16);
+        if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+          return (r * 299 + g * 587 + b * 114) / 1000 > 128;
+        }
+      }
+    }
+    const rgbMatch = bg.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+    if (rgbMatch) {
+      const r = parseInt(rgbMatch[1], 10);
+      const g = parseInt(rgbMatch[2], 10);
+      const b = parseInt(rgbMatch[3], 10);
+      if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+        return (r * 299 + g * 587 + b * 114) / 1000 > 128;
+      }
+    }
+  } catch {}
+  return false;
+}
+
+
 type TokenDef = {
   symbol: "ETH" | "USDC" | "USDT" | "cbBTC" | "cbXRP" | "SOL";
   type: "native" | "erc20";
@@ -256,6 +296,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const idToUse = propId || params?.id;
   const receiptId = String(idToUse || "");
   const account = useActiveAccount();
+  const searchParams = useSearchParams();
+  const layoutParam = String(searchParams?.get("layout") || "").toLowerCase();
+  const modeParam = String(searchParams?.get("mode") || "").toLowerCase();
+  const invoiceParam = String(searchParams?.get("invoice") || "").toLowerCase();
+  const isWideLayout = layoutParam === "wide";
+  const isInvoiceLayout = layoutParam === "invoice" || modeParam === "invoice" || invoiceParam === "1" || invoiceParam === "true";
+  const embeddedParam = String(searchParams?.get("embedded") || "");
+  const isEmbeddedParam = embeddedParam === "1";
   const [wallets, setWallets] = useState<any[]>([]);
   useEffect(() => {
     let mounted = true;
@@ -333,7 +381,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     accentColor?: string; buttonRadius?: string;
   }>({});
 
-  const isLightText = useMemo(() => {
+  const isThemeTextLight = useMemo(() => {
     let light = true;
     try {
       const colorStr = (theme.headerTextColor || "#ffffff").trim().toLowerCase();
@@ -357,6 +405,29 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return light;
   }, [theme.headerTextColor]);
 
+  const isLightBackground = useMemo(() => {
+    try {
+      const mode = String(searchParams?.get("mode") || "").toLowerCase();
+      if (mode === "light") return true;
+      if (mode === "dark") return false;
+    } catch {}
+
+    const bgCandidate = theme.pageBg || theme.surfaceBg || theme.primaryBg;
+    if (bgCandidate) {
+      const bg = bgCandidate.trim().toLowerCase();
+      if (bg === 'transparent' || bg === 'rgba(0,0,0,0)' || bg === 'rgba(0, 0, 0, 0)') {
+        return !isThemeTextLight;
+      }
+      return isColorLight(bgCandidate);
+    }
+    return !isThemeTextLight;
+  }, [theme.pageBg, theme.surfaceBg, theme.primaryBg, isThemeTextLight, searchParams]);
+
+  const isLightText = useMemo(() => {
+    return !isLightBackground;
+  }, [isLightBackground]);
+
+
   // Derived widget theme based on text color lightness
   const widgetTheme = useMemo(() => {
     const commonColors = {
@@ -373,7 +444,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
     const pw = playgroundWidgetOverrides;
 
-    return isLightText
+    return !isLightBackground
       ? darkTheme({
         colors: {
           ...commonColors,
@@ -408,7 +479,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           secondaryButtonHoverBg: "rgba(0,0,0,0.1)",
         }
       });
-  }, [theme, playgroundWidgetOverrides]);
+  }, [theme, playgroundWidgetOverrides, isLightBackground, isLightText]);
 
   // Partner brand colors from container config (for partner containers without merchant theme)
   const [partnerBrandColors, setPartnerBrandColors] = useState<{ primary?: string; accent?: string } | null>(null);
@@ -422,14 +493,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
 
   // URL params and layout/embedding detection
-  const searchParams = useSearchParams();
-  const layoutParam = String(searchParams?.get("layout") || "").toLowerCase();
-  const modeParam = String(searchParams?.get("mode") || "").toLowerCase();
-  const invoiceParam = String(searchParams?.get("invoice") || "").toLowerCase();
-  const isWideLayout = layoutParam === "wide";
-  const isInvoiceLayout = layoutParam === "invoice" || modeParam === "invoice" || invoiceParam === "1" || invoiceParam === "true";
-  const embeddedParam = String(searchParams?.get("embedded") || "");
-  const isEmbeddedParam = embeddedParam === "1";
   const [isIframe, setIsIframe] = useState(false);
   const isEmbedded = propEmbedded !== undefined ? propEmbedded : (isEmbeddedParam || isIframe);
 
@@ -1515,8 +1578,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           try {
             const pt = (j.config as any)?.portalTheme;
             if (pt && typeof pt === 'object') {
-              // Determine active mode — merchant's choice wins
-              const activeMode = pt.activeMode || 'dark';
+              // Determine active mode — URL parameter overrides database settings
+              const urlMode = searchParams?.get("mode");
+              const activeMode = (urlMode === "light" || urlMode === "dark") ? urlMode : (pt.activeMode || 'dark');
               const modeTheme = pt[activeMode] || pt.dark || {};
 
               if (typeof modeTheme.primaryColor === 'string' && modeTheme.primaryColor) merchantTheme.primaryColor = modeTheme.primaryColor;
@@ -1562,12 +1626,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             }
           } catch { }
 
-          // Set html/body background to pageBg (matches playground CSS injector behavior)
-          // For embedded iframes, also set pageBg (not transparent) so the theme background shows
           try {
             if (merchantTheme.pageBg) {
-              document.documentElement.style.background = merchantTheme.pageBg;
-              document.body.style.background = merchantTheme.pageBg;
+              const urlMode = searchParams?.get("mode");
+              const isBgLight = urlMode === "light" || isColorLight(merchantTheme.pageBg);
+              const finalBg = isBgLight
+                ? (isColorLight(merchantTheme.pageBg) ? merchantTheme.pageBg : "#ffffff")
+                : merchantTheme.pageBg;
+              document.documentElement.style.background = finalBg;
+              document.body.style.background = finalBg;
             }
           } catch { }
 
@@ -1755,33 +1822,72 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Fee from admin config
   const [processingFeePct, setProcessingFeePct] = useState<number>(0);
+  const [presentedFeeBps, setPresentedFeeBps] = useState<number | undefined>(undefined);
+  const [creditPresentedFeeBps, setCreditPresentedFeeBps] = useState<number | undefined>(undefined);
   // Base platform fee (platformFeeBps + partnerFeeBps) - loaded from site config for partner containers
   const [basePlatformFeePct, setBasePlatformFeePct] = useState<number>(0.5);
   const [splitConfig, setSplitConfig] = useState<any>(null);
   const [splitConfigCredit, setSplitConfigCredit] = useState<any>(null);
 
   const effectiveBasePlatformFeePct = useMemo(() => {
-    // If debit card is detected and splitConfigCredit is present, calculate from splitConfigCredit
-    if (detectedCardFunding === "debit" && splitConfigCredit && typeof splitConfigCredit === "object") {
-      const partnerBps = typeof splitConfigCredit.partnerBps === "number" ? splitConfigCredit.partnerBps : 0;
-      const platformBps = typeof splitConfigCredit.platformBps === "number" ? splitConfigCredit.platformBps : 0;
-      const agentBps = Array.isArray(splitConfigCredit.agents)
-        ? splitConfigCredit.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+    // If credit card is detected and splitConfig is present, calculate using credit config
+    const isCredit = detectedCardFunding === "credit";
+    const activeSplitConfig = isCredit
+      ? (splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig)
+      : (splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit);
+
+    const partnerBps = activeSplitConfig && typeof activeSplitConfig.partnerBps === "number"
+      ? activeSplitConfig.partnerBps
+      : 0;
+
+    // Prioritize activeSplitConfig smart contract components if available
+    if (activeSplitConfig && typeof activeSplitConfig.platformBps === "number") {
+      const platformBps = activeSplitConfig.platformBps;
+      const agentBps = Array.isArray(activeSplitConfig.agents)
+        ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
         : 0;
-      return (partnerBps + platformBps + agentBps) / 100;
+      return (platformBps + partnerBps + agentBps) / 100;
     }
-    // Otherwise, try splitConfig
-    if (splitConfig && typeof splitConfig === "object") {
-      const partnerBps = typeof splitConfig.partnerBps === "number" ? splitConfig.partnerBps : 0;
-      const platformBps = typeof splitConfig.platformBps === "number" ? splitConfig.platformBps : 0;
-      const agentBps = Array.isArray(splitConfig.agents)
-        ? splitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+
+    const basePresentedBps = isCredit
+      ? (creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : undefined))
+      : (presentedFeeBps !== undefined ? presentedFeeBps : undefined);
+
+    if (basePresentedBps === undefined) {
+      return (50 + partnerBps) / 100; // Platform default of 50 BPS (0.5%) + partner
+    }
+
+    return (basePresentedBps + partnerBps) / 100;
+  }, [detectedCardFunding, splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps]);
+
+  // Credit fee percentage calculation (presented fee + partner + merchant processing fee)
+  // Used for the microtext footnote on the first pane before a card is scanned.
+  const creditFeePct = useMemo(() => {
+    const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object"
+      ? splitConfigCredit
+      : splitConfig;
+
+    const partnerBps = activeSplitConfig && typeof activeSplitConfig.partnerBps === "number"
+      ? activeSplitConfig.partnerBps
+      : 0;
+
+    // Prioritize activeSplitConfig smart contract components if available
+    if (activeSplitConfig && typeof activeSplitConfig.platformBps === "number") {
+      const platformBps = activeSplitConfig.platformBps;
+      const agentBps = Array.isArray(activeSplitConfig.agents)
+        ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
         : 0;
-      return (partnerBps + platformBps + agentBps) / 100;
+      return (platformBps + partnerBps + agentBps) / 100 + Number(processingFeePct || 0);
     }
-    // Fallback to the loaded basePlatformFeePct state
-    return basePlatformFeePct;
-  }, [detectedCardFunding, splitConfig, splitConfigCredit, basePlatformFeePct]);
+
+    const basePresentedBps = creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : undefined);
+
+    if (basePresentedBps === undefined) {
+      return (50 + partnerBps) / 100 + Number(processingFeePct || 0);
+    }
+
+    return (basePresentedBps + partnerBps) / 100 + Number(processingFeePct || 0);
+  }, [splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps, processingFeePct]);
 
   // Dynamic receipt
   const [receipt, setReceipt] = useState<Receipt | null>(null);
@@ -2342,6 +2448,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
         if (cfg?.splitConfig) setSplitConfig(cfg.splitConfig);
         if (cfg?.splitConfigCredit) setSplitConfigCredit(cfg.splitConfigCredit);
+
+        if (typeof (cfg as any).presentedFeeBps === "number") {
+          setPresentedFeeBps((cfg as any).presentedFeeBps);
+        }
+        if (typeof (cfg as any).creditPresentedFeeBps === "number") {
+          setCreditPresentedFeeBps((cfg as any).creditPresentedFeeBps);
+        }
 
         if (typeof cfg.stripeOnrampEnabled === "boolean") setStripeOnrampEnabled(cfg.stripeOnrampEnabled);
         if (typeof cfg.coinbaseOnrampEnabled === "boolean") setCoinbaseOnrampEnabled(cfg.coinbaseOnrampEnabled);
@@ -3716,6 +3829,23 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     </div>
   ) : null;
 
+  // Dynamically resolved color values for contrast & theme consistency
+  const headerColor = isLightBackground
+    ? ((theme.headerTextColor && !isColorLight(theme.headerTextColor)) ? theme.headerTextColor : "#111827")
+    : (theme.headerTextColor || "#ffffff");
+
+  const bodyColor = isLightBackground
+    ? ((theme.bodyTextColor && !isColorLight(theme.bodyTextColor)) ? theme.bodyTextColor : "#374151")
+    : (theme.bodyTextColor || "#e5e7eb");
+
+  const mutedColor = isLightBackground
+    ? (((theme as any).mutedTextColor && !isColorLight((theme as any).mutedTextColor)) ? (theme as any).mutedTextColor : "#6b7280")
+    : ((theme as any).mutedTextColor || "rgba(255,255,255,0.4)");
+
+  const borderColor = isLightBackground
+    ? ((theme.borderColor && !isColorLight(theme.borderColor)) ? theme.borderColor : "rgba(0,0,0,0.08)")
+    : (theme.borderColor || "rgba(255,255,255,0.1)");
+
   return (
     <div
       className={`w-full flex flex-col`}
@@ -3738,8 +3868,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           minHeight: isEmbedded ? 0 : undefined,
           maxHeight: isEmbedded ? "100%" : "var(--pp-vh)",
           fontFamily: theme.fontFamily,
-          borderColor: theme.borderColor || "var(--pp-primary)",
-          backgroundColor: theme.pageBg || theme.surfaceBg || theme.primaryBg || (isEmbedded ? "transparent" : "rgba(10,11,16,0.6)"),
+          borderColor: borderColor,
+          backgroundColor: isLightBackground
+            ? (
+                (theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") ||
+                (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") ||
+                (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") ||
+                (isEmbedded ? "transparent" : "rgba(255,255,255,0.85)")
+              )
+            : (theme.pageBg || theme.surfaceBg || theme.primaryBg || (isEmbedded ? "transparent" : "rgba(10,11,16,0.6)")),
           borderRadius: (theme as any).borderRadius || undefined,
           boxShadow: (theme as any).shadowIntensity === 'none' ? 'none' : ((theme as any).shadowIntensity === 'soft' ? '0 4px 20px -2px rgba(0,0,0,0.05)' : ((theme as any).shadowIntensity === 'strong' ? '0 20px 40px -10px rgba(0,0,0,0.2)' : undefined)),
           backdropFilter: (theme as any).blurStrength ? `blur(${(theme as any).blurStrength})` : undefined,
@@ -3748,6 +3885,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       >
         <style dangerouslySetInnerHTML={{
           __html: `
+            :root {
+              --background: ${isLightBackground ? '#ffffff' : '#0a0a0a'} !important;
+              --foreground: ${isLightBackground ? '#111827' : '#ededed'} !important;
+              --pp-text: ${bodyColor} !important;
+              --pp-text-header: ${headerColor} !important;
+              --pp-text-body: ${bodyColor} !important;
+            }
             .no-scrollbar::-webkit-scrollbar { display: none; }
             .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
             [data-theme],
@@ -3775,8 +3919,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               border: none !important;
               border-radius: 12px !important;
             }
-            ${isLightText ? `
-            .pp-portal-container iframe,
+            ${!isLightBackground ? `
             .stripe-embedded-container iframe {
               filter: invert(0.93) hue-rotate(180deg) brightness(1.1) contrast(0.95) !important;
             }
@@ -3785,11 +3928,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             /* ── portalTheme live overrides ── */
             ${theme.pageBg ? `
             .pp-portal-container > div {
-              background: ${theme.pageBg} !important;
+              background: ${isLightBackground ? (isColorLight(theme.pageBg) ? theme.pageBg : '#ffffff') : theme.pageBg} !important;
             }
             ` : ''}
 
-            ${(theme as any).headerTextColor ? `
             .pp-portal-container h1,
             .pp-portal-container h2,
             .pp-portal-container h3,
@@ -3802,22 +3944,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             .pp-portal-container [class*="text-xl"],
             .pp-portal-container [class*="text-2xl"],
             .pp-portal-container [class*="text-3xl"] {
-              color: ${(theme as any).headerTextColor} !important;
+              color: ${headerColor} !important;
             }
-            ` : ''}
 
-            ${(theme as any).bodyTextColor ? `
             .pp-portal-container p,
             .pp-portal-container span,
             .pp-portal-container div,
             .pp-portal-container label,
             .pp-portal-container td,
             .pp-portal-container li {
-              color: ${(theme as any).bodyTextColor} !important;
+              color: ${bodyColor} !important;
             }
-            ` : ''}
 
-            ${(theme as any).mutedTextColor ? `
             .pp-portal-container [class*="text-white/4"],
             .pp-portal-container [class*="text-white/5"],
             .pp-portal-container [class*="text-white/6"],
@@ -3825,9 +3963,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             .pp-portal-container [class*="text-muted"],
             .pp-portal-container [class*="microtext"],
             .pp-portal-container [class*="uppercase"][class*="tracking"] {
-              color: ${(theme as any).mutedTextColor} !important;
+              color: ${mutedColor} !important;
             }
-            ` : ''}
 
             ${(theme as any).headerTextColor ? `
             .pp-portal-container h1,
@@ -3868,46 +4005,46 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             }
             ` : ''}
 
-            ${theme.borderColor || theme.pageBg ? `
             .pp-portal-container [data-theme],
-            .pp-portal-container [class*="rounded"][class*="border"][class*="shadow"],
+            .pp-portal-container [class*="rounded"][class*="border"],
             .pp-portal-container [class*="glass"],
             .pp-portal-container [class*="backdrop"] {
-              ${theme.pageBg ? `background: ${theme.pageBg} !important;` : ''}
-              ${theme.borderColor ? `border-color: ${theme.borderColor} !important;` : ''}
+              background: ${isLightBackground
+                ? ((theme.pageBg && isColorLight(theme.pageBg)) || (theme.surfaceBg && isColorLight(theme.surfaceBg)) || (theme.primaryBg && isColorLight(theme.primaryBg)) || "rgba(255,255,255,0.85)")
+                : (theme.pageBg || theme.surfaceBg || theme.primaryBg || "rgba(10,11,16,0.6)")} !important;
+              border-color: ${borderColor} !important;
               ${(theme as any).borderRadius ? `border-radius: ${(theme as any).borderRadius} !important;` : ''}
             }
-            ` : ''}
 
             .pp-portal-container .pp-currency-menu {
-              background: ${theme.pageBg || theme.surfaceBg || theme.primaryBg || (isLightText ? '#0c0d14' : '#ffffff')} !important;
-              border-color: ${theme.borderColor || (isLightText ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)')} !important;
+              background: ${isLightBackground
+                ? ((theme.pageBg && isColorLight(theme.pageBg)) || (theme.surfaceBg && isColorLight(theme.surfaceBg)) || (theme.primaryBg && isColorLight(theme.primaryBg)) || '#ffffff')
+                : (theme.pageBg || theme.surfaceBg || theme.primaryBg || '#0c0d14')} !important;
+              border-color: ${borderColor} !important;
               border-radius: ${(theme as any).borderRadius || '12px'} !important;
               box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4) !important;
             }
 
-            ${theme.borderColor || (theme as any).bodyTextColor ? `
             .pp-portal-container input,
             .pp-portal-container select,
             .pp-portal-container textarea,
             .pp-portal-container .pp-currency-btn {
-              ${theme.borderColor ? `border-color: ${theme.borderColor} !important;` : ''}
-              ${(theme as any).bodyTextColor ? `color: ${(theme as any).bodyTextColor} !important;` : ''}
+              border-color: ${borderColor} !important;
+              color: ${bodyColor} !important;
               ${(theme as any).borderRadius ? `border-radius: ${(theme as any).borderRadius} !important;` : ''}
               ${theme.fontFamily ? `font-family: ${theme.fontFamily} !important;` : ''}
             }
             .pp-portal-container input::placeholder,
             .pp-portal-container textarea::placeholder {
-              color: ${(theme as any).mutedTextColor || (theme as any).bodyTextColor || '#9ca3af'} !important;
+              color: ${mutedColor} !important;
               opacity: 0.4 !important;
             }
-            ` : ''}
 
             ${theme.borderColor ? `
             .pp-portal-container button[class*="flex-1"][class*="border"],
             .pp-portal-container .pp-tip-btn {
               border-color: ${theme.borderColor} !important;
-              ${(theme as any).bodyTextColor ? `color: ${(theme as any).bodyTextColor} !important;` : ''}
+              color: ${bodyColor} !important;
               ${(theme as any).borderRadius ? `border-radius: ${(theme as any).borderRadius} !important;` : ''}
             }
             ` : ''}
@@ -3931,18 +4068,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             }
             ` : ''}
 
-            ${theme.pageBg ? `
             .pp-portal-container select option {
-              background: ${theme.pageBg} !important;
-              ${(theme as any).bodyTextColor ? `color: ${(theme as any).bodyTextColor} !important;` : ''}
+              background: ${isLightBackground ? '#ffffff' : '#0a0a0a'} !important;
+              color: ${bodyColor} !important;
             }
-            ` : ''}
 
-            ${(theme as any).mutedTextColor ? `
             .pp-portal-container [class*="justify-center"][class*="gap"] span {
-              color: ${(theme as any).mutedTextColor} !important;
+              color: ${mutedColor} !important;
             }
-            ` : ''}
           `}} />
         {/* Left-half decorative gradient background (only for invoice-style full page) */}
         {!isEmbedded && isInvoiceLayout && (
@@ -4314,6 +4447,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           })()}</span>
                         </div>
                       )}
+                      {detectedCardFunding !== "credit" && (
+                        <div className="microtext text-muted-foreground opacity-70 text-right mt-1.5">
+                          * Credit card payments subject to a {creditFeePct.toFixed(2)}% fee
+                        </div>
+                      )}
                       <div className="border-t border-dashed my-2" />
                     </div>
                   </div>
@@ -4577,7 +4715,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           client={client}
                                           chain={chain}
                                           currency={widgetCurrency as any}
-                                          amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                          amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                           seller={sellerAddress || merchantWallet || recipient}
                                           tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                           showThirdwebBranding={false}
@@ -4658,7 +4796,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   client={client}
                                   chain={chain}
                                   currency={widgetCurrency as any}
-                                  amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                  amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                   seller={sellerAddress || merchantWallet || recipient}
                                   tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                   showThirdwebBranding={false}
@@ -5218,7 +5356,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         client={client}
                                         chain={base}
                                         currency={currency as any}
-                                        amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                        amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                         seller={sellerAddress || merchantWallet || recipient}
                                         tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                         showThirdwebBranding={false}
@@ -5274,7 +5412,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 client={client}
                                 chain={base}
                                 currency={currency as any}
-                                amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                 seller={sellerAddress || merchantWallet || recipient}
                                 tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                 showThirdwebBranding={false}

@@ -129,7 +129,7 @@ async function runBackgroundPoll(params: {
   console.log(`[BACKGROUND POLL] Starting background poll task for session ${sessionId}, receipt ${receiptId}`);
 
   let resolvedStatus = "failed";
-  let isDebitCard = detectedCardFunding === "debit";
+  let isCreditCard = detectedCardFunding === "credit";
   let finalTxHash = "";
 
   // Poll up to 120 times every 5 seconds (10 minutes total)
@@ -162,10 +162,9 @@ async function runBackgroundPoll(params: {
 
       if (status === "fulfillment_complete") {
         resolvedStatus = "success";
-        isDebitCard =
-          isDebitCard ||
-          data.payment_details?.card?.funding === "debit" ||
-          data.payment_details?.card?.funding === "prepaid";
+        isCreditCard =
+          isCreditCard ||
+          data.payment_details?.card?.funding === "credit";
         break;
       }
 
@@ -189,7 +188,7 @@ async function runBackgroundPoll(params: {
   if (resolvedStatus === "success") {
     console.log(`[BACKGROUND POLL] Stripe onramp fulfilled. Executing EIP-7702 transfer...`);
 
-    const targetSplitAddress = isDebitCard && splitAddressCredit
+    const targetSplitAddress = isCreditCard && splitAddressCredit
       ? splitAddressCredit
       : splitAddress;
 
