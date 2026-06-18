@@ -46,7 +46,7 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
     // NOTE: basaltsurge is now its own platform brand, no longer aliased to portalpay
 
     // Pre-fetch brand config for fees (will be used at the end regardless of merchant vs global config)
-    let brandFeesConfig: { platformFeeBps?: number; partnerFeeBps?: number; presentedFeeBps?: number; creditPresentedFeeBps?: number } = {};
+    let brandFeesConfig: { platformFeeBps?: number; partnerFeeBps?: number; presentedFeeBps?: number; creditPresentedFeeBps?: number; creditPlatformFeeBps?: number } = {};
     try {
       if (brandKeyForFees) {
         const { brand: fetchedBrand, overrides: fetchedOverrides } = await getBrandConfigFromCosmos(brandKeyForFees);
@@ -61,10 +61,14 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
           : (typeof (fb as any)?.presentedFeeBps === "number" ? (fb as any).presentedFeeBps : undefined);
         brandFeesConfig.creditPresentedFeeBps = typeof ov?.creditPresentedFeeBps === "number" ? ov.creditPresentedFeeBps
           : (typeof (fb as any)?.creditPresentedFeeBps === "number" ? (fb as any).creditPresentedFeeBps : undefined);
+        brandFeesConfig.creditPlatformFeeBps = typeof ov?.creditPlatformFeeBps === "number" ? ov.creditPlatformFeeBps
+          : (typeof (fb as any)?.creditPlatformFeeBps === "number" ? (fb as any).creditPlatformFeeBps : 125);
+      } else {
+        brandFeesConfig = { platformFeeBps: 50, partnerFeeBps: 0, creditPlatformFeeBps: 125 };
       }
     } catch {
       // Default platform fee is 50 bps (0.5%), partner fee is 0
-      brandFeesConfig = { platformFeeBps: 50, partnerFeeBps: 0 };
+      brandFeesConfig = { platformFeeBps: 50, partnerFeeBps: 0, creditPlatformFeeBps: 125 };
     }
 
     // Check if this is a PER-MERCHANT config (has a real wallet address)
@@ -82,6 +86,33 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
     const partnerBps = typeof splitConf.partnerBps === "number" ? splitConf.partnerBps : (brandFeesConfig.partnerFeeBps ?? 0);
 
     (cfg as any).basePlatformFeePct = (platformBps + partnerBps + agentBps) / 100;
+
+    // Ensure splitConfig exists and has the resolved values
+    const merchantBps = typeof splitConf.merchantBps === "number" ? splitConf.merchantBps : Math.max(0, 10000 - platformBps - partnerBps - agentBps);
+    (cfg as any).splitConfig = {
+      ...splitConf,
+      platformBps,
+      partnerBps,
+      merchantBps,
+      agents
+    };
+
+    // Hydrate splitConfigCredit for Stripe card payments
+    const splitConfCredit = (cfg as any).splitConfigCredit || {};
+    const agentsCredit = Array.isArray(splitConfCredit.agents) ? splitConfCredit.agents : [];
+    const agentBpsCredit = agentsCredit.reduce((sum: number, a: any) => sum + (Number(a.bps) || 0), 0);
+
+    const platformBpsCredit = typeof splitConfCredit.platformBps === "number" ? splitConfCredit.platformBps : (brandFeesConfig.creditPlatformFeeBps ?? 125);
+    const partnerBpsCredit = typeof splitConfCredit.partnerBps === "number" ? splitConfCredit.partnerBps : (brandFeesConfig.partnerFeeBps ?? 0);
+    const merchantBpsCredit = typeof splitConfCredit.merchantBps === "number" ? splitConfCredit.merchantBps : Math.max(0, 10000 - platformBpsCredit - partnerBpsCredit - agentBpsCredit);
+
+    (cfg as any).splitConfigCredit = {
+      ...splitConfCredit,
+      platformBps: platformBpsCredit,
+      partnerBps: partnerBpsCredit,
+      merchantBps: merchantBpsCredit,
+      agents: agentsCredit
+    };
 
     // Attach presented fees if defined in brandFeesConfig
     if (typeof brandFeesConfig.presentedFeeBps === "number") {

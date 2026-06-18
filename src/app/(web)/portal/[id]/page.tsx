@@ -3261,6 +3261,60 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return () => clearInterval(timer);
   }, [headlessStep]);
 
+  // Swap out BasaltHQ / BasaltHQ, Inc. with the partner brand name in the Link / Stripe interface
+  useEffect(() => {
+    const targetBrand = theme.brandName || "BasaltSurge";
+
+    let observer: MutationObserver | null = null;
+    const replaceJob = () => {
+      try {
+        if (observer) observer.disconnect();
+        replaceTextInNode(document.body, "BasaltHQ, Inc.", targetBrand);
+        replaceTextInNode(document.body, "BasaltHQ", targetBrand);
+      } catch {} finally {
+        try {
+          if (observer) observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+        } catch {}
+      }
+    };
+
+    function replaceTextInNode(node: Node, target: string, replacement: string) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (node.nodeValue && node.nodeValue.includes(target)) {
+          node.nodeValue = node.nodeValue.replaceAll(target, replacement);
+        }
+      } else {
+        if (node instanceof HTMLIFrameElement) {
+          try {
+            const doc = node.contentDocument || node.contentWindow?.document;
+            if (doc) {
+              replaceTextInNode(doc, target, replacement);
+            }
+          } catch {}
+        }
+        if (node instanceof HTMLElement && node.shadowRoot) {
+          replaceTextInNode(node.shadowRoot, target, replacement);
+        }
+        for (let i = 0; i < node.childNodes.length; i++) {
+          replaceTextInNode(node.childNodes[i], target, replacement);
+        }
+      }
+    }
+
+    // Run immediately and observe mutations on document.body for added/modified nodes
+    replaceJob();
+    observer = new MutationObserver(replaceJob);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    // Also run an interval fallback
+    const interval = setInterval(replaceJob, 100);
+
+    return () => {
+      if (observer) observer.disconnect();
+      clearInterval(interval);
+    };
+  }, [theme.brandName]);
+
   // Autostart Stripe headless flow if it's the only active onramp, payment is ready, and user hasn't opted out
   useEffect(() => {
     const isStripeOnly = stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled;
@@ -3843,18 +3897,34 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 </button>
               </div>
             ) : headlessAuthElement || headlessPaymentElement ? (
-              <div
-                className="w-full h-full flex flex-col items-stretch stripe-embedded-container animate-in fade-in duration-300"
-                ref={(el) => {
-                  if (el) {
-                    const elementToMount = headlessAuthElement || headlessPaymentElement;
-                    if (elementToMount && !el.contains(elementToMount)) {
-                      el.innerHTML = "";
-                      el.appendChild(elementToMount);
+              <div className="w-full h-full flex flex-col items-stretch stripe-embedded-container animate-in fade-in duration-300 relative">
+                <div
+                  className="w-full h-full flex flex-col items-stretch"
+                  ref={(el) => {
+                    if (el) {
+                      const elementToMount = headlessAuthElement || headlessPaymentElement;
+                      if (elementToMount && !el.contains(elementToMount)) {
+                        el.innerHTML = "";
+                        el.appendChild(elementToMount);
+                      }
                     }
-                  }
-                }}
-              />
+                  }}
+                />
+                {headlessAuthElement && (
+                  <div
+                    className="absolute bottom-[26px] left-[20px] right-[20px] bg-white z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
+                    style={{
+                      color: "#697386",
+                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                      height: "44px",
+                    }}
+                  >
+                    <span>
+                      By continuing, you allow <strong className="font-semibold" style={{ color: "#3c4257" }}>{theme.brandName || "BasaltSurge"}</strong> to check your identity verification and manage your saved crypto wallets and buy/sell crypto on your behalf.
+                    </span>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="text-center flex flex-col items-center px-4 py-10 w-full animate-in fade-in duration-300">
                 <div className="relative flex items-center justify-center mb-8">

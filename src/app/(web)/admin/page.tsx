@@ -9558,7 +9558,25 @@ function TerminalPanel() {
         }
       }
       const storeCurrency = typeof cfg?.storeCurrency === "string" ? cfg.storeCurrency : undefined;
-      const basePlatformFeePct = typeof cfg?.basePlatformFeePct === "number" ? cfg.basePlatformFeePct : 0.5;
+
+      const splitCfg = (cfg as any)?.splitConfig;
+      const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+      const presentedFeeBps = (cfg as any).presentedFeeBps;
+
+      let basePlatformFeePct = 0.5;
+      if (presentedFeeBps !== undefined) {
+        basePlatformFeePct = (presentedFeeBps + partnerBps) / 100;
+      } else if (splitCfg && typeof splitCfg.platformBps === "number") {
+        const platformBps = splitCfg.platformBps;
+        const agentBps = Array.isArray(splitCfg.agents)
+          ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+          : 0;
+        basePlatformFeePct = (partnerBps + platformBps + agentBps) / 100;
+      } else if (typeof (cfg as any).basePlatformFeePct === "number") {
+        basePlatformFeePct = (cfg as any).basePlatformFeePct;
+      } else {
+        basePlatformFeePct = (50 + partnerBps) / 100;
+      }
       // Extract logo for QR code
       const theme: any = cfg?.theme || {};
       const logo = theme?.symbolLogoUrl || theme?.brandLogoUrl || theme?.brandFaviconUrl || "";
