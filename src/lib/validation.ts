@@ -119,7 +119,9 @@ export const TipConfigSchema = z.object({
   presets: z.array(z.number().min(0).max(100)).max(6).optional(),
   defaultTip: z.number().min(0).max(100).nullable().optional(),
   allowCustom: z.boolean().optional(),
+  enabled: z.boolean().optional(),
 });
+
 
 /**
  * Site config update payload schema.
