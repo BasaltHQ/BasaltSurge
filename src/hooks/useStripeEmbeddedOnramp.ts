@@ -1022,7 +1022,7 @@ export function useStripeEmbeddedOnramp({
  
       // Poll for onramp fulfillment (Stripe delivers USDC to buyer's smart wallet)
       let fundsDelivered = false;
-      let isDebitCard = false;
+      let isCreditCard = false;
       console.log(`[EMBEDDED ONRAMP] Starting to poll status for session: ${sessionId}`);
       for (let poll = 0; poll < 60; poll++) { // Max 5 minutes
         await new Promise(r => setTimeout(r, 5000));
@@ -1039,8 +1039,8 @@ export function useStripeEmbeddedOnramp({
  
           if (statusData && statusData.status === "fulfillment_complete") {
             fundsDelivered = true;
-            isDebitCard = statusData.paymentDetails?.card?.funding === "debit" || statusData.paymentDetails?.card?.funding === "prepaid";
-            console.log("[EMBEDDED ONRAMP] ✓ USDC delivered to buyer's smart wallet. Debit card:", isDebitCard);
+            isCreditCard = statusData.paymentDetails?.card?.funding === "credit";
+            console.log("[EMBEDDED ONRAMP] ✓ USDC delivered to buyer's smart wallet. Credit card:", isCreditCard);
             break;
           }
         } catch (pollErr) {
@@ -1059,10 +1059,10 @@ export function useStripeEmbeddedOnramp({
       updateStep("transferring");
  
       // Choose target split address based on card funding type
-      const targetSplitAddress = (isDebitCard || detectedCardFunding === "debit") && splitAddressCredit
+      const targetSplitAddress = (isCreditCard || detectedCardFunding === "credit") && splitAddressCredit
         ? splitAddressCredit
         : (splitAddress || "");
-
+ 
       const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, amount, connectedWallet);
  
       if (!txHash) {
