@@ -44,6 +44,12 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
     const [rates, setRates] = useState<Record<string, number>>({});
     const [usdRates, setUsdRates] = useState<Record<string, number>>({});
 
+    const [processingFeePct, setProcessingFeePct] = useState<number>(0);
+    const [basePlatformFeePct, setBasePlatformFeePct] = useState<number>(0.5);
+    const [taxRate, setTaxRate] = useState<number>(0);
+    const [hasDefaultTax, setHasDefaultTax] = useState<boolean>(false);
+    const [terminalLogoUrl, setTerminalLogoUrl] = useState<string>(logoUrl || "");
+
     const { pushQRToCustomerScreen, clearCustomerScreen } = useQRCodeDisplay();
     const { printDocument, hasPrinter } = useReceiptPrinter();
 
@@ -52,6 +58,65 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
             .then(([r, u]) => { setRates(r); setUsdRates(u); })
             .catch(() => { });
     }, []);
+
+    useEffect(() => {
+        if (!merchantWallet) return;
+        fetch("/api/site/config", { cache: "no-store", headers: { "x-wallet": merchantWallet } })
+            .then((r) => r.json())
+            .then((j: any) => {
+                const cfg = j?.config || {};
+                const feePct = Math.max(0, Number(cfg?.processingFeePct || 0));
+                setProcessingFeePct(feePct);
+
+                const splitCfg = cfg?.splitConfig;
+                const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+                const presentedFeeBps = cfg?.presentedFeeBps;
+
+                let basePlatformFee = 0.5;
+                if (presentedFeeBps !== undefined) {
+                    basePlatformFee = (presentedFeeBps + partnerBps) / 100;
+                } else if (splitCfg && typeof splitCfg.platformBps === "number") {
+                    const platformBps = splitCfg.platformBps;
+                    const agentBps = Array.isArray(splitCfg.agents)
+                        ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+                        : 0;
+                    basePlatformFee = (partnerBps + platformBps + agentBps) / 100;
+                } else if (typeof cfg?.basePlatformFeePct === "number") {
+                    basePlatformFee = cfg.basePlatformFeePct;
+                } else {
+                    basePlatformFee = (50 + partnerBps) / 100;
+                }
+                setBasePlatformFeePct(basePlatformFee);
+
+                const taxCfg: any = cfg?.taxConfig || {};
+                const defCode = typeof taxCfg?.defaultJurisdictionCode === "string" ? taxCfg.defaultJurisdictionCode : "";
+                const list: any[] = Array.isArray(taxCfg?.jurisdictions) ? taxCfg.jurisdictions : [];
+                let rate = 0;
+                const hasDefault = !!defCode;
+                if (defCode) {
+                    const jur: any = list.find((x: any) => x.code === defCode);
+                    if (jur) {
+                        const comps: any[] = Array.isArray(jur.components) ? jur.components : [];
+                        if (comps.length) rate = comps.reduce((s, c) => s + Math.max(0, Math.min(1, Number(c.rate || 0))), 0);
+                        else rate = Math.max(0, Math.min(1, Number(jur.rate || 0)));
+                    }
+                }
+                setTaxRate(rate);
+                setHasDefaultTax(hasDefault);
+
+                const sc = String(cfg?.storeCurrency || "");
+                if (sc && !storeCurrency) {
+                    setTerminalCurrency(sc);
+                }
+
+                const cfgTheme: any = cfg?.theme || {};
+                const logo = cfgTheme?.symbolLogoUrl || cfgTheme?.brandLogoUrl || cfgTheme?.brandFaviconUrl || "";
+                if (logo) {
+                    setTerminalLogoUrl(logo);
+                }
+            })
+            .catch(() => { });
+    }, [merchantWallet, storeCurrency]);
 
     // Calculator Logic
     function parseAmount(): number {
@@ -71,9 +136,37 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
     function clearAmount() { setAmountStr(""); }
 
     const baseUsd = parseAmount();
-    const totalUsd = baseUsd;
+    const activeTaxRate = hasDefaultTax ? Math.max(0, Math.min(1, taxRate || 0)) : 0;
+    const taxUsd = +(baseUsd * activeTaxRate).toFixed(2);
+    const feePctFraction = Math.max(0, (basePlatformFeePct + processingFeePct) / 100);
+    const processingFeeUsd = +((baseUsd + taxUsd) * feePctFraction).toFixed(2);
+    const totalUsd = +((baseUsd + taxUsd + processingFeeUsd)).toFixed(2);
 
     // Conversion
+    const baseConverted = useMemo(() => {
+        if (terminalCurrency === "USD") return baseUsd;
+        const usdRate = Number(usdRates[terminalCurrency] || 0);
+        if (usdRate > 0) return roundForCurrency(baseUsd * usdRate, terminalCurrency);
+        const converted = convertFromUsd(baseUsd, terminalCurrency, rates);
+        return converted > 0 ? roundForCurrency(converted, terminalCurrency) : baseUsd;
+    }, [baseUsd, terminalCurrency, usdRates, rates]);
+
+    const taxConverted = useMemo(() => {
+        if (terminalCurrency === "USD") return taxUsd;
+        const usdRate = Number(usdRates[terminalCurrency] || 0);
+        if (usdRate > 0) return roundForCurrency(taxUsd * usdRate, terminalCurrency);
+        const converted = convertFromUsd(taxUsd, terminalCurrency, rates);
+        return converted > 0 ? roundForCurrency(converted, terminalCurrency) : taxUsd;
+    }, [taxUsd, terminalCurrency, usdRates, rates]);
+
+    const processingFeeConverted = useMemo(() => {
+        if (terminalCurrency === "USD") return processingFeeUsd;
+        const usdRate = Number(usdRates[terminalCurrency] || 0);
+        if (usdRate > 0) return roundForCurrency(processingFeeUsd * usdRate, terminalCurrency);
+        const converted = convertFromUsd(processingFeeUsd, terminalCurrency, rates);
+        return converted > 0 ? roundForCurrency(converted, terminalCurrency) : processingFeeUsd;
+    }, [processingFeeUsd, terminalCurrency, usdRates, rates]);
+
     const totalConverted = useMemo(() => {
         if (terminalCurrency === "USD") return totalUsd;
         const usdRate = Number(usdRates[terminalCurrency] || 0);
@@ -323,7 +416,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
             </div>
             <div className="flex items-center justify-between shrink-0">
                 <div className="flex items-center space-x-4">
-                    {logoUrl && <img src={logoUrl} className="h-10 w-10 object-contain" />}
+                    {terminalLogoUrl && <img src={terminalLogoUrl} className="h-10 w-10 object-contain" />}
                     <div>
                         <h1 className="text-md font-bold">{brandName || "Terminal"}</h1>
                         {employeeName && <div className="text-sm text-muted-foreground">Operator: {employeeName}</div>}
@@ -396,9 +489,22 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                             />
                         </div>
 
-                        <div className="pt-2 md:pt-4 border-t mt-auto">
+                        <div className="pt-2 md:pt-4 border-t mt-auto space-y-1">
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="text-muted-foreground">Base</span>
+                                <span>{formatCurrency(baseConverted, terminalCurrency)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="text-muted-foreground">Tax {hasDefaultTax ? `(${(Math.round(activeTaxRate * 10000) / 100).toFixed(2)}%)` : ""}</span>
+                                <span>{formatCurrency(taxConverted, terminalCurrency)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="text-muted-foreground">Platform ({(basePlatformFeePct + processingFeePct).toFixed(2)}%)</span>
+                                <span>{formatCurrency(processingFeeConverted, terminalCurrency)}</span>
+                            </div>
+                            <div className="h-px bg-foreground/10 my-2" />
                             <div className="flex justify-between items-center mb-2">
-                                <span className="text-muted-foreground">Total</span>
+                                <span className="text-muted-foreground font-bold">Total</span>
                                 <span className="text-xl font-bold">{formatCurrency(totalConverted, terminalCurrency)}</span>
                             </div>
                             {terminalCurrency !== "USD" && (
@@ -457,7 +563,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                                     qrStyle="dots"
                                     eyeRadius={10}
                                     eyeColor={(theme as any)?.secondaryColor || (theme as any)?.primaryColor || "#ffffff"}
-                                    logoImage={logoUrl}
+                                    logoImage={terminalLogoUrl}
                                     logoWidth={40}
                                     logoHeight={40}
                                     removeQrCodeBehindLogo={true}
@@ -574,7 +680,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                         {/* Printable Receipt - Hidden on Screen */}
                         <div className="thermal-paper hidden print:block text-black text-left mx-auto font-mono leading-tight">
                             <div className="flex flex-col items-center mb-2">
-                                {logoUrl && <img src={logoUrl} className="w-8 h-8 object-contain grayscale mb-1" />}
+                                {terminalLogoUrl && <img src={terminalLogoUrl} className="w-8 h-8 object-contain grayscale mb-1" />}
                                 <h2 className="font-bold text-center text-sm">{brandName || "Terminal"}</h2>
                                 {employeeName && <div className="text-[10px] mt-0.5">Op: {employeeName.split('•')[0].trim()}</div>}
                             </div>
