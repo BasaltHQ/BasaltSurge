@@ -1840,7 +1840,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       ? activeSplitConfig.partnerBps
       : 0;
 
-    // Prioritize activeSplitConfig smart contract components if available
+    const basePresentedBps = isCredit
+      ? (creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : undefined))
+      : (presentedFeeBps !== undefined ? presentedFeeBps : undefined);
+
+    if (basePresentedBps !== undefined) {
+      return (basePresentedBps + partnerBps) / 100;
+    }
+
+    // Fallback: If basePresentedBps is not configured, fall back to split components
     if (activeSplitConfig && typeof activeSplitConfig.platformBps === "number") {
       const platformBps = activeSplitConfig.platformBps;
       const agentBps = Array.isArray(activeSplitConfig.agents)
@@ -1849,15 +1857,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       return (platformBps + partnerBps + agentBps) / 100;
     }
 
-    const basePresentedBps = isCredit
-      ? (creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : undefined))
-      : (presentedFeeBps !== undefined ? presentedFeeBps : undefined);
-
-    if (basePresentedBps === undefined) {
-      return (50 + partnerBps) / 100; // Platform default of 50 BPS (0.5%) + partner
-    }
-
-    return (basePresentedBps + partnerBps) / 100;
+    return (50 + partnerBps) / 100; // Platform default of 50 BPS (0.5%) + partner
   }, [detectedCardFunding, splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps]);
 
   // Credit fee percentage calculation (presented fee + partner + merchant processing fee)
@@ -1871,7 +1871,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       ? activeSplitConfig.partnerBps
       : 0;
 
-    // Prioritize activeSplitConfig smart contract components if available
+    const basePresentedBps = creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : undefined);
+
+    if (basePresentedBps !== undefined) {
+      return (basePresentedBps + partnerBps) / 100 + Number(processingFeePct || 0);
+    }
+
+    // Fallback to split components
     if (activeSplitConfig && typeof activeSplitConfig.platformBps === "number") {
       const platformBps = activeSplitConfig.platformBps;
       const agentBps = Array.isArray(activeSplitConfig.agents)
@@ -1880,14 +1886,41 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       return (platformBps + partnerBps + agentBps) / 100 + Number(processingFeePct || 0);
     }
 
-    const basePresentedBps = creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : undefined);
+    return (50 + partnerBps) / 100 + Number(processingFeePct || 0);
+  }, [splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps, processingFeePct]);
 
-    if (basePresentedBps === undefined) {
-      return (50 + partnerBps) / 100 + Number(processingFeePct || 0);
+  // Actual split fee percentage calculation based strictly on the smart contract split components.
+  // This is used for Stripe calculations (stripeProcessingFeeUsd, stripeTotalUsd) to ensure the payment
+  // on-chain matches the smart contract split configuration.
+  const actualSplitFeePct = useMemo(() => {
+    const isCredit = detectedCardFunding === "credit";
+    const activeSplitConfig = isCredit
+      ? (splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig)
+      : (splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit);
+
+    const partnerBps = activeSplitConfig && typeof activeSplitConfig.partnerBps === "number"
+      ? activeSplitConfig.partnerBps
+      : 0;
+
+    // Prioritize activeSplitConfig smart contract components if available
+    if (activeSplitConfig && typeof activeSplitConfig.platformBps === "number") {
+      const platformBps = activeSplitConfig.platformBps;
+      const agentBps = Array.isArray(activeSplitConfig.agents)
+        ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+        : 0;
+      return (platformBps + partnerBps + agentBps) / 100;
     }
 
-    return (basePresentedBps + partnerBps) / 100 + Number(processingFeePct || 0);
-  }, [splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps, processingFeePct]);
+    const basePresentedBps = isCredit
+      ? (creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : undefined))
+      : (presentedFeeBps !== undefined ? presentedFeeBps : undefined);
+
+    if (basePresentedBps !== undefined) {
+      return (basePresentedBps + partnerBps) / 100;
+    }
+
+    return (50 + partnerBps) / 100;
+  }, [detectedCardFunding, splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps]);
 
   // Dynamic receipt
   const [receipt, setReceipt] = useState<Receipt | null>(null);
@@ -2220,9 +2253,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd]);
 
   const stripeProcessingFeeUsd = useMemo(() => {
-    const feePctFraction = Math.max(0, effectiveBasePlatformFeePct / 100);
+    const feePctFraction = Math.max(0, actualSplitFeePct / 100);
     return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
-  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, effectiveBasePlatformFeePct]);
+  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, actualSplitFeePct]);
 
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
@@ -4756,7 +4789,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           client={client}
                                           chain={chain}
                                           currency={widgetCurrency as any}
-                                          amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
+                                          amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                           seller={sellerAddress || merchantWallet || recipient}
                                           tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                           showThirdwebBranding={false}
@@ -4837,7 +4870,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   client={client}
                                   chain={chain}
                                   currency={widgetCurrency as any}
-                                  amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
+                                  amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                   seller={sellerAddress || merchantWallet || recipient}
                                   tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                   showThirdwebBranding={false}
@@ -5397,7 +5430,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         client={client}
                                         chain={base}
                                         currency={currency as any}
-                                        amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
+                                        amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                         seller={sellerAddress || merchantWallet || recipient}
                                         tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                         showThirdwebBranding={false}
@@ -5453,7 +5486,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 client={client}
                                 chain={base}
                                 currency={currency as any}
-                                amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
+                                amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                 seller={sellerAddress || merchantWallet || recipient}
                                 tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                 showThirdwebBranding={false}
