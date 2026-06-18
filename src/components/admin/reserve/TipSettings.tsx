@@ -8,6 +8,7 @@ type TipConfig = {
   presets: number[];
   defaultTip: number | null;
   allowCustom: boolean;
+  enabled?: boolean;
 };
 
 const DEFAULT_PRESETS = [0, 10, 15, 20];
@@ -23,6 +24,7 @@ export function TipSettings({ walletOverride }: TipSettingsProps) {
   const [presets, setPresets] = useState<number[]>(DEFAULT_PRESETS);
   const [defaultTip, setDefaultTip] = useState<number | null>(null);
   const [allowCustom, setAllowCustom] = useState(true);
+  const [enabled, setEnabled] = useState(true);
   const [newPreset, setNewPreset] = useState<string>("");
 
   // Baselines for unsaved change detection
@@ -30,6 +32,7 @@ export function TipSettings({ walletOverride }: TipSettingsProps) {
     presets: DEFAULT_PRESETS,
     defaultTip: null,
     allowCustom: true,
+    enabled: true,
   });
 
   const [loading, setLoading] = useState(true);
@@ -63,6 +66,13 @@ export function TipSettings({ walletOverride }: TipSettingsProps) {
           if (typeof cfg.allowCustom === "boolean") {
             setAllowCustom(cfg.allowCustom);
             setLastSaved((prev) => ({ ...prev, allowCustom: cfg.allowCustom }));
+          }
+          if (typeof cfg.enabled === "boolean") {
+            setEnabled(cfg.enabled);
+            setLastSaved((prev) => ({ ...prev, enabled: cfg.enabled }));
+          } else {
+            setEnabled(true);
+            setLastSaved((prev) => ({ ...prev, enabled: true }));
           }
         }
       })
@@ -114,7 +124,7 @@ export function TipSettings({ walletOverride }: TipSettingsProps) {
     const next = [...presets, val].sort((a, b) => a - b);
     setPresets(next);
     setNewPreset("");
-    scheduleSave({ presets: next, defaultTip, allowCustom });
+    scheduleSave({ presets: next, defaultTip, allowCustom, enabled });
   }
 
   function removePreset(val: number) {
@@ -122,25 +132,31 @@ export function TipSettings({ walletOverride }: TipSettingsProps) {
     const newDefault = defaultTip === val ? null : defaultTip;
     setPresets(next);
     setDefaultTip(newDefault);
-    scheduleSave({ presets: next, defaultTip: newDefault, allowCustom });
+    scheduleSave({ presets: next, defaultTip: newDefault, allowCustom, enabled });
   }
 
   function handleDefaultChange(val: string) {
     const next = val === "none" ? null : Number(val);
     setDefaultTip(next);
-    scheduleSave({ presets, defaultTip: next, allowCustom });
+    scheduleSave({ presets, defaultTip: next, allowCustom, enabled });
   }
 
   function handleCustomToggle(checked: boolean) {
     setAllowCustom(checked);
-    scheduleSave({ presets, defaultTip, allowCustom: checked });
+    scheduleSave({ presets, defaultTip, allowCustom: checked, enabled });
+  }
+
+  function handleEnabledToggle(checked: boolean) {
+    setEnabled(checked);
+    scheduleSave({ presets, defaultTip, allowCustom, enabled: checked });
   }
 
   function resetToDefaults() {
     setPresets(DEFAULT_PRESETS);
     setDefaultTip(null);
     setAllowCustom(true);
-    saveTipConfig({ presets: DEFAULT_PRESETS, defaultTip: null, allowCustom: true });
+    setEnabled(true);
+    saveTipConfig({ presets: DEFAULT_PRESETS, defaultTip: null, allowCustom: true, enabled: true });
   }
 
   if (loading) {
@@ -156,7 +172,8 @@ export function TipSettings({ walletOverride }: TipSettingsProps) {
   const hasChanges =
     JSON.stringify(presets) !== JSON.stringify(lastSaved.presets) ||
     defaultTip !== lastSaved.defaultTip ||
-    allowCustom !== lastSaved.allowCustom;
+    allowCustom !== lastSaved.allowCustom ||
+    enabled !== lastSaved.enabled;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 gap-6 md:gap-8">
@@ -178,8 +195,36 @@ export function TipSettings({ walletOverride }: TipSettingsProps) {
         </div>
       </div>
 
+      {/* Enable Tipping Switch Panel */}
+      <div className="md:col-span-12 rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex items-center justify-between shadow-sm relative overflow-hidden">
+        {enabled && <div className="absolute top-0 right-0 w-48 h-48 bg-[var(--pp-secondary)] opacity-5 blur-[60px] pointer-events-none" />}
+        <div>
+          <label className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-2 block ml-1 relative z-10">Enable Tipping</label>
+          <div className="text-[8px] md:text-[9px] text-muted-foreground/60 uppercase font-bold tracking-wider ml-1 leading-relaxed relative z-10">
+            Show or hide the tipping section completely from the customer payment portal.
+          </div>
+        </div>
+        <div className="flex justify-end relative z-10">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={enabled}
+            onClick={() => handleEnabledToggle(!enabled)}
+            className={`relative w-14 h-7 rounded-full transition-colors ${
+              enabled ? "bg-[var(--pp-secondary)] shadow-[0_0_15px_var(--pp-secondary)]/30" : "bg-foreground/20"
+            }`}
+          >
+            <span
+              className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                enabled ? "translate-x-7" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
       {/* Tip Presets Panel */}
-      <div className="md:col-span-12 rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex flex-col gap-6 shadow-sm">
+      <div className={`md:col-span-12 rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex flex-col gap-6 shadow-sm transition-opacity duration-200 ${!enabled ? "opacity-40 pointer-events-none" : ""}`}>
         <div>
           <label className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-2 block ml-1">Tip Presets</label>
           <div className="text-[8px] md:text-[9px] text-muted-foreground/60 uppercase font-bold tracking-wider ml-1">
@@ -241,7 +286,7 @@ export function TipSettings({ walletOverride }: TipSettingsProps) {
         </div>
       </div>
 
-      <div className="md:col-span-12 lg:col-span-6 rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex flex-col gap-4 shadow-sm">
+      <div className={`md:col-span-12 lg:col-span-6 rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex flex-col gap-4 shadow-sm transition-opacity duration-200 ${!enabled ? "opacity-40 pointer-events-none" : ""}`}>
         <div>
           <label className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-2 block ml-1">Default Tip</label>
           <div className="text-[8px] md:text-[9px] text-muted-foreground/60 uppercase font-bold tracking-wider ml-1 mb-4 leading-relaxed">
@@ -262,7 +307,7 @@ export function TipSettings({ walletOverride }: TipSettingsProps) {
         </select>
       </div>
 
-      <div className="md:col-span-12 lg:col-span-6 rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex flex-col justify-between shadow-sm relative overflow-hidden">
+      <div className={`md:col-span-12 lg:col-span-6 rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex flex-col justify-between shadow-sm relative overflow-hidden transition-opacity duration-200 ${!enabled ? "opacity-40 pointer-events-none" : ""}`}>
         {allowCustom && <div className="absolute top-0 right-0 w-48 h-48 bg-[var(--pp-secondary)] opacity-5 blur-[60px] pointer-events-none" />}
         <div>
           <label className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-2 block ml-1 relative z-10">Allow Custom Tip</label>
@@ -305,7 +350,7 @@ export function TipSettings({ walletOverride }: TipSettingsProps) {
           Reset to Defaults
         </button>
         <button
-          onClick={() => saveTipConfig({ presets, defaultTip, allowCustom })}
+          onClick={() => saveTipConfig({ presets, defaultTip, allowCustom, enabled })}
           disabled={saving || !hasChanges}
           className="px-8 py-3 bg-[var(--pp-secondary)] hover:bg-[var(--pp-secondary)]/90 text-white rounded-xl text-[9px] md:text-[10px] font-bold uppercase tracking-[0.15em] shadow-[0_0_20px_var(--pp-secondary)]/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:shadow-none w-full sm:w-auto"
         >

@@ -2029,6 +2029,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [updatingTip, setUpdatingTip] = useState(false);
   const [merchantTipPresets, setMerchantTipPresets] = useState<number[]>([0, 10, 15, 20]);
   const [merchantAllowCustom, setMerchantAllowCustom] = useState(true);
+  const [merchantTipEnabled, setMerchantTipEnabled] = useState(true);
   const [pendingDefaultTip, setPendingDefaultTip] = useState<number | null>(null);
 
   const tipUsd = Number(receipt?.tipAmount || 0);
@@ -2074,6 +2075,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Auto-apply merchant default tip once receipt is loaded
   useEffect(() => {
+    if (!merchantTipEnabled) return;
     if (pendingDefaultTip === null || !receiptId || !receipt) return;
     // Only apply if no tip has been set yet
     if (Number(receipt?.tipAmount || 0) > 0) {
@@ -2107,7 +2109,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         setUpdatingTip(false);
       }
     })();
-  }, [pendingDefaultTip, receiptId, receipt]);
+  }, [pendingDefaultTip, receiptId, receipt, merchantTipEnabled]);
 
   const baseWithoutFeeNoTipUsd = useMemo(
     () => +(itemsSubtotalUsd + taxUsd).toFixed(2),
@@ -2580,6 +2582,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             if (p.length > 0) setMerchantTipPresets(p);
           }
           if (typeof tc.allowCustom === "boolean") setMerchantAllowCustom(tc.allowCustom);
+          if (typeof tc.enabled === "boolean") {
+            setMerchantTipEnabled(tc.enabled);
+          } else {
+            setMerchantTipEnabled(true);
+          }
           if (typeof tc.defaultTip === "number" && Number.isFinite(tc.defaultTip) && tc.defaultTip > 0) {
             // Queue the default tip — it will be applied once the receipt is loaded
             setPendingDefaultTip(tc.defaultTip);
@@ -3685,20 +3692,31 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const stripeHeadlessUI = (headlessEmailPrompt || headlessActive || headlessInitiated) ? (
     <div className="w-full flex flex-col items-stretch justify-start animate-in fade-in duration-300">
       {headlessEmailPrompt ? (
-        <div className="w-full rounded-xl border border-white/5 bg-white/[0.02] backdrop-blur-xl p-5 flex flex-col items-stretch animate-in zoom-in duration-300">
-          <h3 className="text-white text-base font-bold tracking-tight mb-1">Stripe Quick Checkout</h3>
-          <p className="text-white/60 text-xs mb-4">Verify your identity with Stripe Link to complete your payment.</p>
+        <div className={`w-full rounded-xl border p-5 flex flex-col items-stretch animate-in zoom-in duration-300 backdrop-blur-xl ${isLightText ? 'border-white/5 bg-white/[0.02]' : 'border-black/5 bg-black/[0.02]'}`}>
+          <div className="flex justify-between items-start mb-1 gap-4">
+            <h3 className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>Stripe Quick Checkout</h3>
+            <span className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>{payLabel}</span>
+          </div>
+          <p className={`text-xs mb-4 ${isLightText ? 'text-white/60' : 'text-black/60'}`}>Verify your identity with Stripe Link to complete your payment.</p>
           <input
             type="email"
             placeholder="Email address"
-            className="w-full h-11 px-3 rounded-xl bg-black/45 border border-white/10 text-white placeholder-white/30 mb-4 focus:outline-none focus:border-white/30 focus:bg-black/65 focus:ring-1 focus:ring-white/20 transition-all text-sm font-medium"
+            className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${
+              isLightText 
+                ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20' 
+                : 'bg-black/5 border border-black/10 text-black placeholder-black/30 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
+            }`}
             value={headlessEmailInput}
             onChange={(e) => setHeadlessEmailInput(e.target.value)}
             autoFocus
           />
           <div className="flex gap-3">
             <button
-              className="flex-1 py-2.5 rounded-xl bg-white/[0.03] text-white/80 font-semibold border border-white/5 hover:bg-white/[0.07] hover:text-white transition-all text-xs"
+              className={`flex-1 py-2.5 rounded-xl font-semibold border transition-all text-xs ${
+                isLightText
+                  ? 'bg-white/[0.03] text-white/80 border-white/5 hover:bg-white/[0.07] hover:text-white'
+                  : 'bg-black/[0.03] text-black/80 border-black/5 hover:bg-black/[0.07] hover:text-black'
+              }`}
               onClick={() => {
                 setUserOptedOutOfStripeBypass(true);
                 setHeadlessEmailPrompt(false);
@@ -3710,7 +3728,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 : "Cancel"}
             </button>
             <button
-              className="flex-1 py-2.5 rounded-xl font-semibold transition-all text-xs text-white !text-white hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 border border-transparent shadow-md"
+              className={`flex-1 py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${
+                isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+              }`}
               style={{
                 backgroundColor: theme.primaryColor || "#635BFF",
               }}
@@ -3730,21 +3750,23 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         <div className={`w-full flex flex-col relative transition-all duration-300 ${
           (headlessAuthElement || headlessPaymentElement)
             ? "border-0 bg-transparent shadow-none" 
-            : "bg-white/[0.02] border border-white/5 rounded-xl shadow-xl backdrop-blur-xl overflow-hidden"
+            : `rounded-xl shadow-xl backdrop-blur-xl overflow-hidden border ${
+                isLightText ? 'bg-white/[0.02] border-white/5' : 'bg-black/[0.02] border-black/5'
+              }`
         }`}>
           {/* Header */}
           {!(headlessAuthElement || headlessPaymentElement) && (
-            <div className="p-4 border-b border-white/5 flex items-center justify-between">
-              <span className="text-white font-semibold flex items-center gap-1.5 select-none">
+            <div className={`p-4 border-b flex items-center justify-between ${isLightText ? 'border-white/5' : 'border-black/5'}`}>
+              <span className={`font-semibold flex items-center gap-1.5 select-none ${isLightText ? 'text-white' : 'text-black'}`}>
                 <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#635BFF] fill-current">
                   <path d="M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .979-.714 1.481-1.993 1.481-2.274 0-4.662-.835-6.353-1.638l-.898 5.568c2.81 1.748 5.51 1.748 8.028 1.748 2.541 0 4.606-.654 6.095-1.872 1.583-1.282 2.39-3.136 2.39-5.381 0-4.088-2.52-5.77-6.476-7.228z" />
                 </svg>
-                <span className="text-white text-base font-bold tracking-tight">stripe</span>
+                <span className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>stripe</span>
               </span>
               {headlessStep === "error" && (
                 <button 
                   onClick={() => window.location.reload()}
-                  className="text-white/50 hover:text-white transition-colors p-1"
+                  className={`transition-colors p-1 ${isLightText ? 'text-white/50 hover:text-white' : 'text-black/50 hover:text-black'}`}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                 </button>
@@ -3759,11 +3781,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mb-4 text-red-500 border border-red-500/20">
                   <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
                 </div>
-                <h3 className="text-white text-base font-bold mb-1.5">Payment Failed</h3>
-                <p className="text-white/60 text-xs mb-6 max-w-xs">{headlessError}</p>
+                <h3 className={`text-base font-bold mb-1.5 ${isLightText ? 'text-white' : 'text-black'}`}>Payment Failed</h3>
+                <p className={`text-xs mb-6 max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>{headlessError}</p>
                 <button 
                   onClick={() => window.location.reload()}
-                  className="w-full py-2.5 rounded-xl font-semibold transition-all text-xs text-white !text-white hover:opacity-90 border border-transparent shadow-md"
+                  className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 shadow-md ${
+                    isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                  }`}
                   style={{
                     backgroundColor: theme.primaryColor || "#635BFF",
                   }}
@@ -3776,11 +3800,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 <div className="w-14 h-14 bg-green-500/10 rounded-full flex items-center justify-center mb-4 text-green-500 border border-green-500/20">
                   <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
                 </div>
-                <h3 className="text-white text-base font-bold mb-1.5">Payment Complete</h3>
-                <p className="text-white/60 text-xs mb-6 max-w-xs">USDC has been transferred successfully.</p>
+                <h3 className={`text-base font-bold mb-1.5 ${isLightText ? 'text-white' : 'text-black'}`}>Payment Complete</h3>
+                <p className={`text-xs mb-6 max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>USDC has been transferred successfully.</p>
                 <button 
                   onClick={() => window.location.reload()}
-                  className="w-full py-2.5 rounded-xl font-semibold transition-all text-xs text-white !text-white hover:opacity-90 border border-transparent shadow-md"
+                  className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 shadow-md ${
+                    isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                  }`}
                   style={{
                     backgroundColor: theme.primaryColor || "#635BFF",
                   }}
@@ -3790,18 +3816,24 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               </div>
             ) : headlessStep === "collecting_phone" ? (
               <div className="w-full flex flex-col items-stretch p-2 animate-in zoom-in duration-300">
-                <h3 className="text-white text-base font-bold tracking-tight mb-1">Stripe Verification Required</h3>
-                <p className="text-white/60 text-xs mb-4">Enter your phone number to register your Link account securely.</p>
+                <h3 className={`text-base font-bold tracking-tight mb-1 ${isLightText ? 'text-white' : 'text-black'}`}>Stripe Verification Required</h3>
+                <p className={`text-xs mb-4 ${isLightText ? 'text-white/60' : 'text-black/60'}`}>Enter your phone number to register your Link account securely.</p>
                 <input
                   type="tel"
                   placeholder="Phone number (+1 555-555-5555)"
-                  className="w-full h-11 px-3 rounded-xl bg-black/45 border border-white/10 text-white placeholder-white/30 mb-4 focus:outline-none focus:border-white/30 focus:bg-black/65 focus:ring-1 focus:ring-white/20 transition-all text-sm font-medium"
+                  className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${
+                    isLightText 
+                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20' 
+                      : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
+                  }`}
                   value={headlessPhoneInput}
                   onChange={(e) => setHeadlessPhoneInput(e.target.value)}
                   autoFocus
                 />
                 <button
-                  className="w-full py-2.5 rounded-xl font-semibold transition-all text-xs text-white !text-white hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 border border-transparent shadow-md"
+                  className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${
+                    isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                  }`}
                   style={{
                     backgroundColor: theme.primaryColor || "#635BFF",
                   }}
@@ -3830,39 +3862,39 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               <div className="text-center flex flex-col items-center px-4 py-10 w-full animate-in fade-in duration-300">
                 <div className="relative flex items-center justify-center mb-8">
                   {/* Rotating Outer Ring */}
-                  <div className="absolute w-14 h-14 rounded-full border-2 border-white/5 border-t-white/30 animate-spin"></div>
+                  <div className={`absolute w-14 h-14 rounded-full border-2 animate-spin ${isLightText ? 'border-white/5 border-t-white/30' : 'border-black/5 border-t-black/30'}`}></div>
                   {/* Glowing Core */}
-                  <div className="w-9 h-9 rounded-full bg-white/[0.02] border border-white/10 flex items-center justify-center">
-                    <svg className="h-4.5 w-4.5 text-white/80 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
+                  <div className={`w-9 h-9 rounded-full border flex items-center justify-center ${isLightText ? 'bg-white/[0.02] border-white/10' : 'bg-black/[0.02] border-black/10'}`}>
+                    <svg className={`h-4.5 w-4.5 animate-pulse ${isLightText ? 'text-white/80' : 'text-black/80'}`} viewBox="0 0 24 24" fill="currentColor">
                       <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.25z"/>
                     </svg>
                   </div>
                 </div>
-                <p className="text-white font-semibold text-sm tracking-tight mb-1">{headlessStatus}</p>
+                <p className={`font-semibold text-sm tracking-tight mb-1 ${isLightText ? 'text-white' : 'text-black'}`}>{headlessStatus}</p>
                 {headlessStep === "awaiting_funds" ? (
                   <div className="w-full max-w-xs mt-6 flex flex-col items-stretch px-2 animate-in fade-in zoom-in duration-500">
-                    <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden relative">
+                    <div className={`w-full h-2 rounded-full overflow-hidden relative ${isLightText ? 'bg-white/10' : 'bg-black/10'}`}>
                       <div 
                         className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-1000 ease-linear rounded-full"
                         style={{ width: `${((40 - awaitingFundsSeconds) / 40) * 100}%` }}
                       />
                     </div>
                     <div className="flex justify-between w-full mt-2.5 text-[11px]">
-                      <span className="text-white/50">Fulfillment Status</span>
+                      <span className={isLightText ? 'text-white/50' : 'text-black/50'}>Fulfillment Status</span>
                       <span className="text-emerald-400 font-mono font-bold animate-pulse">
                         {awaitingFundsSeconds > 0 ? `${awaitingFundsSeconds}s remaining` : 'Finalizing transfer...'}
                       </span>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-white/40 text-[11px]">This process is secure and authenticated.</p>
+                  <p className={`text-[11px] ${isLightText ? 'text-white/40' : 'text-black/40'}`}>This process is secure and authenticated.</p>
                 )}
 
                 {headlessBuyerWallet && (
-                  <div className="w-full max-w-xs mt-6 p-3 rounded-xl border border-white/5 bg-white/[0.01] flex flex-col items-stretch text-left animate-in fade-in duration-500">
-                    <span className="text-white/40 text-[10px] font-bold uppercase tracking-wider mb-1.5">Deterministic EOA Wallet</span>
-                    <div className="flex items-center justify-between gap-3 bg-black/40 rounded-lg p-2.5 border border-white/5">
-                      <code className="text-white/80 font-mono text-xs select-all overflow-hidden text-ellipsis whitespace-nowrap flex-1">
+                  <div className={`w-full max-w-xs mt-6 p-3 rounded-xl border flex flex-col items-stretch text-left animate-in fade-in duration-500 ${isLightText ? 'border-white/5 bg-white/[0.01]' : 'border-black/5 bg-black/[0.01]'}`}>
+                    <span className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Deterministic EOA Wallet</span>
+                    <div className={`flex items-center justify-between gap-3 rounded-lg p-2.5 border ${isLightText ? 'bg-black/40 border-white/5' : 'bg-white/40 border-black/5'}`}>
+                      <code className={`font-mono text-xs select-all overflow-hidden text-ellipsis whitespace-nowrap flex-1 ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
                         {headlessBuyerWallet}
                       </code>
                       <button
@@ -3873,7 +3905,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             setTimeout(() => setCopiedWallet(false), 2000);
                           } catch {}
                         }}
-                        className="text-white/40 hover:text-white/80 transition-all p-1.5 rounded-md hover:bg-white/5"
+                        className={`transition-all p-1.5 rounded-md ${isLightText ? 'text-white/40 hover:text-white/80 hover:bg-white/5' : 'text-black/40 hover:text-black/80 hover:bg-black/5'}`}
                         title="Copy wallet address"
                       >
                         {copiedWallet ? (
@@ -3891,8 +3923,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           
           {/* Footer */}
           {!(headlessAuthElement || headlessPaymentElement) && (
-            <div className="p-4 border-t border-white/5 bg-white/[0.01] text-center">
-              <p className="text-xs text-white/40 flex items-center justify-center gap-1.5">
+            <div className={`p-4 border-t text-center ${isLightText ? 'border-white/5 bg-white/[0.01]' : 'border-black/5 bg-black/[0.01]'}`}>
+              <p className={`text-xs flex items-center justify-center gap-1.5 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                 Secure connection to Stripe
               </p>
@@ -4084,7 +4116,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             .pp-portal-container [class*="glass"],
             .pp-portal-container [class*="backdrop"] {
               background: ${isLightBackground
-                ? ((theme.pageBg && isColorLight(theme.pageBg)) || (theme.surfaceBg && isColorLight(theme.surfaceBg)) || (theme.primaryBg && isColorLight(theme.primaryBg)) || "rgba(255,255,255,0.85)")
+                ? ((theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") || (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") || (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") || "rgba(255,255,255,0.85)")
                 : (theme.pageBg || theme.surfaceBg || theme.primaryBg || "rgba(10,11,16,0.6)")} !important;
               border-color: ${borderColor} !important;
               ${(theme as any).borderRadius ? `border-radius: ${(theme as any).borderRadius} !important;` : ''}
@@ -4092,7 +4124,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
             .pp-portal-container .pp-currency-menu {
               background: ${isLightBackground
-                ? ((theme.pageBg && isColorLight(theme.pageBg)) || (theme.surfaceBg && isColorLight(theme.surfaceBg)) || (theme.primaryBg && isColorLight(theme.primaryBg)) || '#ffffff')
+                ? ((theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") || (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") || (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") || '#ffffff')
                 : (theme.pageBg || theme.surfaceBg || theme.primaryBg || '#0c0d14')} !important;
               border-color: ${borderColor} !important;
               border-radius: ${(theme as any).borderRadius || '12px'} !important;
@@ -4103,6 +4135,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             .pp-portal-container select,
             .pp-portal-container textarea,
             .pp-portal-container .pp-currency-btn {
+              background: ${isLightBackground ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.05)'} !important;
               border-color: ${borderColor} !important;
               color: ${bodyColor} !important;
               ${(theme as any).borderRadius ? `border-radius: ${(theme as any).borderRadius} !important;` : ''}
@@ -4430,38 +4463,40 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         ));
                       })()}
 
-                      <div className="mt-2">
-                        <div className="text-xs font-medium">Add a tip</div>
-                        <div className="mt-1 flex gap-2 flex-wrap">
-                          {(["0", "10", "15", "20", "custom"] as const).map((v) => (
-                            <button
-                              key={v}
-                              type="button"
-                              onClick={() => setTipChoice(v)}
-                              className={`pp-tip-btn px-2 py-1 rounded-md border text-xs transition-colors ${isLightText ? 'hover:bg-white/5' : 'hover:bg-black/5'} ${tipChoice === v ? (isLightText ? "bg-white/10 border-white/20" : "bg-black/10 border-black/20") : ""}`}
-                              title={v === "custom" ? "Custom tip amount" : `Tip ${v}%`}
-                            >
-                              {v === "custom" ? "Custom" : `${v}%`}
-                            </button>
-                          ))}
-                          {tipChoice === "custom" && (
-                            <input
-                              type="number"
-                              step="0.1"
-                              min="0"
-                              max="100"
-                              value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
-                              onChange={(e) => setTipCustomPct(Number(e.target.value))}
-                              placeholder="%"
-                              className={`h-7 px-2 rounded-md border text-xs w-20 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/30' : 'bg-black/5 border-black/10 text-black placeholder-black/30'}`}
-                              title="Enter tip percentage"
-                            />
-                          )}
+                      {merchantTipEnabled && (
+                        <div className="mt-2">
+                          <div className="text-xs font-medium">Add a tip</div>
+                          <div className="mt-1 flex gap-2 flex-wrap">
+                            {[...merchantTipPresets.map(String), ...(merchantAllowCustom ? ["custom"] : [])].map((v) => (
+                              <button
+                                key={v}
+                                type="button"
+                                onClick={() => setTipChoice(v)}
+                                className={`pp-tip-btn px-2 py-1 rounded-md border text-xs transition-colors ${isLightText ? 'hover:bg-white/5' : 'hover:bg-black/5'} ${tipChoice === v ? (isLightText ? "bg-white/10 border-white/20" : "bg-black/10 border-black/20") : ""}`}
+                                title={v === "custom" ? "Custom tip amount" : `Tip ${v}%`}
+                              >
+                                {v === "custom" ? "Custom" : `${v}%`}
+                              </button>
+                            ))}
+                            {tipChoice === "custom" && (
+                              <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                max="100"
+                                value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
+                                onChange={(e) => setTipCustomPct(Number(e.target.value))}
+                                placeholder="%"
+                                className={`h-7 px-2 rounded-md border text-xs w-20 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/30' : 'bg-black/5 border-black/10 text-black placeholder-black/30'}`}
+                                title="Enter tip percentage"
+                              />
+                            )}
+                          </div>
+                          <div className="microtext text-muted-foreground mt-1">
+                            Tip applies to subtotal before tax and fees.
+                          </div>
                         </div>
-                        <div className="microtext text-muted-foreground mt-1">
-                          Tip applies to subtotal before tax and fees.
-                        </div>
-                      </div>
+                      )}
 
                       <div className="border-t border-dashed my-2" />
                       <div className="flex items-center justify-between text-sm">
@@ -4763,7 +4798,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                               disabled={!shippingAddressValid || !shipMethod || shippingSaving}
                                               onClick={handleShippingSubmit}
                                               className={`w-full h-10 rounded-lg text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${isLightText ? 'text-white' : 'text-white'}`}
-                                              style={{ backgroundColor: shippingAddressValid && shipMethod ? (theme.primaryColor || '#10b981') : (isLightText ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'), color: shippingAddressValid && shipMethod ? '#ffffff' : (isLightText ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.4)') }}
+                                              style={{ backgroundColor: shippingAddressValid && shipMethod ? (theme.primaryColor || '#10b981') : (isLightText ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'), color: shippingAddressValid && shipMethod ? (isColorLight(theme.primaryColor || '#10b981') ? '#111827' : '#ffffff') : (isLightText ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.4)') }}
                                             >
                                               {shippingSaving ? 'Saving…' : 'Continue to Payment →'}
                                             </button>
@@ -5075,47 +5110,49 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     ));
                   })()}
 
-                  <div className="mt-3 pt-3 flex flex-col items-center">
-                    <div className="text-sm font-semibold flex items-center gap-2">
-                      Add a tip
-                      {updatingTip && <span className="animate-spin text-sm">⏳</span>}
+                  {merchantTipEnabled && (
+                    <div className="mt-3 pt-3 flex flex-col items-center">
+                      <div className="text-sm font-semibold flex items-center gap-2">
+                        Add a tip
+                        {updatingTip && <span className="animate-spin text-sm">⏳</span>}
+                      </div>
+                      <div className="mt-2 flex gap-2 flex-wrap justify-center">
+                        {[...merchantTipPresets.map(String), ...(merchantAllowCustom ? ["custom"] : [])].map((v) => (
+                          <button
+                            key={v}
+                            type="button"
+                            disabled={updatingTip}
+                            onClick={() => {
+                              setTipChoice(v);
+                              if (v !== "custom") handleTipUpdate(v);
+                            }}
+                            className={`pp-tip-btn px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${isLightText ? 'hover:bg-white/5' : 'hover:bg-black/5'} ${tipChoice === v ? (isLightText ? "bg-white/10 border-white/20" : "bg-black/10 border-black/20") : ""} ${updatingTip ? "opacity-50 cursor-not-allowed" : ""}`}
+                            title={v === "custom" ? "Custom tip amount" : `Tip ${v}%`}
+                          >
+                            {v === "custom" ? "Custom" : `${v}%`}
+                          </button>
+                        ))}
+                        {tipChoice === "custom" && (
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="100"
+                            disabled={updatingTip}
+                            value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
+                            onChange={(e) => setTipCustomPct(Number(e.target.value))}
+                            onBlur={() => handleTipUpdate(tipCustomPct)}
+                            placeholder="%"
+                            className={`h-9 px-3 rounded-lg border text-sm w-24 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/30' : 'bg-black/5 border-black/10 text-black placeholder-black/30'}`}
+                            title="Enter tip percentage"
+                          />
+                        )}
+                      </div>
+                      <div className="microtext text-muted-foreground mt-2">
+                        Tip applies to subtotal before tax and fees.
+                      </div>
                     </div>
-                    <div className="mt-2 flex gap-2 flex-wrap justify-center">
-                      {[...merchantTipPresets.map(String), ...(merchantAllowCustom ? ["custom"] : [])].map((v) => (
-                        <button
-                          key={v}
-                          type="button"
-                          disabled={updatingTip}
-                          onClick={() => {
-                            setTipChoice(v);
-                            if (v !== "custom") handleTipUpdate(v);
-                          }}
-                          className={`pp-tip-btn px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${isLightText ? 'hover:bg-white/5' : 'hover:bg-black/5'} ${tipChoice === v ? (isLightText ? "bg-white/10 border-white/20" : "bg-black/10 border-black/20") : ""} ${updatingTip ? "opacity-50 cursor-not-allowed" : ""}`}
-                          title={v === "custom" ? "Custom tip amount" : `Tip ${v}%`}
-                        >
-                          {v === "custom" ? "Custom" : `${v}%`}
-                        </button>
-                      ))}
-                      {tipChoice === "custom" && (
-                        <input
-                          type="number"
-                          step="0.1"
-                          min="0"
-                          max="100"
-                          disabled={updatingTip}
-                          value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
-                          onChange={(e) => setTipCustomPct(Number(e.target.value))}
-                          onBlur={() => handleTipUpdate(tipCustomPct)}
-                          placeholder="%"
-                          className={`h-9 px-3 rounded-lg border text-sm w-24 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/30' : 'bg-black/5 border-black/10 text-black placeholder-black/30'}`}
-                          title="Enter tip percentage"
-                        />
-                      )}
-                    </div>
-                    <div className="microtext text-muted-foreground mt-2">
-                      Tip applies to subtotal before tax and fees.
-                    </div>
-                  </div>
+                  )}
 
                   <div className="border-t border-dashed my-2" />
                   <div className="flex items-center justify-between text-sm">
@@ -5215,7 +5252,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               <button className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isLightText ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-black/10 hover:bg-black/20 text-black'}`} onClick={() => window.location.reload()}>
                                 Refresh Receipt
                               </button>
-                              <button className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-lg active:scale-95 text-white`} style={{ backgroundColor: theme.primaryColor || '#10b981' }} onClick={() => setEmailModalOpen(true)}>
+                              <button className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-lg active:scale-95 ${isColorLight(theme.primaryColor || '#10b981') ? 'text-neutral-900' : 'text-white'}`} style={{ backgroundColor: theme.primaryColor || '#10b981' }} onClick={() => setEmailModalOpen(true)}>
                                 Email Receipt
                               </button>
                             </div>
@@ -5405,7 +5442,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                             disabled={!shippingAddressValid || !shipMethod || shippingSaving}
                                             onClick={handleShippingSubmit}
                                             className={`w-full h-10 rounded-lg text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed`}
-                                            style={{ backgroundColor: shippingAddressValid && shipMethod ? (theme.primaryColor || '#10b981') : (isLightText ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'), color: shippingAddressValid && shipMethod ? '#ffffff' : (isLightText ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.4)') }}
+                                            style={{ backgroundColor: shippingAddressValid && shipMethod ? (theme.primaryColor || '#10b981') : (isLightText ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'), color: shippingAddressValid && shipMethod ? (isColorLight(theme.primaryColor || '#10b981') ? '#111827' : '#ffffff') : (isLightText ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.4)') }}
                                           >
                                             {shippingSaving ? 'Saving…' : 'Continue to Payment →'}
                                           </button>
