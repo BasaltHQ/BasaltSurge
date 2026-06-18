@@ -199,17 +199,23 @@ function TerminalPanel() {
         const cfg = j?.config || {};
         if (typeof cfg.processingFeePct === "number") setProcessingFeePct(cfg.processingFeePct);
 
-        // basePlatformFeePct (platform + partner + agent fees)
+        // basePlatformFeePct (presentedFeeBps > splitConfig platform + partner + agent fees)
         const splitCfg = (cfg as any)?.splitConfig;
-        if (splitCfg && typeof splitCfg === "object") {
-          const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
-          const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
+        const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+        const presentedFeeBps = (cfg as any).presentedFeeBps;
+
+        if (presentedFeeBps !== undefined) {
+          setBasePlatformFeePct((presentedFeeBps + partnerBps) / 100);
+        } else if (splitCfg && typeof splitCfg.platformBps === "number") {
+          const platformBps = splitCfg.platformBps;
           const agentBps = Array.isArray(splitCfg.agents)
             ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
             : 0;
           setBasePlatformFeePct((partnerBps + platformBps + agentBps) / 100);
         } else if (typeof (cfg as any).basePlatformFeePct === "number") {
           setBasePlatformFeePct((cfg as any).basePlatformFeePct);
+        } else {
+          setBasePlatformFeePct((50 + partnerBps) / 100);
         }
 
         const sc = String(cfg?.storeCurrency || "");
@@ -678,17 +684,23 @@ function PreviewContent({ forcedMode }: { forcedMode: PreviewMode }) {
         const cfg = j?.config || {};
         if (typeof cfg.processingFeePct === "number") setProcessingFeePct(cfg.processingFeePct);
 
-        // basePlatformFeePct (platform + partner + agent fees)
+        // basePlatformFeePct (presentedFeeBps > splitConfig platform + partner + agent fees)
         const splitCfg = (cfg as any)?.splitConfig;
-        if (splitCfg && typeof splitCfg === "object") {
-          const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
-          const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
+        const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+        const presentedFeeBps = (cfg as any).presentedFeeBps;
+
+        if (presentedFeeBps !== undefined) {
+          setBasePlatformFeePct((presentedFeeBps + partnerBps) / 100);
+        } else if (splitCfg && typeof splitCfg.platformBps === "number") {
+          const platformBps = splitCfg.platformBps;
           const agentBps = Array.isArray(splitCfg.agents)
             ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
             : 0;
           setBasePlatformFeePct((partnerBps + platformBps + agentBps) / 100);
         } else if (typeof (cfg as any).basePlatformFeePct === "number") {
           setBasePlatformFeePct((cfg as any).basePlatformFeePct);
+        } else {
+          setBasePlatformFeePct((50 + partnerBps) / 100);
         }
 
         // tipConfig (merchant tip presets)
