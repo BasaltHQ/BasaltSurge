@@ -33,14 +33,21 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const oauthToken = req.headers.get("x-stripe-oauth-token") || "";
+
+    const headers: Record<string, string> = {
+      "Authorization": `Bearer ${stripeKey}`,
+      "Stripe-Version": "2026-04-22.preview",
+    };
+    if (oauthToken) {
+      headers["Stripe-OAuth-Token"] = oauthToken;
+    }
+
     const response = await fetch(
       `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
       {
         method: "GET",
-        headers: {
-          "Authorization": `Bearer ${stripeKey}`,
-          "Stripe-Version": "2026-03-25.dahlia;crypto_onramp_beta=v2",
-        },
+        headers,
       }
     );
 
