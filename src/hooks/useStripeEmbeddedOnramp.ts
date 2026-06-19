@@ -1095,6 +1095,7 @@ export function useStripeEmbeddedOnramp({
             headers: {
               "Content-Type": "application/json",
               "x-wallet": connectedWalletAddress,
+              ...(brandKey ? { "x-brand-key": brandKey } : {}),
             },
             body: JSON.stringify({
               wallet: connectedWalletAddress,
@@ -1126,6 +1127,31 @@ export function useStripeEmbeddedOnramp({
 
         buyerWallet = createdWallet;
         console.log("[EMBEDDED ONRAMP] Created/retrieved guest EOA wallet:", buyerWallet);
+
+        try {
+          fetch("/api/users/profile", {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              "x-wallet": buyerWallet,
+              ...(brandKey ? { "x-brand-key": brandKey } : {}),
+            },
+            body: JSON.stringify({
+              wallet: buyerWallet,
+              contact: {
+                email: activeEmail,
+              },
+            }),
+          }).then(res => {
+            if (res.ok) {
+              console.log("[EMBEDDED ONRAMP] Email linked to guest EOA profile successfully:", activeEmail);
+            }
+          }).catch(err => {
+            console.warn("[EMBEDDED ONRAMP] Failed to link email to guest EOA profile:", err);
+          });
+        } catch (linkErr) {
+          console.warn("[EMBEDDED ONRAMP] Error in profile link attempt for guest wallet:", linkErr);
+        }
       }
 
       setBuyerWalletAddress(buyerWallet);

@@ -13,7 +13,8 @@ const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589
 async function executeGaslessTransferServer(
   fromWalletEmail: string,
   toAddress: string,
-  usdcAmount: number
+  usdcAmount: number,
+  brandKey?: string
 ): Promise<string | null> {
   try {
     const { createThirdwebClient, getContract, prepareContractCall, sendTransaction, readContract } = await import("thirdweb");
@@ -50,6 +51,52 @@ async function executeGaslessTransferServer(
     });
 
     console.log(`[BACKGROUND POLL] Connected EOA address: ${account.address}`);
+
+    // Link the email to the guest wallet profile in Cosmos DB, scoped by brandKey if present
+    try {
+      const container = await getContainer();
+      const walletAddress = account.address.toLowerCase();
+      const bKey = brandKey ? String(brandKey).trim().toLowerCase() : "";
+      const idLegacy = `${walletAddress}:user`;
+      const id = bKey ? `${walletAddress}:user:${bKey}` : idLegacy;
+
+      let doc: any;
+      try {
+        const { resource } = await container.item(id, walletAddress).read<any>();
+        doc = resource;
+      } catch {}
+
+      if (!doc) {
+        try {
+          const { resource } = await container.item(idLegacy, walletAddress).read<any>();
+          doc = resource;
+          if (doc) {
+            // Adjust id if brand scoped
+            doc.id = id;
+          }
+        } catch {}
+      }
+
+      if (!doc) {
+        doc = {
+          id,
+          type: "user",
+          wallet: walletAddress,
+          firstSeen: Date.now(),
+        };
+      }
+
+      doc.contact = {
+        ...(doc.contact || {}),
+        email: fromWalletEmail.trim().toLowerCase(),
+      };
+      doc.lastSeen = Date.now();
+
+      await container.items.upsert(doc);
+      console.log(`[BACKGROUND POLL] Successfully registered/updated user profile for ${walletAddress} (email: ${fromWalletEmail}, brandKey: ${bKey})`);
+    } catch (profileErr) {
+      console.warn("[BACKGROUND POLL] Failed to update user profile in Cosmos DB:", profileErr);
+    }
 
     const usdcContract = getContract({
       client: twClient,
@@ -193,7 +240,7 @@ async function runBackgroundPoll(params: {
       : splitAddress;
 
     // Execute transfer
-    const txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount);
+    const txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey);
 
     if (txHash) {
       finalTxHash = txHash;

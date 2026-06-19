@@ -5626,7 +5626,7 @@ function UsersPanel() {
           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Search</label>
           <input
             className="w-full h-10 px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none"
-            placeholder="Wallet or display name…"
+            placeholder="Wallet or shop name…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -5656,7 +5656,7 @@ function UsersPanel() {
             <option value="customers">Customers</option>
             <option value="xp">Total Customer XP</option>
             <option value="fee">Platform Fee</option>
-            <option value="display">Display Name</option>
+            <option value="display">Shop Name</option>
             <option value="wallet">Wallet</option>
           </select>
         </div>
@@ -5717,7 +5717,7 @@ function UsersPanel() {
               <tr className="border-b border-foreground/[0.05] bg-transparent">
                 <th className="text-left px-4 py-3 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Merchant Wallet</th>
                 <th className="text-left px-4 py-3 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Split</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Display Name</th>
+                <th className="text-left px-4 py-3 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Shop Name</th>
                 <th className="text-left px-4 py-3 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Tags</th>
                 <th className="text-left px-4 py-3 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Total Earned (USD)</th>
                 <th className="text-left px-4 py-3 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Customers</th>

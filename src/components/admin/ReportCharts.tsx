@@ -243,15 +243,16 @@ export function SparkArea({ data, width = 200, height = 50, color = "#6366f1" }:
 }
 
 /* ────────── Volume vs Tips Mini Comparison ────────── */
-export function VolumeVsTipsBar({ volume, tips, fees, volumeLabel, tipsLabel, feesLabel }: {
-    volume: number; tips: number; fees?: number;
-    volumeLabel?: string; tipsLabel?: string; feesLabel?: string;
+export function VolumeVsTipsBar({ volume, tips, fees, partnerFees, volumeLabel, tipsLabel, feesLabel, partnerFeesLabel }: {
+    volume: number; tips: number; fees?: number; partnerFees?: number;
+    volumeLabel?: string; tipsLabel?: string; feesLabel?: string; partnerFeesLabel?: string;
 }) {
-    const total = volume + tips + (fees || 0);
+    const total = volume + tips + (fees || 0) + (partnerFees || 0);
     if (total <= 0) return null;
     const volPct = (volume / total) * 100;
     const tipPct = (tips / total) * 100;
     const feePct = fees ? (fees / total) * 100 : 0;
+    const partnerPct = partnerFees ? (partnerFees / total) * 100 : 0;
 
     return (
         <div className="space-y-2">
@@ -261,8 +262,11 @@ export function VolumeVsTipsBar({ volume, tips, fees, volumeLabel, tipsLabel, fe
                 {fees !== undefined && fees > 0 && (
                     <div className="h-full transition-all duration-700" style={{ width: `${feePct}%`, background: "linear-gradient(90deg, #f59e0b, #fbbf24)" }} />
                 )}
+                {partnerFees !== undefined && partnerFees > 0 && (
+                    <div className="h-full transition-all duration-700" style={{ width: `${partnerPct}%`, background: "linear-gradient(90deg, #fb923c, #fdba74)" }} />
+                )}
             </div>
-            <div className="flex items-center gap-4 text-xs">
+            <div className="flex items-center gap-4 flex-wrap text-xs">
                 <div className="flex items-center gap-1.5">
                     <div className="h-2 w-2 rounded-full bg-indigo-500" />
                     <span className="text-muted-foreground">{volumeLabel || "Sales"}</span>
@@ -276,8 +280,15 @@ export function VolumeVsTipsBar({ volume, tips, fees, volumeLabel, tipsLabel, fe
                 {fees !== undefined && fees > 0 && (
                     <div className="flex items-center gap-1.5">
                         <div className="h-2 w-2 rounded-full bg-amber-500" />
-                        <span className="text-muted-foreground">{feesLabel || "Fees"}</span>
+                        <span className="text-muted-foreground">{feesLabel || "Platform Fees"}</span>
                         <span className="font-mono font-semibold">{formatCurrency(fees, "USD")}</span>
+                    </div>
+                )}
+                {partnerFees !== undefined && partnerFees > 0 && (
+                    <div className="flex items-center gap-1.5">
+                        <div className="h-2 w-2 rounded-full bg-orange-400" />
+                        <span className="text-muted-foreground">{partnerFeesLabel || "Partner Fees"}</span>
+                        <span className="font-mono font-semibold">{formatCurrency(partnerFees, "USD")}</span>
                     </div>
                 )}
             </div>
@@ -336,18 +347,28 @@ export function MerchantGrid({ merchants, maxItems = 12 }: { merchants: any[]; m
 }
 
 /* ────────── Revenue Breakdown Card ────────── */
-export function RevenueBreakdown({ earned, fees, tips, volume }: { earned: number; fees: number; tips: number; volume: number }) {
+export function RevenueBreakdown({ earned, fees, tips, volume, partnerFees, feesLabel }: {
+    earned: number;
+    fees: number;
+    tips: number;
+    volume: number;
+    partnerFees?: number;
+    feesLabel?: string;
+}) {
     if (volume <= 0) return null;
     const entries = [
         { label: "Merchant Earned", value: earned, color: "#6366f1" },
-        { label: "Platform Fees", value: fees, color: "#f59e0b" },
+        { label: feesLabel || "Platform Fees", value: fees, color: "#f59e0b" },
+        ...(partnerFees && partnerFees > 0 ? [{ label: "Partner Fees", value: partnerFees, color: "#fb923c" }] : []),
         { label: "Tips", value: tips, color: "#22c55e" },
     ].filter(e => e.value > 0);
+
+    const total = entries.reduce((sum, e) => sum + e.value, 0) || 1;
 
     return (
         <div className="space-y-3">
             {entries.map((entry) => {
-                const pct = ((entry.value / volume) * 100).toFixed(1);
+                const barWidthPct = ((entry.value / total) * 100).toFixed(1);
                 return (
                     <div key={entry.label}>
                         <div className="flex items-center justify-between mb-1">
@@ -357,13 +378,12 @@ export function RevenueBreakdown({ earned, fees, tips, volume }: { earned: numbe
                             </div>
                             <div className="text-xs font-mono font-semibold tabular-nums">
                                 {formatCurrency(entry.value, "USD")}
-                                <span className="text-muted-foreground ml-1">({pct}%)</span>
                             </div>
                         </div>
                         <div className="h-2 bg-muted/20 rounded-full overflow-hidden">
                             <div
                                 className="h-full rounded-full transition-all duration-700"
-                                style={{ width: `${Math.max(1, parseFloat(pct))}%`, background: entry.color }}
+                                style={{ width: `${Math.max(1, parseFloat(barWidthPct))}%`, background: entry.color }}
                             />
                         </div>
                     </div>

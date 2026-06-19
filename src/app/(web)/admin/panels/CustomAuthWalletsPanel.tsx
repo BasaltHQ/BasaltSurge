@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Search, Trash2, Copy, ExternalLink, AlertTriangle, RefreshCw, Mail, ShieldAlert, Key } from "lucide-react";
 import TruncatedAddress from "@/components/truncated-address";
+import { useBrand } from "@/contexts/BrandContext";
 
 interface AuthWalletMapping {
   id: string;
@@ -16,6 +17,7 @@ interface AuthWalletMapping {
 }
 
 export default function CustomAuthWalletsPanel() {
+  const brand = useBrand();
   const [mappings, setMappings] = useState<AuthWalletMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +36,9 @@ export default function CustomAuthWalletsPanel() {
     setError(null);
 
     try {
-      const res = await fetch("/api/admin/custom-auth-wallets", { cache: "no-store" });
+      const brandKey = String(brand?.key || "").toLowerCase().trim();
+      const url = brandKey ? `/api/admin/custom-auth-wallets?brandKey=${brandKey}` : "/api/admin/custom-auth-wallets";
+      const res = await fetch(url, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load mappings");
       setMappings(data.items || []);
@@ -44,7 +48,7 @@ export default function CustomAuthWalletsPanel() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [brand?.key]);
 
   useEffect(() => {
     fetchMappings();
@@ -89,15 +93,24 @@ export default function CustomAuthWalletsPanel() {
 
   // Filter mappings
   const filteredMappings = useMemo(() => {
-    if (!searchQuery.trim()) return mappings;
+    const key = String(brand?.key || "").toLowerCase().trim();
+    const isPlatform = !key || key === "basaltsurge" || key === "portalpay";
+    
+    let list = mappings;
+    if (!isPlatform) {
+      const suffix = `:${key}`;
+      list = mappings.filter(m => String(m.id || "").toLowerCase().endsWith(suffix));
+    }
+
+    if (!searchQuery.trim()) return list;
     const query = searchQuery.toLowerCase().trim();
-    return mappings.filter(
+    return list.filter(
       (m) =>
         m.email.toLowerCase().includes(query) ||
         m.wallet.toLowerCase().includes(query) ||
         (m.displayName && m.displayName.toLowerCase().includes(query))
     );
-  }, [mappings, searchQuery]);
+  }, [mappings, searchQuery, brand?.key]);
 
   return (
     <div className="w-full space-y-6 pb-24 admin-panel-enter">

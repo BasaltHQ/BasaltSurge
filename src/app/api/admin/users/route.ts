@@ -239,11 +239,11 @@ export async function GET(req: NextRequest) {
     }
 
     // Fetch merchant feature settings from shop_config
-    let featureRows: Array<{ wallet?: string; kioskEnabled?: boolean; terminalEnabled?: boolean }> = [];
+    let featureRows: Array<{ wallet?: string; name?: string; kioskEnabled?: boolean; terminalEnabled?: boolean }> = [];
     try {
       const spec = {
         query: `
-          SELECT c.wallet, c.kioskEnabled, c.terminalEnabled, c.brandKey, c.createdAt
+          SELECT c.wallet, c.name, c.kioskEnabled, c.terminalEnabled, c.brandKey, c.createdAt
           FROM c
           WHERE c.type='shop_config'
         `,
@@ -251,7 +251,7 @@ export async function GET(req: NextRequest) {
       const { resources } = await container.items.query(spec as any).fetchAll();
       featureRows = Array.isArray(resources) ? resources as any[] : [];
     } catch { }
-    const featuresMap = new Map<string, { kioskEnabled: boolean; terminalEnabled: boolean; createdAt?: number }>();
+    const featuresMap = new Map<string, { name?: string; kioskEnabled: boolean; terminalEnabled: boolean; createdAt?: number }>();
 
     // Priority map to track which brandKey we have currently stored for a wallet
     // We want 'basaltsurge' to override 'portalpay' or others.
@@ -295,6 +295,7 @@ export async function GET(req: NextRequest) {
           // If the new 'basaltsurge' record has undefined flags, don't clobber the 'portalpay' true flags.
           const newKiosk = r.kioskEnabled !== undefined ? !!r.kioskEnabled : current.kioskEnabled;
           const newTerminal = r.terminalEnabled !== undefined ? !!r.terminalEnabled : current.terminalEnabled;
+          const shopName = typeof r.name === "string" && r.name ? r.name : current.name;
 
           // Normalize createdAt — may be a Date object from the migration or epoch-ms from new signups
           let rawCreated = (r as any).createdAt;
@@ -304,6 +305,7 @@ export async function GET(req: NextRequest) {
           else if (typeof rawCreated === "number" && Number.isFinite(rawCreated)) createdAtMs = rawCreated;
 
           featuresMap.set(w, {
+            name: shopName,
             kioskEnabled: newKiosk,
             terminalEnabled: newTerminal,
             createdAt: createdAtMs,
@@ -608,7 +610,7 @@ export async function GET(req: NextRequest) {
 
         return {
           merchant: m,
-          displayName: prof.displayName,
+          displayName: featuresMap.get(m)?.name || prof.displayName,
           tags: prof.tags,
           totalEarnedUsd,
           customers,
