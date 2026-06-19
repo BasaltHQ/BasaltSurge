@@ -96,7 +96,7 @@ export function isMainDomainHost(host: string): boolean {
         
     if (isPrivateIp) return true;
 
-    return (
+    const isStaticMain = (
         h.endsWith("basalthq.com") ||
         h.endsWith("portalpay.io") ||
         h.endsWith("aipowerpay.com") ||
@@ -107,4 +107,30 @@ export function isMainDomainHost(host: string): boolean {
         h.includes("xpaypass.com") ||
         h.includes("vps.ovh.us")
     );
+    if (isStaticMain) return true;
+
+    // Check dynamic/known partner domains on the server side
+    if (typeof window === "undefined") {
+        try {
+            // Use eval('require') to hide the dependency from Webpack/Turbopack bundling
+            // to avoid compilation issues in Edge runtime or client-side bundles.
+            const req = eval("require");
+            const { DYNAMIC_PARTNER_DOMAINS, KNOWN_PARTNER_DOMAINS } = req("./brand-config");
+            if (DYNAMIC_PARTNER_DOMAINS && DYNAMIC_PARTNER_DOMAINS[h]) {
+                return true;
+            }
+            if (KNOWN_PARTNER_DOMAINS && KNOWN_PARTNER_DOMAINS[h]) {
+                return true;
+            }
+        } catch {
+            // Ignore
+        }
+    } else {
+        // Check client-side window global populated by layout.tsx
+        if ((window as any).__DYNAMIC_DOMAINS__ && (window as any).__DYNAMIC_DOMAINS__[h]) {
+            return true;
+        }
+    }
+
+    return false;
 }
