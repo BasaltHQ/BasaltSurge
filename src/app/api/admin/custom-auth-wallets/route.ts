@@ -14,6 +14,9 @@ export async function GET(req: NextRequest) {
     const containerIdentity = await getContainerIdentity(host);
     const isPartner = containerIdentity.containerType === "partner";
 
+    const url = new URL(req.url);
+    const queryBrandKey = url.searchParams.get("brandKey")?.toLowerCase().trim();
+
     let query = `
       SELECT c.id, c.wallet, c.displayName, c.contact, c.firstSeen, c.lastSeen, c.xp
       FROM c
@@ -22,10 +25,16 @@ export async function GET(req: NextRequest) {
 
     const parameters: { name: string; value: any }[] = [];
 
+    let targetBrandKey = "";
     if (isPartner) {
-      const brandKey = containerIdentity.brandKey.toLowerCase();
+      targetBrandKey = containerIdentity.brandKey.toLowerCase();
+    } else if (queryBrandKey && queryBrandKey !== "basaltsurge" && queryBrandKey !== "portalpay") {
+      targetBrandKey = queryBrandKey;
+    }
+
+    if (targetBrandKey) {
       query += ` AND c.id = CONCAT(c.wallet, ':user:', @brandKey)`;
-      parameters.push({ name: "@brandKey", value: brandKey });
+      parameters.push({ name: "@brandKey", value: targetBrandKey });
     }
 
     const container = await getContainer();

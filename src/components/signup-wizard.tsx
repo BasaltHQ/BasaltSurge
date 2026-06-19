@@ -580,13 +580,13 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="fixed inset-0 z-[100000] bg-black/90 backdrop-blur-md"
+                    className="fixed inset-0 z-[11000] bg-black/90 backdrop-blur-md"
                     onClick={onClose}
                 />
             )}
 
             {/* Modal Container - Fixed if modal, Relative if inline */}
-            <div className={`${inline ? 'relative z-10 w-full flex items-center justify-center p-0' : 'fixed inset-0 z-[100001] flex items-center justify-center pointer-events-none p-0 sm:p-4 pt-[safe-area-inset-top] sm:pt-20'}`}>
+            <div className={`${inline ? 'relative z-10 w-full flex items-center justify-center p-0' : 'fixed inset-0 z-[11001] flex items-center justify-center pointer-events-none p-0 sm:p-4 pt-[safe-area-inset-top] sm:pt-20'}`}>
                 <motion.div
                     initial={{ opacity: 0, scale: 0.95, y: 20 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}

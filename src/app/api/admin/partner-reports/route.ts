@@ -49,6 +49,13 @@ export async function GET(req: NextRequest) {
 
         const isPlatformBrand = brandKey === "portalpay" || brandKey === "basaltsurge";
 
+        // Fetch brand config for fees and unifiedFeeEnabled
+        const { getBrandConfigFromCosmos } = await import("@/lib/brand-config");
+        const { brand: brandConfig } = await getBrandConfigFromCosmos(brandKey);
+        const unifiedFeeEnabled = brandConfig?.unifiedFeeEnabled || false;
+        const partnerFeeBps = typeof brandConfig?.partnerFeeBps === "number" ? brandConfig.partnerFeeBps : 0;
+        const platformFeeBps = typeof brandConfig?.platformFeeBps === "number" ? brandConfig.platformFeeBps : 50;
+
         // Parse time range (frontend sends Unix seconds)
         const { searchParams } = new URL(req.url);
         const startSec = Number(searchParams.get("start") || 0);
@@ -66,6 +73,7 @@ export async function GET(req: NextRequest) {
                                c.totalVolumeUsd, c.merchantEarnedUsd, c.platformFeeUsd,
                                c.customers, c.totalCustomerXp, c.transactionCount,
                                c.cumulativePayments, c.cumulativeMerchantReleases, c.cumulativePlatformReleases,
+                               c.cumulativePartnerReleases, c.cumulativeAgentReleases,
                                c.transactions
                         FROM c WHERE c.type = 'split_index'`,
                 parameters: [],
@@ -75,7 +83,7 @@ export async function GET(req: NextRequest) {
                 parameters: [],
             }).fetchAll(),
             container.items.query({
-                query: `SELECT c.wallet, c.brandKey, c.splitAddress FROM c WHERE c.type = 'site_config'`,
+                query: `SELECT c.wallet, c.brandKey, c.splitAddress, c.splitConfig, c.splitConfigCredit FROM c WHERE c.type = 'site_config'`,
                 parameters: [],
             }).fetchAll(),
         ]);
@@ -117,11 +125,13 @@ export async function GET(req: NextRequest) {
         }
 
         // Pass 3: site_config.brandKey (highest priority — set during onboarding)
+        const siteConfigMap = new Map<string, any>();
         for (const sc of siteConfigs) {
             const w = String(sc.wallet || "").toLowerCase();
             if (!hex(w)) continue;
             const rawBk = String(sc.brandKey || "").toLowerCase();
             if (rawBk) walletBrand.set(w, rawBk);
+            siteConfigMap.set(w, sc);
         }
 
         // ── 4. Filter wallets belonging to this partner brand ──
@@ -145,10 +155,11 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({
                 merchants: [],
                 aggregate: {
-                    totalSales: 0, merchantEarned: 0, platformFee: 0,
+                    totalSales: 0, merchantEarned: 0, platformFee: 0, partnerFee: 0,
                     totalTips: 0, transactionCount: 0, averageOrderValue: 0,
                     merchantCount: 0, customers: 0,
                 },
+                unifiedFeeEnabled,
             });
         }
 
@@ -159,7 +170,17 @@ export async function GET(req: NextRequest) {
 
         const merchantStatsMap = new Map<
             string,
-            { totalSales: number; totalTips: number; transactionCount: number; cashSales: number; cashTransactionCount: number }
+            {
+                totalSales: number;
+                totalTips: number;
+                transactionCount: number;
+                cashSales: number;
+                cashTransactionCount: number;
+                cardSales: number;
+                cardTransactionCount: number;
+                cryptoSales: number;
+                cryptoTransactionCount: number;
+            }
         >();
 
         if (!useIndexed) {
@@ -183,7 +204,10 @@ export async function GET(req: NextRequest) {
 
                 const totalUsd = Number(r.totalUsd || 0);
                 const tipAmount = Number(r.tipAmount || 0);
-                const isCash = String(r.paymentMethod || "").toLowerCase() === "cash";
+                const method = String(r.paymentMethod || "").toLowerCase();
+                const isCash = method === "cash";
+                const isCard = method.includes("stripe") || method.includes("card") || method.includes("credit");
+                const isCrypto = !isCash && !isCard;
 
                 const existing = merchantStatsMap.get(w);
                 if (existing) {
@@ -193,6 +217,12 @@ export async function GET(req: NextRequest) {
                     if (isCash) {
                         existing.cashSales += totalUsd;
                         existing.cashTransactionCount += 1;
+                    } else if (isCard) {
+                        existing.cardSales += totalUsd;
+                        existing.cardTransactionCount += 1;
+                    } else {
+                        existing.cryptoSales += totalUsd;
+                        existing.cryptoTransactionCount += 1;
                     }
                 } else {
                     merchantStatsMap.set(w, {
@@ -201,6 +231,10 @@ export async function GET(req: NextRequest) {
                         transactionCount: 1,
                         cashSales: isCash ? totalUsd : 0,
                         cashTransactionCount: isCash ? 1 : 0,
+                        cardSales: isCard ? totalUsd : 0,
+                        cardTransactionCount: isCard ? 1 : 0,
+                        cryptoSales: isCrypto ? totalUsd : 0,
+                        cryptoTransactionCount: isCrypto ? 1 : 0,
                     });
                 }
             }
@@ -224,7 +258,10 @@ export async function GET(req: NextRequest) {
 
                     const totalUsd = Number(r.totalUsd || 0);
                     const tipAmount = Number(r.tipAmount || 0);
-                    const isCash = String(r.paymentMethod || "").toLowerCase() === "cash";
+                    const method = String(r.paymentMethod || "").toLowerCase();
+                    const isCash = method === "cash";
+                    const isCard = method.includes("stripe") || method.includes("card") || method.includes("credit");
+                    const isCrypto = !isCash && !isCard;
 
                     const existing = merchantStatsMap.get(w);
                     if (existing) {
@@ -234,6 +271,12 @@ export async function GET(req: NextRequest) {
                         if (isCash) {
                             existing.cashSales += totalUsd;
                             existing.cashTransactionCount += 1;
+                        } else if (isCard) {
+                            existing.cardSales += totalUsd;
+                            existing.cardTransactionCount += 1;
+                        } else {
+                            existing.cryptoSales += totalUsd;
+                            existing.cryptoTransactionCount += 1;
                         }
                     } else {
                         merchantStatsMap.set(w, {
@@ -242,6 +285,10 @@ export async function GET(req: NextRequest) {
                             transactionCount: 1,
                             cashSales: isCash ? totalUsd : 0,
                             cashTransactionCount: isCash ? 1 : 0,
+                            cardSales: isCard ? totalUsd : 0,
+                            cardTransactionCount: isCard ? 1 : 0,
+                            cryptoSales: isCrypto ? totalUsd : 0,
+                            cryptoTransactionCount: isCrypto ? 1 : 0,
                         });
                     }
                 }
@@ -279,14 +326,14 @@ export async function GET(req: NextRequest) {
         // ── 6. Also pull split_index for earned/fee breakdown per merchant ──
         const splitStatsMap = new Map<
             string,
-            { totalVolumeUsd: number; merchantEarnedUsd: number; platformFeeUsd: number; customers: number; transactionCount: number }
+            { totalVolumeUsd: number; merchantEarnedUsd: number; platformFeeUsd: number; partnerFeeUsd: number; agentFeeUsd: number; customers: number; transactionCount: number }
         >();
 
         for (const row of splitRows) {
             const w = String(row.merchantWallet || "").toLowerCase();
             if (!partnerWallets.has(w)) continue;
 
-            let vol: number, earned: number, fee: number;
+            let vol: number, earned: number, platformFee: number, partnerFee: number, agentFee: number;
             let cust: number, txCount: number;
 
             if (!useIndexed && startMs > 0) {
@@ -301,6 +348,8 @@ export async function GET(req: NextRequest) {
                 const filtCumPayments: Record<string, number> = {};
                 const filtCumMR: Record<string, number> = {};
                 const filtCumPR: Record<string, number> = {};
+                const filtCumPartner: Record<string, number> = {};
+                const filtCumAgent: Record<string, number> = {};
                 const uniqueCustomers = new Set<string>();
 
                 for (const tx of filteredTxs) {
@@ -313,6 +362,10 @@ export async function GET(req: NextRequest) {
                     } else if (tx.type === 'release') {
                         if (tx.releaseType === 'merchant') {
                             filtCumMR[token] = (filtCumMR[token] || 0) + value;
+                        } else if (tx.releaseType === 'partner') {
+                            filtCumPartner[token] = (filtCumPartner[token] || 0) + value;
+                        } else if (tx.releaseType === 'agent') {
+                            filtCumAgent[token] = (filtCumAgent[token] || 0) + value;
                         } else {
                             filtCumPR[token] = (filtCumPR[token] || 0) + value;
                         }
@@ -321,18 +374,34 @@ export async function GET(req: NextRequest) {
 
                 const merchantReleasesUsd = cumulativeToUsd(filtCumMR);
                 const platformReleasesUsd = cumulativeToUsd(filtCumPR);
+                const partnerReleasesUsd = cumulativeToUsd(filtCumPartner);
+                const agentReleasesUsd = cumulativeToUsd(filtCumAgent);
                 const paymentsUsd = cumulativeToUsd(filtCumPayments);
 
-                if (merchantReleasesUsd > 0 || platformReleasesUsd > 0) {
+                if (merchantReleasesUsd > 0 || platformReleasesUsd > 0 || partnerReleasesUsd > 0 || agentReleasesUsd > 0) {
                     earned = merchantReleasesUsd;
-                    fee = platformReleasesUsd;
-                    vol = earned + fee;
+                    platformFee = platformReleasesUsd;
+                    partnerFee = partnerReleasesUsd;
+                    agentFee = agentReleasesUsd;
+                    vol = earned + platformFee + partnerFee + agentFee;
                 } else if (paymentsUsd > 0) {
                     vol = paymentsUsd;
-                    earned = vol;
-                    fee = 0;
+                    const scDoc = siteConfigMap.get(w);
+                    const cryptoPlatformBps = typeof scDoc?.splitConfig?.platformBps === "number"
+                        ? scDoc.splitConfig.platformBps
+                        : platformFeeBps;
+                    const cryptoPartnerBps = typeof scDoc?.splitConfig?.partnerBps === "number"
+                        ? scDoc.splitConfig.partnerBps
+                        : partnerFeeBps;
+                    const cryptoAgents = Array.isArray(scDoc?.splitConfig?.agents) ? scDoc.splitConfig.agents : [];
+                    const cryptoAgentBps = cryptoAgents.reduce((sum: number, a: any) => sum + (Number(a.bps) || 0), 0);
+
+                    platformFee = Math.round(vol * (cryptoPlatformBps / 10000) * 100) / 100;
+                    partnerFee = Math.round(vol * (cryptoPartnerBps / 10000) * 100) / 100;
+                    agentFee = Math.round(vol * (cryptoAgentBps / 10000) * 100) / 100;
+                    earned = Math.round((vol - platformFee - partnerFee - agentFee) * 100) / 100;
                 } else {
-                    vol = 0; earned = 0; fee = 0;
+                    vol = 0; earned = 0; platformFee = 0; partnerFee = 0; agentFee = 0;
                 }
                 cust = uniqueCustomers.size;
                 txCount = filteredTxs.filter((tx: any) => tx.type === 'payment').length;
@@ -340,20 +409,45 @@ export async function GET(req: NextRequest) {
                 // All-time: use full cumulative data
                 const merchantReleasesUsd = cumulativeToUsd(row.cumulativeMerchantReleases);
                 const platformReleasesUsd = cumulativeToUsd(row.cumulativePlatformReleases);
+                const partnerReleasesUsd = cumulativeToUsd(row.cumulativePartnerReleases);
+                const agentReleasesUsd = cumulativeToUsd(row.cumulativeAgentReleases);
                 const paymentsUsd = cumulativeToUsd(row.cumulativePayments);
 
-                if (merchantReleasesUsd > 0 || platformReleasesUsd > 0) {
+                if (merchantReleasesUsd > 0 || platformReleasesUsd > 0 || partnerReleasesUsd > 0 || agentReleasesUsd > 0) {
                     earned = merchantReleasesUsd;
-                    fee = platformReleasesUsd;
-                    vol = earned + fee;
+                    platformFee = platformReleasesUsd;
+                    partnerFee = partnerReleasesUsd;
+                    agentFee = agentReleasesUsd;
+                    vol = earned + platformFee + partnerFee + agentFee;
                 } else if (paymentsUsd > 0) {
                     vol = paymentsUsd;
-                    earned = vol;
-                    fee = 0;
+                    const scDoc = siteConfigMap.get(w);
+                    const cryptoPlatformBps = typeof scDoc?.splitConfig?.platformBps === "number"
+                        ? scDoc.splitConfig.platformBps
+                        : platformFeeBps;
+                    const cryptoPartnerBps = typeof scDoc?.splitConfig?.partnerBps === "number"
+                        ? scDoc.splitConfig.partnerBps
+                        : partnerFeeBps;
+                    const cryptoAgents = Array.isArray(scDoc?.splitConfig?.agents) ? scDoc.splitConfig.agents : [];
+                    const cryptoAgentBps = cryptoAgents.reduce((sum: number, a: any) => sum + (Number(a.bps) || 0), 0);
+
+                    platformFee = Math.round(vol * (cryptoPlatformBps / 10000) * 100) / 100;
+                    partnerFee = Math.round(vol * (cryptoPartnerBps / 10000) * 100) / 100;
+                    agentFee = Math.round(vol * (cryptoAgentBps / 10000) * 100) / 100;
+                    earned = Math.round((vol - platformFee - partnerFee - agentFee) * 100) / 100;
                 } else {
                     vol = Number(row.totalVolumeUsd || 0);
                     earned = Number(row.merchantEarnedUsd || 0);
-                    fee = Number(row.platformFeeUsd || 0);
+                    platformFee = Number(row.platformFeeUsd || 0);
+                    const scDoc = siteConfigMap.get(w);
+                    const cryptoPartnerBps = typeof scDoc?.splitConfig?.partnerBps === "number"
+                        ? scDoc.splitConfig.partnerBps
+                        : partnerFeeBps;
+                    partnerFee = Math.round(vol * (cryptoPartnerBps / 10000) * 100) / 100;
+
+                    const cryptoAgents = Array.isArray(scDoc?.splitConfig?.agents) ? scDoc.splitConfig.agents : [];
+                    const cryptoAgentBps = cryptoAgents.reduce((sum: number, a: any) => sum + (Number(a.bps) || 0), 0);
+                    agentFee = Math.round(vol * (cryptoAgentBps / 10000) * 100) / 100;
                 }
                 cust = Number(row.customers || 0);
                 txCount = Number(row.transactionCount || 0);
@@ -363,14 +457,18 @@ export async function GET(req: NextRequest) {
             if (existing) {
                 existing.totalVolumeUsd += vol;
                 existing.merchantEarnedUsd += earned;
-                existing.platformFeeUsd += fee;
+                existing.platformFeeUsd += platformFee;
+                existing.partnerFeeUsd += partnerFee;
+                existing.agentFeeUsd += agentFee;
                 existing.customers += cust;
                 existing.transactionCount += txCount;
             } else {
                 splitStatsMap.set(w, {
                     totalVolumeUsd: vol,
                     merchantEarnedUsd: earned,
-                    platformFeeUsd: fee,
+                    platformFeeUsd: platformFee,
+                    partnerFeeUsd: partnerFee,
+                    agentFeeUsd: agentFee,
                     customers: cust,
                     transactionCount: txCount,
                 });
@@ -388,6 +486,8 @@ export async function GET(req: NextRequest) {
             let transactionCount: number;
             let merchantEarned: number;
             let platformFee: number;
+            let partnerFee: number;
+            let agentFee: number;
 
             // Split_index is the SOURCE OF TRUTH for volume/fees (blockchain data survives receipt loss).
             // Only fall back to receipts when split_index is missing or has obviously bad data
@@ -401,6 +501,8 @@ export async function GET(req: NextRequest) {
                 totalSales = splitStats.totalVolumeUsd;
                 merchantEarned = splitStats.merchantEarnedUsd;
                 platformFee = splitStats.platformFeeUsd;
+                partnerFee = splitStats.partnerFeeUsd;
+                agentFee = splitStats.agentFeeUsd || 0;
                 totalTips = receiptStats?.totalTips || 0; // tips from receipts (not on-chain)
                 transactionCount = splitStats.transactionCount;
             } else if (hasReceipts) {
@@ -409,13 +511,50 @@ export async function GET(req: NextRequest) {
                 totalTips = receiptStats.totalTips;
                 transactionCount = receiptStats.transactionCount;
 
-                // Estimate earned/fee from receipt volume using the split_index fee ratio
-                merchantEarned = totalSales;
-                platformFee = 0;
+                // Estimate earned/fee from receipt volume using the split_index fee ratio or BPS
                 if (splitIsValid && splitStats.totalVolumeUsd > 0) {
                     const feeRatio = splitStats.platformFeeUsd / splitStats.totalVolumeUsd;
                     platformFee = Math.round(totalSales * feeRatio * 100) / 100;
-                    merchantEarned = Math.round((totalSales - platformFee) * 100) / 100;
+                    const partnerRatio = splitStats.partnerFeeUsd / splitStats.totalVolumeUsd;
+                    partnerFee = Math.round(totalSales * partnerRatio * 100) / 100;
+                    const agentRatio = (splitStats.agentFeeUsd || 0) / splitStats.totalVolumeUsd;
+                    agentFee = Math.round(totalSales * agentRatio * 100) / 100;
+                    merchantEarned = Math.round((totalSales - platformFee - partnerFee - agentFee) * 100) / 100;
+                } else {
+                    const scDoc = siteConfigMap.get(w);
+                    const cryptoPlatformBps = typeof scDoc?.splitConfig?.platformBps === "number"
+                        ? scDoc.splitConfig.platformBps
+                        : platformFeeBps;
+                    const cryptoPartnerBps = typeof scDoc?.splitConfig?.partnerBps === "number"
+                        ? scDoc.splitConfig.partnerBps
+                        : partnerFeeBps;
+                    const cryptoAgents = Array.isArray(scDoc?.splitConfig?.agents) ? scDoc.splitConfig.agents : [];
+                    const cryptoAgentBps = cryptoAgents.reduce((sum: number, a: any) => sum + (Number(a.bps) || 0), 0);
+
+                    const creditPlatformBps = typeof scDoc?.splitConfigCredit?.platformBps === "number"
+                        ? scDoc.splitConfigCredit.platformBps
+                        : 125;
+                    const creditPartnerBps = typeof scDoc?.splitConfigCredit?.partnerBps === "number"
+                        ? scDoc.splitConfigCredit.partnerBps
+                        : partnerFeeBps;
+                    const creditAgents = Array.isArray(scDoc?.splitConfigCredit?.agents) ? scDoc.splitConfigCredit.agents : [];
+                    const creditAgentBps = creditAgents.reduce((sum: number, a: any) => sum + (Number(a.bps) || 0), 0);
+
+                    const cryptoSales = receiptStats?.cryptoSales || 0;
+                    const cardSales = receiptStats?.cardSales || 0;
+
+                    const cryptoPlatformFee = Math.round(cryptoSales * (cryptoPlatformBps / 10000) * 100) / 100;
+                    const cryptoPartnerFee = Math.round(cryptoSales * (cryptoPartnerBps / 10000) * 100) / 100;
+                    const cryptoAgentFee = Math.round(cryptoSales * (cryptoAgentBps / 10000) * 100) / 100;
+
+                    const cardPlatformFee = Math.round(cardSales * (creditPlatformBps / 10000) * 100) / 100;
+                    const cardPartnerFee = Math.round(cardSales * (creditPartnerBps / 10000) * 100) / 100;
+                    const cardAgentFee = Math.round(cardSales * (creditAgentBps / 10000) * 100) / 100;
+
+                    platformFee = cryptoPlatformFee + cardPlatformFee;
+                    partnerFee = cryptoPartnerFee + cardPartnerFee;
+                    agentFee = cryptoAgentFee + cardAgentFee;
+                    merchantEarned = Math.round((totalSales - platformFee - partnerFee - agentFee) * 100) / 100;
                 }
             } else {
                 // No data at all
@@ -424,9 +563,12 @@ export async function GET(req: NextRequest) {
                 transactionCount = 0;
                 merchantEarned = 0;
                 platformFee = 0;
+                partnerFee = 0;
+                agentFee = 0;
             }
 
             const customers = splitStats?.customers || 0;
+            const totalPartnerFeeCombined = partnerFee + agentFee;
 
             return {
                 wallet: w,
@@ -435,6 +577,9 @@ export async function GET(req: NextRequest) {
                 totalSales: Math.round(totalSales * 100) / 100,
                 merchantEarned: Math.round(merchantEarned * 100) / 100,
                 platformFee: Math.round(platformFee * 100) / 100,
+                partnerFee: Math.round(totalPartnerFeeCombined * 100) / 100,
+                agentFee: Math.round(agentFee * 100) / 100,
+                rawPartnerFee: Math.round(partnerFee * 100) / 100,
                 totalTips: Math.round(totalTips * 100) / 100,
                 transactionCount,
                 customers,
@@ -446,25 +591,39 @@ export async function GET(req: NextRequest) {
             };
         });
 
+        // ── 8. Apply unified fee logic if enabled ──
+        // For unifiedFee configurations, present the sum of all fees (platform fee + partner fee + agent fee) as the unified fee (returned under platformFee).
+        let finalMerchants = merchants;
+        if (unifiedFeeEnabled) {
+            finalMerchants = merchants.map(m => ({
+                ...m,
+                platformFee: Number((m.platformFee + m.partnerFee).toFixed(2)),
+                partnerFee: 0,
+                agentFee: 0,
+            }));
+        }
+
         // ── 9. Overall aggregate ──
         const aggregate = {
-            totalSales: merchants.reduce((s, m) => s + m.totalSales, 0),
-            merchantEarned: merchants.reduce((s, m) => s + m.merchantEarned, 0),
-            platformFee: merchants.reduce((s, m) => s + m.platformFee, 0),
-            totalTips: merchants.reduce((s, m) => s + m.totalTips, 0),
-            transactionCount: merchants.reduce((s, m) => s + m.transactionCount, 0),
+            totalSales: finalMerchants.reduce((s, m) => s + m.totalSales, 0),
+            merchantEarned: finalMerchants.reduce((s, m) => s + m.merchantEarned, 0),
+            platformFee: finalMerchants.reduce((s, m) => s + m.platformFee, 0),
+            partnerFee: finalMerchants.reduce((s, m) => s + (m.partnerFee || 0), 0),
+            agentFee: finalMerchants.reduce((s, m) => s + (m.agentFee || 0), 0),
+            totalTips: finalMerchants.reduce((s, m) => s + m.totalTips, 0),
+            transactionCount: finalMerchants.reduce((s, m) => s + m.transactionCount, 0),
             averageOrderValue: 0 as number,
-            merchantCount: merchants.filter((m) => m.transactionCount > 0).length,
-            customers: merchants.reduce((s, m) => s + m.customers, 0),
-            cashSales: merchants.reduce((s, m) => s + m.cashSales, 0),
-            cashTransactionCount: merchants.reduce((s, m) => s + m.cashTransactionCount, 0),
+            merchantCount: finalMerchants.filter((m) => m.transactionCount > 0).length,
+            customers: finalMerchants.reduce((s, m) => s + m.customers, 0),
+            cashSales: finalMerchants.reduce((s, m) => s + m.cashSales, 0),
+            cashTransactionCount: finalMerchants.reduce((s, m) => s + m.cashTransactionCount, 0),
         };
         aggregate.averageOrderValue =
             aggregate.transactionCount > 0
                 ? Math.round((aggregate.totalSales / aggregate.transactionCount) * 100) / 100
                 : 0;
 
-        return NextResponse.json({ merchants, aggregate });
+        return NextResponse.json({ merchants: finalMerchants, aggregate, unifiedFeeEnabled });
     } catch (e: any) {
         console.error("[PartnerReports] Error:", e);
         return NextResponse.json({ error: e.message || "Failed" }, { status: 500 });
