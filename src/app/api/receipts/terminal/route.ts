@@ -280,12 +280,16 @@ export async function POST(req: NextRequest) {
         const host = req.headers.get("host");
         const u = new URL(req.url);
         const hostname = (xfHost || host || u.hostname || "").toLowerCase();
-        const { brandKey: bk } = getContainerIdentity(hostname);
+        const { brandKey: bk } = await getContainerIdentity(hostname);
         let brandKeyForFees = bk;
         if (!brandKeyForFees) {
           try { brandKeyForFees = getBrandKey(); } catch { brandKeyForFees = ""; }
         }
         if (brandKeyForFees) {
+          const clampBps = (v: any) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? Math.max(0, Math.min(10000, Math.floor(n))) : 0;
+          };
           const { brand: fetchedBrand, overrides: fetchedOverrides } = await getBrandConfigFromCosmos(brandKeyForFees);
           const ov = (typeof fetchedOverrides === "object" && fetchedOverrides) ? fetchedOverrides : ({} as any);
           const fb = (typeof fetchedBrand === "object" && fetchedBrand) ? fetchedBrand : null;

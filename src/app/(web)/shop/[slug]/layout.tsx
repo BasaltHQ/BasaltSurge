@@ -10,7 +10,7 @@ type ShopConfig = {
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   // 1. Resolve Brand Identity (Platform vs Partner))
   const { getContainerIdentity, getBrandConfigFromCosmos } = await import('@/lib/brand-config');
-  const { brandKey } = getContainerIdentity();
+  const { brandKey } = await getContainerIdentity();
 
   const { brand } = await getBrandConfigFromCosmos(brandKey);
 

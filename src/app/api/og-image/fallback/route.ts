@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
 
   let brand = getBrandConfig(); // static fallback
   try {
-    const identity = deriveContainerIdentityFromHostname(host);
+    const identity = await deriveContainerIdentityFromHostname(host);
     if (identity?.brandKey) {
       const { brand: dbBrand } = await getBrandConfigFromCosmos(identity.brandKey);
       if (dbBrand) brand = dbBrand;

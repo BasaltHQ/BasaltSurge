@@ -32,7 +32,7 @@ export async function buildOgTwitterForRoute(opts: {
     const headersList = await headers();
     const host = headersList.get('x-forwarded-host') || headersList.get('host') || '';
     const { deriveContainerIdentityFromHostname } = await import('@/lib/brand-config');
-    const identity = deriveContainerIdentityFromHostname(host);
+    const identity = await deriveContainerIdentityFromHostname(host);
     if (identity?.brandKey) {
       brandKeyFromHost = identity.brandKey;
     }
