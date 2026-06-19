@@ -236,6 +236,19 @@ export default async function ShopPage({ params }: { params: Promise<{ slug: str
     }
 
     if (!config) {
+      // Check if this is a dynamic partner domain!
+      const { getDynamicPartnerDomains } = require("@/lib/brand-config");
+      const dynamicDomains = await getDynamicPartnerDomains();
+
+      // Update global cache
+      (globalThis as any).__DYNAMIC_DOMAINS__ = dynamicDomains;
+
+      if (dynamicDomains && dynamicDomains[cleanSlug]) {
+        console.log(`[ShopPage] Detected dynamic partner domain "${cleanSlug}". Redirecting to root.`);
+        const { redirect } = require("next/navigation");
+        redirect("/");
+      }
+
       return notFound();
     }
 
