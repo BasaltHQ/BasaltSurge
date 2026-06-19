@@ -98,6 +98,7 @@ function fmtUSD(n?: number): string {
 export default function HomeContent() {
   const [story, setStory] = React.useState("");
   const [storyHtml, setStoryHtml] = React.useState("");
+  const [activeThesisTab, setActiveThesisTab] = React.useState<"legacy" | "portalpay">("portalpay");
   const [metrics, setMetrics] = React.useState<Metrics | null>(null);
   const [containerBrandKey, setContainerBrandKey] = React.useState<string>("");
   const [containerType, setContainerType] = React.useState<string>("");
@@ -759,10 +760,19 @@ export default function HomeContent() {
                     <img src="/mockup_theme.png" alt="Mobile Checkout UI Mockup" className="absolute inset-0 w-full h-full object-cover" />
                   ) : (
                     <div className="absolute inset-0 overflow-hidden bg-[#050508] flex items-center justify-center">
+                      {/* Neutral Tech Background */}
+                      <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-30 mix-blend-luminosity pointer-events-none" style={{ backgroundImage: 'url("/neutral_tech_bento_bg.png")' }} />
                       {/* Ambient glow */}
-                      <div className="absolute inset-0 opacity-20" style={{ background: 'radial-gradient(ellipse at 50% 60%, var(--pp-secondary) 0%, transparent 70%)' }} />
+                      <div className="absolute inset-0 opacity-20" style={{ background: 'radial-gradient(ellipse at 50% 60%, var(--pp-secondary, #10b981) 0%, transparent 70%)' }} />
+                      {/* Subtle gradient blur backing to make phone pop */}
+                      <div 
+                        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[70%] rounded-full blur-[25px] opacity-75 pointer-events-none"
+                        style={{
+                          background: 'radial-gradient(circle, rgba(5, 5, 8, 0.95) 0%, rgba(5, 5, 8, 0.4) 70%, transparent 100%)'
+                        }}
+                      />
                       {/* Phone frame with QR */}
-                      <div className="relative w-[45%] max-w-[160px] aspect-[9/16] rounded-[16px] border border-white/10 bg-black/80 shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center overflow-hidden">
+                      <div className="relative w-[45%] max-w-[160px] aspect-[9/16] rounded-[16px] border border-white/20 bg-black/60 backdrop-blur-md shadow-[0_0_40px_rgba(0,0,0,0.6)] flex flex-col items-center justify-center overflow-hidden z-10">
                         {/* Status bar */}
                         <div className="absolute top-0 left-0 right-0 h-5 flex items-center justify-center">
                           <div className="w-8 h-1.5 rounded-full bg-white/10 mt-1" />
@@ -770,12 +780,12 @@ export default function HomeContent() {
                         {/* QR Code grid */}
                         <svg className="w-[65%] aspect-square" viewBox="0 0 80 80" fill="none">
                           {/* Corner brackets */}
-                          <rect x="4" y="4" width="20" height="20" rx="2" stroke="var(--pp-secondary)" strokeWidth="2.5" fill="none" />
-                          <rect x="8" y="8" width="12" height="12" rx="1" fill="var(--pp-secondary)" opacity="0.7" />
-                          <rect x="56" y="4" width="20" height="20" rx="2" stroke="var(--pp-secondary)" strokeWidth="2.5" fill="none" />
-                          <rect x="60" y="8" width="12" height="12" rx="1" fill="var(--pp-secondary)" opacity="0.7" />
-                          <rect x="4" y="56" width="20" height="20" rx="2" stroke="var(--pp-secondary)" strokeWidth="2.5" fill="none" />
-                          <rect x="8" y="60" width="12" height="12" rx="1" fill="var(--pp-secondary)" opacity="0.7" />
+                          <rect x="4" y="4" width="20" height="20" rx="2" stroke="var(--pp-secondary, #10b981)" strokeWidth="2.5" fill="none" />
+                          <rect x="8" y="8" width="12" height="12" rx="1" fill="var(--pp-secondary, #10b981)" opacity="0.85" />
+                          <rect x="56" y="4" width="20" height="20" rx="2" stroke="var(--pp-secondary, #10b981)" strokeWidth="2.5" fill="none" />
+                          <rect x="60" y="8" width="12" height="12" rx="1" fill="var(--pp-secondary, #10b981)" opacity="0.85" />
+                          <rect x="4" y="56" width="20" height="20" rx="2" stroke="var(--pp-secondary, #10b981)" strokeWidth="2.5" fill="none" />
+                          <rect x="8" y="60" width="12" height="12" rx="1" fill="var(--pp-secondary, #10b981)" opacity="0.85" />
                           {/* Data dots */}
                           {[
                             [30,10],[36,10],[42,10],[48,10],
@@ -789,7 +799,7 @@ export default function HomeContent() {
                             [30,66],[42,66],[54,66],[66,66],[72,66],
                             [30,72],[36,72],[48,72],[60,72],[72,72],
                           ].map(([cx,cy], i) => (
-                            <rect key={i} x={cx} y={cy} width="4" height="4" rx="0.5" fill="var(--pp-primary)" opacity={0.4 + (i % 3) * 0.2} />
+                            <rect key={i} x={cx} y={cy} width="4" height="4" rx="0.5" fill="var(--pp-primary, #34d399)" opacity={0.65 + (i % 3) * 0.15} />
                           ))}
                         </svg>
                         {/* Scan line sweeping over QR */}
@@ -797,17 +807,17 @@ export default function HomeContent() {
                           animate={{ y: ['-80%', '80%'] }}
                           transition={{ duration: 2, repeat: Infinity, repeatType: 'reverse', ease: 'easeInOut' }}
                           className="absolute left-[17%] right-[17%] h-[2px]"
-                          style={{ background: 'var(--pp-secondary)', boxShadow: '0 0 12px 3px var(--pp-secondary)' }}
+                          style={{ background: 'var(--pp-secondary, #10b981)', boxShadow: '0 0 16px 4px var(--pp-secondary, #10b981)' }}
                         />
                         {/* Bottom pill button */}
-                        <div className="absolute bottom-3 w-[50%] h-4 rounded-full opacity-40" style={{ backgroundColor: 'var(--pp-secondary)' }} />
+                        <div className="absolute bottom-3 w-[50%] h-4 rounded-full opacity-60" style={{ backgroundColor: 'var(--pp-secondary, #10b981)' }} />
                       </div>
                       {/* Pulse ring around phone */}
                       <motion.div
-                        animate={{ scale: [1, 1.6], opacity: [0.3, 0] }}
+                        animate={{ scale: [1, 1.6], opacity: [0.35, 0] }}
                         transition={{ duration: 2, repeat: Infinity, ease: 'easeOut' }}
                         className="absolute w-[50%] max-w-[180px] aspect-[9/16] rounded-[20px] border-2 pointer-events-none"
-                        style={{ borderColor: 'var(--pp-secondary)' }}
+                        style={{ borderColor: 'var(--pp-secondary, #10b981)' }}
                       />
                     </div>
                   )}
@@ -819,34 +829,52 @@ export default function HomeContent() {
                 whileHover={{ y: -5 }}
                 className="rounded-[2rem] bg-[#0A0A0A] border border-white/5 p-0 relative overflow-hidden group shadow-2xl transition-all duration-500 hover:border-white/10 flex flex-col"
               >
-                <div className="flex-1 relative min-h-[200px] border-b border-white/10">
+                <div className="relative z-10 p-8 flex flex-col justify-center">
+                  <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mb-6 backdrop-blur-md border border-white/10 shadow-inner">
+                    <CheckCircle2 className="w-6 h-6 text-white" />
+                  </div>
+                  <h3 className="text-3xl font-bold mb-3 tracking-tight">White-Label.</h3>
+                  <p className="text-muted-foreground text-lg leading-relaxed font-light">
+                    Maintain complete control with customizable colors, logos, and digital receipts.
+                  </p>
+                </div>
+                <div className="flex-1 relative min-h-[200px] border-t border-white/10">
                   {!isPartnerContainer ? (
                     <img src="/mockup_branding.png" alt="White Label Config Mockup" className="absolute inset-0 w-full h-full object-cover" />
                   ) : (
                     <div className="absolute inset-0 overflow-hidden bg-[#050508] flex items-center justify-center p-6">
+                      {/* Neutral Tech Background */}
+                      <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-30 mix-blend-luminosity pointer-events-none" style={{ backgroundImage: 'url("/neutral_tech_bento_bg.png")' }} />
                       {/* Ambient glow */}
-                      <div className="absolute inset-0 opacity-15" style={{ background: 'radial-gradient(ellipse at 30% 40%, var(--pp-primary) 0%, transparent 60%)' }} />
-                      <div className="relative w-full max-w-[200px] flex flex-col gap-3">
+                      <div className="absolute inset-0 opacity-15" style={{ background: 'radial-gradient(ellipse at 30% 40%, var(--pp-primary, #34d399) 0%, transparent 60%)' }} />
+                      {/* Subtle gradient blur backing to make custom branding elements pop */}
+                      <div 
+                        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[70%] rounded-full blur-[25px] opacity-75 pointer-events-none"
+                        style={{
+                          background: 'radial-gradient(circle, rgba(5, 5, 8, 0.95) 0%, rgba(5, 5, 8, 0.4) 70%, transparent 100%)'
+                        }}
+                      />
+                      <div className="relative w-full max-w-[200px] flex flex-col gap-3 z-10">
                         {/* Color palette row */}
                         <div className="flex gap-2 justify-center">
                           {[
-                            { color: 'var(--pp-primary)', delay: 0 },
-                            { color: 'var(--pp-secondary)', delay: 0.3 },
-                            { color: 'var(--pp-primary)', delay: 0.6, opacity: 0.5 },
-                            { color: 'var(--pp-secondary)', delay: 0.9, opacity: 0.3 },
+                            { color: 'var(--pp-primary, #34d399)', delay: 0 },
+                            { color: 'var(--pp-secondary, #10b981)', delay: 0.3 },
+                            { color: 'var(--pp-primary, #34d399)', delay: 0.6, opacity: 0.5 },
+                            { color: 'var(--pp-secondary, #10b981)', delay: 0.9, opacity: 0.3 },
                           ].map((swatch, i) => (
                             <motion.div
                               key={i}
                               animate={{ scale: [1, 1.15, 1], opacity: [swatch.opacity || 0.8, 1, swatch.opacity || 0.8] }}
                               transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut', delay: swatch.delay }}
-                              className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg border border-white/10 shadow-lg"
+                              className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg border border-white/20 shadow-lg"
                               style={{ backgroundColor: swatch.color }}
                             />
                           ))}
                         </div>
                         {/* Mini receipt skeleton */}
-                        <div className="mt-2 rounded-xl border border-white/10 bg-white/[0.03] p-4 flex flex-col gap-2.5 backdrop-blur-sm">
-                          <div className="w-[60%] h-2 rounded-full mx-auto" style={{ backgroundColor: 'var(--pp-secondary)', opacity: 0.5 }} />
+                        <div className="mt-2 rounded-xl border border-white/20 bg-white/[0.06] p-4 flex flex-col gap-2.5 backdrop-blur-md shadow-xl">
+                          <div className="w-[60%] h-2 rounded-full mx-auto" style={{ backgroundColor: 'var(--pp-secondary, #10b981)', opacity: 0.7 }} />
                           <div className="w-full h-[1px] bg-white/10" />
                           <div className="flex justify-between">
                             <div className="w-[40%] h-1.5 rounded-full bg-white/15" />
@@ -859,21 +887,12 @@ export default function HomeContent() {
                           <div className="w-full h-[1px] bg-white/10" />
                           <div className="flex justify-between">
                             <div className="w-[30%] h-2 rounded-full bg-white/20 font-bold" />
-                            <div className="w-[25%] h-2 rounded-full" style={{ backgroundColor: 'var(--pp-primary)', opacity: 0.5 }} />
+                            <div className="w-[25%] h-2 rounded-full" style={{ backgroundColor: 'var(--pp-primary, #34d399)', opacity: 0.7 }} />
                           </div>
                         </div>
                       </div>
                     </div>
                   )}
-                </div>
-                <div className="relative z-10 p-8 flex flex-col justify-center">
-                  <div className="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mb-6 backdrop-blur-md border border-white/10 shadow-inner">
-                    <CheckCircle2 className="w-6 h-6 text-white" />
-                  </div>
-                  <h3 className="text-3xl font-bold mb-3 tracking-tight">White-Label.</h3>
-                  <p className="text-muted-foreground text-lg leading-relaxed font-light">
-                    Maintain complete control with customizable colors, logos, and digital receipts.
-                  </p>
                 </div>
               </motion.div>
 
@@ -896,43 +915,53 @@ export default function HomeContent() {
                     <img src="/mockup_admin.png" alt="Touchpoint Management Mockup" className="absolute inset-0 w-full h-full object-cover" />
                   ) : (
                     <div className="absolute inset-0 overflow-hidden bg-[#050508] flex items-center justify-center">
-                      <div className="absolute inset-0 opacity-10" style={{ background: 'radial-gradient(ellipse at 50% 20%, var(--pp-secondary) 0%, transparent 60%)' }} />
-                      <svg className="w-[85%] h-[85%] max-w-[260px]" viewBox="0 0 200 140" fill="none">
+                      {/* Neutral Tech Background */}
+                      <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-30 mix-blend-luminosity pointer-events-none" style={{ backgroundImage: 'url("/neutral_tech_bento_bg.png")' }} />
+                      {/* Ambient glow */}
+                      <div className="absolute inset-0 opacity-10" style={{ background: 'radial-gradient(ellipse at 50% 20%, var(--pp-secondary, #10b981) 0%, transparent 60%)' }} />
+                      {/* Subtle gradient blur backing to make Touchpoints pop */}
+                      <div 
+                        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[85%] h-[75%] rounded-full blur-[20px] opacity-75 pointer-events-none"
+                        style={{
+                          background: 'radial-gradient(circle, rgba(5, 5, 8, 0.95) 0%, rgba(5, 5, 8, 0.4) 70%, transparent 100%)'
+                        }}
+                      />
+                      <svg className="w-[85%] h-[85%] max-w-[260px] relative z-10" viewBox="0 0 200 140" fill="none">
                         {/* Cloud node at top */}
-                        <ellipse cx="100" cy="20" rx="28" ry="12" stroke="var(--pp-secondary)" strokeWidth="1" fill="none" opacity="0.6" />
-                        <text x="100" y="23" textAnchor="middle" fill="var(--pp-secondary)" fontSize="6" opacity="0.8">Cloud</text>
+                        <ellipse cx="100" cy="22" rx="32" ry="14" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <text x="100" y="26" textAnchor="middle" fill="var(--pp-secondary, #10b981)" fontSize="10" fontWeight="800" letterSpacing="0.05em">CLOUD</text>
                         {/* Connection lines from cloud to devices */}
-                        <path d="M80 30 L40 90" stroke="var(--pp-primary)" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.5">
+                        <path d="M76 30 L40 80" stroke="var(--pp-primary, #34d399)" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.75">
                           <animate attributeName="stroke-dashoffset" from="24" to="0" dur="3s" repeatCount="indefinite" />
                         </path>
-                        <path d="M100 32 L100 90" stroke="var(--pp-secondary)" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.5">
+                        <path d="M100 36 L100 86" stroke="var(--pp-secondary, #10b981)" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.75">
                           <animate attributeName="stroke-dashoffset" from="24" to="0" dur="2.5s" repeatCount="indefinite" />
                         </path>
-                        <path d="M120 30 L160 90" stroke="var(--pp-primary)" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.5">
+                        <path d="M124 30 L160 80" stroke="var(--pp-primary, #34d399)" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.75">
                           <animate attributeName="stroke-dashoffset" from="24" to="0" dur="3.5s" repeatCount="indefinite" />
                         </path>
                         {/* Kiosk (left) */}
-                        <rect x="22" y="90" width="36" height="40" rx="3" stroke="var(--pp-secondary)" strokeWidth="1" fill="none" opacity="0.5" />
-                        <rect x="26" y="94" width="28" height="24" rx="1" fill="var(--pp-secondary)" opacity="0.08" />
-                        <text x="40" y="122" textAnchor="middle" fill="white" fontSize="5" opacity="0.4">Kiosk</text>
+                        <rect x="20" y="80" width="40" height="40" rx="6" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <rect x="24" y="84" width="32" height="24" rx="2" fill="var(--pp-secondary, #10b981)" opacity="0.15" />
+                        <text x="40" y="136" textAnchor="middle" fill="white" fontSize="10" fontWeight="700">Kiosk</text>
                         {/* Terminal (center) */}
-                        <rect x="80" y="92" width="40" height="28" rx="3" stroke="var(--pp-secondary)" strokeWidth="1" fill="none" opacity="0.5" />
-                        <rect x="84" y="96" width="32" height="16" rx="1" fill="var(--pp-secondary)" opacity="0.08" />
-                        <rect x="88" y="120" width="24" height="6" rx="1" fill="var(--pp-primary)" opacity="0.15" />
-                        <text x="100" y="136" textAnchor="middle" fill="white" fontSize="5" opacity="0.4">Terminal</text>
+                        <rect x="80" y="86" width="40" height="34" rx="6" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <rect x="84" y="90" width="32" height="22" rx="2" fill="var(--pp-secondary, #10b981)" opacity="0.15" />
+                        <rect x="88" y="122" width="24" height="4" rx="1" fill="var(--pp-primary, #34d399)" opacity="0.3" />
+                        <text x="100" y="136" textAnchor="middle" fill="white" fontSize="10" fontWeight="700">Terminal</text>
                         {/* Handheld (right) */}
-                        <rect x="147" y="90" width="24" height="38" rx="4" stroke="var(--pp-secondary)" strokeWidth="1" fill="none" opacity="0.5" />
-                        <rect x="150" y="94" width="18" height="24" rx="1" fill="var(--pp-secondary)" opacity="0.08" />
-                        <text x="159" y="122" textAnchor="middle" fill="white" fontSize="5" opacity="0.4">Handheld</text>
+                        <rect x="145" y="80" width="30" height="40" rx="6" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <rect x="149" y="84" width="22" height="28" rx="2" fill="var(--pp-secondary, #10b981)" opacity="0.15" />
+                        <text x="160" y="136" textAnchor="middle" fill="white" fontSize="10" fontWeight="700">Handheld</text>
                         {/* Pulse dots traveling down lines */}
-                        <circle r="2" fill="var(--pp-secondary)" opacity="0.8">
-                          <animateMotion path="M80 30 L40 90" dur="3s" repeatCount="indefinite" />
+                        <circle r="3" fill="var(--pp-secondary, #10b981)" opacity="1.0">
+                          <animateMotion path="M76 30 L40 80" dur="3s" repeatCount="indefinite" />
                         </circle>
-                        <circle r="2" fill="var(--pp-secondary)" opacity="0.8">
-                          <animateMotion path="M100 32 L100 90" dur="2.5s" repeatCount="indefinite" />
+                        <circle r="3" fill="var(--pp-secondary, #10b981)" opacity="1.0">
+                          <animateMotion path="M100 36 L100 86" dur="2.5s" repeatCount="indefinite" />
                         </circle>
-                        <circle r="2" fill="var(--pp-secondary)" opacity="0.8">
-                          <animateMotion path="M120 30 L160 90" dur="3.5s" repeatCount="indefinite" />
+                        <circle r="3" fill="var(--pp-secondary, #10b981)" opacity="1.0">
+                          <animateMotion path="M124 30 L160 80" dur="3.5s" repeatCount="indefinite" />
                         </circle>
                       </svg>
                     </div>
@@ -950,52 +979,62 @@ export default function HomeContent() {
                     <img src="/mockup_storefront.png" alt="Storefront Interface Mockup" className="absolute inset-0 w-full h-full object-cover" />
                   ) : (
                     <div className="absolute inset-0 overflow-hidden bg-[#050508] flex items-center justify-center">
-                      <div className="absolute inset-0 opacity-10" style={{ background: 'radial-gradient(ellipse at 30% 50%, var(--pp-primary) 0%, transparent 50%)' }} />
-                      <svg className="w-[90%] h-[80%] max-w-[400px]" viewBox="0 0 300 180" fill="none">
+                      {/* Neutral Tech Background */}
+                      <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-30 mix-blend-luminosity pointer-events-none" style={{ backgroundImage: 'url("/neutral_tech_bento_bg.png")' }} />
+                      {/* Ambient glow */}
+                      <div className="absolute inset-0 opacity-10" style={{ background: 'radial-gradient(ellipse at 30% 50%, var(--pp-primary, #34d399) 0%, transparent 50%)' }} />
+                      {/* Subtle gradient blur backing to make Programmable Routing pop */}
+                      <div 
+                        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[85%] h-[75%] rounded-full blur-[20px] opacity-75 pointer-events-none"
+                        style={{
+                          background: 'radial-gradient(circle, rgba(5, 5, 8, 0.95) 0%, rgba(5, 5, 8, 0.4) 70%, transparent 100%)'
+                        }}
+                      />
+                      <svg className="w-[90%] h-[80%] max-w-[400px] relative z-10" viewBox="0 0 300 180" fill="none">
                         {/* Source node — incoming payment */}
-                        <rect x="10" y="70" width="60" height="40" rx="8" stroke="var(--pp-secondary)" strokeWidth="1.5" fill="none" opacity="0.6" />
-                        <text x="40" y="86" textAnchor="middle" fill="var(--pp-secondary)" fontSize="7" opacity="0.9">Payment</text>
-                        <text x="40" y="98" textAnchor="middle" fill="white" fontSize="6" opacity="0.4">$100.00</text>
+                        <rect x="10" y="69" width="68" height="42" rx="8" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <text x="44" y="87" textAnchor="middle" fill="var(--pp-secondary, #10b981)" fontSize="10" fontWeight="800" letterSpacing="0.05em">PAYMENT</text>
+                        <text x="44" y="100" textAnchor="middle" fill="white" fontSize="10" fontWeight="700">$100.00</text>
                         {/* Central router hub */}
-                        <circle cx="140" cy="90" r="18" stroke="var(--pp-secondary)" strokeWidth="1.5" fill="none" opacity="0.5" />
-                        <circle cx="140" cy="90" r="8" fill="var(--pp-secondary)" opacity="0.15" />
-                        <text x="140" y="93" textAnchor="middle" fill="var(--pp-secondary)" fontSize="6" opacity="0.8">Router</text>
+                        <circle cx="140" cy="90" r="22" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <circle cx="140" cy="90" r="12" fill="var(--pp-secondary, #10b981)" opacity="0.25" />
+                        <text x="140" y="94" textAnchor="middle" fill="var(--pp-secondary, #10b981)" fontSize="9" fontWeight="800" letterSpacing="0.05em">ROUTER</text>
                         {/* Line: source → router */}
-                        <path d="M70 90 L122 90" stroke="var(--pp-primary)" strokeWidth="1" strokeDasharray="4 3" opacity="0.5">
+                        <path d="M78 90 L118 90" stroke="var(--pp-primary, #34d399)" strokeWidth="1.2" strokeDasharray="4 3" opacity="0.7">
                           <animate attributeName="stroke-dashoffset" from="28" to="0" dur="2s" repeatCount="indefinite" />
                         </path>
-                        <circle r="2.5" fill="var(--pp-primary)" opacity="0.9">
-                          <animateMotion path="M70 90 L122 90" dur="2s" repeatCount="indefinite" />
+                        <circle r="3" fill="var(--pp-primary, #34d399)" opacity="1.0">
+                          <animateMotion path="M78 90 L118 90" dur="2s" repeatCount="indefinite" />
                         </circle>
                         {/* Destination 1 — Vendor (top) */}
-                        <path d="M158 80 L220 40" stroke="var(--pp-secondary)" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.4">
+                        <path d="M160 80 L215 41" stroke="var(--pp-secondary, #10b981)" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.65">
                           <animate attributeName="stroke-dashoffset" from="24" to="0" dur="2.5s" repeatCount="indefinite" />
                         </path>
-                        <rect x="220" y="22" width="65" height="36" rx="6" stroke="var(--pp-secondary)" strokeWidth="1" fill="none" opacity="0.5" />
-                        <text x="252" y="38" textAnchor="middle" fill="white" fontSize="6" opacity="0.5">Vendor A</text>
-                        <text x="252" y="50" textAnchor="middle" fill="var(--pp-secondary)" fontSize="7" opacity="0.7">50%</text>
-                        <circle r="2" fill="var(--pp-secondary)" opacity="0.8">
-                          <animateMotion path="M158 80 L220 40" dur="2.5s" repeatCount="indefinite" />
+                        <rect x="215" y="20" width="75" height="42" rx="8" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <text x="252" y="37" textAnchor="middle" fill="white" fontSize="10" fontWeight="700">Vendor A</text>
+                        <text x="252" y="50" textAnchor="middle" fill="var(--pp-secondary, #10b981)" fontSize="11" fontWeight="800">50%</text>
+                        <circle r="3" fill="var(--pp-secondary, #10b981)" opacity="1.0">
+                          <animateMotion path="M160 80 L215 41" dur="2.5s" repeatCount="indefinite" />
                         </circle>
                         {/* Destination 2 — Platform (middle) */}
-                        <path d="M158 90 L220 90" stroke="var(--pp-secondary)" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.4">
+                        <path d="M162 90 L215 91" stroke="var(--pp-secondary, #10b981)" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.65">
                           <animate attributeName="stroke-dashoffset" from="24" to="0" dur="3s" repeatCount="indefinite" />
                         </path>
-                        <rect x="220" y="72" width="65" height="36" rx="6" stroke="var(--pp-primary)" strokeWidth="1" fill="none" opacity="0.5" />
-                        <text x="252" y="88" textAnchor="middle" fill="white" fontSize="6" opacity="0.5">Platform</text>
-                        <text x="252" y="100" textAnchor="middle" fill="var(--pp-primary)" fontSize="7" opacity="0.7">30%</text>
-                        <circle r="2" fill="var(--pp-primary)" opacity="0.8">
-                          <animateMotion path="M158 90 L220 90" dur="3s" repeatCount="indefinite" />
+                        <rect x="215" y="70" width="75" height="42" rx="8" stroke="var(--pp-primary, #34d399)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <text x="252" y="87" textAnchor="middle" fill="white" fontSize="10" fontWeight="700">Platform</text>
+                        <text x="252" y="100" textAnchor="middle" fill="var(--pp-primary, #34d399)" fontSize="11" fontWeight="800">30%</text>
+                        <circle r="3" fill="var(--pp-primary, #34d399)" opacity="1.0">
+                          <animateMotion path="M162 90 L215 91" dur="3s" repeatCount="indefinite" />
                         </circle>
                         {/* Destination 3 — Reserve (bottom) */}
-                        <path d="M158 100 L220 140" stroke="var(--pp-secondary)" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.4">
+                        <path d="M160 100 L215 141" stroke="var(--pp-secondary, #10b981)" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.65">
                           <animate attributeName="stroke-dashoffset" from="24" to="0" dur="3.5s" repeatCount="indefinite" />
                         </path>
-                        <rect x="220" y="122" width="65" height="36" rx="6" stroke="var(--pp-secondary)" strokeWidth="1" fill="none" opacity="0.5" />
-                        <text x="252" y="138" textAnchor="middle" fill="white" fontSize="6" opacity="0.5">Reserve</text>
-                        <text x="252" y="150" textAnchor="middle" fill="var(--pp-secondary)" fontSize="7" opacity="0.7">20%</text>
-                        <circle r="2" fill="var(--pp-secondary)" opacity="0.8">
-                          <animateMotion path="M158 100 L220 140" dur="3.5s" repeatCount="indefinite" />
+                        <rect x="215" y="120" width="75" height="42" rx="8" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <text x="252" y="137" textAnchor="middle" fill="white" fontSize="10" fontWeight="700">Reserve</text>
+                        <text x="252" y="150" textAnchor="middle" fill="var(--pp-secondary, #10b981)" fontSize="11" fontWeight="800">20%</text>
+                        <circle r="3" fill="var(--pp-secondary, #10b981)" opacity="1.0">
+                          <animateMotion path="M160 100 L215 141" dur="3.5s" repeatCount="indefinite" />
                         </circle>
                       </svg>
                     </div>
@@ -1027,67 +1066,79 @@ export default function HomeContent() {
 
         {/* How it works - Architectural Timeline */}
         <section className="py-32 border-t border-white/5 relative">
-          <div className="max-w-7xl mx-auto relative z-10 flex flex-col lg:flex-row gap-16 items-center">
-            
-            <motion.div 
-              initial={{ opacity: 0, x: -20 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ duration: 0.8 }}
-              className="flex-1 w-full relative rounded-3xl overflow-hidden border border-white/10 shadow-2xl h-[600px]"
-            >
-              {!isPartnerContainer ? (
-                <img src="/pos_qr_surge.png" alt="BasaltSurge POS Terminal QR Scanning" className="absolute inset-0 w-full h-full object-cover" />
-              ) : (
-                <div className="absolute inset-0 overflow-hidden bg-[#050508] flex items-center justify-center">
-                  {/* Ambient gradient */}
-                  <div className="absolute inset-0 opacity-15" style={{ background: 'linear-gradient(135deg, var(--pp-primary) 0%, transparent 40%, var(--pp-secondary) 100%)' }} />
-                  {/* 4-step pipeline SVG */}
-                  <svg className="w-[90%] h-auto max-w-[500px]" viewBox="0 0 400 200" fill="none">
-                    {/* Step nodes */}
-                    {[
-                      { x: 30, label: 'Configure', sub: 'Brand & Wallet', icon: 'M50 70 L50 60 L60 60 L60 70 M45 70 L65 70 L65 85 L45 85 Z' },
-                      { x: 135, label: 'Generate', sub: 'Receipt & QR', icon: 'M155 60 L165 60 L165 70 L155 70 Z M155 72 L165 72 L165 82 L155 82 Z M152 58 L168 58 L168 84 L152 84 Z' },
-                      { x: 240, label: 'Scan & Pay', sub: 'Instant Settle', icon: 'M260 60 L260 85 M252 68 L260 60 L268 68' },
-                      { x: 345, label: 'Reconcile', sub: 'Real-time', icon: 'M358 62 L362 70 L366 62 M358 72 L362 80 L366 72 M355 58 L355 84 L369 84 L369 58 Z' },
-                    ].map((step, i) => (
-                      <g key={i}>
-                        {/* Node circle */}
-                        <circle cx={step.x + 10} cy={100} r="28" stroke="var(--pp-secondary)" strokeWidth="1" fill="none" opacity="0.4" />
-                        <circle cx={step.x + 10} cy={100} r="16" fill="var(--pp-secondary)" opacity="0.06" />
-                        {/* Step number */}
-                        <text x={step.x + 10} y={105} textAnchor="middle" fill="var(--pp-secondary)" fontSize="14" fontWeight="bold" opacity="0.6">{i + 1}</text>
-                        {/* Label */}
-                        <text x={step.x + 10} y={148} textAnchor="middle" fill="white" fontSize="9" opacity="0.7">{step.label}</text>
-                        <text x={step.x + 10} y={162} textAnchor="middle" fill="var(--pp-secondary)" fontSize="7" opacity="0.4">{step.sub}</text>
-                      </g>
-                    ))}
-                    {/* Connectors with animated dash */}
-                    {[
-                      { d: 'M68 100 L107 100' },
-                      { d: 'M173 100 L212 100' },
-                      { d: 'M278 100 L317 100' },
-                    ].map((conn, i) => (
-                      <g key={i}>
-                        <path d={conn.d} stroke="var(--pp-primary)" strokeWidth="1.5" strokeDasharray="4 4" opacity="0.4">
-                          <animate attributeName="stroke-dashoffset" from="32" to="0" dur={`${1.5 + i * 0.3}s`} repeatCount="indefinite" />
-                        </path>
-                        {/* Chevron arrow */}
-                        <circle r="3" fill="var(--pp-secondary)" opacity="0.8">
-                          <animateMotion path={conn.d} dur={`${1.5 + i * 0.3}s`} repeatCount="indefinite" />
-                        </circle>
-                      </g>
-                    ))}
-                    {/* Speed lines burst from center */}
-                    {[15, 35, 165, 185].map((y, i) => (
-                      <line key={i} x1="120" y1={y} x2="280" y2={y} stroke="var(--pp-secondary)" strokeWidth="0.5" opacity="0.08" />
-                    ))}
-                  </svg>
-                </div>
-              )}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-              <div className="absolute bottom-10 left-10 right-10">
-                <h2 className="text-4xl md:text-6xl font-black tracking-tight mb-4 text-white drop-shadow-md">Architected for Speed.</h2>
-                <p className="text-xl text-white/90 font-light drop-shadow-md">From configuration to settlement in four frictionless steps.</p>
-              </div>
-            </motion.div>
+          <div className="max-w-7xl mx-auto relative z-10">
+            {/* Section Header */}
+            <div className="mb-20 max-w-3xl">
+              <h2 className="text-5xl md:text-6xl font-black tracking-tight mb-6 text-white">Architected for Speed.</h2>
+              <p className="text-xl md:text-2xl text-muted-foreground font-light leading-relaxed">From configuration to settlement in four frictionless steps.</p>
+            </div>
+
+            <div className="flex flex-col lg:flex-row gap-16 items-center">
+              <motion.div 
+                initial={{ opacity: 0, x: -20 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ duration: 0.8 }}
+                className="flex-1 w-full relative rounded-3xl overflow-hidden border border-white/10 shadow-2xl h-[500px]"
+              >
+                {!isPartnerContainer ? (
+                  <>
+                    <img src="/pos_qr_surge.png" alt="BasaltSurge POS Terminal QR Scanning" className="absolute inset-0 w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none" />
+                  </>
+                ) : (
+                  <div className="absolute inset-0 overflow-hidden bg-[#050508] flex items-center justify-center">
+                    {/* Neutral Tech Background */}
+                    <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-40 mix-blend-luminosity pointer-events-none" style={{ backgroundImage: 'url("/neutral_tech_clean_grid.png")' }} />
+                    {/* Ambient gradient */}
+                    <div className="absolute inset-0 opacity-10" style={{ background: 'linear-gradient(135deg, var(--pp-primary, #34d399) 0%, transparent 40%, var(--pp-secondary, #10b981) 100%)' }} />
+                    {/* Subtle gradient blur backing to make timeline pop */}
+                    <div 
+                      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[80%] h-[75%] rounded-full blur-[30px] opacity-80 pointer-events-none"
+                      style={{
+                        background: 'radial-gradient(circle, rgba(5, 5, 8, 0.95) 0%, rgba(5, 5, 8, 0.5) 70%, transparent 100%)'
+                      }}
+                    />
+                    {/* Vertical Timeline SVG */}
+                    <svg className="w-[90%] h-auto max-h-[460px] relative z-10" viewBox="0 0 240 380" fill="none">
+                      {/* Step nodes */}
+                      {[
+                        { y: 50, label: 'Configure', sub: 'Brand & Wallet' },
+                        { y: 135, label: 'Generate', sub: 'Receipt & QR' },
+                        { y: 220, label: 'Scan & Pay', sub: 'Instant Settle' },
+                        { y: 305, label: 'Reconcile', sub: 'Real-time' },
+                      ].map((step, i) => (
+                        <g key={i}>
+                          {/* Node circle */}
+                          <circle cx="120" cy={step.y} r="22" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                          <circle cx="120" cy={step.y} r="12" fill="var(--pp-secondary, #10b981)" opacity="0.15" />
+                          {/* Step number */}
+                          <text x="120" y={step.y + 4} textAnchor="middle" fill="var(--pp-secondary, #10b981)" fontSize="12" fontWeight="bold" opacity="0.95">{i + 1}</text>
+                          {/* Label */}
+                          <text x="120" y={step.y + 36} textAnchor="middle" fill="white" fontSize="10" fontWeight="bold" opacity="0.95">{step.label}</text>
+                          <text x="120" y="0" opacity="0">
+                            {/* Hide secondary label under standard container but keep elements valid */}
+                          </text>
+                          <text x="120" y={step.y + 48} textAnchor="middle" fill="var(--pp-secondary, #10b981)" fontSize="8" fontWeight="600" opacity="0.75">{step.sub}</text>
+                        </g>
+                      ))}
+                      {/* Connectors with animated dash */}
+                      {[
+                        { d: 'M120 72 L120 113' },
+                        { d: 'M120 157 L120 198' },
+                        { d: 'M120 242 L120 283' },
+                      ].map((conn, i) => (
+                        <g key={i}>
+                          <path d={conn.d} stroke="var(--pp-primary, #34d399)" strokeWidth="1.8" strokeDasharray="4 4" opacity="0.65">
+                            <animate attributeName="stroke-dashoffset" from="32" to="0" dur={`${1.5 + i * 0.3}s`} repeatCount="indefinite" />
+                          </path>
+                          {/* Chevron arrow */}
+                          <circle r="3" fill="var(--pp-secondary, #10b981)" opacity="1.0">
+                            <animateMotion path={conn.d} dur={`${1.5 + i * 0.3}s`} repeatCount="indefinite" />
+                          </circle>
+                        </g>
+                      ))}
+                    </svg>
+                  </div>
+                )}
+              </motion.div>
 
             <div className="flex-1 w-full relative border-l border-white/10 pl-8 space-y-12 py-8">
                 {[
@@ -1122,7 +1173,8 @@ export default function HomeContent() {
                 ))}
             </div>
           </div>
-        </section>
+        </div>
+      </section>
 
 
         <TechnologyPartners />
@@ -1177,70 +1229,210 @@ export default function HomeContent() {
             
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: true }} transition={{ duration: 0.8 }}
-              className="flex-1 w-full rounded-3xl overflow-hidden border border-white/10 shadow-2xl h-[500px] relative bg-white/5"
+              className="flex-1 w-full rounded-3xl overflow-hidden border border-white/10 shadow-2xl h-[500px] relative bg-[#050508]"
             >
               {!isPartnerContainer ? (
                 <img src="/luxury_boutique.png" alt="Luxury Boutique" className="absolute inset-0 w-full h-full object-cover hover:scale-105 transition-transform duration-1000" />
               ) : (
-                <div className="absolute inset-0 overflow-hidden bg-[#050508] flex items-center justify-center">
+                <div className="absolute inset-0 overflow-hidden bg-[#050508] flex flex-col items-center justify-center p-6">
+                  {/* Interactive selector */}
+                  <div className="absolute top-4 left-4 right-4 z-20 flex justify-between items-center bg-black/60 backdrop-blur-md border border-white/10 p-1.5 rounded-xl shadow-lg">
+                    <div className="text-[9px] font-bold text-white/40 uppercase tracking-[0.15em] pl-2">Rail Comparison</div>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => setActiveThesisTab("legacy")}
+                        className={`px-3 py-1 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all duration-300 ${
+                          activeThesisTab === "legacy"
+                            ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                            : "text-white/60 hover:text-white hover:bg-white/5 border border-transparent"
+                        }`}
+                      >
+                        <span className="flex flex-col items-center leading-tight">
+                          <span className="block">Legacy</span>
+                          <span className="text-[7.5px] opacity-60 font-semibold tracking-normal mt-0.5">Rail</span>
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => setActiveThesisTab("portalpay")}
+                        className={`px-3 py-1 rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all duration-300 ${
+                          activeThesisTab === "portalpay"
+                            ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                            : "text-white/60 hover:text-white hover:bg-white/5 border border-transparent"
+                        }`}
+                        style={{
+                          backgroundColor: activeThesisTab === "portalpay" ? 'var(--pp-secondary-opacity-20, rgba(16, 185, 129, 0.2))' : undefined,
+                          color: activeThesisTab === "portalpay" ? 'var(--pp-secondary, #10b981)' : undefined,
+                          borderColor: activeThesisTab === "portalpay" ? 'var(--pp-secondary-opacity-30, rgba(16, 185, 129, 0.3))' : undefined,
+                        }}
+                      >
+                        <span className="flex flex-col items-center leading-tight">
+                          <span className="block truncate max-w-[120px]">{displayBrandName}</span>
+                          <span className="text-[7.5px] opacity-60 font-semibold tracking-normal mt-0.5">Rail</span>
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Neutral Tech Background */}
+                  <div className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-35 mix-blend-luminosity pointer-events-none" style={{ backgroundImage: 'url("/neutral_tech_clean_grid.png")' }} />
+                  
                   {/* Ambient glow */}
-                  <div className="absolute inset-0 opacity-12" style={{ background: 'radial-gradient(ellipse at 50% 60%, var(--pp-secondary) 0%, transparent 60%)' }} />
-                  <svg className="w-[88%] h-auto max-w-[420px]" viewBox="0 0 360 260" fill="none">
-                    {/* Legacy rail — crossed out */}
-                    <g opacity="0.25">
-                      <rect x="30" y="30" width="120" height="75" rx="8" stroke="white" strokeWidth="1" fill="none" />
-                      <rect x="30" y="55" width="120" height="12" fill="white" opacity="0.1" />
-                      <text x="90" y="50" textAnchor="middle" fill="white" fontSize="8">Card Rail</text>
-                      <text x="90" y="92" textAnchor="middle" fill="white" fontSize="6" opacity="0.5">2-5 Day Settle</text>
-                      {/* Strike-through */}
-                      <line x1="25" y1="25" x2="155" y2="110" stroke="#ff4444" strokeWidth="1.5" opacity="0.6" />
-                      <line x1="155" y1="25" x2="25" y2="110" stroke="#ff4444" strokeWidth="1.5" opacity="0.6" />
-                    </g>
-                    {/* Arrow from legacy to crypto */}
-                    <path d="M160 67 L195 67" stroke="white" strokeWidth="0.8" strokeDasharray="3 3" opacity="0.2" />
-                    <text x="178" y="60" textAnchor="middle" fill="white" fontSize="7" opacity="0.3">→</text>
+                  <div 
+                    className="absolute inset-0 opacity-15 pointer-events-none transition-all duration-700" 
+                    style={{ 
+                      background: activeThesisTab === 'legacy' 
+                        ? 'radial-gradient(ellipse at 50% 60%, rgba(239, 68, 68, 0.15) 0%, transparent 60%)' 
+                        : 'radial-gradient(ellipse at 50% 60%, var(--pp-secondary, #10b981) 0%, transparent 60%)' 
+                    }} 
+                  />
+                  
+                  {/* Subtle gradient blur backing to make comparison diagram pop */}
+                  <div 
+                    className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[85%] h-[65%] rounded-full blur-[30px] opacity-80 pointer-events-none"
+                    style={{
+                      background: 'radial-gradient(circle, rgba(5, 5, 8, 0.95) 0%, rgba(5, 5, 8, 0.5) 70%, transparent 100%)'
+                    }}
+                  />
 
-                    {/* Crypto rail — active */}
-                    {/* Wallet node */}
-                    <circle cx="230" cy="45" r="20" stroke="var(--pp-secondary)" strokeWidth="1.2" fill="none" opacity="0.6" />
-                    <circle cx="230" cy="45" r="10" fill="var(--pp-secondary)" opacity="0.08" />
-                    <text x="230" y="48" textAnchor="middle" fill="var(--pp-secondary)" fontSize="7" opacity="0.8">Wallet</text>
+                  {/* svg */}
+                  {/* svg */}
+                  <svg className="w-[90%] h-auto max-w-[420px] relative z-10 mt-6" viewBox="0 0 360 280" fill="none">
+                    {activeThesisTab === "legacy" ? (
+                      <g key="legacy">
+                        {/* Title & Info Stacked on the Left */}
+                        <text x="20" y="14" fill="#ef4444" fontSize="9.5" fontWeight="800" opacity="0.8" letterSpacing="0.08em">LEGACY SYSTEM</text>
+                        <text x="20" y="23" fill="#ef4444" fontSize="8" fontWeight="800" opacity="0.5" letterSpacing="0.08em">HIGH-FRICTION RAIL</text>
+                        <text x="20" y="32" fill="white" fontSize="7" fontWeight="800" opacity="0.4" letterSpacing="0.05em">10 NODES • 2.5%+ FEE LEAKAGE • 2-5 DAY DELAY</text>
+                        
+                        {/* Messy Criss-crossing paths (shifted down by 10px from previous) */}
+                        <path d="M45 105 L110 85" stroke="#ef4444" strokeWidth="1.2" strokeDasharray="3 3" opacity="0.5" />
+                        <path d="M110 85 L180 75" stroke="#ef4444" strokeWidth="1.2" opacity="0.4" />
+                        <path d="M110 85 L110 145" stroke="#ef4444" strokeWidth="1" strokeDasharray="2 2" opacity="0.4" />
+                        <path d="M110 145 L180 140" stroke="#ef4444" strokeWidth="1.2" opacity="0.4" />
+                        <path d="M180 140 L180 75" stroke="#ef4444" strokeWidth="1" opacity="0.3" />
+                        <path d="M180 75 L250 90" stroke="#ef4444" strokeWidth="1.2" opacity="0.4" />
+                        <path d="M250 90 L315 105" stroke="#ef4444" strokeWidth="1.2" opacity="0.5" />
+                        <path d="M315 105 L110 145" stroke="#ef4444" strokeWidth="0.8" strokeDasharray="4 4" opacity="0.25" />
+                        <path d="M110 145 L250 155" stroke="#ef4444" strokeWidth="1.2" opacity="0.4" />
+                        <path d="M250 155 L315 190" stroke="#ef4444" strokeWidth="1.2" opacity="0.4" />
+                        <path d="M315 190 L245 235" stroke="#ef4444" strokeWidth="1.5" opacity="0.6" />
+                        
+                        {/* Red/gray warning pulses (very slow, struggling animation, shifted down by 10px) */}
+                        <circle r="3" fill="#ef4444" opacity="0.8">
+                          <animateMotion path="M45 105 L110 85 L180 75 L250 90 L315 105" dur="5s" repeatCount="indefinite" />
+                        </circle>
+                        <circle r="3" fill="#ef4444" opacity="0.8">
+                          <animateMotion path="M315 105 L110 145 L250 155 L315 190 L245 235" dur="7s" repeatCount="indefinite" />
+                        </circle>
 
-                    {/* Chain node */}
-                    <circle cx="295" cy="130" r="22" stroke="var(--pp-primary)" strokeWidth="1.2" fill="none" opacity="0.6" />
-                    <circle cx="295" cy="130" r="11" fill="var(--pp-primary)" opacity="0.08" />
-                    <text x="295" y="128" textAnchor="middle" fill="var(--pp-primary)" fontSize="7" opacity="0.8">Chain</text>
-                    <text x="295" y="138" textAnchor="middle" fill="white" fontSize="5" opacity="0.35">Finality</text>
+                        {/* Nodes (shifted down by 10px) */}
+                        {/* 1. Card Swipe */}
+                        <circle cx="45" cy="105" r="14" stroke="rgba(255,255,255,0.15)" strokeWidth="1.2" fill="#0A0A0C" />
+                        <text x="45" y="108.5" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="800" opacity="0.6">CARD</text>
+                        <text x="45" y="127" textAnchor="middle" fill="white" fontSize="7.5" fontWeight="600" opacity="0.4">Swipe/Tap</text>
 
-                    {/* Merchant node */}
-                    <circle cx="230" cy="215" r="20" stroke="var(--pp-secondary)" strokeWidth="1.2" fill="none" opacity="0.6" />
-                    <circle cx="230" cy="215" r="10" fill="var(--pp-secondary)" opacity="0.08" />
-                    <text x="230" y="218" textAnchor="middle" fill="var(--pp-secondary)" fontSize="7" opacity="0.8">Merchant</text>
+                        {/* 2. Gateway */}
+                        <circle cx="110" cy="85" r="14" stroke="rgba(255,255,255,0.15)" strokeWidth="1.2" fill="#0A0A0C" />
+                        <text x="110" y="88.5" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="800" opacity="0.6">GTWY</text>
+                        <text x="110" y="69" textAnchor="middle" fill="#ef4444" fontSize="7" fontWeight="bold" opacity="0.75">+$0.15</text>
 
-                    {/* Path: Wallet → Chain */}
-                    <path d="M248 55 L278 115" stroke="var(--pp-secondary)" strokeWidth="1" strokeDasharray="4 3" opacity="0.4">
-                      <animate attributeName="stroke-dashoffset" from="28" to="0" dur="2s" repeatCount="indefinite" />
-                    </path>
-                    <circle r="2.5" fill="var(--pp-secondary)" opacity="0.9">
-                      <animateMotion path="M248 55 L278 115" dur="2s" repeatCount="indefinite" />
-                    </circle>
+                        {/* 3. Acquirer */}
+                        <circle cx="110" cy="145" r="14" stroke="rgba(255,255,255,0.15)" strokeWidth="1.2" fill="#0A0A0C" />
+                        <text x="110" y="148.5" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="800" opacity="0.6">ACQR</text>
+                        <text x="110" y="166" textAnchor="middle" fill="white" fontSize="7" fontWeight="600" opacity="0.4">Acquirer Bank</text>
 
-                    {/* Path: Chain → Merchant */}
-                    <path d="M278 145 L248 205" stroke="var(--pp-primary)" strokeWidth="1" strokeDasharray="4 3" opacity="0.4">
-                      <animate attributeName="stroke-dashoffset" from="28" to="0" dur="2.5s" repeatCount="indefinite" />
-                    </path>
-                    <circle r="2.5" fill="var(--pp-primary)" opacity="0.9">
-                      <animateMotion path="M278 145 L248 205" dur="2.5s" repeatCount="indefinite" />
-                    </circle>
+                        {/* 4. Risk / Fraud */}
+                        <circle cx="180" cy="140" r="14" stroke="rgba(255,255,255,0.15)" strokeWidth="1.2" fill="#0A0A0C" />
+                        <text x="180" y="143.5" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="800" opacity="0.6">RISK</text>
+                        <text x="180" y="158" textAnchor="middle" fill="#ef4444" fontSize="7" fontWeight="bold" opacity="0.75">1.5% Risk</text>
 
-                    {/* Settlement label */}
-                    <text x="335" y="133" textAnchor="middle" fill="var(--pp-secondary)" fontSize="6" opacity="0.5">Instant</text>
-                    <text x="335" y="143" textAnchor="middle" fill="var(--pp-secondary)" fontSize="6" opacity="0.5">Settlement</text>
+                        {/* 5. Processor */}
+                        <circle cx="180" cy="75" r="14" stroke="rgba(255,255,255,0.15)" strokeWidth="1.2" fill="#0A0A0C" />
+                        <text x="180" y="78.5" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="800" opacity="0.6">PROC</text>
+                        <text x="180" y="57" textAnchor="middle" fill="#ef4444" fontSize="7" fontWeight="bold" opacity="0.75">+0.5% Fee</text>
 
-                    {/* Zero chargeback badge */}
-                    <rect x="55" y="140" width="100" height="30" rx="6" stroke="var(--pp-secondary)" strokeWidth="0.8" fill="none" opacity="0.3" />
-                    <text x="105" y="155" textAnchor="middle" fill="var(--pp-secondary)" fontSize="7" opacity="0.6">0% Chargeback</text>
-                    <text x="105" y="165" textAnchor="middle" fill="white" fontSize="5" opacity="0.3">Cryptographic Finality</text>
+                        {/* 6. Network */}
+                        <circle cx="250" cy="90" r="14" stroke="rgba(255,255,255,0.15)" strokeWidth="1.2" fill="#0A0A0C" />
+                        <text x="250" y="93.5" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="800" opacity="0.6">NETW</text>
+                        <text x="250" y="72" textAnchor="middle" fill="#ef4444" fontSize="7" fontWeight="bold" opacity="0.75">+1.2% Interchange</text>
+
+                        {/* 7. Issuer */}
+                        <circle cx="315" cy="105" r="14" stroke="rgba(255,255,255,0.15)" strokeWidth="1.2" fill="#0A0A0C" />
+                        <text x="315" y="108.5" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="800" opacity="0.6">ISSUER</text>
+                        <text x="315" y="124" textAnchor="middle" fill="white" fontSize="7" fontWeight="600" opacity="0.4">Card Issuer</text>
+
+                        {/* 8. Batch Settle */}
+                        <circle cx="250" cy="155" r="14" stroke="rgba(255,255,255,0.15)" strokeWidth="1.2" fill="#0A0A0C" />
+                        <text x="250" y="158.5" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="800" opacity="0.6">BATCH</text>
+                        <text x="250" y="173" textAnchor="middle" fill="white" fontSize="7" fontWeight="600" opacity="0.4">Nightly Batch</text>
+
+                        {/* 9. Clearing Bank */}
+                        <circle cx="315" cy="190" r="14" stroke="rgba(255,255,255,0.15)" strokeWidth="1.2" fill="#0A0A0C" />
+                        <text x="315" y="193.5" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="800" opacity="0.6">CLEAR</text>
+                        <text x="315" y="211" textAnchor="middle" fill="#ef4444" fontSize="7.5" fontWeight="bold" opacity="0.8">2-5 Day Delay</text>
+
+                        {/* 10. Merchant Target */}
+                        <circle cx="245" cy="235" r="18" stroke="#ef4444" strokeWidth="1.5" fill="#0A0A0C" opacity="0.75" />
+                        <text x="245" y="239" textAnchor="middle" fill="#ef4444" fontSize="7" fontWeight="800">MERCH</text>
+                        <text x="245" y="260" textAnchor="middle" fill="white" fontSize="7.5" fontWeight="600" opacity="0.4">High Fees & Reserve</text>
+
+                      </g>
+                    ) : (
+                      <g key="portalpay">
+                        {/* Title & Info Stacked on the Left */}
+                        <text x="20" y="14" fill="var(--pp-secondary, #10b981)" fontSize="9" fontWeight="800" letterSpacing="0.08em">{displayBrandName.toUpperCase()}</text>
+                        <text x="20" y="23" fill="var(--pp-secondary, #10b981)" fontSize="8" fontWeight="800" opacity="0.75" letterSpacing="0.08em">CRYPTO RAIL</text>
+                        <text x="20" y="32" fill="var(--pp-secondary, #10b981)" fontSize="7.5" fontWeight="800" letterSpacing="0.05em">3 STEPS • ZERO RISK • INSTANT</text>
+
+                        {/* Connectors with pulse animations */}
+                        <path d="M70 192 L160 192" stroke="var(--pp-secondary, #10b981)" strokeWidth="2.2" strokeDasharray="6 4" opacity="0.75">
+                          <animate attributeName="stroke-dashoffset" from="30" to="0" dur="1.2s" repeatCount="indefinite" />
+                        </path>
+                        <circle r="4" fill="var(--pp-secondary, #10b981)" opacity="1.0">
+                          <animateMotion path="M70 192 L160 192" dur="1.2s" repeatCount="indefinite" />
+                        </circle>
+
+                        <path d="M200 192 L290 192" stroke="var(--pp-secondary, #10b981)" strokeWidth="2.2" strokeDasharray="6 4" opacity="0.75">
+                          <animate attributeName="stroke-dashoffset" from="30" to="0" dur="1.5s" repeatCount="indefinite" />
+                        </path>
+                        <circle r="4" fill="var(--pp-secondary, #10b981)" opacity="1.0">
+                          <animateMotion path="M200 192 L290 192" dur="1.5s" repeatCount="indefinite" />
+                        </circle>
+
+                        {/* Step 1: Scan node */}
+                        <circle cx="50" cy="192" r="20" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <circle cx="50" cy="192" r="11" fill="var(--pp-secondary, #10b981)" opacity="0.12" />
+                        <g transform="translate(41, 183)" stroke="var(--pp-secondary, #10b981)" strokeWidth="1.5" fill="none" opacity="0.95">
+                          <rect x="0" y="0" width="18" height="18" rx="2" strokeWidth="1.5" />
+                          <rect x="3" y="3" width="4" height="4" fill="var(--pp-secondary, #10b981)" />
+                          <rect x="11" y="3" width="4" height="4" fill="var(--pp-secondary, #10b981)" />
+                          <rect x="3" y="11" width="4" height="4" fill="var(--pp-secondary, #10b981)" />
+                          <rect x="11" y="11" width="3" height="3" fill="var(--pp-secondary, #10b981)" />
+                        </g>
+                        <text x="50" y="225" textAnchor="middle" fill="white" fontSize="8" fontWeight="800">1. SCAN QR</text>
+                        <text x="50" y="235" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="600" opacity="0.5">Cust Wallet Connect</text>
+
+                        {/* Step 2: Smart contract node */}
+                        <circle cx="180" cy="192" r="20" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <circle cx="180" cy="192" r="11" fill="var(--pp-secondary, #10b981)" opacity="0.12" />
+                        <g transform="translate(171, 183)" stroke="var(--pp-secondary, #10b981)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" opacity="0.95">
+                          <path d="M7 11a3.5 3.5 0 0 1-.7-5l2-2a3.5 3.5 0 0 1 5 5l-1 1" />
+                          <path d="M11 7a3.5 3.5 0 0 1 .7 5l-2 2a3.5 3.5 0 0 1-5-5l1-1" />
+                        </g>
+                        <text x="180" y="225" textAnchor="middle" fill="white" fontSize="8" fontWeight="800">2. CONTRACT</text>
+                        <text x="180" y="235" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="600" opacity="0.5">Auto Fee Splitting</text>
+
+                        {/* Step 3: Settle node */}
+                        <circle cx="310" cy="192" r="20" stroke="var(--pp-secondary, #10b981)" strokeWidth="2" fill="#0A0A0C" opacity="1.0" />
+                        <circle cx="310" cy="192" r="11" fill="var(--pp-secondary, #10b981)" opacity="0.12" />
+                        <g transform="translate(301, 183)" stroke="var(--pp-secondary, #10b981)" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.95">
+                          <path d="M9 18s6-3 6-8V4l-6-2-6 2v6c0 5 6 8 6 8z" />
+                          <path d="M6.5 9 L8 10.5 L11.5 7" />
+                        </g>
+                        <text x="310" y="225" textAnchor="middle" fill="var(--pp-secondary, #10b981)" fontSize="8" fontWeight="800">3. SETTLE</text>
+                        <text x="310" y="235" textAnchor="middle" fill="white" fontSize="6.5" fontWeight="600" opacity="0.5">Real-time / No Risk</text>
+                      </g>
+                    )}
                   </svg>
                 </div>
               )}

@@ -64,6 +64,10 @@ export function cachedFetch<T = any>(url: string, options?: RequestInit): Promis
   // Create new fetch and cache it
   const promise = fetch(fetchUrl, options)
     .then(async (r) => {
+      if (!r.ok) {
+        console.warn(`[client-api-cache] Fetch returned non-OK status: ${r.status} ${r.statusText} for URL: ${url}`);
+        return {} as any;
+      }
       const text = await r.text();
       try {
         return JSON.parse(text);
