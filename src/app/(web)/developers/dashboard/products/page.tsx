@@ -64,6 +64,15 @@ export default function ProductsPage() {
   const brand = useBrand();
   const [wallets, setWallets] = useState<any[]>([]);
 
+  const formatProductIdForModal = (productId: string) => {
+    if (!productId) return "";
+    const key = String(brand?.key || "basaltsurge").toLowerCase();
+    if (key !== "basaltsurge" && key !== "portalpay") {
+      return productId.replace(/^portalpay/i, key);
+    }
+    return productId;
+  };
+
   // Modal and selection state
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -788,7 +797,7 @@ export default function ProductsPage() {
         microtexts={
           selectedProduct
             ? [
-              { label: "Product ID", value: selectedProduct.id },
+              { label: "Product ID", value: formatProductIdForModal(selectedProduct.id) },
               { label: "Plan", value: getPricingLabel(selectedProduct).label },
             ]
             : []
@@ -804,7 +813,11 @@ export default function ProductsPage() {
         onClose={() => setInfoOpen(false)}
         title={infoTitle}
         description={infoDesc}
-        microtexts={infoMicro}
+        microtexts={infoMicro.map(m =>
+          m.label === "Product ID" && m.value
+            ? { ...m, value: formatProductIdForModal(m.value) }
+            : m
+        )}
         actions={
           infoTitle.startsWith("Enterprise") && (DISCORD_URL?.length > 0)
             ? [
@@ -831,7 +844,7 @@ export default function ProductsPage() {
         microtexts={
           selectedProduct
             ? [
-              { label: "Product ID", value: selectedProduct.id },
+              { label: "Product ID", value: formatProductIdForModal(selectedProduct.id) },
               { label: "Plan", value: getPricingLabel(selectedProduct).label },
             ]
             : []
@@ -851,7 +864,7 @@ export default function ProductsPage() {
         microtexts={
           selectedProduct
             ? [
-              { label: "Product ID", value: selectedProduct.id },
+              { label: "Product ID", value: formatProductIdForModal(selectedProduct.id) },
               { label: "Tip Amount", value: `$${fundingAmountUsd}` },
               { label: "Correlation ID", value: fundingCorrelationId || undefined },
             ]
@@ -947,7 +960,7 @@ export default function ProductsPage() {
         onClose={() => setWalletModalOpen(false)}
         title="Manage Wallet"
         description="Connect or fund your in-app wallet."
-        microtexts={selectedProduct ? [{ label: "Product ID", value: selectedProduct.id }] : []}
+        microtexts={selectedProduct ? [{ label: "Product ID", value: formatProductIdForModal(selectedProduct.id) }] : []}
         actions={[{ label: "Close", onClick: () => setWalletModalOpen(false), variant: "secondary" }]}
       >
         <div className="flex justify-center">
