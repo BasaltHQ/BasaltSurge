@@ -190,7 +190,7 @@ export async function GET(req: NextRequest) {
     if (!activeBrandKey) {
       try {
         const host = req.headers.get("host") || "";
-        const ci = getContainerIdentity(host);
+        const ci = await getContainerIdentity(host);
         const bk = String(ci?.brandKey || "").toLowerCase();
         const ct = String(ci?.containerType || "").toLowerCase();
         if (bk && (ct === "partner" || !activeBrandKey)) {

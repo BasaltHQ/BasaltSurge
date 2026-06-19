@@ -38,7 +38,7 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
     const host = req.headers.get("host") || u.hostname || "";
 
     // Get container identity to determine brand key for fee lookup
-    const containerIdentity = getContainerIdentity(host);
+    const containerIdentity = await getContainerIdentity(host);
     let brandKeyForFees = containerIdentity.brandKey;
     if (!brandKeyForFees) {
       try { brandKeyForFees = getBrandKey(req); } catch { brandKeyForFees = ""; }
@@ -129,7 +129,7 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
       const savedBrandKey = String((cfg as any)?.brandKey || "").toLowerCase();
 
       // Get container identity to check if this is a partner container
-      const merchantContainerIdentity = getContainerIdentity(host);
+      const merchantContainerIdentity = await getContainerIdentity(host);
       const containerBrandKey = (merchantContainerIdentity.brandKey || "").toLowerCase();
       const isPartnerMerchant = containerBrandKey && containerBrandKey !== "portalpay" && containerBrandKey !== "basaltsurge";
 
@@ -1441,7 +1441,7 @@ export async function GET(req: NextRequest) {
     try {
       const host = req.headers.get("host") || "";
       // Get brand key directly (no HTTP call)
-      const containerIdentity = getContainerIdentity(host);
+      const containerIdentity = await getContainerIdentity(host);
       let brandKey = containerIdentity.brandKey;
       if (!brandKey) { try { brandKey = getBrandKey(req); } catch { brandKey = ""; } }
       // getDocIdForBrand handles basaltsurge as platform brand - no need to normalize here

@@ -226,7 +226,7 @@ export async function GET(_req: NextRequest) {
       const { getBrandKey } = await import("@/config/brands");
 
       const host = _req.headers.get("host") || url.hostname || "";
-      const identity = getContainerIdentity(host);
+      const identity = await getContainerIdentity(host);
       let identityBrandKey = (identity.brandKey || "").toLowerCase();
       if (!identityBrandKey) {
         try { identityBrandKey = (getBrandKey(_req) || "").toLowerCase(); } catch { identityBrandKey = ""; }

@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
   try {
     // Determine brand key from container or env
     const host = req.headers.get("host") || "";
-    const containerIdentity = getContainerIdentity(host);
+    const containerIdentity = await getContainerIdentity(host);
     let brandKey = containerIdentity.brandKey;
     if (!brandKey) {
       try { brandKey = getBrandKey(req); } catch { brandKey = "basaltsurge"; }
@@ -193,7 +193,7 @@ export async function POST(req: NextRequest) {
 
     // Determine brand key
     const host = req.headers.get("host") || "";
-    const containerIdentity = getContainerIdentity(host);
+    const containerIdentity = await getContainerIdentity(host);
     let brandKey = containerIdentity.brandKey;
     if (!brandKey) {
       try { brandKey = getBrandKey(req); } catch { brandKey = "basaltsurge"; }

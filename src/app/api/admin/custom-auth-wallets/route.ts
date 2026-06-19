@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
     const caller = await requireRole(req, "admin");
 
     const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
-    const containerIdentity = getContainerIdentity(host);
+    const containerIdentity = await getContainerIdentity(host);
     const isPartner = containerIdentity.containerType === "partner";
 
     let query = `
@@ -109,7 +109,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
-    const containerIdentity = getContainerIdentity(host);
+    const containerIdentity = await getContainerIdentity(host);
     if (containerIdentity.containerType === "partner") {
       const expectedId = `${wallet.toLowerCase()}:user:${containerIdentity.brandKey.toLowerCase()}`;
       if (id.toLowerCase() !== expectedId) {

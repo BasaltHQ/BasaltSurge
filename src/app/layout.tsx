@@ -216,7 +216,7 @@ export async function generateMetadata(): Promise<Metadata> {
 
     // Instead of duplicating logic, use the shared module that knows about all partner domains
     const { deriveContainerIdentityFromHostname } = require("@/lib/brand-config");
-    const derived = deriveContainerIdentityFromHostname(host);
+    const derived = await deriveContainerIdentityFromHostname(host);
     if (derived) {
       brandKeyFromHost = derived.brandKey;
     }
@@ -601,7 +601,7 @@ export default async function RootLayout({
     }
 
     const { deriveContainerIdentityFromHostname } = require("@/lib/brand-config");
-    const derived = deriveContainerIdentityFromHostname(host);
+    const derived = await deriveContainerIdentityFromHostname(host);
     if (derived) {
       brandKeyFromHost = derived.brandKey;
     }
