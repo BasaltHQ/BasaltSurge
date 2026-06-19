@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Metadata } from "next";
 import { getContainer } from "@/lib/cosmos";
 import { getBrandConfig } from "@/config/brands";
@@ -245,7 +245,6 @@ export default async function ShopPage({ params }: { params: Promise<{ slug: str
 
       if (dynamicDomains && dynamicDomains[cleanSlug]) {
         console.log(`[ShopPage] Detected dynamic partner domain "${cleanSlug}". Redirecting to root.`);
-        const { redirect } = require("next/navigation");
         redirect("/");
       }
 
