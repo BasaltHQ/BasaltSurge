@@ -678,6 +678,7 @@ export default async function RootLayout({
   try {
     const { getDynamicPartnerDomains } = require("@/lib/brand-config");
     dynamicDomains = await getDynamicPartnerDomains();
+    (globalThis as any).__DYNAMIC_DOMAINS__ = dynamicDomains;
   } catch { }
 
   const isCustomDomainServer = !!hostForNavbar && !isMainDomainHost(hostForNavbar);

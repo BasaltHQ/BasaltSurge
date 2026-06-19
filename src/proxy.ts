@@ -36,6 +36,43 @@ function isJwtExpired(token: string): boolean {
 
 import { isCandidateSlug, isMainDomainHost } from "@/lib/routing";
 
+let lastFetch = 0;
+const CACHE_TTL = 30 * 1000; // 30 seconds
+
+async function ensureDynamicDomains(req: NextRequest) {
+    const now = Date.now();
+    const globalAny = globalThis as any;
+    
+    // Only fetch if not cached, or cache expired
+    if (!globalAny.__DYNAMIC_DOMAINS__ || (now - lastFetch > CACHE_TTL)) {
+        try {
+            const url = req.nextUrl;
+            const port = url.port || "3000";
+            const fetchUrl = `http://127.0.0.1:${port}/api/partner-domains`;
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            
+            const res = await fetch(fetchUrl, {
+                signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            
+            if (res.ok) {
+                const domains = await res.json();
+                globalAny.__DYNAMIC_DOMAINS__ = domains;
+                lastFetch = now;
+            }
+        } catch (err) {
+            console.error("[proxy] Failed to fetch dynamic partner domains:", err);
+            // Don't overwrite existing cache on failure, just allow retry later
+            if (!globalAny.__DYNAMIC_DOMAINS__) {
+                globalAny.__DYNAMIC_DOMAINS__ = {};
+            }
+        }
+    }
+}
+
 /**
  * Build a conservative CSP allowing:
  * - default-src self
@@ -191,8 +228,18 @@ function applySecurityHeaders(req: NextRequest, res: NextResponse) {
     res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
 }
 
-export function proxy(req: NextRequest) {
+export async function proxy(req: NextRequest) {
     const url = req.nextUrl;
+
+    // Fetch and cache dynamic partner domains on non-asset/non-api pages
+    const isAsset = url.pathname.includes(".") || url.pathname.startsWith("/_next") || url.pathname.startsWith("/api");
+    if (!isAsset) {
+        try {
+            await ensureDynamicDomains(req);
+        } catch (e) {
+            console.error("[proxy] Error ensuring dynamic domains:", e);
+        }
+    }
 
     // Attach container type header for SSR/client awareness
     try {

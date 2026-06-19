@@ -109,6 +109,12 @@ export function isMainDomainHost(host: string): boolean {
     );
     if (isStaticMain) return true;
 
+    // Check global/window cache first
+    const globalDomains = (typeof window !== "undefined" ? (window as any) : (globalThis as any)).__DYNAMIC_DOMAINS__;
+    if (globalDomains && globalDomains[h]) {
+        return true;
+    }
+
     // Check dynamic/known partner domains on the server side
     if (typeof window === "undefined") {
         try {
