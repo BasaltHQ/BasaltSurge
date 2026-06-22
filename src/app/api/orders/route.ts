@@ -7,6 +7,7 @@ import { getInventoryItems, type InventoryItemMem } from "@/lib/inventory-mem";
 import { pushReceipts } from "@/lib/receipts-mem";
 import { requireApimOrJwt } from "@/lib/gateway-auth";
 import { isValidRedirectUrl, isValidWebhookUrl } from "@/lib/webhook-dispatch";
+import { getContainerIdentity, getBrandConfigFromCosmos } from "@/lib/brand-config";
 
 /**
  * Orders API
@@ -213,7 +214,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const brandKey = String(getBrandKey() || "").toLowerCase();
+    // Determine effective brandKey using request body/headers and resolve brandKey
+    const effectiveBrandKey = (
+      typeof body?.brandKey === "string" ? body.brandKey.toLowerCase() :
+        (getBrandKey(req) || process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase()
+    ) || undefined;
+    const brandKey = effectiveBrandKey || "";
+
     const itemsBody: OrderItemBody[] = Array.isArray(body?.items) ? body.items : [];
     if (!itemsBody.length) {
       return NextResponse.json(
@@ -253,7 +260,28 @@ export async function POST(req: NextRequest) {
     const onSuccess = typeof body?.onSuccess === "string" ? String(body.onSuccess).trim() : undefined;
 
     // Fetch site config for brand, processing fee, tax presets, and fallback default token (prefer per-wallet, fallback global)
-    const cfg = await getSiteConfigForWallet(wallet).catch(() => null as any);
+    const cfg = await getSiteConfigForWallet(wallet, effectiveBrandKey, req).catch(() => null as any);
+
+    // Direct fetch bypass for high-fidelity splitConfig
+    let directSplitConfig: any = null;
+    if (effectiveBrandKey) {
+      try {
+        const container = await getContainer();
+        const docId = `site:config:${effectiveBrandKey}`;
+        const spec = {
+          query: "SELECT * FROM c WHERE c.id = @docId",
+          parameters: [{ name: "@docId", value: docId }]
+        };
+        const { resources } = await container.items.query(spec).fetchAll();
+        const resource = Array.isArray(resources) && resources[0] ? resources[0] : null;
+        if (resource?.splitConfig) {
+          directSplitConfig = resource.splitConfig;
+          console.log("[Orders API] Direct splitConfig fetch success:", { docId, wallet, splitConfig: directSplitConfig });
+        }
+      } catch (e: any) {
+        console.log("[Orders API] Direct splitConfig fetch failed:", e.message);
+      }
+    }
     const brandName = cfg?.theme?.brandName || "PortalPay";
     let splitAddr = "";
     // Enforce split required before merchant activity (order generation)
@@ -834,9 +862,11 @@ export async function POST(req: NextRequest) {
     const baseWithoutFeeCents = discountedSubtotalCents + taxCents;
 
     // Total processing fee = basePlatformFeePct (platform + partner + agent fee) + merchant add-on from site config
-    // basePlatformFeePct: from splitConfig (merchant-specific)
-    let basePlatformFeePct: number;
-    const splitCfg = (cfg as any)?.splitConfig;
+    // basePlatformFeePct: combined platform + partner + agent fee from splitConfig (merchant-specific)
+    let basePlatformFeePct: number | undefined = undefined;
+
+    // Priority 1: Use directly fetched splitConfig (most reliable), fallback to cfg.splitConfig
+    const splitCfg = directSplitConfig || (cfg as any)?.splitConfig;
     if (splitCfg && typeof splitCfg === "object") {
       const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
       const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
@@ -844,10 +874,53 @@ export async function POST(req: NextRequest) {
         ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
         : 0;
       basePlatformFeePct = (partnerBps + platformBps + agentBps) / 100;
-    } else {
-      basePlatformFeePct = typeof (cfg as any)?.basePlatformFeePct === "number" ? Math.max(0, (cfg as any).basePlatformFeePct) : 0.5;
     }
-    const totalFeePct = Math.max(0, basePlatformFeePct + Number(processingFeePct || 0));
+
+    // Priority 2: Use basePlatformFeePct if explicitly set in config
+    if (typeof basePlatformFeePct !== "number") {
+      basePlatformFeePct = typeof (cfg as any)?.basePlatformFeePct === "number"
+        ? Math.max(0, Number((cfg as any).basePlatformFeePct))
+        : undefined;
+    }
+
+    // Priority 3: Fall back to brand overrides
+    if (typeof basePlatformFeePct !== "number") {
+      try {
+        const xfHost = req.headers.get("x-forwarded-host");
+        const host = req.headers.get("host");
+        const u = new URL(req.url);
+        const hostname = (xfHost || host || u.hostname || "").toLowerCase();
+        const { brandKey: bk } = await getContainerIdentity(hostname);
+        let brandKeyForFees = bk;
+        if (!brandKeyForFees) {
+          try { brandKeyForFees = getBrandKey(req); } catch { brandKeyForFees = ""; }
+        }
+        if (brandKeyForFees) {
+          const clampBps = (v: any) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? Math.max(0, Math.min(10000, Math.floor(n))) : 0;
+          };
+          const { brand: fetchedBrand, overrides: fetchedOverrides } = await getBrandConfigFromCosmos(brandKeyForFees);
+          const ov = (typeof fetchedOverrides === "object" && fetchedOverrides) ? fetchedOverrides : ({} as any);
+          const fb = (typeof fetchedBrand === "object" && fetchedBrand) ? fetchedBrand : null;
+          const platformBps = typeof ov?.platformFeeBps === "number" ? ov.platformFeeBps
+            : (typeof (fb as any)?.platformFeeBps === "number" ? (fb as any).platformFeeBps : 50);
+          const partnerBps = typeof ov?.partnerFeeBps === "number" ? ov.partnerFeeBps
+            : (typeof (fb as any)?.partnerFeeBps === "number" ? (fb as any).partnerFeeBps : 0);
+          const agentsList = Array.isArray(ov?.agents) ? ov.agents
+            : (Array.isArray((fb as any)?.agents) ? (fb as any).agents : []);
+          const agentBps = agentsList.reduce((sum: number, a: any) => sum + clampBps(a?.bps || 0), 0);
+          basePlatformFeePct = (platformBps + partnerBps + agentBps) / 100;
+        } else {
+          basePlatformFeePct = 0.5;
+        }
+      } catch {
+        basePlatformFeePct = 0.5;
+      }
+    }
+
+    const finalBasePlatformFeePct = typeof basePlatformFeePct === "number" ? basePlatformFeePct : 0.5;
+    const totalFeePct = Math.max(0, finalBasePlatformFeePct + Number(processingFeePct || 0));
     const feePctFraction = totalFeePct / 100;
     // Skip processing fee for cash payments — no payment processor involved
     const processingFeeCents = paymentMethod === "cash" ? 0 : Math.round(baseWithoutFeeCents * feePctFraction);
