@@ -96,8 +96,8 @@ export async function getContainer(dbId = defaultDbId, containerId = defaultCont
   // ── Cosmos DB path (existing behavior) ────────────────────────────
   // IMPORTANT: Always use the ORIGINAL Cosmos DB names, not the env-configured
   // names which may have been changed to new values (e.g. "surge") for MongoDB.
-  const cosmosDbId = COSMOS_ORIGINAL_DB;
-  const cosmosContainerId = COSMOS_ORIGINAL_CONTAINER;
+  const cosmosDbId = dbId === "payportal" ? COSMOS_ORIGINAL_DB : dbId;
+  const cosmosContainerId = containerId === "payportal_events" ? COSMOS_ORIGINAL_CONTAINER : containerId;
 
   const client = cache.client || new CosmosClient(conn);
   cache.client = client;
@@ -105,8 +105,18 @@ export async function getContainer(dbId = defaultDbId, containerId = defaultCont
   const { database } = await client.databases.createIfNotExists({ id: cosmosDbId });
   cache.db = database;
 
-  // OPTIMIZATION: Use optimistic container reference to avoid network RTT on every cold start
-  const container = database.container(cosmosContainerId);
+  let container;
+  if (containerId !== "payportal_events") {
+    // For custom container, ensure it exists in Cosmos DB (using /wallet as partition key)
+    const { container: customContainer } = await database.containers.createIfNotExists({
+      id: cosmosContainerId,
+      partitionKey: "/wallet"
+    });
+    container = customContainer;
+  } else {
+    // OPTIMIZATION: Use optimistic container reference to avoid network RTT on every cold start
+    container = database.container(cosmosContainerId);
+  }
 
   cache.container = container;
   cache.dbId = dbId;

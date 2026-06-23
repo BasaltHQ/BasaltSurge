@@ -159,6 +159,8 @@ export type UseStripeEmbeddedOnrampReturn = {
   detectedCardBrand: string | null;
   /** Expose detected card last 4 digits */
   detectedCardLast4: string | null;
+  /** The Stripe checkout session ID */
+  sessionId: string | null;
 };
 
 const STEP_MESSAGES: Record<OnrampStep, string> = {
@@ -252,6 +254,7 @@ export function useStripeEmbeddedOnramp({
   const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | null>(null);
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   const onrampRef = useRef<OnrampCoordinator | null>(null);
   const mountedRef = useRef(true);
@@ -333,6 +336,7 @@ export function useStripeEmbeddedOnramp({
     paymentTokenRef.current = null;
     verificationTokenRef.current = null;
     sessionIdRef.current = null;
+    setSessionId(null);
     activeEmailRef.current = null;
     customerIdRef.current = null;
     buyerWalletRef.current = null;
@@ -713,6 +717,7 @@ export function useStripeEmbeddedOnramp({
       if (!sessionResult) return;
       currentSessionId = sessionResult.sessionId;
       sessionIdRef.current = currentSessionId;
+      setSessionId(currentSessionId);
 
       if (sessionResult.paymentDetails?.card) {
         const funding = sessionResult.paymentDetails.card.funding;
@@ -837,10 +842,12 @@ export function useStripeEmbeddedOnramp({
           } else if (lastError === "quote_rate_drifted") {
             console.log("[EMBEDDED ONRAMP] Quote rate drifted. Recreating session with fresh quote...");
             sessionIdRef.current = null;
+            setSessionId(null);
             const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet);
             if (!sessionResult) return;
             currentSessionId = sessionResult.sessionId;
             sessionIdRef.current = currentSessionId;
+            setSessionId(currentSessionId);
             console.log("[EMBEDDED ONRAMP] New session created with fresh quote. Retrying checkout...");
             updateStep("checking_out");
             continue;
@@ -1270,5 +1277,6 @@ export function useStripeEmbeddedOnramp({
     detectedCardFunding,
     detectedCardBrand,
     detectedCardLast4,
+    sessionId,
   };
 }

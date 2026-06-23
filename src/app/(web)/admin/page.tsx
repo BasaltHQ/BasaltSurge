@@ -84,6 +84,7 @@ import ModulesPanel from "@/app/(web)/admin/panels/ModulesPanel";
 import CustomAuthWalletsPanel from "@/app/(web)/admin/panels/CustomAuthWalletsPanel";
 import { NodeOperatorsPanel } from "@/app/(web)/admin/panels/NodeOperatorsPanel";
 import { NodeDashboardPanel } from "@/app/(web)/admin/panels/NodeDashboardPanel";
+import AutoclosePanel from "@/app/(web)/admin/panels/AutoclosePanel";
 import { isPlatformCtx, isPartnerCtx, isPlatformSuperAdmin, canAccessPanel } from "@/lib/authz";
 
 function ResendTrackingBtn({ receipt, operatorWallet }: { receipt: any, operatorWallet: string }) {
@@ -11162,6 +11163,7 @@ export default function AdminPage() {
 
         {activeTab === "analytics" && <AnalyticsPanel />}
         {activeTab === "leaderboard" && <LeaderboardPanel />}
+        {activeTab === "autoclose" && <AutoclosePanel />}
 
         {activeTab === "loyaltyConfig" && (
           <div className="w-full space-y-6 pb-24 admin-panel-enter">
