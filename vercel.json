@@ -3,6 +3,10 @@
     {
       "path": "/api/split/reindex-all",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/autoclose",
+      "schedule": "0 8 * * *"
     }
   ]
 }

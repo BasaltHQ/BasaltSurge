@@ -19,6 +19,7 @@ import { fetchEthRates, fetchUsdRates, fetchBtcUsd, fetchXrpUsd, type EthRates }
 import { SUPPORTED_CURRENCIES, convertFromUsd, formatCurrency, getCurrencyFlag, roundForCurrency } from "@/lib/fx";
 import { useStripeOnrampInterceptor } from "@/hooks/useStripeOnrampInterceptor";
 import { useStripeEmbeddedOnramp } from "@/hooks/useStripeEmbeddedOnramp";
+import { usePortalLogger } from "@/hooks/usePortalLogger";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
 // Embedded mode (embedded=1 or iframe) removes page background to fit seamlessly in host modals.
@@ -3206,6 +3207,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     submitPhone: headlessSubmitPhone,
     isActive: headlessActive,
     buyerWalletAddress: headlessBuyerWallet,
+    sessionId: headlessSessionId,
   } = useStripeEmbeddedOnramp({
     email: shipEmail || undefined,
     fullName: shipName || undefined,
@@ -3232,6 +3234,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     },
     onSuccess: (result) => {
       console.log("[STRIPE HEADLESS] ✓ Onramp + transfer completed:", result);
+      console.log("[STRIPE HEADLESS SUCCESS] Checkout completed with no issues. Session:", result.sessionId, "Tx:", result.txHash);
       // Funds are now in the split contract — receipt can be marked paid
       const txHash = result.txHash || "";
       setPaymentConfirmed({
@@ -3247,6 +3250,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     onError: (error) => {
       console.error("[STRIPE HEADLESS] Error:", error);
     },
+  });
+
+  // Client-side logging pipeline for portal errors & console logs
+  usePortalLogger({
+    receiptId,
+    wallet: headlessBuyerWallet || account?.address || undefined,
+    sessionId: headlessSessionId,
   });
 
   // Countdown timer for awaiting_funds step in Stripe headless flow

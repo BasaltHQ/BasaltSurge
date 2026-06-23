@@ -153,6 +153,7 @@ export type AdminPanel =
   | 'updates'          // Updates panel
   | 'notificationsPlatform' // Platform notifications
   | 'shopifyPlatform' // Shopify Platform
+  | 'autoclose'       // Autoclose Daily Settlement
   | 'users';          // Users/Merchants tab in partner group
 
 // ------------------------------------------------------------------
@@ -383,7 +384,7 @@ export function canAccessPanel(panel: AdminPanel, wallet?: string): boolean {
     return permissions.includes('manage:dev');
   }
 
-  if (panel === 'reportsPartner' || panel === 'reportsPlatform' || panel === 'reports') {
+  if (panel === 'reportsPartner' || panel === 'reportsPlatform' || panel === 'reports' || panel === 'autoclose') {
     return permissions.includes('view:reports');
   }
 

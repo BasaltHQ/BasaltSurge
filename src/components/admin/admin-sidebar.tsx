@@ -59,7 +59,8 @@ import {
   Handshake,
   FileSignature,
   Code,
-  GraduationCap
+  GraduationCap,
+  Clock
 } from 'lucide-react';
 import { useBrand } from '@/contexts/BrandContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -132,6 +133,7 @@ export type AdminTabKey =
   | 'updates'
   | 'analytics'
   | 'leaderboard'
+  | 'autoclose'
   | 'agentUniversity';
 
 interface AdminSidebarProps {
@@ -496,6 +498,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Driver Requests', key: 'driverRequests' as AdminTabKey, icon: <Truck className="w-4 h-4" /> },
         { title: 'Admin Users', key: 'admins' as AdminTabKey, icon: <Shield className="w-4 h-4" /> },
         { title: 'Reports', key: 'reportsPartner' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
+        { title: 'Autoclose', key: 'autoclose' as AdminTabKey, icon: <Clock className="w-4 h-4" /> },
         { title: 'Roadmap', key: 'roadmap' as AdminTabKey, icon: <LayoutGrid className="w-4 h-4" /> },
         { title: 'Modules', key: 'modules' as AdminTabKey, icon: <Blocks className="w-4 h-4" /> },
         { title: 'Notifications', key: 'notificationsPartner' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
@@ -515,6 +518,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Support Admin', key: 'supportAdmin' as AdminTabKey, icon: <LifeBuoy className="w-4 h-4" /> },
         { title: 'Agent University', key: 'agentUniversity' as AdminTabKey, icon: <GraduationCap className="w-4 h-4" /> },
         { title: 'Reports', key: 'reportsPlatform' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
+        { title: 'Autoclose', key: 'autoclose' as AdminTabKey, icon: <Clock className="w-4 h-4" /> },
         { title: 'Notifications', key: 'notificationsPlatform' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
         ...(process.env.NEXT_PUBLIC_DECENTRALIZATION?.toUpperCase() === 'TRUE' ? [{ title: 'Node Operators', key: 'nodeOperators' as AdminTabKey, icon: <Server className="w-4 h-4" /> }] : []),
       ].filter((item) => canAccessPanel(item.key as any, wallet)),
@@ -538,8 +542,14 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
     },
   ];
 
+  // Sort the items within each group alphabetically by title
+  const sortedGroups = groups.map(g => ({
+    ...g,
+    items: g.items ? [...g.items].sort((a, b) => a.title.localeCompare(b.title)) : []
+  }));
+
   // Filter out groups with zero children (e.g. Apps when no industry pack is set)
-  const visibleGroups = groups.filter(g => !g.items || g.items.length > 0);
+  const visibleGroups = sortedGroups.filter(g => !g.items || g.items.length > 0);
 
   return (
     <>
