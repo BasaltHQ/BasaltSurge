@@ -31,8 +31,11 @@ export async function GET(
     }
 
     // Container gating: partner containers only see their own brand; platform sees all
-    const containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || process.env.CONTAINER_TYPE || "platform").toLowerCase();
-    const brandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
+    const host = _req.headers.get("x-forwarded-host") || _req.headers.get("host") || "";
+    const { getContainerIdentity } = await import("@/lib/brand-config");
+    const containerIdentity = await getContainerIdentity(host);
+    const containerType = containerIdentity.containerType;
+    const brandKey = containerIdentity.brandKey;
 
     const { app } = await context.params;
     const requestedApp = String(app || "").toLowerCase();

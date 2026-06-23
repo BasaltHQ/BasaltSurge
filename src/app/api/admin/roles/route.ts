@@ -4,21 +4,10 @@ import { getAuthenticatedWallet } from "@/lib/auth";
 import { resolveAdminRole } from "@/lib/authz-server";
 import { getEnv } from "@/lib/env";
 import { logAdminAction } from "@/lib/audit";
+import { getBrandKey } from "@/config/brands";
 
 const DOC_ID = "admin_roles";
 export const dynamic = 'force-dynamic';
-
-function getBrandKey(req: NextRequest): string {
-    const ct = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || process.env.CONTAINER_TYPE || "platform").toLowerCase();
-    const envKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
-
-    // Check header first (for multi-tenant platform hosting partners)
-    const headerKey = req.headers.get("x-brand-key");
-    if (headerKey) return headerKey.toLowerCase();
-
-    if (ct === "partner") return envKey;
-    return envKey || "basaltsurge";
-}
 
 export async function GET(req: NextRequest) {
     try {

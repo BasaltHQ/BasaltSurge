@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { requireThirdwebAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -31,14 +32,13 @@ const hex = (s: any) => typeof s === "string" && /^0x[a-f0-9]{40}$/i.test(s);
 
 export async function GET(req: NextRequest) {
     try {
-        const wallet = req.headers.get("x-wallet") || "";
-        if (!wallet || !isAdminWallet(wallet)) {
+        const caller = await requireThirdwebAuth(req).catch(() => null);
+        if (!caller || !caller.roles.includes("admin")) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const brandKey = String(
-            process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
-        ).toLowerCase();
+        const { getBrandKey } = await import("@/config/brands");
+        const brandKey = getBrandKey(req);
 
         if (!brandKey) {
             return NextResponse.json(

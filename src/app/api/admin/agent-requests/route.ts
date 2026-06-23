@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { getBrandKey } from "@/config/brands";
 
 export const dynamic = "force-dynamic";
 
@@ -19,9 +20,7 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const brandKey = String(
-            process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
-        ).toLowerCase();
+        const brandKey = getBrandKey(req);
 
         const container = await getContainer();
 
@@ -47,9 +46,7 @@ export async function PUT(req: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const brandKey = String(
-            process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
-        ).toLowerCase();
+        const brandKey = getBrandKey(req);
 
         const body = await req.json();
         const { id, status } = body;
@@ -99,9 +96,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const brandKey = String(
-            process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
-        ).toLowerCase();
+        const brandKey = getBrandKey(req);
 
         const body = await req.json();
         const { wallet, name, email, phone, notes } = body;
