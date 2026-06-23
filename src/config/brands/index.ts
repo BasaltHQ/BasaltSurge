@@ -126,6 +126,26 @@ export function getBrandKey(req?: NextRequest): string {
     const hostLower = host.toLowerCase().split(":")[0];
     const parts = hostLower.split(".");
     
+    // Check dynamic domains (client-side window or server-side globalThis)
+    if (typeof window !== "undefined") {
+      const win = window as any;
+      if (win.__DYNAMIC_DOMAINS__ && win.__DYNAMIC_DOMAINS__[hostLower]) {
+        return win.__DYNAMIC_DOMAINS__[hostLower];
+      }
+    } else {
+      const glob = globalThis as any;
+      if (glob.__DYNAMIC_DOMAINS__ && glob.__DYNAMIC_DOMAINS__[hostLower]) {
+        return glob.__DYNAMIC_DOMAINS__[hostLower];
+      }
+      try {
+        const brandConfigMod = "@/lib/brand-config";
+        const brandConfig = require(brandConfigMod);
+        if (brandConfig && brandConfig.DYNAMIC_PARTNER_DOMAINS && brandConfig.DYNAMIC_PARTNER_DOMAINS[hostLower]) {
+          return brandConfig.DYNAMIC_PARTNER_DOMAINS[hostLower];
+        }
+      } catch {}
+    }
+
     // Check custom/known partner domains
     if (hostLower.includes("paynex")) return "paynex";
     if (hostLower.includes("xpaypass") || hostLower.includes("xoinpay")) return "xoinpay";

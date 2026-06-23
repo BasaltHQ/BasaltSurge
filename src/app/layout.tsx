@@ -25,7 +25,7 @@ import { BrandProvider } from "@/contexts/BrandContext";
 import { getContainer } from "@/lib/cosmos";
 import { getEnv, isDualSplitEnabled } from "@/lib/env";
 import { isMainDomainHost } from "@/lib/routing";
-import { getBrandConfigFromCosmos, getContainerIdentity } from "@/lib/brand-config";
+import { getBrandConfigFromCosmos, getContainerIdentity, deriveContainerIdentityFromHostname } from "@/lib/brand-config";
 import { normalizeBrandName, resolveBrandAppLogo, resolveBrandSymbol, getDefaultBrandName } from "@/lib/branding";
 import { printBanner, isDebug } from "@/lib/logger";
 import { ConsoleBanner } from "@/components/ConsoleBanner";
@@ -154,7 +154,7 @@ async function getContainerIdentityDirect(): Promise<{ brandKey: string; contain
     const { headers } = require("next/headers");
     const headersList = await headers();
     const host = headersList.get("x-forwarded-host") || headersList.get("host") || "";
-    const derived = deriveBrandKeyFromHostname(host);
+    const derived = await deriveContainerIdentityFromHostname(host);
 
     if (derived) {
       return derived;

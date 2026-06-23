@@ -224,8 +224,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ app:
             return NextResponse.json({ error: "forbidden" }, { status: 403 });
         }
 
-        const containerType = getContainerType();
-        const envBrand = getBrandKey();
+        const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+        const { getContainerIdentity } = await import("@/lib/brand-config");
+        const containerIdentity = await getContainerIdentity(host);
+        const containerType = containerIdentity.containerType;
+        const envBrand = containerIdentity.brandKey;
         const { searchParams } = new URL(req.url);
         const brandParam = searchParams.get("brand");
 

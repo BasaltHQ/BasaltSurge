@@ -65,8 +65,11 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
     const app = body?.app === "paynex" ? "paynex" : "portalpay";
-    const brandKey = String(body?.brandKey || getBrandKey()).toLowerCase();
-    const containerType = getContainerType();
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+    const { getContainerIdentity } = await import("@/lib/brand-config");
+    const containerIdentity = await getContainerIdentity(host);
+    const containerType = containerIdentity.containerType;
+    const brandKey = String(body?.brandKey || containerIdentity.brandKey).toLowerCase();
     const success = !!body?.success;
     const bytes = Number(body?.bytes || 0) || 0;
 
@@ -111,8 +114,11 @@ export async function GET(req: NextRequest) {
     const wallet = String(caller?.wallet || "").toLowerCase();
     const roles = Array.isArray(caller?.roles) ? caller!.roles : [];
 
-    const containerType = getContainerType();
-    const brandKeyEnv = getBrandKey();
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+    const { getContainerIdentity } = await import("@/lib/brand-config");
+    const containerIdentity = await getContainerIdentity(host);
+    const containerType = containerIdentity.containerType;
+    const brandKeyEnv = containerIdentity.brandKey;
 
     const isPlatform = containerType === "platform";
     const isSuperadmin = roles.includes("superadmin");

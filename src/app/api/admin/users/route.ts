@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   const url = new URL(req.url);
   const qBrand = String(url.searchParams.get("brandKey") || "").toLowerCase();
-  let currentBrandKey = getBrandKey();
+  let currentBrandKey = getBrandKey(req);
   // Normalize basaltsurge to portalpay for unmigrated legacy data
   // if (currentBrandKey === "basaltsurge") currentBrandKey = "portalpay";
 

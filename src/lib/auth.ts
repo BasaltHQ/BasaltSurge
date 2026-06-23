@@ -198,13 +198,8 @@ export async function requireThirdwebAuth(req?: NextRequest): Promise<{ wallet: 
 				// Query Cosmos DB for database-configured roles to dynamically elevate roles array
 				try {
 					const { resolveAdminRole } = await import("@/lib/authz-server");
-					let brandKey = "";
-					if (req) {
-						brandKey = req.headers.get("x-brand-key") || "";
-					}
-					if (!brandKey) {
-						brandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
-					}
+					const { getBrandKey } = await import("@/config/brands");
+					const brandKey = getBrandKey(req);
 					const dbRole = await resolveAdminRole(wallet, brandKey || undefined);
 					if (dbRole) {
 						if (!roles.includes("admin")) {
@@ -260,13 +255,8 @@ export async function requireThirdwebAuth(req?: NextRequest): Promise<{ wallet: 
 							// Query Cosmos DB for database-configured roles to dynamically elevate roles array
 							try {
 								const { resolveAdminRole } = await import("@/lib/authz-server");
-								let brandKey = "";
-								if (req) {
-									brandKey = req.headers.get("x-brand-key") || "";
-								}
-								if (!brandKey) {
-									brandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
-								}
+								const { getBrandKey } = await import("@/config/brands");
+								const brandKey = getBrandKey(req);
 								const dbRole = await resolveAdminRole(wallet, brandKey || undefined);
 								if (dbRole) {
 									if (!roles.includes("admin")) {

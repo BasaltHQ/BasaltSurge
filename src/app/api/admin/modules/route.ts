@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { requireThirdwebAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -24,20 +25,19 @@ function isAdminWallet(wallet: string): boolean {
     return w === owner || w === platform || admins.includes(w);
 }
 
-function getBrandKey(): string {
-    return String(
-        process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
-    ).toLowerCase();
+function getBrandKey(req?: NextRequest): string {
+    const { getBrandKey: resolveBrandKey } = require("@/config/brands");
+    return resolveBrandKey(req);
 }
 
 export async function GET(req: NextRequest) {
     try {
-        const wallet = req.headers.get("x-wallet") || "";
-        if (!wallet || !isAdminWallet(wallet)) {
+        const caller = await requireThirdwebAuth(req).catch(() => null);
+        if (!caller || !caller.roles.includes("admin")) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const brandKey = getBrandKey();
+        const brandKey = getBrandKey(req);
         if (!brandKey) {
             return NextResponse.json({ disabledModules: [] });
         }
@@ -62,12 +62,13 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
     try {
-        const wallet = req.headers.get("x-wallet") || "";
-        if (!wallet || !isAdminWallet(wallet)) {
+        const caller = await requireThirdwebAuth(req).catch(() => null);
+        if (!caller || !caller.roles.includes("admin")) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
+        const wallet = caller.wallet;
 
-        const brandKey = getBrandKey();
+        const brandKey = getBrandKey(req);
         if (!brandKey) {
             return NextResponse.json({ error: "No brand key configured" }, { status: 500 });
         }
