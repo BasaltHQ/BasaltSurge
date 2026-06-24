@@ -36,5 +36,13 @@ app.prepare().then(() => {
         })
         .listen(port, () => {
             console.log(`> Ready on http://${hostname}:${port}`);
+            // Start background cron scheduler in production or when START_SCHEDULER is enabled
+            if (process.env.NODE_ENV === 'production' || process.env.START_SCHEDULER === 'true') {
+                try {
+                    require('./scripts/start-scheduler.js');
+                } catch (e) {
+                    console.error('Failed to load startup scheduler:', e);
+                }
+            }
         });
 });

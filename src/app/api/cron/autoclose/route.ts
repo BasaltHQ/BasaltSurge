@@ -60,10 +60,23 @@ export async function POST(req: NextRequest) {
   const startTime = Date.now();
 
   try {
-    // 1. Authenticate with CRON_SECRET
-    const body = await req.json().catch(() => ({}));
-    const cronSecret = req.headers.get("x-cron-secret") || body.cronSecret;
+    // 1. Authenticate with CRON_SECRET (accepts x-cron-secret header, Bearer token, query param, or POST body)
     const envSecret = process.env.CRON_SECRET;
+    const authHeader = req.headers.get("authorization");
+    let cronSecret = req.headers.get("x-cron-secret");
+    if (!cronSecret && authHeader && authHeader.startsWith("Bearer ")) {
+      cronSecret = authHeader.substring(7);
+    }
+    if (!cronSecret) {
+      try {
+        const url = new URL(req.url);
+        cronSecret = url.searchParams.get("cronSecret") || url.searchParams.get("cron_secret") || "";
+      } catch {}
+    }
+    if (!cronSecret && req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      cronSecret = body.cronSecret;
+    }
 
     if (!envSecret || cronSecret !== envSecret) {
       console.warn(`[cron/autoclose] Unauthorized request (correlationId: ${correlationId})`);
@@ -419,4 +432,8 @@ export async function POST(req: NextRequest) {
       { status: 500, headers: { "x-correlation-id": correlationId } }
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  return POST(req);
 }
