@@ -11,10 +11,19 @@ export function getClient() {
   if (typeof window !== "undefined") {
     const path = window.location.pathname || "";
     const isPlatformPath = path.startsWith("/developers") || path.startsWith("/docs");
-    if (isPlatformPath) {
+    const containerType = document.documentElement?.getAttribute("data-pp-container-type") || "";
+    const isPlatformContainer = !containerType || containerType.toLowerCase() === "platform";
+    if (isPlatformPath && isPlatformContainer) {
       brandKey = "basaltsurge";
     } else {
       brandKey = document.documentElement?.getAttribute("data-pp-brand-key") || "";
+      if (!brandKey) {
+        const hostLower = window.location.hostname.toLowerCase();
+        const win = window as any;
+        if (win.__DYNAMIC_DOMAINS__ && win.__DYNAMIC_DOMAINS__[hostLower]) {
+          brandKey = win.__DYNAMIC_DOMAINS__[hostLower];
+        }
+      }
     }
   }
 
