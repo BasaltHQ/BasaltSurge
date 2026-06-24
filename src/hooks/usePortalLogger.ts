@@ -38,6 +38,9 @@ export function usePortalLogger({
     const MAX_LOGS = 100;
 
     const sendLogToServer = async (level: "log" | "warn" | "error", args: any[]) => {
+      // Only capture errors
+      if (level !== "error") return;
+
       // Basic protection: do not recursively log if we are already sending, or if we hit the cap
       if (isSending || logCount >= MAX_LOGS) return;
 

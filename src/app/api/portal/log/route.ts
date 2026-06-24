@@ -19,6 +19,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    // Only allow error logs to be saved to DB
+    if (level !== "error") {
+      return NextResponse.json({ ok: true, ignored: true });
+    }
+
     // Connect to the 'portal_logs' collection (will be created automatically if not existing)
     const container = await getContainer(undefined, "portal_logs");
     const logId = crypto.randomUUID();

@@ -37,10 +37,43 @@ export async function POST(req: NextRequest) {
   const correlationId = crypto.randomUUID();
 
   try {
-    // Require admin role
-    const caller = await requireRole(req, "admin");
+    // Auth: Allow either CRON_SECRET or standard admin role
+    let isAuthed = false;
+    let authWallet = "";
 
-    debug("BATCH REINDEX", `Starting batch reindex initiated by ${caller.wallet.slice(0, 10)}...`);
+    // Check CRON_SECRET first
+    const envSecret = process.env.CRON_SECRET;
+    if (envSecret) {
+      const authHeader = req.headers.get("authorization");
+      const xCronSecret = req.headers.get("x-cron-secret");
+      let cronSecret = xCronSecret || "";
+      if (!cronSecret && authHeader && authHeader.startsWith("Bearer ")) {
+        cronSecret = authHeader.substring(7);
+      }
+      if (!cronSecret) {
+        // Fallback: check query parameter or json body
+        try {
+          const url = new URL(req.url);
+          cronSecret = url.searchParams.get("cronSecret") || url.searchParams.get("cron_secret") || "";
+          if (!cronSecret && req.method === "POST") {
+            const body = await req.json().catch(() => ({}));
+            cronSecret = body?.cronSecret || "";
+          }
+        } catch {}
+      }
+      if (cronSecret === envSecret) {
+        isAuthed = true;
+        authWallet = "system_cron";
+      }
+    }
+
+    if (!isAuthed) {
+      // Fallback: require standard admin role
+      const caller = await requireRole(req, "admin");
+      authWallet = caller.wallet;
+    }
+
+    debug("BATCH REINDEX", `Starting batch reindex initiated by ${authWallet.slice(0, 10)}...`);
 
     const container = await getContainer();
 
@@ -462,6 +495,10 @@ export async function POST(req: NextRequest) {
       { status: 500, headers: { "x-correlation-id": correlationId } }
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  return POST(req);
 }
 
 /**
