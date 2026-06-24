@@ -696,7 +696,8 @@ export default async function RootLayout({
     // If in a partner container, load global platform admins so they inherit their permissions
     if (isPartner) {
       try {
-        const { resource: globalResource } = await c.item("admin_roles", "global").read();
+        const cGlobal = await getContainer(undefined, "payportal_events");
+        const { resource: globalResource } = await cGlobal.item("admin_roles", "global").read();
         if (globalResource && Array.isArray(globalResource.admins)) {
           globalResource.admins.forEach((a: any) => {
             const w = String(a.wallet || "").toLowerCase().trim();
