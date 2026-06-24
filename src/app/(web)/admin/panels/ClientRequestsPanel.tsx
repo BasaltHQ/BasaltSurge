@@ -14,7 +14,7 @@ import { ReserveSettings } from "@/components/admin/reserve/ReserveSettings";
 import { TouchpointThemeCards, ThemePickerModal } from "@/components/admin/TouchpointThemePicker";
 import { parseKioskConfig } from "@/lib/themes";
 import type { TouchpointType, ColorMode, KioskLayout } from "@/lib/themes";
-import { Lock, CreditCard, Lightbulb, AlertTriangle, HelpCircle, Inbox, Store, Utensils, Sun, Moon, Grid, List, Newspaper, Sparkles, Ban, Check } from "lucide-react";
+import { Lock, CreditCard, Lightbulb, AlertTriangle, HelpCircle, Inbox, Store, Utensils, Sun, Moon, Grid, List, Newspaper, Sparkles, Ban, Check, Key, RefreshCw, Eye, EyeOff, Copy, Trash2, Plus } from "lucide-react";
 
 type ClientRequest = {
     id: string;
@@ -1530,7 +1530,7 @@ export default function ClientRequestsPanel() {
                                                 <tr className="bg-foreground/[0.02]">
                                                     <td colSpan={5} className="px-4 py-4 border-t border-foreground/5">
                                                         <div className="flex items-center gap-4 mb-4 border-b border-white/5 pb-2">
-                                                            {["details", "config", "team", "reserve", "themes", ...(req.industryPack === "restaurant" ? ["tables"] : [])].map(tab => (
+                                                            {["details", "config", "team", "api", "reserve", "themes", ...(req.industryPack === "restaurant" ? ["tables"] : [])].map(tab => (
                                                                 <button
                                                                     key={tab}
                                                                     onClick={() => setActiveTabs(prev => ({ ...prev, [req.id]: tab }))}
@@ -1539,7 +1539,7 @@ export default function ClientRequestsPanel() {
                                                                         : "border-transparent text-muted-foreground hover:text-zinc-300"
                                                                         }`}
                                                                 >
-                                                                    {tab === "details" ? "Details" : tab === "config" ? "Shop Config" : tab === "team" ? "Team" : tab === "reserve" ? "Reserve" : tab === "tables" ? "Tables" : "Themes"}
+                                                                    {tab === "details" ? "Details" : tab === "config" ? "Shop Config" : tab === "team" ? "Team" : tab === "api" ? "API Keys" : tab === "reserve" ? "Reserve" : tab === "tables" ? "Tables" : "Themes"}
                                                                 </button>
                                                             ))}
                                                         </div>
@@ -1652,6 +1652,11 @@ export default function ClientRequestsPanel() {
                                                                 brandKey={brandKey}
                                                                 initialTables={req.industryParams?.restaurant?.tables || []}
                                                                 initialParams={req.industryParams}
+                                                            />
+                                                        ) : (activeTabs[req.id] === "api") ? (
+                                                            <MerchantApiKeysTab
+                                                                merchantWallet={req.wallet}
+                                                                brandKey={brandKey}
                                                             />
                                                         ) : (
                                                             <div className="animate-in fade-in slide-in-from-top-1 duration-200">
@@ -3388,6 +3393,352 @@ function TouchpointThemesTab({
             )}
 
 
+        </div>
+    );
+}
+
+function MerchantApiKeysTab({
+    merchantWallet,
+    brandKey,
+}: {
+    merchantWallet: string;
+    brandKey: string;
+}) {
+    const [keys, setKeys] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+    const [success, setSuccess] = useState("");
+
+    // State for creating a new key
+    const [newLabel, setNewLabel] = useState("");
+    const [newPlan, setNewPlan] = useState<"starter" | "pro" | "enterprise">("starter");
+    const [creating, setCreating] = useState(false);
+
+    // Modal or display state for newly generated/rotated raw API key
+    const [generatedKey, setGeneratedKey] = useState<string | null>(null);
+
+    // State for revealing an existing key
+    const [revealingId, setRevealingId] = useState<string | null>(null);
+    const [revealedKeyText, setRevealedKeyText] = useState<string>("");
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+
+    const loadKeys = useCallback(async () => {
+        if (!merchantWallet) return;
+        setLoading(true);
+        setError("");
+        try {
+            const res = await fetch(`/api/admin/merchants/${merchantWallet}/api-keys`);
+            const data = await res.json();
+            if (res.ok && data.keys) {
+                setKeys(data.keys);
+            } else {
+                setError(data.error || "Failed to load API keys.");
+            }
+        } catch (err: any) {
+            setError(err?.message || "Network error loading API keys.");
+        } finally {
+            setLoading(false);
+        }
+    }, [merchantWallet]);
+
+    useEffect(() => {
+        loadKeys();
+    }, [loadKeys]);
+
+    const handleCreateKey = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newLabel.trim()) return;
+        setCreating(true);
+        setError("");
+        setSuccess("");
+        setGeneratedKey(null);
+
+        try {
+            const res = await fetch(`/api/admin/merchants/${merchantWallet}/api-keys`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "create",
+                    label: newLabel,
+                    plan: newPlan,
+                    brandKey,
+                }),
+            });
+            const data = await res.json();
+            if (res.ok && data.apiKey) {
+                setGeneratedKey(data.apiKey);
+                setNewLabel("");
+                setSuccess("API Key issued successfully! Please copy it now; it will not be displayed again.");
+                await loadKeys();
+            } else {
+                setError(data.error || "Failed to issue API key.");
+            }
+        } catch (err: any) {
+            setError(err?.message || "Network error issuing API key.");
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    const handleRotateKey = async (keyId: string) => {
+        if (!confirm("Are you sure you want to rotate this API key? The old key will immediately stop working!")) return;
+        setError("");
+        setSuccess("");
+        setGeneratedKey(null);
+
+        try {
+            const res = await fetch(`/api/admin/merchants/${merchantWallet}/api-keys`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "rotate",
+                    keyId,
+                }),
+            });
+            const data = await res.json();
+            if (res.ok && data.apiKey) {
+                setGeneratedKey(data.apiKey);
+                setSuccess("API Key rotated successfully! Please copy the new key now.");
+                await loadKeys();
+            } else {
+                setError(data.error || "Failed to rotate API key.");
+            }
+        } catch (err: any) {
+            setError(err?.message || "Network error rotating API key.");
+        }
+    };
+
+    const handleToggleStatus = async (keyId: string, currentActive: boolean) => {
+        setError("");
+        setSuccess("");
+        const action = currentActive ? "revoke" : "activate";
+        try {
+            const res = await fetch(`/api/admin/merchants/${merchantWallet}/api-keys`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action,
+                    keyId,
+                }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setSuccess(`API Key ${currentActive ? "revoked" : "activated"} successfully.`);
+                await loadKeys();
+            } else {
+                setError(data.error || "Failed to update API key status.");
+            }
+        } catch (err: any) {
+            setError(err?.message || "Network error updating API key status.");
+        }
+    };
+
+    const handleRevealKey = async (keyId: string) => {
+        if (revealingId === keyId) {
+            // Already showing, hide it
+            setRevealingId(null);
+            setRevealedKeyText("");
+            return;
+        }
+
+        setError("");
+        setSuccess("");
+        try {
+            const res = await fetch(`/api/admin/merchants/${merchantWallet}/api-keys`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "reveal",
+                    keyId,
+                }),
+            });
+            const data = await res.json();
+            if (res.ok && data.apiKey) {
+                setRevealingId(keyId);
+                setRevealedKeyText(data.apiKey);
+            } else {
+                setError(data.error || "Failed to decrypt API key.");
+            }
+        } catch (err: any) {
+            setError(err?.message || "Network error decrypting API key.");
+        }
+    };
+
+    const handleCopy = (text: string, id: string) => {
+        navigator.clipboard.writeText(text);
+        setCopiedId(id);
+        setTimeout(() => setCopiedId(null), 2000);
+    };
+
+    return (
+        <div className="w-full px-4 sm:px-6 lg:px-8 space-y-6 pb-24 animate-in fade-in duration-200">
+            <div>
+                <h4 className="text-sm font-medium mb-1">API Key Management</h4>
+                <p className="text-xs text-muted-foreground mb-4">
+                    Issue and manage API keys for this merchant. API keys allow developers to authenticate against standard Orders, Receipts, and Shop endpoints.
+                </p>
+            </div>
+
+            {error && <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg">{error}</div>}
+            {success && <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs rounded-lg">{success}</div>}
+
+            {/* Generated Raw Key display (Crucial - shows only once) */}
+            {generatedKey && (
+                <div className="p-4 bg-amber-500/10 border border-amber-500/20 text-amber-300 rounded-lg space-y-3">
+                    <div className="flex items-start gap-2">
+                        <Lock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <div>
+                            <h5 className="text-xs font-bold uppercase tracking-wide">Copy New API Key</h5>
+                            <p className="text-xs opacity-80 mt-1">
+                                For security reasons, this key will only be shown to you this once. Store it carefully.
+                            </p>
+                        </div>
+                    </div>
+                    <div className="flex gap-2 items-center bg-black/40 p-3 rounded border border-white/10">
+                        <code className="text-xs break-all text-emerald-400 font-mono select-all flex-1">{generatedKey}</code>
+                        <button
+                            onClick={() => handleCopy(generatedKey, "new-key")}
+                            className="p-1.5 bg-white/5 hover:bg-white/10 rounded transition-colors text-white shrink-0"
+                            title="Copy Key"
+                        >
+                            {copiedId === "new-key" ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Form to issue a new key */}
+            <form onSubmit={handleCreateKey} className="p-4 rounded-lg border border-white/5 bg-black/20 space-y-4">
+                <h5 className="text-xs font-mono uppercase text-muted-foreground tracking-wider">Issue New API Key</h5>
+                <div className="flex flex-col sm:flex-row gap-4 items-end">
+                    <div className="flex-1 space-y-2">
+                        <label className="text-xs text-zinc-400">Key Label</label>
+                        <input
+                            type="text"
+                            value={newLabel}
+                            onChange={(e) => setNewLabel(e.target.value)}
+                            placeholder="e.g. Production WooCommerce Sync"
+                            className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                            required
+                        />
+                    </div>
+                    <div className="w-full sm:w-[150px] space-y-2">
+                        <label className="text-xs text-zinc-400">Plan</label>
+                        <select
+                            value={newPlan}
+                            onChange={(e) => setNewPlan(e.target.value as any)}
+                            className="w-full bg-zinc-900 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                        >
+                            <option value="starter">Starter</option>
+                            <option value="pro">Pro</option>
+                            <option value="enterprise">Enterprise</option>
+                        </select>
+                    </div>
+                    <button
+                        type="submit"
+                        disabled={creating}
+                        className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-sm font-medium rounded-lg disabled:opacity-50 transition-all flex items-center gap-2 h-[38px] shrink-0"
+                    >
+                        <Plus className="w-4 h-4" />
+                        <span>{creating ? "Issuing..." : "Issue Key"}</span>
+                    </button>
+                </div>
+            </form>
+
+            {/* List of keys */}
+            <div className="space-y-4">
+                <h5 className="text-xs font-mono uppercase text-muted-foreground tracking-wider">Existing API Keys</h5>
+                {loading ? (
+                    <div className="text-xs text-muted-foreground">Loading keys...</div>
+                ) : keys.length === 0 ? (
+                    <div className="text-xs text-muted-foreground italic bg-black/10 p-4 rounded border border-white/5">No API keys issued for this merchant.</div>
+                ) : (
+                    <div className="overflow-x-auto rounded-lg border border-white/5 bg-black/20">
+                        <table className="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr className="border-b border-white/5 text-xs text-muted-foreground uppercase font-mono tracking-wider bg-black/40">
+                                    <th className="px-4 py-3">Label</th>
+                                    <th className="px-4 py-3">Plan</th>
+                                    <th className="px-4 py-3">Key Preview</th>
+                                    <th className="px-4 py-3 text-center">Status</th>
+                                    <th className="px-4 py-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {keys.map((key) => {
+                                    const isRevealed = revealingId === key.id;
+                                    const displayText = isRevealed ? revealedKeyText : key.maskedKey;
+                                    return (
+                                        <tr key={key.id} className="border-b border-white/5 hover:bg-white/[0.02]">
+                                            <td className="px-4 py-3 font-medium text-white max-w-[150px] truncate" title={key.label}>
+                                                {key.label}
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                                    key.plan === "enterprise" ? "bg-purple-500/20 text-purple-400 border border-purple-500/30" :
+                                                    key.plan === "pro" ? "bg-blue-500/20 text-blue-400 border border-blue-500/30" :
+                                                    "bg-zinc-500/20 text-zinc-400 border border-zinc-500/30"
+                                                }`}>
+                                                    {key.plan}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <div className="flex items-center gap-2 font-mono text-xs max-w-[280px]">
+                                                    <span className={`${isRevealed ? "text-emerald-400" : "text-zinc-400"} break-all truncate`}>
+                                                        {displayText}
+                                                    </span>
+                                                    <button
+                                                        onClick={() => handleRevealKey(key.id)}
+                                                        className="text-zinc-500 hover:text-white transition-colors shrink-0"
+                                                        title={isRevealed ? "Hide Key" : "Reveal Key"}
+                                                    >
+                                                        {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                                    </button>
+                                                    {isRevealed && (
+                                                        <button
+                                                            onClick={() => handleCopy(revealedKeyText, key.id)}
+                                                            className="text-zinc-500 hover:text-white transition-colors shrink-0"
+                                                            title="Copy Key"
+                                                        >
+                                                            {copiedId === key.id ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3 text-center">
+                                                <span className={`inline-block w-2 h-2 rounded-full ${key.isActive ? "bg-emerald-500" : "bg-red-500"}`} />
+                                            </td>
+                                            <td className="px-4 py-3 text-right">
+                                                <div className="flex justify-end gap-2">
+                                                    <button
+                                                        onClick={() => handleRotateKey(key.id)}
+                                                        className="px-2 py-1 bg-white/5 hover:bg-white/10 text-white rounded text-xs transition-all flex items-center gap-1"
+                                                        title="Rotate Key (regenerates raw secret)"
+                                                    >
+                                                        <RefreshCw className="w-3 h-3" />
+                                                        <span>Rotate</span>
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleToggleStatus(key.id, key.isActive)}
+                                                        className={`px-2 py-1 rounded text-xs transition-all flex items-center gap-1 ${
+                                                            key.isActive 
+                                                                ? "bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20" 
+                                                                : "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20"
+                                                        }`}
+                                                        title={key.isActive ? "Revoke Access" : "Grant Access"}
+                                                    >
+                                                        <span>{key.isActive ? "Revoke" : "Activate"}</span>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
