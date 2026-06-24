@@ -883,47 +883,57 @@ export async function POST(req: NextRequest) {
         : undefined;
     }
 
+    // Resolve brand configuration for fee properties (both for basePlatformFeePct fallback and presentedFeeBps check)
+    let brandPresentedFeeBps: number | undefined = undefined;
+    let brandBasePlatformFeePct: number | undefined = undefined;
+    try {
+      const xfHost = req.headers.get("x-forwarded-host");
+      const host = req.headers.get("host");
+      const u = new URL(req.url);
+      const hostname = (xfHost || host || u.hostname || "").toLowerCase();
+      const { brandKey: bk } = await getContainerIdentity(hostname);
+      let brandKeyForFees = bk || brandKey;
+      if (!brandKeyForFees) {
+        try { brandKeyForFees = getBrandKey(req); } catch { brandKeyForFees = ""; }
+      }
+      if (brandKeyForFees) {
+        const clampBps = (v: any) => {
+          const n = Number(v);
+          return Number.isFinite(n) ? Math.max(0, Math.min(10000, Math.floor(n))) : 0;
+        };
+        const { brand: fetchedBrand, overrides: fetchedOverrides } = await getBrandConfigFromCosmos(brandKeyForFees);
+        const ov = (typeof fetchedOverrides === "object" && fetchedOverrides) ? fetchedOverrides : ({} as any);
+        const fb = (typeof fetchedBrand === "object" && fetchedBrand) ? fetchedBrand : null;
+
+        brandPresentedFeeBps = typeof ov?.presentedFeeBps === "number" ? ov.presentedFeeBps
+          : (typeof (fb as any)?.presentedFeeBps === "number" ? (fb as any).presentedFeeBps : undefined);
+
+        const platformBps = typeof ov?.platformFeeBps === "number" ? ov.platformFeeBps
+          : (typeof (fb as any)?.platformFeeBps === "number" ? (fb as any).platformFeeBps : 50);
+        const partnerBps = typeof ov?.partnerFeeBps === "number" ? ov.partnerFeeBps
+          : (typeof (fb as any)?.partnerFeeBps === "number" ? (fb as any).partnerFeeBps : 0);
+        const agentsList = Array.isArray(ov?.agents) ? ov.agents
+          : (Array.isArray((fb as any)?.agents) ? (fb as any).agents : []);
+        const agentBps = agentsList.reduce((sum: number, a: any) => sum + clampBps(a?.bps || 0), 0);
+        brandBasePlatformFeePct = (platformBps + partnerBps + agentBps) / 100;
+      }
+    } catch (e) {
+      console.log("[Orders API] Error fetching brand config overrides:", e);
+    }
+
     // Priority 3: Fall back to brand overrides
     if (typeof basePlatformFeePct !== "number") {
-      try {
-        const xfHost = req.headers.get("x-forwarded-host");
-        const host = req.headers.get("host");
-        const u = new URL(req.url);
-        const hostname = (xfHost || host || u.hostname || "").toLowerCase();
-        const { brandKey: bk } = await getContainerIdentity(hostname);
-        let brandKeyForFees = bk;
-        if (!brandKeyForFees) {
-          try { brandKeyForFees = getBrandKey(req); } catch { brandKeyForFees = ""; }
-        }
-        if (brandKeyForFees) {
-          const clampBps = (v: any) => {
-            const n = Number(v);
-            return Number.isFinite(n) ? Math.max(0, Math.min(10000, Math.floor(n))) : 0;
-          };
-          const { brand: fetchedBrand, overrides: fetchedOverrides } = await getBrandConfigFromCosmos(brandKeyForFees);
-          const ov = (typeof fetchedOverrides === "object" && fetchedOverrides) ? fetchedOverrides : ({} as any);
-          const fb = (typeof fetchedBrand === "object" && fetchedBrand) ? fetchedBrand : null;
-          const platformBps = typeof ov?.platformFeeBps === "number" ? ov.platformFeeBps
-            : (typeof (fb as any)?.platformFeeBps === "number" ? (fb as any).platformFeeBps : 50);
-          const partnerBps = typeof ov?.partnerFeeBps === "number" ? ov.partnerFeeBps
-            : (typeof (fb as any)?.partnerFeeBps === "number" ? (fb as any).partnerFeeBps : 0);
-          const agentsList = Array.isArray(ov?.agents) ? ov.agents
-            : (Array.isArray((fb as any)?.agents) ? (fb as any).agents : []);
-          const agentBps = agentsList.reduce((sum: number, a: any) => sum + clampBps(a?.bps || 0), 0);
-          basePlatformFeePct = (platformBps + partnerBps + agentBps) / 100;
-        } else {
-          basePlatformFeePct = 0.5;
-        }
-      } catch {
-        basePlatformFeePct = 0.5;
-      }
+      basePlatformFeePct = typeof brandBasePlatformFeePct === "number" ? brandBasePlatformFeePct : 0.5;
     }
 
     const finalBasePlatformFeePct = typeof basePlatformFeePct === "number" ? basePlatformFeePct : 0.5;
     const totalFeePct = Math.max(0, finalBasePlatformFeePct + Number(processingFeePct || 0));
     const feePctFraction = totalFeePct / 100;
-    // Skip processing fee for cash payments — no payment processor involved
-    const processingFeeCents = paymentMethod === "cash" ? 0 : Math.round(baseWithoutFeeCents * feePctFraction);
+
+    // Skip processing fee for cash payments — no payment processor involved.
+    // Also skip processing fee if brand has a presentedFee configured (e.g. Stripe card presentedFee is handled/added at the checkout/Stripe onramp level)
+    const hasPresentedFee = typeof brandPresentedFeeBps === "number";
+    const processingFeeCents = (paymentMethod === "cash" || hasPresentedFee) ? 0 : Math.round(baseWithoutFeeCents * feePctFraction);
 
     const finalLineItems: ReceiptLineItem[] = [
       ...lineItems,
