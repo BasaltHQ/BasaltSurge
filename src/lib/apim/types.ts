@@ -8,6 +8,7 @@ export interface ApiKey {
     prefix: string; // "sk_live_" or "pk_live_" (for identifying key type)
     label: string; // User-provided name/description
     ownerWallet: string; // Wallet address of the owner
+    wallet: string; // Partition key (same as ownerWallet)
     brandKey?: string; // Optional: Scope to specific brand/partner
     plan: ApiKeyPlan;
     rateLimit: {

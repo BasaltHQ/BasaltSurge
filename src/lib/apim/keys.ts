@@ -90,6 +90,7 @@ export async function createApiKeyDoc(
         prefix: KEY_PREFIX,
         label,
         ownerWallet: wallet.toLowerCase(),
+        wallet: wallet.toLowerCase(),
         brandKey: brandKey?.toLowerCase(),
         plan,
         rateLimit: {
@@ -134,7 +135,7 @@ export function getRateLimitForPlan(plan: ApiKeyPlan): RateLimitConfig {
  */
 export async function findApiKeysByWallet(wallet: string): Promise<ApiKey[]> {
     const container = await getContainer();
-    const query = "SELECT * FROM c WHERE c.type = 'api_key' AND c.ownerWallet = @wallet AND c.isActive = true";
+    const query = "SELECT * FROM c WHERE c.type = 'api_key' AND c.wallet = @wallet AND c.isActive = true";
     const { resources } = await container.items.query({
         query,
         parameters: [{ name: "@wallet", value: wallet.toLowerCase() }]
