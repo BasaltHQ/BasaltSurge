@@ -9,20 +9,12 @@ export function getClient() {
   // Resolve brandKey dynamically
   let brandKey = "";
   if (typeof window !== "undefined") {
-    const path = window.location.pathname || "";
-    const isPlatformPath = path.startsWith("/developers") || path.startsWith("/docs");
-    const containerType = document.documentElement?.getAttribute("data-pp-container-type") || "";
-    const isPlatformContainer = !containerType || containerType.toLowerCase() === "platform";
-    if (isPlatformPath && isPlatformContainer) {
-      brandKey = "basaltsurge";
-    } else {
-      brandKey = document.documentElement?.getAttribute("data-pp-brand-key") || "";
-      if (!brandKey) {
-        const hostLower = window.location.hostname.toLowerCase();
-        const win = window as any;
-        if (win.__DYNAMIC_DOMAINS__ && win.__DYNAMIC_DOMAINS__[hostLower]) {
-          brandKey = win.__DYNAMIC_DOMAINS__[hostLower];
-        }
+    brandKey = document.documentElement?.getAttribute("data-pp-brand-key") || "";
+    if (!brandKey) {
+      const hostLower = window.location.hostname.toLowerCase();
+      const win = window as any;
+      if (win.__DYNAMIC_DOMAINS__ && win.__DYNAMIC_DOMAINS__[hostLower]) {
+        brandKey = win.__DYNAMIC_DOMAINS__[hostLower];
       }
     }
   }
@@ -34,7 +26,10 @@ export function getClient() {
   // For "basaltsurge" (platform), strictly use the main client ID, do NOT look for a brand-specific one.
   // This avoids issues where NEXT_PUBLIC_THIRDWEB_CLIENT_ID_BASALTSURGE is set incorrectly or missing.
   const isPlatform = !brandKey || brandKey.toLowerCase() === "basaltsurge" || brandKey.toLowerCase() === "portalpay";
-  const specificClientId = (!isPlatform && brandKey) ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${brandKey.toUpperCase()}`] : undefined;
+  
+  // Normalize brandKey (e.g. "data-opt" -> "DATA_OPT") to resolve env vars safely
+  const normalizedKey = brandKey ? brandKey.toUpperCase().replace(/-/g, "_") : "";
+  const specificClientId = (!isPlatform && normalizedKey) ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${normalizedKey}`] : undefined;
   const clientId = specificClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
 
   const cacheKey = secret ? `secret_${secret}` : `client_${clientId}`;
