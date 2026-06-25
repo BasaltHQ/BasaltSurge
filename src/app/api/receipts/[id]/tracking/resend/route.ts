@@ -84,7 +84,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             }
             if (brandDoc?.name) brandName = brandDoc.name;
             if (brandDoc?.logos?.app) logoUrl = brandDoc.logos.app;
-            if (brandDoc?.theme?.primaryColor) brandColor = brandDoc.theme.primaryColor;
+            if (brandDoc?.colors?.primary) brandColor = brandDoc.colors.primary;
         }
 
         const { resources: shopDocs } = await container.items.query({
@@ -160,6 +160,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             html: htmlContent,
             fromName: senderName,
             fromEmail: senderEmail,
+            brandKey: brandKey,
         });
 
         return NextResponse.json({ ok: true, sent: true }, { headers: { "x-correlation-id": correlationId } });

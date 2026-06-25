@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
 
                 if (brandDoc?.name) brandName = brandDoc.name;
                 if (brandDoc?.logos?.app) logoUrl = brandDoc.logos.app;
-                if (brandDoc?.theme?.primaryColor) brandColor = brandDoc.theme.primaryColor;
+                if (brandDoc?.colors?.primary) brandColor = brandDoc.colors.primary;
             }
 
             // 1.5. Shop Override (Merchant Specific Branding)
