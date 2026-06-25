@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 const STRIPE_API_VERSION = "2026-03-25.dahlia;crypto_onramp_beta=v2";
 const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
-async function executeGaslessTransferServer(
+export async function executeGaslessTransferServer(
   fromWalletEmail: string,
   toAddress: string,
   usdcAmount: number,
@@ -178,6 +178,7 @@ async function runBackgroundPoll(params: {
   let resolvedStatus = "failed";
   let isCreditCard = detectedCardFunding === "credit";
   let finalTxHash = "";
+  let isDefinitiveFailure = false;
 
   // Poll up to 120 times every 5 seconds (10 minutes total)
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -224,6 +225,7 @@ async function runBackgroundPoll(params: {
       ) {
         console.warn(`[BACKGROUND POLL] Stripe session failed early: status=${status}, lastError=${lastError}`);
         resolvedStatus = "failed";
+        isDefinitiveFailure = true;
         break;
       }
     } catch (e) {
@@ -275,12 +277,13 @@ async function runBackgroundPoll(params: {
     } else {
       console.error("[BACKGROUND POLL] executeGaslessTransferServer failed.");
       resolvedStatus = "failed";
+      isDefinitiveFailure = true;
     }
   }
 
-  // If we reach here and status is failed, update receipt to failed and send email
+  // If we reach here and status is failed, update receipt to pending/failed and send email if definitive
   if (resolvedStatus === "failed") {
-    console.warn(`[BACKGROUND POLL] Session failed or timed out. Updating receipt ${receiptId} status to failed.`);
+    console.warn(`[BACKGROUND POLL] Session failed or timed out. Updating receipt ${receiptId} status. Definitive: ${isDefinitiveFailure}`);
 
     // 1. Update Cosmos DB
     try {
@@ -289,14 +292,15 @@ async function runBackgroundPoll(params: {
       const { resource: receipt } = await container.item(docId, merchantWallet).read();
 
       if (receipt) {
-        receipt.status = "failed";
+        const nextStatus = isDefinitiveFailure ? "failed" : "pending";
+        receipt.status = nextStatus;
         receipt.lastUpdatedAt = Date.now();
         receipt.statusHistory = Array.isArray(receipt.statusHistory)
-          ? [...receipt.statusHistory, { status: "failed", ts: Date.now() }]
-          : [{ status: "failed", ts: Date.now() }];
+          ? [...receipt.statusHistory, { status: nextStatus, ts: Date.now() }]
+          : [{ status: nextStatus, ts: Date.now() }];
 
         await container.items.upsert(receipt);
-        console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to failed in DB`);
+        console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to ${nextStatus} in DB`);
       } else {
         console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found in DB for failure tagging`);
       }
@@ -304,9 +308,10 @@ async function runBackgroundPoll(params: {
       console.error("[BACKGROUND POLL] Database failure update error:", dbErr);
     }
 
-    // 2. Send transaction failure email to customer
-    try {
-      console.log(`[BACKGROUND POLL] Sending failure email to ${email}`);
+    if (isDefinitiveFailure) {
+      // 2. Send transaction failure email to customer
+      try {
+        console.log(`[BACKGROUND POLL] Sending failure email to ${email}`);
       const siteConfig = await getSiteConfigForWallet(merchantWallet);
       const brandName = siteConfig?.theme?.brandName || "PortalPay";
       const brandColor = siteConfig?.theme?.primaryColor || "#35ff7c";
@@ -367,6 +372,27 @@ export async function POST(req: NextRequest) {
         { ok: false, error: "missing_required_fields" },
         { status: 400 }
       );
+    }
+
+    // Immediately write Stripe metadata to the receipt in Cosmos DB
+    try {
+      const container = await getContainer();
+      const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
+      const { resource: receipt } = await container.item(docId, merchantWallet).read();
+      if (receipt) {
+        receipt.stripeSessionId = sessionId;
+        receipt.customerEmail = email;
+        receipt.onrampAmount = amount;
+        receipt.splitAddress = splitAddress;
+        receipt.splitAddressCredit = splitAddressCredit || null;
+        receipt.lastUpdatedAt = Date.now();
+        await container.items.upsert(receipt);
+        console.log(`[BACKGROUND POLL] Immediately saved Stripe metadata to receipt ${receiptId}`);
+      } else {
+        console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found during immediate metadata write`);
+      }
+    } catch (dbErr) {
+      console.error("[BACKGROUND POLL] Failed to write initial Stripe metadata to receipt:", dbErr);
     }
 
     // Launch background task asynchronously without awaiting

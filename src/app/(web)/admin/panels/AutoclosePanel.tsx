@@ -71,6 +71,45 @@ export default function AutoclosePanel() {
   // Time till next close (UTC 00:00)
   const [timeLeft, setTimeLeft] = useState("00:00:00");
 
+  // Stuck Payments reconciliation state
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileResult, setReconcileResult] = useState<any>(null);
+  const [reconcileError, setReconcileError] = useState("");
+  const [reconcileSuccess, setReconcileSuccess] = useState("");
+
+  async function triggerStuckPaymentsReconciliation() {
+    if (!window.confirm("Are you sure you want to scan for and reconcile stuck guest EOA payments? This will check all pending/failed Stripe onramp receipts from the last 7 days, inspect their derived guest wallet balances, and sweep any found USDC to target split contracts.")) {
+      return;
+    }
+
+    try {
+      setReconciling(true);
+      setReconcileError("");
+      setReconcileSuccess("");
+      setReconcileResult(null);
+
+      const res = await fetch("/api/cron/reconcile-stuck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.message || data.error || "Reconciliation failed");
+      }
+
+      setReconcileResult(data);
+      setReconcileSuccess("Stuck payments sweep executed successfully!");
+      loadRuns(); // Reload history logs in case any receipt state updated
+    } catch (err: any) {
+      setReconcileError(err.message || "An unexpected error occurred");
+    } finally {
+      setReconciling(false);
+    }
+  }
+
   const isSuper = account?.address ? isPlatformSuperAdmin(account.address) : false;
   const isPlatform = brandKey === "portalpay" || brandKey === "basaltsurge";
 
@@ -337,6 +376,112 @@ export default function AutoclosePanel() {
             <p className="text-[10px] text-muted-foreground mt-1">On-chain value settled to splits</p>
           </div>
         </div>
+      </div>
+
+      {/* Stuck Payments Reconciliation */}
+      <div className="glass-pane rounded-xl border overflow-hidden p-6 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20">
+              <Activity className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Stuck Payments Recovery (Base Outage Protection)</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Scan for and sweep stuck guest EOA wallet payments to splits (runs automatically every 10 minutes in the background).
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={triggerStuckPaymentsReconciliation}
+            disabled={reconciling}
+            className="px-4 py-2.5 rounded-xl bg-foreground/10 hover:bg-foreground/20 text-white font-semibold text-xs transition-all disabled:opacity-50 flex items-center gap-2 self-start md:self-center border border-foreground/10"
+          >
+            {reconciling ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Play className="w-4 h-4 fill-current" />
+            )}
+            <span>Scan & Sweep Now</span>
+          </button>
+        </div>
+
+        {reconcileError && (
+          <div className="text-xs font-medium text-rose-500 bg-rose-500/10 px-4 py-3 rounded-lg border border-rose-500/20 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{reconcileError}</span>
+          </div>
+        )}
+
+        {reconcileSuccess && (
+          <div className="text-xs font-medium text-emerald-500 bg-emerald-500/10 px-4 py-3 rounded-lg border border-emerald-500/20 flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 shrink-0" />
+            <span>{reconcileSuccess}</span>
+          </div>
+        )}
+
+        {reconcileResult && (
+          <div className="p-4 rounded-lg border border-foreground/10 bg-foreground/[0.01] text-xs space-y-2.5">
+            <div className="font-semibold text-white flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-emerald-500" />
+              <span>Reconciliation Run Report:</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-muted-foreground">
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider block text-muted-foreground/60">Candidate Receipts</span>
+                <span className="text-sm font-semibold text-white mt-0.5 block">{reconcileResult.processed || 0}</span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider block text-muted-foreground/60">Sweeps Executed</span>
+                <span className="text-sm font-semibold text-emerald-400 mt-0.5 block">{reconcileResult.succeeded || 0}</span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider block text-muted-foreground/60">Failed Sweeps</span>
+                <span className="text-sm font-semibold text-rose-400 mt-0.5 block">{reconcileResult.failed || 0}</span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider block text-muted-foreground/60">Skipped (Zero/Incomplete)</span>
+                <span className="text-sm font-semibold text-white mt-0.5 block">{reconcileResult.skipped || 0}</span>
+              </div>
+            </div>
+
+            {reconcileResult.results && reconcileResult.results.length > 0 && (
+              <div className="mt-3 border-t border-foreground/5 pt-3">
+                <div className="text-[11px] font-bold text-white uppercase tracking-wider mb-2">Reconciliation Details:</div>
+                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-2">
+                  {reconcileResult.results.map((r: any, idx: number) => (
+                    <div key={idx} className="p-2 rounded bg-background border text-[11px] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-white">#{r.receiptId}</span>
+                        <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
+                          r.status === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                          r.status === 'failed' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
+                          'bg-foreground/10 text-muted-foreground border border-foreground/20'
+                        }`}>
+                          {r.status.toUpperCase()}
+                        </span>
+                        {r.reason && <span className="text-muted-foreground/75">({r.reason})</span>}
+                      </div>
+                      {r.txHash && (
+                        <div className="text-xs font-mono text-primary flex items-center gap-1.5">
+                          <span>Tx:</span>
+                          <a 
+                            href={`https://basescan.org/tx/${r.txHash}`} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="underline"
+                          >
+                            {r.txHash.slice(0, 10)}...{r.txHash.slice(-8)}
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Closes Log */}

@@ -7,6 +7,7 @@ import { EndOfDayPDF } from "@/components/reports/EndOfDayPDF";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { isBasaltSurge } from "@/lib/branding";
 import sharp from "sharp";
+import { readBrandOverridesFromCosmos } from "@/lib/brand-config";
 
 // Initialize Resend
 const resend = new Resend(process.env.RESEND_API_KEY || "re_123");
@@ -43,15 +44,14 @@ export async function POST(req: NextRequest) {
         let brandColor = "#111827"; // Default Slate-900
 
         try {
-            const siteConfig = await getSiteConfigForWallet(merchantWallet);
+            const siteConfig = await getSiteConfigForWallet(merchantWallet, undefined, req);
             const brandKey = siteConfig?.brandKey;
             brandName = siteConfig?.theme?.brandName || brandName;
             logoUrl = siteConfig?.theme?.brandLogoUrl || undefined;
             if (siteConfig?.theme?.primaryColor) brandColor = siteConfig.theme.primaryColor;
 
             if (brandKey && brandKey.toLowerCase() !== "portalpay") {
-                const container = await getContainer();
-                const { resource: brandDoc } = await container.item("brand:config", brandKey.toLowerCase()).read();
+                const brandDoc = await readBrandOverridesFromCosmos(brandKey);
 
                 if (brandDoc?.email?.senderEmail) {
                     senderEmail = brandDoc.email.senderEmail;

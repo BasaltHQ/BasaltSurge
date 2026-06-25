@@ -3,6 +3,7 @@ import { getContainer } from "@/lib/cosmos";
 import { sendEmail } from "@/lib/aws/ses";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { isBasaltSurge } from "@/lib/branding";
+import { readBrandOverridesFromCosmos } from "@/lib/brand-config";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const correlationId = crypto.randomUUID();
@@ -43,14 +44,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         let logoUrl: string | undefined = undefined;
         let brandColor = "#111827";
 
-        const siteConfig = await getSiteConfigForWallet(wallet);
+        const siteConfig = await getSiteConfigForWallet(wallet, undefined, req);
         const brandKey = siteConfig?.brandKey || "";
         brandName = siteConfig?.theme?.brandName || brandName;
         logoUrl = siteConfig?.theme?.brandLogoUrl || undefined;
         if (siteConfig?.theme?.primaryColor) brandColor = siteConfig.theme.primaryColor;
 
         if (brandKey && brandKey.toLowerCase() !== "portalpay") {
-            const { resource: brandDoc } = await container.item("brand:config", brandKey.toLowerCase()).read();
+            const brandDoc = await readBrandOverridesFromCosmos(brandKey);
             if (brandDoc?.email?.senderEmail) {
                 senderEmail = brandDoc.email.senderEmail;
                 senderName = brandDoc.email.senderName || brandDoc.name || senderName;
