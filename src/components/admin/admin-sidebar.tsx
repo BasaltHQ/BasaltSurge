@@ -60,7 +60,8 @@ import {
   FileSignature,
   Code,
   GraduationCap,
-  Clock
+  Clock,
+  Mail
 } from 'lucide-react';
 import { useBrand } from '@/contexts/BrandContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -134,6 +135,7 @@ export type AdminTabKey =
   | 'analytics'
   | 'leaderboard'
   | 'autoclose'
+  | 'emailConfig'
   | 'agentUniversity';
 
 interface AdminSidebarProps {
@@ -488,6 +490,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Devices', key: 'devices' as AdminTabKey, icon: <Smartphone className="w-4 h-4" /> },
         ...(!isRequestMode || isSuperadmin ? [{ title: 'Split Config', key: 'splitConfig' as AdminTabKey, icon: <GitMerge className="w-4 h-4" /> }] : []),
         { title: 'Branding', key: 'branding' as AdminTabKey, icon: <Palette className="w-4 h-4" /> },
+        { title: 'Email Settings', key: 'emailConfig' as AdminTabKey, icon: <Mail className="w-4 h-4" /> },
         { title: 'Onramps', key: 'onramps' as AdminTabKey, icon: <Plug className="w-4 h-4" /> },
         { title: 'Merchants', key: 'users' as AdminTabKey, icon: <Store className="w-4 h-4" /> },
         { title: 'SEO Pages', key: 'seoPages' as AdminTabKey, icon: <Search className="w-4 h-4" /> },

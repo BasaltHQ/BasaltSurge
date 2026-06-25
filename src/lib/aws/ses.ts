@@ -1,4 +1,12 @@
-import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import { 
+    SESClient, 
+    SendEmailCommand,
+    VerifyEmailIdentityCommand,
+    VerifyDomainIdentityCommand,
+    VerifyDomainDkimCommand,
+    GetIdentityVerificationAttributesCommand,
+    GetIdentityDkimAttributesCommand
+} from "@aws-sdk/client-ses";
 
 const sesClient = new SESClient({
     region: process.env.SES_REGION || process.env.AWS_REGION || "us-west-2",
@@ -57,3 +65,48 @@ export async function sendEmail({
 
     return await sesClient.send(command);
 }
+
+export async function verifyEmailIdentity(email: string) {
+    const command = new VerifyEmailIdentityCommand({
+        EmailAddress: email,
+    });
+    return await sesClient.send(command);
+}
+
+export async function verifyDomainIdentity(domain: string) {
+    const command = new VerifyDomainIdentityCommand({
+        Domain: domain,
+    });
+    return await sesClient.send(command);
+}
+
+export async function verifyDomainDkim(domain: string) {
+    const command = new VerifyDomainDkimCommand({
+        Domain: domain,
+    });
+    return await sesClient.send(command);
+}
+
+export async function getIdentityStatus(identity: string) {
+    const verificationCommand = new GetIdentityVerificationAttributesCommand({
+        Identities: [identity],
+    });
+    const dkimCommand = new GetIdentityDkimAttributesCommand({
+        Identities: [identity],
+    });
+
+    const [verificationRes, dkimRes] = await Promise.all([
+        sesClient.send(verificationCommand),
+        sesClient.send(dkimCommand),
+    ]);
+
+    const verificationAttr = verificationRes.VerificationAttributes?.[identity];
+    const dkimAttr = dkimRes.DkimAttributes?.[identity];
+
+    return {
+        verificationStatus: verificationAttr?.VerificationStatus || "Pending",
+        dkimStatus: dkimAttr?.DkimVerificationStatus || "Pending",
+        dkimTokens: dkimAttr?.DkimTokens || [],
+    };
+}
+

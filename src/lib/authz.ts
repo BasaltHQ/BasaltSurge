@@ -154,6 +154,7 @@ export type AdminPanel =
   | 'notificationsPlatform' // Platform notifications
   | 'shopifyPlatform' // Shopify Platform
   | 'autoclose'       // Autoclose Daily Settlement
+  | 'emailConfig'     // Email sender/DKIM settings
   | 'users';          // Users/Merchants tab in partner group
 
 // ------------------------------------------------------------------
@@ -357,7 +358,7 @@ export function canAccessPanel(panel: AdminPanel, wallet?: string): boolean {
     return permissions.includes('manage:partners');
   }
 
-  if (panel === 'branding' || panel === 'onramps' || panel === 'seoPages') {
+  if (panel === 'branding' || panel === 'onramps' || panel === 'seoPages' || panel === 'emailConfig') {
     return permissions.includes('manage:branding');
   }
 

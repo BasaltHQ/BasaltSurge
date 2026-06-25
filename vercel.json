@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/autoclose",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-stuck",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

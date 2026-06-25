@@ -82,6 +82,41 @@ export default function PartnerManagementPanel() {
   const [containerState, setContainerState] = useState<string>("");
   const [approvedAgents, setApprovedAgents] = useState<any[]>([]);
 
+  // Stuck Payments reconciliation state
+  const [reconciling, setReconciling] = useState(false);
+  const [reconcileResult, setReconcileResult] = useState<any>(null);
+  const [reconcileError, setReconcileError] = useState("");
+
+  async function triggerStuckPaymentsReconciliation() {
+    if (!window.confirm("Are you sure you want to scan for and reconcile stuck guest EOA payments? This will check all pending/failed Stripe onramp receipts from the last 7 days, inspect their derived guest wallet balances, and sweep any found USDC to target split contracts.")) {
+      return;
+    }
+
+    try {
+      setReconciling(true);
+      setReconcileError("");
+      setReconcileResult(null);
+
+      const res = await fetch("/api/cron/reconcile-stuck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.message || data.error || "Reconciliation failed");
+      }
+
+      setReconcileResult(data);
+    } catch (err: any) {
+      setReconcileError(err.message || "An unexpected error occurred");
+    } finally {
+      setReconciling(false);
+    }
+  }
+
   // Persist current brand config to the Brand Config API to avoid timing issues during provisioning/deploy.
   async function persistBrandBeforeProvision(): Promise<boolean> {
     try {
@@ -2636,6 +2671,62 @@ export default function PartnerManagementPanel() {
             ) : null}
             </div>
           </div>
+
+        {/* Stuck Payments Reconciliation */}
+        <div className="glass-pane rounded-xl border overflow-hidden">
+          <div className="px-5 py-4 border-b border-foreground/5 flex items-center justify-between">
+            <h4 className="text-sm font-semibold">Stuck Payments Recovery (Base Outage Protection)</h4>
+          </div>
+          <div className="p-5 space-y-4">
+            <div className="text-xs text-muted-foreground/70">
+              Scan for guest EOA wallets with stuck USDC payments due to Base blockchain outages or network congestion, and reconcile them back to their split contracts.
+            </div>
+
+            {reconcileError && (
+              <div className="p-3 rounded-lg border border-red-500/20 bg-red-500/[0.02] text-xs text-red-500">
+                ⚠️ {reconcileError}
+              </div>
+            )}
+
+            {reconcileResult && (
+              <div className="p-3 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.02] text-xs space-y-2">
+                <div className="font-semibold text-emerald-500">✓ Reconciliation complete:</div>
+                <div className="text-muted-foreground/90 space-y-1">
+                  <p>Processed: {reconcileResult.processed || 0} candidate receipt(s)</p>
+                  <p>Succeeded: {reconcileResult.succeeded || 0} payment(s) swept</p>
+                  <p>Failed: {reconcileResult.failed || 0} execution(s)</p>
+                  <p>Skipped: {reconcileResult.skipped || 0} receipt(s)</p>
+                </div>
+                {reconcileResult.results && reconcileResult.results.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-emerald-500/10 max-h-40 overflow-y-auto space-y-1">
+                    {reconcileResult.results.map((r: any, idx: number) => (
+                      <div key={idx} className="text-[11px] text-muted-foreground/80 flex justify-between">
+                        <span>{r.receiptId}: {r.status} {r.reason ? `(${r.reason})` : ''}</span>
+                        {r.txHash && (
+                          <span className="font-mono text-emerald-400">
+                            <a href={`https://base.blockscout.com/tx/${r.txHash}`} target="_blank" rel="noreferrer" className="underline">
+                              {r.txHash.slice(0, 8)}...
+                            </a>
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end">
+              <button
+                className="px-4 py-2.5 rounded-lg border border-foreground/10 hover:bg-foreground/5 transition-colors text-sm font-medium text-white flex items-center gap-2 bg-foreground/5"
+                onClick={triggerStuckPaymentsReconciliation}
+                disabled={reconciling}
+              >
+                {reconciling ? "Scanning & Reconciling…" : "Reconcile Stuck Payments"}
+              </button>
+            </div>
+          </div>
+        </div>
 
           {/* Split Versions overview */}
           <div className="glass-pane rounded-xl border overflow-hidden">
