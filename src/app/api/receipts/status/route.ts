@@ -102,6 +102,8 @@ export async function POST(req: NextRequest) {
     const expectedToken = typeof body.expectedToken === "string" ? String(body.expectedToken).toUpperCase() : undefined;
     const expectedAmountToken = typeof body.expectedAmountToken === "string" || typeof body.expectedAmountToken === "number" ? String(body.expectedAmountToken) : undefined;
     const expectedUsd = typeof body.expectedUsd === "number" ? Number(body.expectedUsd) : undefined;
+    const stripeSessionId = typeof body.stripeSessionId === "string" ? String(body.stripeSessionId).trim() : undefined;
+    const customerEmail = typeof body.customerEmail === "string" ? String(body.customerEmail).trim().toLowerCase() : undefined;
     let brandKey: string | undefined = undefined;
     try { brandKey = getBrandKey(); } catch { brandKey = undefined; }
 
@@ -238,6 +240,8 @@ export async function POST(req: NextRequest) {
             }
             : {}),
           ...(shopSlug ? { shopSlug } : {}),
+          ...(stripeSessionId ? { stripeSessionId } : {}),
+          ...(customerEmail ? { customerEmail } : {}),
         }
         : {
           id,
@@ -267,6 +271,8 @@ export async function POST(req: NextRequest) {
             }
             : {}),
           ...(shopSlug ? { shopSlug } : {}),
+          ...(stripeSessionId ? { stripeSessionId } : {}),
+          ...(customerEmail ? { customerEmail } : {}),
         };
 
       await container.items.upsert(next as any);
