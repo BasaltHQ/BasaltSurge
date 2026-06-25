@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getContainer } from "@/lib/cosmos";
 
 export const dynamic = 'force-dynamic';
 
@@ -86,6 +87,25 @@ export async function POST(req: NextRequest) {
     }
 
     console.log("[STRIPE ONRAMP] Session created:", data.id, "status:", data.status);
+
+    if (receiptId && merchantWallet) {
+      try {
+        const container = await getContainer();
+        const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
+        const normalizedWallet = merchantWallet.toLowerCase();
+        const { resource: receipt } = await container.item(docId, normalizedWallet).read();
+        if (receipt) {
+          receipt.stripeSessionId = data.id;
+          receipt.lastUpdatedAt = Date.now();
+          await container.items.upsert(receipt);
+          console.log(`[STRIPE ONRAMP] Successfully linked Stripe session ${data.id} to receipt ${receiptId}`);
+        } else {
+          console.warn(`[STRIPE ONRAMP] Receipt ${receiptId} not found in DB`);
+        }
+      } catch (dbErr: any) {
+        console.error("[STRIPE ONRAMP] Failed to persist Stripe session ID to receipt:", dbErr);
+      }
+    }
 
     return NextResponse.json({
       ok: true,

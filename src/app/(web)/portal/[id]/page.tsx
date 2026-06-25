@@ -3245,6 +3245,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       postStatus("paid", {
         txHash,
         paymentMethod: "stripe_headless",
+        stripeSessionId: result.sessionId,
+        customerEmail: shipEmail || undefined,
       });
     },
     onError: (error) => {

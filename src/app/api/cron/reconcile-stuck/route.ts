@@ -154,7 +154,7 @@ export async function POST(req: NextRequest) {
         const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
         let receipt: any = null;
         try {
-          const { resource } = await container.item(docId, merchantWallet).read();
+          const { resource } = await container.item(docId, merchantWallet.toLowerCase()).read();
           receipt = resource;
         } catch {}
 
