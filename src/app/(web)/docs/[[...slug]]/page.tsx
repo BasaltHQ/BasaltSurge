@@ -9,6 +9,7 @@ import { ArrowLeft, Github, BookOpen } from 'lucide-react';
 import Link from 'next/link';
 import { getBaseUrl } from '@/lib/base-url';
 import { getBrandConfig } from '@/config/brands';
+import { CopyForLlmButton } from '@/components/docs/copy-for-llm-button';
 
 // Force dynamic rendering to apply brand-specific replacements at runtime
 export const dynamic = 'force-dynamic';
@@ -33,6 +34,7 @@ export async function generateStaticParams() {
     { slug: ['guides', 'payment-gateway'] },
     { slug: ['guides', 'pos'] },
     { slug: ['guides', 'shopify'] },
+    { slug: ['guides', 'agent-integration'] },
     { slug: ['merchant'] },
     { slug: ['merchant', 'shop-setup'] },
     { slug: ['merchant', 'reserve-management'] },
@@ -218,8 +220,13 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
           )}
 
           {/* Page Title */}
-          <div className="mb-8">
-            <h1 className="text-4xl font-bold mb-2">{pageTitle}</h1>
+          <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border pb-4">
+            <div>
+              <h1 className="text-4xl font-bold mb-2">{pageTitle}</h1>
+            </div>
+            <div className="shrink-0">
+              <CopyForLlmButton content={processedContent} pageTitle={pageTitle} />
+            </div>
           </div>
 
           {/* Content */}

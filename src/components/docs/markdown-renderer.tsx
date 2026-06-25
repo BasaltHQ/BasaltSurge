@@ -95,6 +95,27 @@ function CustomLink({ href, children }: any) {
   const pathname = usePathname();
   const isExternal = href?.startsWith('http');
   const isAnchor = href?.startsWith('#');
+  const isApi = href?.startsWith('/api/');
+
+  if (href === '/api/docs/download-skill') {
+    return (
+      <a
+        href={href}
+        className="inline-flex items-center gap-2 px-5 py-2.5 my-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-bold text-xs uppercase tracking-wider rounded-lg transition-all shadow-[0_0_15px_rgba(99,102,241,0.4)] hover:shadow-[0_0_20px_rgba(99,102,241,0.6)] no-underline active:scale-95 duration-200"
+        download
+      >
+        {children}
+      </a>
+    );
+  }
+
+  if (isApi) {
+    return (
+      <a href={href} className="text-primary hover:underline font-semibold" download>
+        {children}
+      </a>
+    );
+  }
 
   if (isAnchor) {
     return (

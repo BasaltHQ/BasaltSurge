@@ -8,12 +8,14 @@ This guide walks through integrating PortalPay into an e-commerce platform, cove
 
 ## Security & Headers
 
-- All developer API requests require the APIM subscription header:
+- All API requests require authentication using your secret API key passed via the header:
+  `x-api-key: {your-merchant-api-key}`
+- For backward compatibility with legacy endpoints, the Azure APIM subscription header is also supported:
   `Ocp-Apim-Subscription-Key: {your-subscription-key}`
-- Perform PortalPay API calls on your backend; never expose your subscription key in browser code.
-- Origin enforcement: requests must pass through Azure Front Door (AFD). APIM validates an internal x-edge-secret injected by AFD. Direct-origin calls are denied (403) in protected environments.
+- Perform all API calls on your backend; never expose your API keys or subscription keys in browser code.
+- Origin enforcement: requests must pass through Azure Front Door (AFD). The gateway validates internal security tokens; direct-origin calls to backend pods are denied (403).
 - Rate limiting headers may be returned: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`. Implement exponential backoff on `429 Too Many Requests`.
-- Admin-only endpoints (e.g., POST `/api/receipts/refund`, POST `/api/receipts/terminal`, POST `/api/split/deploy`, POST `/api/pricing/config`) are JWT cookie-protected in the PortalPay UI and are not callable via APIM.
+- Admin-only endpoints (e.g., POST `/api/receipts/refund`, POST `/api/receipts/terminal`, POST `/api/split/deploy`, POST `/api/pricing/config`) are JWT cookie-protected in the Admin Portal UI and are not callable via external merchant API keys.
 
 ---
 
@@ -57,7 +59,7 @@ async function syncProducts(products: any[]) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Ocp-Apim-Subscription-Key': process.env.PORTALPAY_SUBSCRIPTION_KEY
+        'x-api-key': process.env.PORTALPAY_API_KEY!
       },
       body: JSON.stringify({
         sku: product.sku,
@@ -122,7 +124,7 @@ export async function POST(req: Request) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Ocp-Apim-Subscription-Key': process.env.PORTALPAY_SUBSCRIPTION_KEY!
+      'x-api-key': process.env.PORTALPAY_API_KEY!
     },
     body: JSON.stringify({
       items: items.map((item: any) => ({
@@ -207,12 +209,47 @@ async function waitForPayment(receiptId: string): Promise<boolean> {
 
 ```typescript
 // pages/api/webhooks/portalpay.ts
-export async function POST(req: Request) {
-  const { event, receiptId, transactionHash } = await req.json();
+import crypto from "crypto";
+
+function verifyWebhookSignature(rawBody: string, signatureHeader: string, signingSecret: string): boolean {
+  if (!signatureHeader || !signingSecret) return false;
   
-  // Verify webhook signature (coming soon)
-  // const valid = verifyWebhookSignature(req);
-  // if (!valid) return Response.json({ error: 'invalid' }, { status: 401 });
+  // Extract hex digest from header formatted as "sha256=..."
+  const match = signatureHeader.match(/^sha256=(.+)$/);
+  if (!match) return false;
+  const providedSignature = match[1];
+  
+  const expectedSignature = crypto
+    .createHmac("sha256", signingSecret)
+    .update(rawBody)
+    .digest("hex");
+  
+  try {
+    const signatureBuf = Buffer.from(providedSignature, "hex");
+    const expectedBuf = Buffer.from(expectedSignature, "hex");
+    if (signatureBuf.length !== expectedBuf.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(signatureBuf, expectedBuf);
+  } catch {
+    return false;
+  }
+}
+
+export async function POST(req: Request) {
+  const signatureHeader = req.headers.get("x-portalpay-signature") || "";
+  const rawBody = await req.text();
+  
+  // Verify webhook signature using the merchant API key as the signing secret
+  const signingSecret = process.env.PORTALPAY_API_KEY!;
+  const isValid = verifyWebhookSignature(rawBody, signatureHeader, signingSecret);
+  
+  if (!isValid) {
+    return Response.json({ error: "Invalid signature" }, { status: 401 });
+  }
+  
+  const payload = JSON.parse(rawBody);
+  const { event, receiptId, transactionHash } = payload;
   
   if (event === 'receipt.paid') {
     // Update order status
