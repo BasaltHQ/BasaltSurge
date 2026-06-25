@@ -314,6 +314,7 @@ export async function POST(req: NextRequest) {
                 subject: `[${brandName}] Transaction Failed - Receipt #${receiptId}`,
                 html: htmlContent,
                 fromName: `${brandName} Support`,
+                brandKey: brandKey,
               });
             } catch (emailErr) {
               console.error(`[cron/reconcile-stuck] Failed to send failure email for ${receiptId}:`, emailErr);
@@ -435,6 +436,7 @@ export async function POST(req: NextRequest) {
             subject: `[${brandName}] Payment Reconciled - Receipt #${receiptId}`,
             html: htmlContent,
             fromName: `${brandName} Support`,
+            brandKey: brandKey,
           });
         } catch (emailErr) {
           console.error(`[cron/reconcile-stuck] Failed to send reconciliation confirmation email for ${receiptId}:`, emailErr);

@@ -77,12 +77,9 @@ export async function triggerNotification(
         if (brandDoc) {
           brandKey = (brandDoc.key || brandKey).toLowerCase();
           brandName = brandDoc.name || brandName;
-          brandColor = brandDoc.theme?.primaryColor || brandColor;
+          brandColor = brandDoc.colors?.primary || brandColor;
           logoUrl = brandDoc.logos?.app || logoUrl;
           senderName = `${brandName} Partner Portal`;
-          if (brandDoc.theme?.logoShape) {
-            logoShape = brandDoc.theme.logoShape;
-          }
         }
       } catch (err) {
         console.error("[Notification Dispatcher] Failed to resolve partner brand assets:", err);
@@ -153,6 +150,7 @@ export async function triggerNotification(
       subject: `[${brandName}] ${data.title}`,
       html: htmlContent,
       fromName: senderName,
+      brandKey: brandKey,
     });
 
     console.log(`[Notification Dispatcher] Successfully sent email to ${recipientEmail} for event=${event}`);

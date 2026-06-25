@@ -133,6 +133,17 @@ export type BrandConfigDoc = {
   agents?: { wallet: string; bps: number }[];
   // Contact information
   contactEmail?: string;
+  // Email configuration (AWS SES verification and custom sender setup)
+  email?: {
+    domain?: string;
+    senderEmail?: string;
+    senderName?: string;
+    verificationType?: "email" | "domain";
+    verificationStatus?: string;
+    dkimStatus?: string;
+    dkimTokens?: string[];
+    updatedAt?: number;
+  };
   // APIM product aliasing/curation
   apimCatalog?: ApimCatalogEntry[];
   // Container Apps deployment status for Partners panel

@@ -346,12 +346,14 @@ async function runBackgroundPoll(params: {
         subject: `[${brandName}] Transaction Failed - Receipt #${receiptId}`,
         html: htmlContent,
         fromName: `${brandName} Support`,
+        brandKey: brandKey,
       });
       console.log(`[BACKGROUND POLL] Failure email successfully dispatched to ${email}`);
     } catch (emailErr) {
       console.error("[BACKGROUND POLL] Failed to send failure email:", emailErr);
     }
   }
+}
 }
 
 export async function POST(req: NextRequest) {

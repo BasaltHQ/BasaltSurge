@@ -22,12 +22,14 @@ export async function sendEmail({
     html,
     fromName,
     fromEmail,
+    brandKey,
 }: {
     to: string;
     subject: string;
     html: string;
     fromName?: string;
     fromEmail?: string;
+    brandKey?: string;
 }) {
     // AWS SES requires the sender to be a verified domain/address.
     // If the default verified address is sales@basalthq.com, we can use the brand name with the verified email address.
@@ -41,7 +43,43 @@ export async function sendEmail({
     }
 
     // Set the display name to the requested fromName, but enforce the verified email
-    const source = fromName ? `"${fromName}" <${verifiedEmail}>` : defaultFrom;
+    let source = fromName ? `"${fromName}" <${verifiedEmail}>` : defaultFrom;
+    let replyToAddresses = fromEmail ? [fromEmail] : undefined;
+
+    // Dynamically resolve custom brand email configuration if brandKey is provided
+    if (brandKey) {
+        try {
+            const { getContainer } = await import("@/lib/cosmos");
+            const container = await getContainer();
+            let doc: any = null;
+            try {
+                const { resource } = await container.item("brand:config", brandKey.toLowerCase().trim()).read();
+                doc = resource;
+            } catch {}
+
+            if (doc && doc.email) {
+                const emailConfig = doc.email;
+                const contactEmail = doc.contactEmail || emailConfig.senderEmail;
+                
+                // Only use the custom sender address if it's verified (status === 'Success')
+                if (emailConfig.verificationStatus === "Success") {
+                    const customSender = emailConfig.senderEmail || (emailConfig.domain ? `noreply@${emailConfig.domain}` : null);
+                    if (customSender) {
+                        verifiedEmail = customSender;
+                        source = fromName ? `"${fromName}" <${customSender}>` : `"${doc.name || brandKey}" <${customSender}>`;
+                    }
+                }
+                
+                // Always set ReplyToAddresses to the brand's support/contact email (or sender email) if available,
+                // so customers can reply directly to the partner even if we are using the default platform sender.
+                if (contactEmail) {
+                    replyToAddresses = [contactEmail];
+                }
+            }
+        } catch (dbErr) {
+            console.error(`[AWS SES] Failed to dynamically resolve brand email config for ${brandKey}:`, dbErr);
+        }
+    }
 
     const command = new SendEmailCommand({
         Source: source,
@@ -60,7 +98,7 @@ export async function sendEmail({
                 },
             },
         },
-        ReplyToAddresses: fromEmail ? [fromEmail] : undefined,
+        ReplyToAddresses: replyToAddresses,
     });
 
     return await sesClient.send(command);
