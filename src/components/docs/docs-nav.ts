@@ -19,6 +19,7 @@ export const docsNavigation: DocNavSection[] = [
       { title: 'Quick Start', href: '/developers/docs/quickstart' },
       { title: 'Core Concepts', href: '/developers/docs/concepts' },
       { title: 'Authentication', href: '/developers/docs/auth' },
+      { title: 'Agent Integration', href: '/developers/docs/guides/agent-integration' },
     ],
   },
   {
