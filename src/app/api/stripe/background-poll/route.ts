@@ -273,7 +273,21 @@ async function runBackgroundPoll(params: {
           receipt.isCreditCard = isCreditCard;
           receipt.detectedCardFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
 
-          await container.items.upsert(receipt);
+          let finalReceipt = receipt;
+          try {
+            const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
+            const { readBrandOverridesCached } = await import("@/lib/brand-config");
+            const siteConfig = await getSiteConfigForWallet(merchantWallet);
+            const brandConfigDoc = brandKey ? await readBrandOverridesCached(brandKey) : null;
+            if (siteConfig) {
+              const funding = receipt.detectedCardFunding === "credit" ? "credit" : "debit";
+              finalReceipt = recalculateReceiptForCardFunding(receipt, funding, siteConfig, brandConfigDoc);
+            }
+          } catch (recalcErr) {
+            console.error("[BACKGROUND POLL] Failed to recalculate receipt line items:", recalcErr);
+          }
+
+          await container.items.upsert(finalReceipt);
           console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to paid with txHash: ${txHash}`);
         } else {
           console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found in DB`);

@@ -212,7 +212,7 @@ export async function POST(req: NextRequest) {
       }
 
       const ts = Date.now();
-      const next = resource
+      let next = resource
         ? {
           ...resource,
           status,
@@ -280,6 +280,25 @@ export async function POST(req: NextRequest) {
           ...(detectedCardFunding ? { detectedCardFunding } : {}),
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
         };
+
+      if (["paid", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
+        const funding = (detectedCardFunding === "credit" || isCreditCard === true || next.detectedCardFunding === "credit" || next.isCreditCard === true) ? "credit" : "debit";
+        const brandKeyToUse = brandKey || next.brandKey || resource?.brandKey;
+        try {
+          const { getSiteConfigForWallet } = await import("@/lib/site-config");
+          const { readBrandOverridesCached } = await import("@/lib/brand-config");
+          const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
+
+          const siteConfig = await getSiteConfigForWallet(wallet, brandKeyToUse);
+          const brandConfigDoc = brandKeyToUse ? await readBrandOverridesCached(brandKeyToUse) : null;
+
+          if (siteConfig) {
+            next = recalculateReceiptForCardFunding(next, funding, siteConfig, brandConfigDoc);
+          }
+        } catch (recalcErr) {
+          console.error("[STATUS API] Failed to recalculate receipt for card funding:", recalcErr);
+        }
+      }
 
       await container.items.upsert(next as any);
       try {

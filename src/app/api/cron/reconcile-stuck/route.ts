@@ -444,7 +444,54 @@ export async function POST(req: NextRequest) {
           : [{ status: "paid", ts: Date.now() }];
         receipt.ttl = -1; // disable expiration
 
-        await container.items.upsert(receipt);
+        // Persist card funding if resolved from Stripe
+        let isCreditCard = receipt.isCreditCard;
+        let detectedCardFunding = receipt.detectedCardFunding;
+
+        if (receipt.stripeSessionId && (!detectedCardFunding || isCreditCard === undefined)) {
+          try {
+            const stripeKey = process.env.STRIPE_API_KEY;
+            if (stripeKey) {
+              const STRIPE_API_VERSION = "2026-03-25.dahlia;crypto_onramp_beta=v2";
+              const response = await fetch(
+                `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(receipt.stripeSessionId)}`,
+                {
+                  method: "GET",
+                  headers: {
+                    "Authorization": `Bearer ${stripeKey}`,
+                    "Stripe-Version": STRIPE_API_VERSION,
+                  },
+                }
+              );
+              if (response.ok) {
+                const data = await response.json();
+                isCreditCard = data.payment_details?.card?.funding === "credit";
+                detectedCardFunding = isCreditCard ? "credit" : "debit";
+                receipt.isCreditCard = isCreditCard;
+                receipt.detectedCardFunding = detectedCardFunding;
+              }
+            }
+          } catch (stripeErr) {
+            console.warn(`[cron/reconcile-stuck] Failed to fetch Stripe session ${receipt.stripeSessionId} for card funding info:`, stripeErr);
+          }
+        }
+
+        const funding = (detectedCardFunding === "credit" || isCreditCard === true) ? "credit" : "debit";
+        
+        let finalReceipt = receipt;
+        try {
+          const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
+          const { readBrandOverridesCached } = await import("@/lib/brand-config");
+          const siteConfig = await getSiteConfigForWallet(merchantWallet, brandKey);
+          const brandConfigDoc = brandKey ? await readBrandOverridesCached(brandKey) : null;
+          if (siteConfig) {
+            finalReceipt = recalculateReceiptForCardFunding(receipt, funding, siteConfig, brandConfigDoc);
+          }
+        } catch (recalcErr) {
+          console.error("[cron/reconcile-stuck] Failed to recalculate receipt line items:", recalcErr);
+        }
+
+        await container.items.upsert(finalReceipt);
         succeeded++;
 
         // Send confirmation email

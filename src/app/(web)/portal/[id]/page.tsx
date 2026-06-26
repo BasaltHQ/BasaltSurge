@@ -2232,7 +2232,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // ── Stripe Headless Onramp State ──
   const [headlessEmailPrompt, setHeadlessEmailPrompt] = useState(false);
   const [copiedWallet, setCopiedWallet] = useState(false);
-  const [stripeIframeHeight, setStripeIframeHeight] = useState(0);
   const [headlessEmailInput, setHeadlessEmailInput] = useState(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
@@ -2354,18 +2353,39 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + processingFeeUsd).toFixed(2);
   }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd, feeMinusEnabled, unscaleFactor]);
 
+  const debitStripeFeePct = useMemo(() => {
+    const activeSplitConfig = splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit;
+    const platformBps = activeSplitConfig && typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50;
+    const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
+      ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+      : 0;
+    const basePresentedBps = presentedFeeBps !== undefined ? presentedFeeBps : 290;
+    return Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
+  }, [splitConfig, splitConfigCredit, presentedFeeBps]);
+
+  const creditStripeFeePct = useMemo(() => {
+    const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig;
+    const platformBps = activeSplitConfig && typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50;
+    const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
+      ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+      : 0;
+    const basePresentedBps = creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : 390);
+    return Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
+  }, [splitConfig, splitConfigCredit, creditPresentedFeeBps, presentedFeeBps]);
+
+  const stripeFeePct = useMemo(() => {
+    const isCredit = detectedCardFunding === "credit";
+    return isCredit ? creditStripeFeePct : debitStripeFeePct;
+  }, [detectedCardFunding, debitStripeFeePct, creditStripeFeePct]);
+
   const stripeProcessingFeeUsd = useMemo(() => {
-    const feePctFraction = Math.max(0, actualSplitFeePct / 100);
-    return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
-  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, actualSplitFeePct]);
+    return +(totalUsd * stripeFeePct).toFixed(2);
+  }, [totalUsd, stripeFeePct]);
 
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
-    if (feeMinusEnabled) {
-      return totalUsd;
-    }
-    return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + stripeProcessingFeeUsd).toFixed(2);
-  }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, stripeProcessingFeeUsd, feeMinusEnabled, totalUsd]);
+    return +(totalUsd - stripeProcessingFeeUsd).toFixed(2);
+  }, [receipt, totalUsd, stripeProcessingFeeUsd]);
 
   // Compute receipt readiness (loaded and has a positive total)
   useEffect(() => {
@@ -3334,6 +3354,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     connectedWallet: account,
     enabled: stripeHeadless,
     isEcommerceMode,
+    feeMinusEnabled,
+    debitFeePct: debitStripeFeePct * 100,
+    creditFeePct: creditStripeFeePct * 100,
+    totalUsd,
     onCardDetected: (card) => {
       if (card) {
         setDetectedCardFunding(card.funding);
@@ -3439,57 +3463,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       clearInterval(interval);
     };
   }, [theme.brandName]);
-
-  // Monitor the Stripe payment element iframe height to dynamically detect the layout state
-  useEffect(() => {
-    if (!headlessPaymentElement) {
-      setStripeIframeHeight(0);
-      return;
-    }
-
-    const checkHeight = () => {
-      const iframe = headlessPaymentElement.querySelector("iframe");
-      if (iframe) {
-        setStripeIframeHeight(iframe.offsetHeight);
-      }
-    };
-
-    checkHeight();
-    const interval = setInterval(checkHeight, 500);
-
-    let observer: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(() => {
-        checkHeight();
-      });
-      observer.observe(headlessPaymentElement);
-    }
-
-    return () => {
-      clearInterval(interval);
-      if (observer) observer.disconnect();
-    };
-  }, [headlessPaymentElement]);
-
-  const shouldShowMask = useMemo(() => {
-    if (headlessAuthElement) return true;
-    if (headlessPaymentElement) {
-      return stripeIframeHeight > 0 && stripeIframeHeight < 360;
-    }
-    return false;
-  }, [headlessAuthElement, headlessPaymentElement, stripeIframeHeight]);
-
-  const maskStyle = useMemo(() => {
-    const isPayment = !!headlessPaymentElement;
-    return {
-      backgroundColor: "#ffffff",
-      color: "#697386",
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      bottom: isPayment ? "74px" : "26px",
-      height: isPayment ? "40px" : "54px",
-      filter: !isLightBackground ? "invert(0.93) hue-rotate(180deg) brightness(1.1) contrast(0.95)" : undefined,
-    };
-  }, [headlessPaymentElement, isLightBackground]);
 
   // Autostart Stripe headless flow if it's the only active onramp, payment is ready, and user hasn't opted out
   useEffect(() => {
@@ -4071,6 +4044,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 >
                   Confirm & Continue
                 </button>
+                <p className={`mt-3 text-center text-[10.5px] leading-relaxed select-none ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
+                  By continuing, you allow <strong className={isLightText ? 'text-white/80' : 'text-black/80'}>{theme.brandName || "BasaltSurge"}</strong> to check your identity verification and manage your saved crypto wallets and buy/sell crypto on your behalf.
+                </p>
               </div>
             ) : headlessAuthElement || headlessPaymentElement ? (
               <div className="w-full h-full flex flex-col items-stretch stripe-embedded-container animate-in fade-in duration-300 relative">
@@ -4086,10 +4062,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     }
                   }}
                 />
-                {shouldShowMask && (
+                {headlessAuthElement && (
                   <div
-                    className="absolute left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
-                    style={maskStyle}
+                    className="absolute bottom-[26px] left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
+                    style={{
+                      backgroundColor: "#ffffff",
+                      color: "#697386",
+                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                      height: "54px",
+                      filter: !isLightBackground ? "invert(0.93) hue-rotate(180deg) brightness(1.1) contrast(0.95)" : undefined,
+                    }}
                   >
                     <span>
                       By continuing, you allow <strong className="font-semibold" style={{ color: "#3c4257" }}>{theme.brandName || "BasaltSurge"}</strong> to check your identity verification and manage your saved crypto wallets and buy/sell crypto on your behalf.

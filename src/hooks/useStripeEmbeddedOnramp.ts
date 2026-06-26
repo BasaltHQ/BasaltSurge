@@ -94,6 +94,14 @@ export type UseStripeEmbeddedOnrampProps = {
   splitAddressCredit?: string;
   /** USD amount to onramp */
   amount?: number;
+  /** Fee minus mode enabled */
+  feeMinusEnabled?: boolean;
+  /** Debit Stripe fee component percentage (e.g. 2.9) */
+  debitFeePct?: number;
+  /** Credit Stripe fee component percentage (e.g. 3.9) */
+  creditFeePct?: number;
+  /** Total USD customer is charged */
+  totalUsd?: number;
   /** Network for destination */
   network?: string;
   /** Destination currency */
@@ -243,6 +251,10 @@ export function useStripeEmbeddedOnramp({
   onStepChange,
   onCardDetected,
   isEcommerceMode = false,
+  feeMinusEnabled = false,
+  debitFeePct = 0,
+  creditFeePct = 0,
+  totalUsd,
 }: UseStripeEmbeddedOnrampProps): UseStripeEmbeddedOnrampReturn {
   const [step, setStep] = useState<OnrampStep>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -356,8 +368,12 @@ export function useStripeEmbeddedOnramp({
       const { inAppWallet } = await import("thirdweb/wallets");
       const { base } = await import("thirdweb/chains");
 
+      const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
+      const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
+      const clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+
       const twClient = createThirdwebClient({
-        clientId: process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "",
+        clientId,
       });
 
       // Create in-app wallet with auth_endpoint strategy and EIP-7702 gasless sponsored mode!
@@ -405,8 +421,12 @@ export function useStripeEmbeddedOnramp({
       const { createThirdwebClient, getContract, prepareContractCall, sendTransaction, readContract } = await import("thirdweb");
       const { base } = await import("thirdweb/chains");
 
+      const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
+      const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
+      const clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+
       const twClient = createThirdwebClient({
-        clientId: process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "",
+        clientId,
       });
 
       let account: any;
@@ -521,10 +541,19 @@ export function useStripeEmbeddedOnramp({
     }
   }, []);
 
+  const getOnrampAmount = useCallback((funding: "credit" | "debit" | null): number => {
+    if (totalUsd !== undefined) {
+      const rate = funding === "credit" ? (creditFeePct ?? 0) : (debitFeePct ?? 0);
+      return +(totalUsd - (totalUsd * rate / 100)).toFixed(2);
+    }
+    return amount || 0;
+  }, [totalUsd, debitFeePct, creditFeePct, amount]);
+
   const createSessionHelper = useCallback(async (
     customerId: string,
     pmToken: string,
-    buyerWallet: string
+    buyerWallet: string,
+    overrideAmount?: number
   ): Promise<{ sessionId: string; paymentDetails: any } | null> => {
     updateStep("creating_session");
     try {
@@ -534,7 +563,7 @@ export function useStripeEmbeddedOnramp({
         body: JSON.stringify({
           cryptoCustomerId: customerId,
           cryptoPaymentToken: pmToken,
-          sourceAmount: amount,
+          sourceAmount: overrideAmount ?? amount,
           sourceCurrency: "usd",
           destinationCurrency,
           destinationNetwork: network,
@@ -564,7 +593,7 @@ export function useStripeEmbeddedOnramp({
           try {
             await onrampRef.current.verifyDocuments();
             console.log("[EMBEDDED ONRAMP] Document verification completed. Retrying session creation...");
-            return await createSessionHelper(customerId, pmToken, buyerWallet);
+            return await createSessionHelper(customerId, pmToken, buyerWallet, overrideAmount);
           } catch (verifyErr: any) {
             throw new Error(verifyErr?.message || "Identity verification failed or was cancelled");
           }
@@ -611,7 +640,7 @@ export function useStripeEmbeddedOnramp({
           receiptId,
           merchantWallet,
           email: activeEmail,
-          amount,
+          amount: getOnrampAmount(detectedCardFunding),
           splitAddress,
           splitAddressCredit,
           brandKey,
@@ -673,7 +702,8 @@ export function useStripeEmbeddedOnramp({
       ? splitAddressCredit
       : (splitAddress || "");
 
-    const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, amount || 0, connectedWallet);
+    const finalAmount = getOnrampAmount(detectedCardFunding || (isCreditCard ? "credit" : "debit"));
+    const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, finalAmount, connectedWallet);
 
     if (!txHash) {
       handleError("Failed to transfer funds to merchant");
@@ -696,7 +726,8 @@ export function useStripeEmbeddedOnramp({
     onSuccess,
     handleError,
     executeGaslessTransfer,
-    connectedWallet
+    connectedWallet,
+    getOnrampAmount
   ]);
 
   const runCheckoutLoop = useCallback(async (
@@ -713,7 +744,8 @@ export function useStripeEmbeddedOnramp({
 
     let currentSessionId = sessionIdRef.current;
     if (!currentSessionId) {
-      const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet);
+      const initialAmount = getOnrampAmount(null);
+      const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount);
       if (!sessionResult) return;
       currentSessionId = sessionResult.sessionId;
       sessionIdRef.current = currentSessionId;
@@ -732,6 +764,18 @@ export function useStripeEmbeddedOnramp({
         onCardDetected?.({ funding: fundingType, brand, last4 });
         
         console.log(`[EMBEDDED ONRAMP] Card detected: ${brand} ${funding} (${last4}). Pausing for fee review.`);
+
+        if (fundingType === "credit") {
+          const creditAmount = getOnrampAmount("credit");
+          if (creditAmount !== initialAmount) {
+            console.log(`[EMBEDDED ONRAMP] Credit card detected. Re-creating session with credit amount: ${creditAmount} (was ${initialAmount})`);
+            const creditSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, creditAmount);
+            if (!creditSessionResult) return;
+            currentSessionId = creditSessionResult.sessionId;
+            sessionIdRef.current = currentSessionId;
+            setSessionId(currentSessionId);
+          }
+        }
         
         updateStep("confirming_fees");
         await new Promise(r => setTimeout(r, 2500));
@@ -843,7 +887,8 @@ export function useStripeEmbeddedOnramp({
             console.log("[EMBEDDED ONRAMP] Quote rate drifted. Recreating session with fresh quote...");
             sessionIdRef.current = null;
             setSessionId(null);
-            const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet);
+            const targetAmount = getOnrampAmount(detectedCardFunding);
+            const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount);
             if (!sessionResult) return;
             currentSessionId = sessionResult.sessionId;
             sessionIdRef.current = currentSessionId;
@@ -882,7 +927,9 @@ export function useStripeEmbeddedOnramp({
     network,
     updateStep,
     handleError,
-    onCardDetected
+    onCardDetected,
+    getOnrampAmount,
+    detectedCardFunding
   ]);
 
   const submitKycInfo = useCallback(async (kycInfo: any) => {
