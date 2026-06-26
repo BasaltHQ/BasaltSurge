@@ -37,6 +37,7 @@ export type Receipt = {
   shippingMethod?: string;
   shippingCostUsd?: number;
   tracking?: { carrier?: string; trackingNumber?: string; trackingUrl?: string; shippedAt?: number; updatedAt?: number };
+  stripeEmail?: string;
 };
 
 function toCents(n: number) {
@@ -114,7 +115,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     const spec = {
       query:
-        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
+        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
       parameters: [{ name: "@id", value: id }],
     } as { query: string; parameters: { name: string; value: any }[] };
 
@@ -144,6 +145,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         shippingMethod: typeof (row as any)?.shippingMethod === "string" ? (row as any).shippingMethod : undefined,
         shippingCostUsd: Number.isFinite(Number((row as any)?.shippingCostUsd)) ? Number((row as any).shippingCostUsd) : undefined,
         tracking: (row as any)?.tracking && typeof (row as any).tracking === "object" ? (row as any).tracking : undefined,
+        stripeEmail: typeof (row as any)?.stripeEmail === "string" ? (row as any).stripeEmail : undefined,
       };
       if (!(rec.totalUsd > 0)) {
         const candidate = sumLineItems(rec.lineItems || []);

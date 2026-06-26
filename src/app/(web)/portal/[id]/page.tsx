@@ -116,6 +116,7 @@ type Receipt = {
   redirectUrl?: string;
   returnUrl?: string;
   onSuccess?: string;
+  stripeEmail?: string;
 };
 
 // Helper to determine if receipt is already paid/settled
@@ -1996,6 +1997,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           const rec: Receipt | undefined = j?.receipt;
           if (rec && typeof rec.totalUsd === "number") {
             setReceipt(rec);
+            // Prepopulate stripeEmail if returned from receipt API
+            const emailVal = rec.stripeEmail || rec.shippingAddress?.email || "";
+            if (emailVal) {
+              setShipEmail((prev) => prev || emailVal);
+              setHeadlessEmailInput((prev) => prev || emailVal);
+            }
             try {
               const rw = String((rec as any)?.recipientWallet || "").toLowerCase();
               if (/^0x[a-f0-9]{40}$/i.test(rw)) setResolvedRecipient(rw as `0x${string}`);
@@ -2210,12 +2217,24 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [items]);
 
   const [shipName, setShipName] = useState('');
-  const [shipEmail, setShipEmail] = useState('');
+  const [shipEmail, setShipEmail] = useState(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      return sp.get("stripeEmail") || sp.get("email") || "";
+    }
+    return "";
+  });
 
   // ── Stripe Headless Onramp State ──
   const [headlessEmailPrompt, setHeadlessEmailPrompt] = useState(false);
   const [copiedWallet, setCopiedWallet] = useState(false);
-  const [headlessEmailInput, setHeadlessEmailInput] = useState('');
+  const [headlessEmailInput, setHeadlessEmailInput] = useState(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      return sp.get("stripeEmail") || sp.get("email") || "";
+    }
+    return "";
+  });
   const [headlessPhoneInput, setHeadlessPhoneInput] = useState('');
   const [headlessInitiated, setHeadlessInitiated] = useState(false);
   const [shipLine1, setShipLine1] = useState('');
@@ -2235,6 +2254,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       setShipMethod(shippingOptions.methods[0]);
     }
   }, [shippingRequired, shippingOptions.methods, shipMethod]);
+
+  // Sync shipEmail with headlessEmailInput for Stripe prepopulation
+  useEffect(() => {
+    if (shipEmail && !headlessEmailInput) {
+      setHeadlessEmailInput(shipEmail);
+    }
+  }, [shipEmail, headlessEmailInput]);
 
   // Auto-detect pre-existing shipping info (page refresh)
   useEffect(() => {
