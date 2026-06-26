@@ -33,8 +33,8 @@ export async function GET(req: NextRequest) {
     const parameters: { name: string; value: any }[] = [];
 
     if (targetBrandKey) {
-      query += ` AND (c.id = CONCAT(c.wallet, ':user:', @brandKey) OR c.id = CONCAT(c.wallet, ':user'))`;
-      parameters.push({ name: "@brandKey", value: targetBrandKey });
+      query += ` AND (ENDSWITH(c.id, @brandSuffix) OR ENDSWITH(c.id, ':user'))`;
+      parameters.push({ name: "@brandSuffix", value: `:${targetBrandKey}` });
     }
 
     const container = await getContainer();
@@ -51,18 +51,29 @@ export async function GET(req: NextRequest) {
     for (const r of resources) {
       const wallet = String(r.wallet || "").toLowerCase().trim();
       const id = String(r.id || "");
-      if (targetBrandKey && id === `${wallet}:user:${targetBrandKey}`) {
+      const lowercaseId = id.toLowerCase();
+      if (targetBrandKey && lowercaseId === `${wallet}:user:${targetBrandKey}`) {
         brandScopedProfiles.set(wallet, r);
-      } else if (id === `${wallet}:user`) {
+      } else if (lowercaseId === `${wallet}:user`) {
         legacyProfiles.push(r);
       }
     }
 
     // Resolve brand-specific Thirdweb Client ID dynamically
-    const bKey = targetBrandKey ? targetBrandKey.toUpperCase() : "";
-    const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
+    const bKey = targetBrandKey ? targetBrandKey.toUpperCase().replace(/-/g, "_") : "";
+    const envClientId = (bKey ? (process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] || process.env[`THIRDWEB_CLIENT_ID_${bKey}`]) : undefined)
+      || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID
+      || process.env.THIRDWEB_CLIENT_ID;
 
-    if (envClientId && targetBrandKey) {
+    const uncheckedLegacy = legacyProfiles.filter(p => {
+      const checked = p.checkedBrands || [];
+      return !checked.map((b: string) => b.toLowerCase()).includes(targetBrandKey);
+    });
+
+    // Process a max batch size of 20 at a time to prevent server/gateway timeouts
+    const batchToProcess = uncheckedLegacy.slice(0, 20);
+
+    if (envClientId && targetBrandKey && batchToProcess.length > 0) {
       try {
         const { createThirdwebClient } = await import("thirdweb");
         const { inAppWallet } = await import("thirdweb/wallets");
@@ -74,48 +85,66 @@ export async function GET(req: NextRequest) {
           secretKey: process.env.THIRDWEB_SECRET_KEY,
         });
 
-        for (const legacyProfile of legacyProfiles) {
-          const wallet = String(legacyProfile.wallet || "").toLowerCase().trim();
-          const email = String(legacyProfile.contact?.email || "").toLowerCase().trim();
+        // Run EOA checks and database upserts concurrently
+        await Promise.all(
+          batchToProcess.map(async (legacyProfile) => {
+            const wallet = String(legacyProfile.wallet || "").toLowerCase().trim();
+            const email = String(legacyProfile.contact?.email || "").toLowerCase().trim();
 
-          // Skip if already backfilled/checked
-          if (brandScopedProfiles.has(wallet)) {
-            continue;
-          }
+            if (brandScopedProfiles.has(wallet)) {
+              return;
+            }
 
-          try {
-            const verificationToken = markEmailVerified(email);
-            const tempWallet = inAppWallet({
-              auth: { options: ["auth_endpoint" as any] },
-              executionMode: { mode: "EIP7702", sponsorGas: true },
-            });
-            const account = await tempWallet.connect({
-              client: brandTwClient,
-              chain: base,
-              strategy: "auth_endpoint" as any,
-              payload: JSON.stringify({ email, verificationToken }),
-            });
-            const derivedAddress = account.address.toLowerCase().trim();
+            try {
+              const verificationToken = markEmailVerified(email);
+              const tempWallet = inAppWallet({
+                auth: { options: ["auth_endpoint" as any] },
+                executionMode: { mode: "EIP7702", sponsorGas: true },
+              });
+              const account = await tempWallet.connect({
+                client: brandTwClient,
+                chain: base,
+                strategy: "auth_endpoint" as any,
+                payload: JSON.stringify({ email, verificationToken }),
+              });
+              const derivedAddress = account.address.toLowerCase().trim();
 
-            if (derivedAddress === wallet) {
-              console.log(`[custom-auth-wallets] EOA matched: email ${email} derived ${derivedAddress} == wallet ${wallet} using client ID ${envClientId}`);
-              
-              // Create the brand-scoped profile
-              const nextDoc = {
+              if (derivedAddress === wallet) {
+                console.log(`[custom-auth-wallets] EOA matched: email ${email} derived ${derivedAddress} == wallet ${wallet} using client ID ${envClientId}`);
+                
+                // Create the brand-scoped profile
+                const nextDoc = {
+                  ...legacyProfile,
+                  id: `${wallet}:user:${targetBrandKey}`,
+                  brandKey: targetBrandKey,
+                  lastSeen: Date.now()
+                };
+
+                await container.items.upsert(nextDoc);
+                console.log(`[custom-auth-wallets] Successfully backfilled user profile for ${targetBrandKey}: ${nextDoc.id}`);
+                brandScopedProfiles.set(wallet, nextDoc);
+              }
+            } catch (deriveErr) {
+              console.warn(`[custom-auth-wallets] Failed EOA derivation check for email ${email} under brand ${targetBrandKey}:`, deriveErr);
+            }
+
+            // Mark this legacy profile as checked for this brand so we never try slow EOA derivation on it again
+            try {
+              const checked = Array.isArray(legacyProfile.checkedBrands) ? [...legacyProfile.checkedBrands] : [];
+              if (!checked.map((b: string) => b.toLowerCase()).includes(targetBrandKey)) {
+                checked.push(targetBrandKey);
+              }
+              const updatedLegacy = {
                 ...legacyProfile,
-                id: `${wallet}:user:${targetBrandKey}`,
-                brandKey: targetBrandKey,
+                checkedBrands: checked,
                 lastSeen: Date.now()
               };
-
-              await container.items.upsert(nextDoc);
-              console.log(`[custom-auth-wallets] Successfully backfilled user profile for ${targetBrandKey}: ${nextDoc.id}`);
-              brandScopedProfiles.set(wallet, nextDoc);
+              await container.items.upsert(updatedLegacy);
+            } catch (legacyUpdateErr) {
+              console.error(`[custom-auth-wallets] Failed to update checkedBrands on legacy profile for ${wallet}:`, legacyUpdateErr);
             }
-          } catch (deriveErr) {
-            console.warn(`[custom-auth-wallets] Failed EOA derivation check for email ${email} under brand ${targetBrandKey}:`, deriveErr);
-          }
-        }
+          })
+        );
       } catch (importErr) {
         console.error(`[custom-auth-wallets] Failed to load Thirdweb SDK for derivation:`, importErr);
       }
