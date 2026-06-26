@@ -104,6 +104,8 @@ export async function POST(req: NextRequest) {
     const expectedUsd = typeof body.expectedUsd === "number" ? Number(body.expectedUsd) : undefined;
     const stripeSessionId = typeof body.stripeSessionId === "string" ? String(body.stripeSessionId).trim() : undefined;
     const customerEmail = typeof body.customerEmail === "string" ? String(body.customerEmail).trim().toLowerCase() : undefined;
+    const detectedCardFunding = typeof body.detectedCardFunding === "string" ? String(body.detectedCardFunding).trim().toLowerCase() : undefined;
+    const isCreditCard = typeof body.isCreditCard === "boolean" ? body.isCreditCard : undefined;
     let brandKey: string | undefined = undefined;
     try { brandKey = getBrandKey(); } catch { brandKey = undefined; }
 
@@ -242,6 +244,8 @@ export async function POST(req: NextRequest) {
           ...(shopSlug ? { shopSlug } : {}),
           ...(stripeSessionId ? { stripeSessionId } : {}),
           ...(customerEmail ? { customerEmail } : {}),
+          ...(detectedCardFunding ? { detectedCardFunding } : {}),
+          ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
         }
         : {
           id,
@@ -273,6 +277,8 @@ export async function POST(req: NextRequest) {
           ...(shopSlug ? { shopSlug } : {}),
           ...(stripeSessionId ? { stripeSessionId } : {}),
           ...(customerEmail ? { customerEmail } : {}),
+          ...(detectedCardFunding ? { detectedCardFunding } : {}),
+          ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
         };
 
       await container.items.upsert(next as any);

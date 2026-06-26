@@ -77,40 +77,7 @@ export default function AutoclosePanel() {
   const [reconcileError, setReconcileError] = useState("");
   const [reconcileSuccess, setReconcileSuccess] = useState("");
 
-  // Temporary recovery state
-  const [reconcilingTemp, setReconcilingTemp] = useState(false);
-  const [reconcileTempResult, setReconcileTempResult] = useState<any>(null);
-  const [reconcileTempError, setReconcileTempError] = useState("");
 
-  async function triggerTempRecovery() {
-    if (!window.confirm("Are you sure you want to trigger the temporary recovery for the lost Stripe headless payments from mmfmilton@icloud.com? This will verify their derived guest wallet balances in production and sweep them directly on-chain.")) {
-      return;
-    }
-
-    try {
-      setReconcilingTemp(true);
-      setReconcileTempError("");
-      setReconcileTempResult(null);
-
-      const res = await fetch("/api/admin/reconcile-temp-lost", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data.message || data.error || "Recovery failed");
-      }
-
-      setReconcileTempResult(data);
-    } catch (err: any) {
-      setReconcileTempError(err.message || "An unexpected error occurred");
-    } finally {
-      setReconcilingTemp(false);
-    }
-  }
 
   async function triggerStuckPaymentsReconciliation() {
     if (!window.confirm("Are you sure you want to scan for and reconcile stuck guest EOA payments? This will check all pending/failed Stripe onramp receipts from the last 7 days, inspect their derived guest wallet balances, and sweep any found USDC to target split contracts.")) {
@@ -518,83 +485,7 @@ export default function AutoclosePanel() {
           </div>
         )}
 
-        {/* Temporary Lost Payments Recovery (Today's Outage) */}
-        <div className="border-t border-foreground/5 pt-6 mt-6 space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-              <h4 className="text-sm font-bold text-white uppercase tracking-wide">Temporary Lost Payments Recovery (Today's Outage)</h4>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Specifically sweep and reconcile today's lost Stripe headless checkouts (R-904400 and R-497694) for <strong>mmfmilton@icloud.com</strong> using live production client IDs.
-              </p>
-            </div>
-            <button
-              onClick={triggerTempRecovery}
-              disabled={reconcilingTemp}
-              className="px-4 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-semibold text-xs transition-all disabled:opacity-50 flex items-center gap-2 self-start md:self-center border border-rose-500/20"
-            >
-              {reconcilingTemp ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Play className="w-4 h-4 fill-current text-rose-400" />
-              )}
-              <span>Run Specific Recovery (Today's Case)</span>
-            </button>
-          </div>
 
-          {reconcileTempError && (
-            <div className="text-xs font-medium text-rose-500 bg-rose-500/10 px-4 py-3 rounded-lg border border-rose-500/20 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{reconcileTempError}</span>
-            </div>
-          )}
-
-          {reconcileTempResult && (
-            <div className="p-4 rounded-lg border border-foreground/10 bg-foreground/[0.01] text-xs space-y-3">
-              <div className="font-semibold text-white flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-emerald-500" />
-                <span>Recovery Run Report:</span>
-              </div>
-              {reconcileTempResult.results && reconcileTempResult.results.length > 0 && (
-                <div className="space-y-3">
-                  {reconcileTempResult.results.map((r: any, idx: number) => (
-                    <div key={idx} className="p-3 rounded bg-background border border-foreground/5 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-white">Receipt {r.receiptId} ({r.brandKey})</span>
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                          r.swept ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-foreground/10 text-muted-foreground border border-foreground/20'
-                        }`}>
-                          {r.swept ? "SWEPT" : "NOT SWEPT"}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-muted-foreground space-y-1 pl-1">
-                        <p>Derived Guest Wallet: <code className="font-mono text-white select-all">{r.resolvedWallet || "N/A"}</code></p>
-                        {r.txHash && (
-                          <p className="flex items-center gap-1">
-                            <span>Sweep Tx Hash:</span>
-                            <a href={`https://basescan.org/tx/${r.txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-emerald-400 select-all">{r.txHash}</a>
-                          </p>
-                        )}
-                        <p>Database updated successfully: <span className={r.dbUpdated ? "text-emerald-400 font-semibold" : "text-rose-400"}>{r.dbUpdated ? "Yes" : "No"}</span></p>
-                        
-                        {r.attempts && r.attempts.length > 0 && (
-                          <div className="mt-2 pt-2 border-t border-foreground/5 space-y-1">
-                            <div className="text-[10px] uppercase font-bold text-muted-foreground/60">Execution Logs:</div>
-                            {r.attempts.map((att: any, attIdx: number) => (
-                              <div key={attIdx} className="text-[10px] text-muted-foreground/80 flex items-center justify-between">
-                                <span>Client ID {att.clientId}: {att.success ? "Success" : `Failed (${att.error || "No balance"})`}</span>
-                                {att.walletAddress && <span>Derived: {att.walletAddress.slice(0, 10)}... (bal: {att.balance} USDC)</span>}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Closes Log */}
