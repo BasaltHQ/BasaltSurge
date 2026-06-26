@@ -4034,7 +4034,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     }
                   }}
                 />
-                {headlessAuthElement && (
+                {(headlessAuthElement || headlessPaymentElement) && (
                   <div
                     className="absolute bottom-[26px] left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
                     style={{
@@ -4052,8 +4052,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 )}
               </div>
             ) : (
-              <div className="text-center flex flex-col items-center px-4 py-10 w-full animate-in fade-in duration-300">
-                <div className="relative flex items-center justify-center mb-8">
+              <div className="text-center flex flex-col items-center justify-center gap-4 min-h-[320px] px-4 py-8 w-full animate-in fade-in duration-300">
+                <div className="relative flex items-center justify-center">
                   {/* Rotating Outer Ring */}
                   <div className={`absolute w-14 h-14 rounded-full border-2 animate-spin ${isLightText ? 'border-white/5 border-t-white/30' : 'border-black/5 border-t-black/30'}`}></div>
                   {/* Glowing Core */}
@@ -4063,9 +4063,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     </svg>
                   </div>
                 </div>
-                <p className={`font-semibold text-sm tracking-tight mb-1 ${isLightText ? 'text-white' : 'text-black'}`}>{headlessStatus}</p>
+                <p className={`font-semibold text-sm tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>{headlessStatus}</p>
                 {headlessStep === "awaiting_funds" ? (
-                  <div className="w-full max-w-xs mt-6 flex flex-col items-stretch px-2 animate-in fade-in zoom-in duration-500">
+                  <div className="w-full max-w-xs flex flex-col items-stretch px-2 animate-in fade-in zoom-in duration-500">
                     <div className={`w-full h-2 rounded-full overflow-hidden relative ${isLightText ? 'bg-white/10' : 'bg-black/10'}`}>
                       <div
                         className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-1000 ease-linear rounded-full"
