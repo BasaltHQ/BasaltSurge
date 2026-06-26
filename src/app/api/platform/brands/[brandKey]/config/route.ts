@@ -45,6 +45,7 @@ type BrandConfigDoc = {
   coinbaseOnrampEnabled?: boolean;
   transakOnrampEnabled?: boolean;
   rampnowOnrampEnabled?: boolean;
+  feeMinusEnabled?: boolean;
   // Email Configuration
   email?: {
     senderName?: string;
@@ -103,6 +104,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     primaryAgentWallet: undefined,
     presentedFeeBps: undefined,
     creditPresentedFeeBps: undefined,
+    feeMinusEnabled: false,
   };
 
   const withDefaults = applyBrandDefaults(baseRaw);
@@ -155,6 +157,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     coinbaseOnrampEnabled: typeof overrides.coinbaseOnrampEnabled === "boolean" ? overrides.coinbaseOnrampEnabled : withDefaults.coinbaseOnrampEnabled,
     transakOnrampEnabled: typeof overrides.transakOnrampEnabled === "boolean" ? overrides.transakOnrampEnabled : withDefaults.transakOnrampEnabled,
     rampnowOnrampEnabled: typeof overrides.rampnowOnrampEnabled === "boolean" ? overrides.rampnowOnrampEnabled : withDefaults.rampnowOnrampEnabled,
+    feeMinusEnabled: typeof overrides.feeMinusEnabled === "boolean" ? overrides.feeMinusEnabled : withDefaults.feeMinusEnabled,
   });
 
   return merged;
@@ -314,6 +317,9 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
   }
   if (typeof raw?.rampnowOnrampEnabled === "boolean") {
     out.rampnowOnrampEnabled = raw.rampnowOnrampEnabled;
+  }
+  if (typeof raw?.feeMinusEnabled === "boolean") {
+    out.feeMinusEnabled = raw.feeMinusEnabled;
   }
 
   // Thirdweb Keys

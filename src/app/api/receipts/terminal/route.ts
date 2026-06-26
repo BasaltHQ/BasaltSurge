@@ -320,13 +320,36 @@ export async function POST(req: NextRequest) {
     const feePctFraction = totalFeePct / 100;
     const processingFeeCents = Math.round(baseWithoutFeeCents * feePctFraction);
 
-    const lineItems: ReceiptLineItem[] = [
-      { label: baseLabel, priceUsd: fromCents(baseCents) },
-      ...(taxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(taxCents) }] : []),
-      ...(processingFeeCents > 0 ? [{ label: "Processing Fee", priceUsd: fromCents(processingFeeCents) }] : []),
-    ];
+    const isFeeMinus = !!cfg?.feeMinusEnabled;
+    let lineItems: ReceiptLineItem[];
+    let totalUsd: number;
 
-    const totalUsd = fromCents(baseWithoutFeeCents + processingFeeCents);
+    if (isFeeMinus) {
+      const originalSubtotalCents = baseCents;
+      const originalTaxCents = taxCents;
+      const originalBaseWithoutFeeCents = baseWithoutFeeCents; // Customer total
+
+      const adjustedBaseWithoutFeeCents = Math.round(originalBaseWithoutFeeCents / (1 + feePctFraction));
+      const finalProcessingFeeCents = originalBaseWithoutFeeCents - adjustedBaseWithoutFeeCents;
+
+      const scaleFactor = originalBaseWithoutFeeCents > 0 ? (adjustedBaseWithoutFeeCents / originalBaseWithoutFeeCents) : 1;
+      const adjustedSubtotalCents = Math.round(originalSubtotalCents * scaleFactor);
+      const adjustedTaxCents = adjustedBaseWithoutFeeCents - adjustedSubtotalCents;
+
+      lineItems = [
+        { label: baseLabel, priceUsd: fromCents(adjustedSubtotalCents) },
+        ...(adjustedTaxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(adjustedTaxCents) }] : []),
+        ...(finalProcessingFeeCents > 0 ? [{ label: "Processing Fee", priceUsd: fromCents(finalProcessingFeeCents) }] : []),
+      ];
+      totalUsd = fromCents(originalBaseWithoutFeeCents);
+    } else {
+      lineItems = [
+        { label: baseLabel, priceUsd: fromCents(baseCents) },
+        ...(taxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(taxCents) }] : []),
+        ...(processingFeeCents > 0 ? [{ label: "Processing Fee", priceUsd: fromCents(processingFeeCents) }] : []),
+      ];
+      totalUsd = fromCents(baseWithoutFeeCents + processingFeeCents);
+    }
     const receiptId = genReceiptId();
     const ts = Date.now();
 

@@ -64,6 +64,7 @@ export type BrandConfig = {
   coinbaseOnrampEnabled?: boolean;
   transakOnrampEnabled?: boolean;
   rampnowOnrampEnabled?: boolean;
+  feeMinusEnabled?: boolean;
 };
 
 export const BRANDS: Record<string, BrandConfig> = {
@@ -77,6 +78,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     partnerFeeBps: 0,
     defaultMerchantFeeBps: 0,
     unifiedFeeEnabled: false,
+    feeMinusEnabled: false,
     apimCatalog: [], // original platform may expose full catalog elsewhere
   },
   basaltsurge: {
@@ -89,6 +91,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     partnerFeeBps: 0,
     defaultMerchantFeeBps: 0,
     unifiedFeeEnabled: false,
+    feeMinusEnabled: false,
     apimCatalog: [],
   },
   // Example second brand - provide assets under /public/brands/paynex/*
@@ -301,6 +304,7 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     apimCatalog,
     accessMode: (raw.accessMode as any) || (envAccessMode === "request" ? "request" : (envAccessMode === "open" ? "open" : undefined)) || raw.accessMode,
     unifiedFeeEnabled: typeof raw.unifiedFeeEnabled === "boolean" ? raw.unifiedFeeEnabled : false,
+    feeMinusEnabled: typeof raw.feeMinusEnabled === "boolean" ? raw.feeMinusEnabled : false,
     creditPlatformFeeBps: typeof raw.creditPlatformFeeBps === "number" ? raw.creditPlatformFeeBps : undefined,
     agentFeeBps: typeof raw.agentFeeBps === "number" ? raw.agentFeeBps : undefined,
     creditAgentFeeBps: typeof raw.creditAgentFeeBps === "number" ? raw.creditAgentFeeBps : undefined,

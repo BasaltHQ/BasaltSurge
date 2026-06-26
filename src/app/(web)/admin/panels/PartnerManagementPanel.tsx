@@ -158,6 +158,7 @@ export default function PartnerManagementPanel() {
       if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
       if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
+      if (config?.feeMinusEnabled !== undefined) body.feeMinusEnabled = Boolean(config.feeMinusEnabled);
       if (typeof config?.presentedFeeBps === "number") {
         body.presentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.presentedFeeBps))));
       }
@@ -175,7 +176,7 @@ export default function PartnerManagementPanel() {
       }
 
       // If nothing to persist, skip
-      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined && body.presentedFeeBps === undefined && body.creditPresentedFeeBps === undefined) {
+      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined && body.presentedFeeBps === undefined && body.creditPresentedFeeBps === undefined && body.feeMinusEnabled === undefined) {
         return true;
       }
 
@@ -881,6 +882,7 @@ export default function PartnerManagementPanel() {
       if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
       if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
+      if (config?.feeMinusEnabled !== undefined) body.feeMinusEnabled = Boolean(config.feeMinusEnabled);
       if (typeof config?.presentedFeeBps === "number")
         body.presentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.presentedFeeBps))));
       if (typeof config?.creditPresentedFeeBps === "number")
@@ -2049,6 +2051,19 @@ export default function PartnerManagementPanel() {
                     className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4"
                   />
                   <span>Unified Fee Display</span>
+                </label>
+              </div>
+              <div className="flex items-center">
+                <label className="flex items-center gap-2.5 text-xs font-medium cursor-pointer select-none mt-5">
+                  <input
+                    type="checkbox"
+                    checked={!!config?.feeMinusEnabled}
+                    onChange={(e) =>
+                      setConfig((prev: any) => ({ ...prev, feeMinusEnabled: e.target.checked }))
+                    }
+                    className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4"
+                  />
+                  <span>Enable Fee- System Option</span>
                 </label>
               </div>
               <div>

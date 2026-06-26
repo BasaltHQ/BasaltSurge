@@ -61,6 +61,8 @@ type SiteConfigResponse = {
     coinbaseOnrampEnabled?: boolean;
     transakOnrampEnabled?: boolean;
     rampnowOnrampEnabled?: boolean;
+    feeMinusEnabled?: boolean;
+    currencySelectionEnabled?: boolean;
   };
   degraded?: boolean;
   reason?: string;
@@ -2448,6 +2450,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [transakOnrampEnabled, setTransakOnrampEnabled] = useState<boolean>(false);
   const [rampnowOnrampEnabled, setRampnowOnrampEnabled] = useState<boolean>(false);
   const [userOptedOutOfStripeBypass, setUserOptedOutOfStripeBypass] = useState<boolean>(false);
+  const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
+  const [currencySelectionEnabled, setCurrencySelectionEnabled] = useState<boolean>(true);
 
   // Consolidated site-config fetch (single call) to set fee, default token, and seller/split address
   useEffect(() => {
@@ -2493,10 +2497,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           setCreditPresentedFeeBps((cfg as any).creditPresentedFeeBps);
         }
 
-        if (typeof cfg.stripeOnrampEnabled === "boolean") setStripeOnrampEnabled(cfg.stripeOnrampEnabled);
-        if (typeof cfg.coinbaseOnrampEnabled === "boolean") setCoinbaseOnrampEnabled(cfg.coinbaseOnrampEnabled);
-        if (typeof cfg.transakOnrampEnabled === "boolean") setTransakOnrampEnabled(cfg.transakOnrampEnabled);
-        if (typeof cfg.rampnowOnrampEnabled === "boolean") setRampnowOnrampEnabled(cfg.rampnowOnrampEnabled);
+        const isFeeMinus = !!(cfg as any).feeMinusEnabled;
+        setFeeMinusEnabled(isFeeMinus);
+        setCurrencySelectionEnabled((cfg as any).currencySelectionEnabled !== false);
+
+        if (isFeeMinus) {
+          setStripeOnrampEnabled(true);
+          setCoinbaseOnrampEnabled(false);
+          setTransakOnrampEnabled(false);
+          setRampnowOnrampEnabled(false);
+        } else {
+          if (typeof cfg.stripeOnrampEnabled === "boolean") setStripeOnrampEnabled(cfg.stripeOnrampEnabled);
+          if (typeof cfg.coinbaseOnrampEnabled === "boolean") setCoinbaseOnrampEnabled(cfg.coinbaseOnrampEnabled);
+          if (typeof cfg.transakOnrampEnabled === "boolean") setTransakOnrampEnabled(cfg.transakOnrampEnabled);
+          if (typeof cfg.rampnowOnrampEnabled === "boolean") setRampnowOnrampEnabled(cfg.rampnowOnrampEnabled);
+        }
 
         // basePlatformFeePct (platform + partner + agent fees)
         const splitCfg = (cfg as any)?.splitConfig;
@@ -4483,6 +4498,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 <div className={`relative overflow-visible p-3 h-full flex flex-col justify-center ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : "md:p-4"}`}>
                   <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-xl md:ml-auto" : "w-full"}>
                     {/* Currency equivalents selector */}
+                    {currencySelectionEnabled && (
                     <div className="p-3" ref={currencyRef}>
                       <div className="flex items-center justify-between">
                         <div>
@@ -4546,6 +4562,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         </div>
                       </div>
                     </div>
+                    )}
 
                     {/* Receipt */}
                     <div className="mt-2 p-3">
@@ -4667,7 +4684,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             })()}</span>
                           </div>
                         )}
-                        {processingFeeUsd > 0 && (
+                        {!feeMinusEnabled && processingFeeUsd > 0 && (
                           <div className="flex items-center justify-between text-sm">
                             <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
                               <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0)).toFixed(2)}%)</span>
@@ -4687,7 +4704,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             })()}</span>
                           </div>
                         )}
-                        {detectedCardFunding !== "credit" && (
+                        {!feeMinusEnabled && detectedCardFunding !== "credit" && (
                           <div className="microtext text-muted-foreground opacity-70 text-right mt-1.5">
                             * Credit card payments subject to a {creditFeePct.toFixed(2)}% fee
                           </div>
@@ -5159,6 +5176,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           ) : (
             <>
               {/* Currency equivalents selector */}
+              {currencySelectionEnabled && (
               <div className={isEmbedded ? "rounded-none border-0 bg-transparent px-1" : "rounded-xl border bg-background/80 p-3"} ref={currencyRef}>
                 <div className="flex items-baseline justify-between">
                   <div className="text-sm font-semibold">Order Preview</div>
@@ -5219,6 +5237,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   </div>
                 </div>
               </div>
+              )}
 
               {/* Receipt */}
               <div className={`mt-4 ${isEmbedded ? "" : "rounded-2xl border p-3 bg-background/70"}`}>
@@ -5332,7 +5351,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       })()}</span>
                     </div>
                   )}
-                  {processingFeeUsd > 0 && (
+                  {!feeMinusEnabled && processingFeeUsd > 0 && (
                     <div className="flex items-center justify-between text-sm">
                       <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
                         <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0)).toFixed(2)}%)</span>

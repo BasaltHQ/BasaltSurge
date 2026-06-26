@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
     const { isDualSplitEnabled } = await import("@/lib/env");
     const isDual = isDualSplitEnabled();
     const cardFunding = session?.payment_details?.card?.funding || "";
-    const useSeparateSplit = isDual && (cardFunding === "debit" || cardFunding === "prepaid");
+    const useSeparateSplit = isDual && cardFunding === "credit";
 
     // Resolve merchant context from metadata
     const context = await resolveMerchantFromMetadata(metadata, container, brandKey, useSeparateSplit);

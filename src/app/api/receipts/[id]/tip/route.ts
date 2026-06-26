@@ -38,31 +38,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const tipAmount = fromCents(toCents(tipInput));
 
         // Recalculate Totals
-        // 1. Identify Base
-        // Look for items that are NOT Tax, Processing Fee, Gratuity
-        const baseItems = receipt.lineItems.filter((i: any) =>
-            i.label !== "Tax" && i.label !== "Processing Fee" && i.label !== "Gratuity"
-        );
-        const baseUsd = baseItems.reduce((acc: number, i: any) => acc + (i.priceUsd || 0), 0);
-        const baseCents = toCents(baseUsd);
-
-        // 2. Recalculate Tax (Fixed Rate from Receipt)
-        const taxRate = Number(receipt.taxRate || 0);
-        const taxCents = Math.round(baseCents * taxRate);
-
-        // 3. Tip
-        const tipCents = toCents(tipAmount);
-
-        // 4. Processing Fee - fetch from brand-scoped splitConfig
         const wallet = receipt.wallet;
+        const effectiveBrandKey = (
+            typeof receipt?.brandKey === "string" ? receipt.brandKey.toLowerCase() :
+                (process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase()
+        ) || undefined;
+
+        const cfg = await getSiteConfigForWallet(wallet, effectiveBrandKey).catch(() => null as any);
+        const isFeeMinus = !!cfg?.feeMinusEnabled;
+
         let feePct = 0.005; // 0.5% default fallback
         try {
-            // Get brandKey from receipt, env, or fallback
-            const effectiveBrandKey = (
-                typeof receipt?.brandKey === "string" ? receipt.brandKey.toLowerCase() :
-                    (process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase()
-            ) || undefined;
-
             let basePlatformFeePct: number | undefined = undefined;
 
             // Priority 1: Fetch splitConfig from brand-scoped site config (cross-partition query)
@@ -90,23 +76,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 }
             }
 
-            // Priority 2: Fallback to getSiteConfigForWallet
+            // Priority 2: Fallback to site config
             if (typeof basePlatformFeePct !== "number") {
-                const cfg = await getSiteConfigForWallet(wallet, effectiveBrandKey);
-                const splitCfg = (cfg as any)?.splitConfig;
-                if (splitCfg && typeof splitCfg === "object") {
-                    const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
-                    const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
-                    const agentBps = Array.isArray(splitCfg.agents)
-                        ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-                        : 0;
-                    basePlatformFeePct = (partnerBps + platformBps + agentBps) / 100;
-                } else if (typeof (cfg as any)?.basePlatformFeePct === "number") {
-                    basePlatformFeePct = (cfg as any).basePlatformFeePct;
-                }
-                const procFee = Number(cfg?.processingFeePct || 0);
-                if (typeof basePlatformFeePct === "number") {
-                    basePlatformFeePct += procFee;
+                if (cfg) {
+                    const splitCfg = (cfg as any)?.splitConfig;
+                    if (splitCfg && typeof splitCfg === "object") {
+                        const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+                        const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
+                        const agentBps = Array.isArray(splitCfg.agents)
+                            ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+                            : 0;
+                        basePlatformFeePct = (partnerBps + platformBps + agentBps) / 100;
+                    } else if (typeof (cfg as any)?.basePlatformFeePct === "number") {
+                        basePlatformFeePct = (cfg as any).basePlatformFeePct;
+                    }
+                    const procFee = Number(cfg?.processingFeePct || 0);
+                    if (typeof basePlatformFeePct === "number") {
+                        basePlatformFeePct += procFee;
+                    }
                 }
             }
 
@@ -118,26 +105,95 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             feePct = basePlatformFeePct / 100;
         } catch { }
 
-        // Calculate Fee on (Base + Tax + Tip)
-        // Fees usually apply to the total amount charged to card.
-        const subtotalCents = baseCents + taxCents + tipCents;
-        const feeCents = Math.round(subtotalCents * feePct);
+        const tipCents = toCents(tipAmount);
 
-        const totalCents = subtotalCents + feeCents;
+        // 1. Identify Base items (excluding Tax, Processing Fee, Gratuity)
+        const baseItems = receipt.lineItems.filter((i: any) =>
+            i.label !== "Tax" && i.label !== "Processing Fee" && i.label !== "Gratuity"
+        );
 
-        // Construct new Line Items
-        const newLineItems = [
-            ...baseItems,
-            ...(taxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(taxCents) }] : []),
-            ...(tipCents > 0 ? [{ label: "Gratuity", priceUsd: fromCents(tipCents) }] : []),
-            ...(feeCents > 0 ? [{ label: "Processing Fee", priceUsd: fromCents(feeCents) }] : [])
-        ];
+        let finalLineItems: any[];
+        let finalTotalCents: number;
+
+        if (isFeeMinus) {
+            // Find current scaled totals
+            const scaledBaseCents = baseItems.reduce((acc: number, i: any) => acc + toCents(i.priceUsd || 0), 0);
+            const scaledTaxCents = toCents(receipt.lineItems.find((i: any) => i.label === "Tax")?.priceUsd || 0);
+            const scaledBaseWithoutFeeCents = scaledBaseCents + scaledTaxCents;
+            
+            // Unscale to recover original unscaled subtotal & tax
+            const originalBaseCents = toCents(receipt.totalUsd); // totalUsd stored was originalBaseWithoutFee
+            const unscaleFactor = scaledBaseWithoutFeeCents > 0 ? (originalBaseCents / scaledBaseWithoutFeeCents) : 1;
+            
+            const baseItemsClean = baseItems.map((i: any) => ({
+                ...i,
+                priceUsd: fromCents(Math.round(toCents(i.priceUsd) * unscaleFactor))
+            }));
+            const originalSubtotalCents = baseItemsClean.reduce((acc: number, i: any) => acc + toCents(i.priceUsd), 0);
+            const originalTaxCents = originalBaseCents - originalSubtotalCents;
+
+            // Customer pays original subtotal + original tax + tip
+            const customerTotalCents = originalSubtotalCents + originalTaxCents + tipCents;
+            
+            // Adjusted base (includes tip)
+            const adjustedBaseCents = Math.round(customerTotalCents / (1 + feePct));
+            const finalFeeCents = customerTotalCents - adjustedBaseCents;
+
+            // Tip is not scaled
+            const adjustedBaseWithoutTipCents = adjustedBaseCents - tipCents;
+
+            // Scale factor to apply to original items & tax
+            const scaleFactor = (originalSubtotalCents + originalTaxCents) > 0 
+                ? (adjustedBaseWithoutTipCents / (originalSubtotalCents + originalTaxCents)) 
+                : 1;
+
+            const adjustedSubtotalCents = Math.round(originalSubtotalCents * scaleFactor);
+            const adjustedTaxCents = adjustedBaseWithoutTipCents - adjustedSubtotalCents;
+
+            const adjustedItems = baseItemsClean.map((i: any) => ({
+                ...i,
+                priceUsd: fromCents(Math.round(toCents(i.priceUsd) * scaleFactor))
+            }));
+
+            // Rounding difference adjustment on last item
+            const sumAdjustedItemsCents = adjustedItems.reduce((s: number, i: any) => s + toCents(i.priceUsd), 0);
+            const diff = adjustedSubtotalCents - sumAdjustedItemsCents;
+            if (diff !== 0 && adjustedItems.length > 0) {
+                const lastIdx = adjustedItems.length - 1;
+                adjustedItems[lastIdx].priceUsd = fromCents(toCents(adjustedItems[lastIdx].priceUsd) + diff);
+            }
+
+            finalLineItems = [
+                ...adjustedItems,
+                ...(adjustedTaxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(adjustedTaxCents) }] : []),
+                ...(tipCents > 0 ? [{ label: "Gratuity", priceUsd: fromCents(tipCents) }] : []),
+                ...(finalFeeCents > 0 ? [{ label: "Processing Fee", priceUsd: fromCents(finalFeeCents) }] : [])
+            ];
+            finalTotalCents = customerTotalCents;
+        } else {
+            // Standard fee+ code path
+            const baseUsd = baseItems.reduce((acc: number, i: any) => acc + (i.priceUsd || 0), 0);
+            const baseCents = toCents(baseUsd);
+            const taxRate = Number(receipt.taxRate || 0);
+            const taxCents = Math.round(baseCents * taxRate);
+
+            const subtotalCents = baseCents + taxCents + tipCents;
+            const feeCents = Math.round(subtotalCents * feePct);
+
+            finalLineItems = [
+                ...baseItems,
+                ...(taxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(taxCents) }] : []),
+                ...(tipCents > 0 ? [{ label: "Gratuity", priceUsd: fromCents(tipCents) }] : []),
+                ...(feeCents > 0 ? [{ label: "Processing Fee", priceUsd: fromCents(feeCents) }] : [])
+            ];
+            finalTotalCents = subtotalCents + feeCents;
+        }
 
         const updatedReceipt = {
             ...receipt,
             tipAmount: tipAmount,
-            totalUsd: fromCents(totalCents),
-            lineItems: newLineItems,
+            totalUsd: fromCents(finalTotalCents),
+            lineItems: finalLineItems,
             lastUpdatedAt: Date.now()
         };
 
