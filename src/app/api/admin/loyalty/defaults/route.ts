@@ -16,14 +16,25 @@ const getDocId = (brandKey: string) => `loyalty:defaults:${brandKey}`;
  * Platform context (including localhost) always uses "portalpay".
  * Partner context uses the configured BRAND_KEY.
  */
-function resolveBrandKey(): string {
+async function resolveBrandKeyAsync(req?: NextRequest): Promise<string> {
     // Platform context (including localhost dev) always uses portalpay
     if (isPlatformContext()) {
         return "portalpay";
     }
+    try {
+        const url = req ? new URL(req.url) : null;
+        const host = req?.headers.get("host") || url?.hostname || "";
+        if (host) {
+            const { getContainerIdentity } = require("@/lib/brand-config");
+            const containerIdentity = await getContainerIdentity(host);
+            if (containerIdentity.brandKey) {
+                return containerIdentity.brandKey.toLowerCase();
+            }
+        }
+    } catch {}
     // Partner context uses configured brand key
     try {
-        return getBrandKey() || "portalpay";
+        return getBrandKey(req) || "portalpay";
     } catch {
         return "portalpay";
     }
@@ -49,7 +60,7 @@ export async function GET(req: NextRequest) {
     try {
         // Public read access - merchants need to fetch defaults
         // Authentication is optional for reading defaults
-        const brandKey = resolveBrandKey();
+        const brandKey = await resolveBrandKeyAsync(req);
         console.log("GET loyalty defaults - brandKey:", brandKey, "isPlatform:", isPlatformContext());
 
         const container = await getContainer();
@@ -91,7 +102,7 @@ export async function POST(req: NextRequest) {
         try { requireCsrf(req); } catch (e) { return NextResponse.json({ error: "csrf" }, { status: 403 }); }
 
         const body = await req.json();
-        const brandKey = resolveBrandKey();
+        const brandKey = await resolveBrandKeyAsync(req);
         console.log("POST loyalty defaults - brandKey:", brandKey, "isPlatform:", isPlatformContext());
 
         const container = await getContainer();

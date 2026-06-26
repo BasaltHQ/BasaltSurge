@@ -7,12 +7,23 @@ import { isPlatformContext } from "@/lib/env";
 // Use a specific partition key for global art settings
 const ART_SETTINGS_WALLET = "platform_global_art";
 
-function resolveBrandKey(): string {
+async function resolveBrandKeyAsync(req?: NextRequest): Promise<string> {
     if (isPlatformContext()) {
         return "portalpay";
     }
     try {
-        return getBrandKey() || "portalpay";
+        const url = req ? new URL(req.url) : null;
+        const host = req?.headers.get("host") || url?.hostname || "";
+        if (host) {
+            const { getContainerIdentity } = require("@/lib/brand-config");
+            const containerIdentity = await getContainerIdentity(host);
+            if (containerIdentity.brandKey) {
+                return containerIdentity.brandKey.toLowerCase();
+            }
+        }
+    } catch {}
+    try {
+        return getBrandKey(req) || "portalpay";
     } catch {
         return "portalpay";
     }
@@ -22,7 +33,7 @@ const getDocId = (brandKey: string) => `global:art:${brandKey}`;
 
 export async function GET(req: NextRequest) {
     try {
-        const brandKey = resolveBrandKey();
+        const brandKey = await resolveBrandKeyAsync(req);
         const container = await getContainer();
         const docId = getDocId(brandKey);
 
@@ -53,7 +64,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Missing config" }, { status: 400 });
         }
 
-        const brandKey = resolveBrandKey();
+        const brandKey = await resolveBrandKeyAsync(req);
         const container = await getContainer();
         const docId = getDocId(brandKey);
 

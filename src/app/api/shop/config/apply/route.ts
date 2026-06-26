@@ -20,9 +20,20 @@ function getDocIdForBrand(brandKey?: string): string {
     }
 }
 
-function resolveBrandKey(): string {
+async function resolveBrandKeyAsync(req?: NextRequest): Promise<string> {
     try {
-        const k = (getBrandKey() || "basaltsurge").toLowerCase();
+        const url = req ? new URL(req.url) : null;
+        const host = req?.headers.get("host") || url?.hostname || "";
+        if (host) {
+            const { getContainerIdentity } = require("@/lib/brand-config");
+            const containerIdentity = await getContainerIdentity(host);
+            if (containerIdentity.brandKey) {
+                return containerIdentity.brandKey.toLowerCase();
+            }
+        }
+    } catch {}
+    try {
+        const k = (getBrandKey(req) || "basaltsurge").toLowerCase();
         return k;
     } catch {
         return "basaltsurge";
@@ -60,7 +71,7 @@ export async function POST(req: NextRequest) {
         const body = await req.json().catch(() => ({}));
 
         // Resolve brand key for this container
-        const brandKey = resolveBrandKey();
+        const brandKey = await resolveBrandKeyAsync(req);
         const normalizedBrand = String(brandKey || "portalpay").toLowerCase();
 
         // Get doc ID based on brand

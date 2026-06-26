@@ -2,9 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { getBrandKey } from "@/config/brands";
 
-function resolveBrandKey(): string {
+async function resolveBrandKeyAsync(req?: NextRequest): Promise<string> {
   try {
-    return (getBrandKey() || "basaltsurge").toLowerCase();
+    const url = req ? new URL(req.url) : null;
+    const host = req?.headers.get("host") || url?.hostname || "";
+    if (host) {
+      const { getContainerIdentity } = require("@/lib/brand-config");
+      const containerIdentity = await getContainerIdentity(host);
+      if (containerIdentity.brandKey) {
+        return containerIdentity.brandKey.toLowerCase();
+      }
+    }
+  } catch {}
+  try {
+    return (getBrandKey(req) || "basaltsurge").toLowerCase();
   } catch {
     return "basaltsurge";
   }
@@ -36,7 +47,7 @@ export async function GET(req: NextRequest) {
     if (isNaN(offset) || offset < 0) offset = 0;
 
     // Resolve Context
-    const currentBrand = resolveBrandKey();
+    const currentBrand = await resolveBrandKeyAsync(req);
     const isPlatform = currentBrand === "portalpay" || currentBrand === "basaltsurge";
 
     let queryBase = `

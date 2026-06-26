@@ -498,24 +498,37 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
       }] : [])
     ];
 
-    // Fetch and apply brand config onramp options
+    // Fetch and apply brand config options (with fallback for merchant-level settings)
     try {
       if (brandKeyForFees) {
         const { brand: fetchedBrand } = await getBrandConfigFromCosmos(brandKeyForFees);
         if (fetchedBrand) {
-          cfg.stripeOnrampEnabled = fetchedBrand.stripeOnrampEnabled ?? true;
+          // Fallback logic for feeMinusEnabled and stripeOnrampEnabled when not defined or falsy on merchant config
+          cfg.feeMinusEnabled = cfg.feeMinusEnabled || !!fetchedBrand.feeMinusEnabled;
+          cfg.stripeOnrampEnabled = cfg.stripeOnrampEnabled || (fetchedBrand.stripeOnrampEnabled ?? true);
+
           cfg.coinbaseOnrampEnabled = fetchedBrand.coinbaseOnrampEnabled ?? false;
           cfg.transakOnrampEnabled = fetchedBrand.transakOnrampEnabled ?? false;
           cfg.rampnowOnrampEnabled = fetchedBrand.rampnowOnrampEnabled ?? false;
         }
       } else {
-        cfg.stripeOnrampEnabled = true;
+        if (cfg.stripeOnrampEnabled === undefined || cfg.stripeOnrampEnabled === null) {
+          cfg.stripeOnrampEnabled = true;
+        }
+        if (cfg.feeMinusEnabled === undefined || cfg.feeMinusEnabled === null) {
+          cfg.feeMinusEnabled = false;
+        }
         cfg.coinbaseOnrampEnabled = false;
         cfg.transakOnrampEnabled = false;
         cfg.rampnowOnrampEnabled = false;
       }
     } catch {
-      cfg.stripeOnrampEnabled = true;
+      if (cfg.stripeOnrampEnabled === undefined || cfg.stripeOnrampEnabled === null) {
+        cfg.stripeOnrampEnabled = true;
+      }
+      if (cfg.feeMinusEnabled === undefined || cfg.feeMinusEnabled === null) {
+        cfg.feeMinusEnabled = false;
+      }
       cfg.coinbaseOnrampEnabled = false;
       cfg.transakOnrampEnabled = false;
       cfg.rampnowOnrampEnabled = false;
