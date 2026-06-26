@@ -33,14 +33,17 @@ async function logCronError(errorDetails: {
   action: string;
   message: string;
   stack?: string;
+  wallet?: string;
 }) {
   try {
     const container = await getContainer(undefined, "cron_logs");
     const logId = crypto.randomUUID();
     const now = Date.now();
+    const scaOverride = process.env.THIRDWEB_ADMIN_SCA_ADDRESS || process.env.SCA_ADDRESS || "";
+    const partitionWallet = errorDetails.wallet || scaOverride || "0x6c28067a2D4F10013FbBb8534aCd76Ab43A4fF9f";
     await container.items.create({
       id: logId,
-      wallet: "0x6c28067a2D4F10013FbBb8534aCd76Ab43A4fF9f", // Partition key
+      wallet: partitionWallet, // Partition key
       type: "cron_autoclose_error",
       action: errorDetails.action,
       splitAddress: errorDetails.splitAddress || null,
@@ -58,6 +61,7 @@ async function logCronError(errorDetails: {
 export async function POST(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   const startTime = Date.now();
+  let sAccount: any = undefined;
 
   try {
     // 1. Authenticate with CRON_SECRET (accepts x-cron-secret header, Bearer token, query param, or POST body)
@@ -168,15 +172,14 @@ export async function POST(req: NextRequest) {
       privateKey: pk as `0x${string}`,
     });
 
+    const scaOverride = process.env.THIRDWEB_ADMIN_SCA_ADDRESS || process.env.SCA_ADDRESS || "";
     const sWallet = smartWallet({
       chain,
       gasless: true,
-      overrides: {
-        accountAddress: "0x6c28067a2D4F10013FbBb8534aCd76Ab43A4fF9f",
-      },
+      ...(scaOverride ? { overrides: { accountAddress: scaOverride as `0x${string}` } } : {}),
     });
 
-    const sAccount = await sWallet.connect({
+    sAccount = await sWallet.connect({
       client: serverClient,
       personalAccount: adminAccount,
     });
@@ -365,6 +368,7 @@ export async function POST(req: NextRequest) {
             action: "distribute",
             message: errMsg,
             stack: err?.stack,
+            wallet: sAccount.address,
           });
         }
       }
@@ -388,7 +392,7 @@ export async function POST(req: NextRequest) {
       const runDate = new Date(startTime).toISOString().split('T')[0];
       await runsContainer.items.create({
         id: runDocId,
-        wallet: "0x6c28067a2D4F10013FbBb8534aCd76Ab43A4fF9f", // Partition Key
+        wallet: sAccount.address, // Partition Key
         type: "autoclose_run",
         date: runDate,
         timestamp: startTime,
@@ -426,6 +430,7 @@ export async function POST(req: NextRequest) {
       action: "run_autoclose_cron",
       message: err?.message || String(err),
       stack: err?.stack,
+      wallet: typeof sAccount !== "undefined" ? sAccount.address : undefined,
     });
     return NextResponse.json(
       { error: "internal", message: err?.message || "Unknown error" },
