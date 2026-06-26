@@ -1070,6 +1070,7 @@ export async function GET(req: NextRequest) {
   try {
     const correlationId = crypto.randomUUID();
     const url = new URL(req.url);
+    const host = req.headers.get("host") || url.hostname || "";
     const referer = req.headers.get("referer") || "";
     const userAgent = req.headers.get("user-agent") || "";
     const xThemeCaller = req.headers.get("x-theme-caller") || req.headers.get("x-source") || "";
@@ -1187,7 +1188,8 @@ export async function GET(req: NextRequest) {
       // Resolve brandKey early so it's available for shop_config query filtering
       let brandKey: string | undefined = undefined;
       try {
-        brandKey = getBrandKey(req);
+        const containerIdentity = await getContainerIdentity(host);
+        brandKey = containerIdentity.brandKey;
       } catch {
         brandKey = undefined;
       }
@@ -1519,6 +1521,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(payload, { status, headers: { "x-correlation-id": correlationId } });
     }
     const url = new URL(req.url);
+    const host = req.headers.get("host") || url.hostname || "";
     const queryWallet = String(url.searchParams.get("wallet") || "").toLowerCase();
     const headerWallet = String(req.headers.get('x-wallet') || '').toLowerCase();
     const rawWallet = headerWallet || queryWallet;
@@ -1589,7 +1592,12 @@ export async function POST(req: NextRequest) {
       const c = await getContainer();
       // Prefer brand-scoped doc when brand configured; fallback to legacy
       let brandKey: string | undefined = undefined;
-      try { brandKey = getBrandKey(req); } catch { brandKey = undefined; }
+      try {
+        const containerIdentity = await getContainerIdentity(host);
+        brandKey = containerIdentity.brandKey;
+      } catch {
+        brandKey = undefined;
+      }
       if (brandKey) {
         try {
           const { resource } = await c.item(getDocIdForBrand(brandKey), wallet).read<any>();
@@ -1804,7 +1812,12 @@ export async function POST(req: NextRequest) {
 
     // Write brand-scoped doc in partner containers; use getDocIdForBrand() for consistency with GET.
     let brandKey: string | undefined = undefined;
-    try { brandKey = getBrandKey(req); } catch { brandKey = undefined; }
+    try {
+      const containerIdentity = await getContainerIdentity(host);
+      brandKey = containerIdentity.brandKey;
+    } catch {
+      brandKey = undefined;
+    }
     const normalizedBrand = String(brandKey || "basaltsurge").toLowerCase();
     // Use getDocIdForBrand() for consistent doc ID between save and load
     // This ensures basaltsurge/portalpay uses "site:config:basaltsurge" and partners use "site:config:<brandKey>"
