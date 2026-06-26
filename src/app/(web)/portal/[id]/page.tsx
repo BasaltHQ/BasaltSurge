@@ -2232,6 +2232,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // ── Stripe Headless Onramp State ──
   const [headlessEmailPrompt, setHeadlessEmailPrompt] = useState(false);
   const [copiedWallet, setCopiedWallet] = useState(false);
+  const [stripeIframeHeight, setStripeIframeHeight] = useState(0);
   const [headlessEmailInput, setHeadlessEmailInput] = useState(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
@@ -3439,6 +3440,57 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     };
   }, [theme.brandName]);
 
+  // Monitor the Stripe payment element iframe height to dynamically detect the layout state
+  useEffect(() => {
+    if (!headlessPaymentElement) {
+      setStripeIframeHeight(0);
+      return;
+    }
+
+    const checkHeight = () => {
+      const iframe = headlessPaymentElement.querySelector("iframe");
+      if (iframe) {
+        setStripeIframeHeight(iframe.offsetHeight);
+      }
+    };
+
+    checkHeight();
+    const interval = setInterval(checkHeight, 500);
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => {
+        checkHeight();
+      });
+      observer.observe(headlessPaymentElement);
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (observer) observer.disconnect();
+    };
+  }, [headlessPaymentElement]);
+
+  const shouldShowMask = useMemo(() => {
+    if (headlessAuthElement) return true;
+    if (headlessPaymentElement) {
+      return stripeIframeHeight > 0 && stripeIframeHeight < 360;
+    }
+    return false;
+  }, [headlessAuthElement, headlessPaymentElement, stripeIframeHeight]);
+
+  const maskStyle = useMemo(() => {
+    const isPayment = !!headlessPaymentElement;
+    return {
+      backgroundColor: "#ffffff",
+      color: "#697386",
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      bottom: isPayment ? "74px" : "26px",
+      height: isPayment ? "40px" : "54px",
+      filter: !isLightBackground ? "invert(0.93) hue-rotate(180deg) brightness(1.1) contrast(0.95)" : undefined,
+    };
+  }, [headlessPaymentElement, isLightBackground]);
+
   // Autostart Stripe headless flow if it's the only active onramp, payment is ready, and user hasn't opted out
   useEffect(() => {
     const isStripeOnly = stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled;
@@ -4034,16 +4086,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     }
                   }}
                 />
-                {(headlessAuthElement || headlessPaymentElement) && (
+                {shouldShowMask && (
                   <div
-                    className="absolute bottom-[26px] left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
-                    style={{
-                      backgroundColor: "#ffffff",
-                      color: "#697386",
-                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                      height: "54px",
-                      filter: !isLightBackground ? "invert(0.93) hue-rotate(180deg) brightness(1.1) contrast(0.95)" : undefined,
-                    }}
+                    className="absolute left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
+                    style={maskStyle}
                   >
                     <span>
                       By continuing, you allow <strong className="font-semibold" style={{ color: "#3c4257" }}>{theme.brandName || "BasaltSurge"}</strong> to check your identity verification and manage your saved crypto wallets and buy/sell crypto on your behalf.
