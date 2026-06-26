@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useCallback, useRef, useEffect } from "react";
+import { SHADOW_MAP } from "./types";
 import type { PortalThemeConfig, PortalModeTheme } from "./types";
 
 /**
@@ -58,7 +59,12 @@ export default function PortalMockPreview({ config, shopName, shopLogo, wallet }
 
     const msg = {
       type: 'pp-playground-theme',
-      theme: { ...t },
+      theme: {
+        ...t,
+        portalGradientEnabled: config.portalGradientEnabled,
+        portalGradientStart: config.portalGradientStart,
+        portalGradientEnd: config.portalGradientEnd,
+      },
       widget: { ...config.widget },
     };
 
@@ -70,7 +76,7 @@ export default function PortalMockPreview({ config, shopName, shopLogo, wallet }
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [t, config.widget]);
+  }, [t, config.widget, config.portalGradientEnabled, config.portalGradientStart, config.portalGradientEnd]);
 
   // Also send on iframe load
   const handleIframeLoad = useCallback(() => {
@@ -82,7 +88,12 @@ export default function PortalMockPreview({ config, shopName, shopLogo, wallet }
       try {
         iframe.contentWindow?.postMessage({
           type: 'pp-playground-theme',
-          theme: { ...t },
+          theme: {
+            ...t,
+            portalGradientEnabled: config.portalGradientEnabled,
+            portalGradientStart: config.portalGradientStart,
+            portalGradientEnd: config.portalGradientEnd,
+          },
           widget: { ...config.widget },
         }, '*');
       } catch { }
@@ -92,7 +103,7 @@ export default function PortalMockPreview({ config, shopName, shopLogo, wallet }
     setTimeout(send, 300);
     setTimeout(send, 800);
     setTimeout(send, 1500);
-  }, [t, config.widget]);
+  }, [t, config.widget, config.portalGradientEnabled, config.portalGradientStart, config.portalGradientEnd]);
 
   const handleLayoutChange = useCallback((newLayout: LayoutMode) => {
     setLayoutMode(newLayout);
@@ -110,7 +121,7 @@ export default function PortalMockPreview({ config, shopName, shopLogo, wallet }
       overflow: 'hidden',
       transform: 'translateZ(0)',
       borderRadius: layoutMode !== 'invoice' ? (t.borderRadius || '12px') : 0,
-      boxShadow: layoutMode !== 'invoice' ? (t.boxShadow || '0 25px 50px -12px rgba(0,0,0,0.5)') : 'none',
+      boxShadow: layoutMode !== 'invoice' ? (SHADOW_MAP[t.shadowIntensity] || 'none') : 'none',
     };
 
     switch (layoutMode) {
@@ -121,7 +132,7 @@ export default function PortalMockPreview({ config, shopName, shopLogo, wallet }
       case 'invoice':
         return { ...baseStyle, width: '100%', height: '100%' };
     }
-  }, [layoutMode, preferredHeight, t.borderRadius, t.boxShadow]);
+  }, [layoutMode, preferredHeight, t.borderRadius, t.shadowIntensity]);
 
   return (
     <div className="h-full flex flex-col overflow-hidden rounded-t-xl border border-white/10 border-b-0">

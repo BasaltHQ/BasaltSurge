@@ -85,7 +85,7 @@ import CustomAuthWalletsPanel from "@/app/(web)/admin/panels/CustomAuthWalletsPa
 import { NodeOperatorsPanel } from "@/app/(web)/admin/panels/NodeOperatorsPanel";
 import { NodeDashboardPanel } from "@/app/(web)/admin/panels/NodeDashboardPanel";
 import AutoclosePanel from "@/app/(web)/admin/panels/AutoclosePanel";
-import EmailConfigPanelExt from "@/app/(web)/admin/panels/EmailConfigPanel";
+import EmailConfigPanelExt from "./panels/EmailConfigPanel";
 import { isPlatformCtx, isPartnerCtx, isPlatformSuperAdmin, canAccessPanel } from "@/lib/authz";
 
 function ResendTrackingBtn({ receipt, operatorWallet }: { receipt: any, operatorWallet: string }) {
@@ -9533,14 +9533,15 @@ function TerminalPanel() {
   const [terminalLogoUrl, setTerminalLogoUrl] = useState<string>("");
 
   // Site meta for tax & fee
-  const [siteMeta, setSiteMeta] = useState<{ processingFeePct: number; basePlatformFeePct: number; taxRate: number; hasDefault: boolean; storeCurrency?: string }>({
+  const [siteMeta, setSiteMeta] = useState<{ processingFeePct: number; basePlatformFeePct: number; taxRate: number; hasDefault: boolean; storeCurrency?: string; feeMinusEnabled?: boolean }>({
     processingFeePct: 0,
     basePlatformFeePct: 0.5,
     taxRate: 0,
     hasDefault: false,
+    feeMinusEnabled: false,
   });
 
-  async function fetchSiteMeta(): Promise<{ processingFeePct: number; basePlatformFeePct: number; taxRate: number; hasDefault: boolean; storeCurrency?: string }> {
+  async function fetchSiteMeta(): Promise<{ processingFeePct: number; basePlatformFeePct: number; taxRate: number; hasDefault: boolean; storeCurrency?: string; feeMinusEnabled?: boolean }> {
     try {
       const r = await fetch("/api/site/config", { headers: { "x-wallet": account?.address || "" } });
       const j = await r.json().catch(() => ({}));
@@ -9583,9 +9584,10 @@ function TerminalPanel() {
       const theme: any = cfg?.theme || {};
       const logo = theme?.symbolLogoUrl || theme?.brandLogoUrl || theme?.brandFaviconUrl || "";
       if (logo) setTerminalLogoUrl(logo);
-      return { processingFeePct, basePlatformFeePct, taxRate: rate, hasDefault, storeCurrency };
+      const feeMinusEnabled = !!cfg?.feeMinusEnabled;
+      return { processingFeePct, basePlatformFeePct, taxRate: rate, hasDefault, storeCurrency, feeMinusEnabled };
     } catch {
-      return { processingFeePct: 0, basePlatformFeePct: 0.5, taxRate: 0, hasDefault: false };
+      return { processingFeePct: 0, basePlatformFeePct: 0.5, taxRate: 0, hasDefault: false, feeMinusEnabled: false };
     }
   }
 
@@ -9637,21 +9639,48 @@ function TerminalPanel() {
   }
 
   // Totals computation in USD (canonical)
+  const feeMinusEnabled = !!siteMeta.feeMinusEnabled;
   const baseUsd = parseAmount();
   const taxRate = siteMeta.hasDefault ? Math.max(0, Math.min(1, siteMeta.taxRate || 0)) : 0;
-  const taxUsd = +(baseUsd * taxRate).toFixed(2);
-  const feePctFraction = Math.max(0, ((Number(siteMeta.basePlatformFeePct || 0.5) + Number(siteMeta.processingFeePct || 0)) / 100));
-  const processingFeeUsd = +((baseUsd + taxUsd) * feePctFraction).toFixed(2);
-  const totalUsd = +((baseUsd + taxUsd + processingFeeUsd)).toFixed(2);
+
+  let taxUsd = 0;
+  let processingFeeUsd = 0;
+  let totalUsd = 0;
+  let displayBaseUsd = baseUsd;
+
+  if (feeMinusEnabled) {
+    const rawSubtotal = baseUsd;
+    const rawTax = +(rawSubtotal * taxRate).toFixed(2);
+    const rawTotal = rawSubtotal + rawTax;
+    const feePctFraction = Math.max(0, ((Number(siteMeta.basePlatformFeePct || 0.5) + Number(siteMeta.processingFeePct || 0)) / 100));
+
+    const adjustedTotal = rawTotal;
+    const adjustedBaseWithoutFee = +(adjustedTotal / (1 + feePctFraction)).toFixed(2);
+    const finalFee = +(adjustedTotal - adjustedBaseWithoutFee).toFixed(2);
+
+    const scaleFactor = rawTotal > 0 ? (adjustedBaseWithoutFee / rawTotal) : 1;
+    const adjustedSubtotal = +(rawSubtotal * scaleFactor).toFixed(2);
+    const adjustedTax = +(adjustedBaseWithoutFee - adjustedSubtotal).toFixed(2);
+
+    displayBaseUsd = adjustedSubtotal;
+    taxUsd = adjustedTax;
+    processingFeeUsd = finalFee;
+    totalUsd = adjustedTotal;
+  } else {
+    taxUsd = +(baseUsd * taxRate).toFixed(2);
+    const feePctFraction = Math.max(0, ((Number(siteMeta.basePlatformFeePct || 0.5) + Number(siteMeta.processingFeePct || 0)) / 100));
+    processingFeeUsd = +((baseUsd + taxUsd) * feePctFraction).toFixed(2);
+    totalUsd = +((baseUsd + taxUsd + processingFeeUsd)).toFixed(2);
+  }
 
   // Convert to display currency
   const baseConverted = React.useMemo(() => {
-    if (terminalCurrency === "USD") return baseUsd;
+    if (terminalCurrency === "USD") return displayBaseUsd;
     const usdRate = Number(usdRates[terminalCurrency] || 0);
-    if (usdRate > 0) return roundForCurrency(baseUsd * usdRate, terminalCurrency);
-    const converted = convertFromUsd(baseUsd, terminalCurrency, rates);
-    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : baseUsd;
-  }, [baseUsd, terminalCurrency, usdRates, rates]);
+    if (usdRate > 0) return roundForCurrency(displayBaseUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(displayBaseUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : displayBaseUsd;
+  }, [displayBaseUsd, terminalCurrency, usdRates, rates]);
 
   const taxConverted = React.useMemo(() => {
     if (terminalCurrency === "USD") return taxUsd;

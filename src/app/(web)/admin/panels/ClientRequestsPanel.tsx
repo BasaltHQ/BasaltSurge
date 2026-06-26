@@ -71,6 +71,9 @@ type ClientRequest = {
     deployedSplitAddressCredit?: string;
     industryPack?: string | null;
     industryParams?: { restaurant?: { tables?: string[] };[key: string]: any } | null;
+    portalGradientEnabled?: boolean;
+    portalGradientStart?: string;
+    portalGradientEnd?: string;
 };
 
 // Helper to safely extract a numeric timestamp from Cosmos DB dates which may be numbers, strings, or {$date: string} objects
@@ -1680,6 +1683,9 @@ export default function ClientRequestsPanel() {
                                                                             primaryColor: req.primaryColor,
                                                                             secondaryColor: req.secondaryColor,
                                                                             layoutMode: req.layoutMode,
+                                                                            portalGradientEnabled: req.portalGradientEnabled,
+                                                                            portalGradientStart: req.portalGradientStart,
+                                                                            portalGradientEnd: req.portalGradientEnd,
                                                                         }}
                                                                         onSave={async (data) => { await updateStatus(req.id, req.status, undefined, false, data); }}
                                                                     />
@@ -3119,17 +3125,22 @@ function MerchantSettingsTab({
                             <div className="text-xs font-semibold">Tipping Enabled</div>
                             <div className="text-[11px] text-muted-foreground">Allow customers to leave a tip during checkout.</div>
                         </div>
-                        <label className="relative inline-flex items-center cursor-pointer select-none">
-                            <input
-                                type="checkbox"
-                                checked={!!config.tipConfig?.enabled}
-                                onChange={(e) => {
-                                    const nextTip = { ...config.tipConfig, enabled: e.target.checked };
-                                    saveSettings({ tipConfig: nextTip });
-                                }}
-                                className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4"
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const nextTip = { ...config.tipConfig, enabled: !config.tipConfig?.enabled };
+                                saveSettings({ tipConfig: nextTip });
+                            }}
+                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                config.tipConfig?.enabled ? "bg-emerald-500" : "bg-zinc-700"
+                            }`}
+                        >
+                            <span
+                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                    config.tipConfig?.enabled ? "translate-x-4" : "translate-x-0"
+                                }`}
                             />
-                        </label>
+                        </button>
                     </div>
 
                     {/* Fee Minus switch */}
@@ -3143,17 +3154,22 @@ function MerchantSettingsTab({
                                 }
                             </div>
                         </div>
-                        <label className="relative inline-flex items-center cursor-pointer select-none">
-                            <input
-                                type="checkbox"
-                                disabled={!partnerFeeMinusEnabled}
-                                checked={!!config.feeMinusEnabled}
-                                onChange={(e) => {
-                                    saveSettings({ feeMinusEnabled: e.target.checked });
-                                }}
-                                className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4 disabled:opacity-30 disabled:cursor-not-allowed"
+                        <button
+                            type="button"
+                            disabled={!partnerFeeMinusEnabled}
+                            onClick={() => {
+                                saveSettings({ feeMinusEnabled: !config.feeMinusEnabled });
+                            }}
+                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed ${
+                                config.feeMinusEnabled ? "bg-emerald-500" : "bg-zinc-700"
+                            }`}
+                        >
+                            <span
+                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                    config.feeMinusEnabled ? "translate-x-4" : "translate-x-0"
+                                }`}
                             />
-                        </label>
+                        </button>
                     </div>
 
                     {/* Currency Selection switch */}
@@ -3162,16 +3178,21 @@ function MerchantSettingsTab({
                             <div className="text-xs font-semibold">Currency Selection Dropdown</div>
                             <div className="text-[11px] text-muted-foreground">Show or hide the currency conversion selector in the payment portal.</div>
                         </div>
-                        <label className="relative inline-flex items-center cursor-pointer select-none">
-                            <input
-                                type="checkbox"
-                                checked={!!config.currencySelectionEnabled}
-                                onChange={(e) => {
-                                    saveSettings({ currencySelectionEnabled: e.target.checked });
-                                }}
-                                className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4"
+                        <button
+                            type="button"
+                            onClick={() => {
+                                saveSettings({ currencySelectionEnabled: !config.currencySelectionEnabled });
+                            }}
+                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                config.currencySelectionEnabled ? "bg-emerald-500" : "bg-zinc-700"
+                            }`}
+                        >
+                            <span
+                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                    config.currencySelectionEnabled ? "translate-x-4" : "translate-x-0"
+                                }`}
                             />
-                        </label>
+                        </button>
                     </div>
                 </div>
 

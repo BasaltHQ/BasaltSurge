@@ -44,6 +44,9 @@ type SiteTheme = {
   pageBg?: string;
   navbarMode?: "symbol" | "logo";
   brandKey?: string;
+  portalGradientEnabled?: boolean;
+  portalGradientStart?: string;
+  portalGradientEnd?: string;
 };
 
 type SiteConfigResponse = {
@@ -303,8 +306,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const layoutParam = String(searchParams?.get("layout") || "").toLowerCase();
   const modeParam = String(searchParams?.get("mode") || "").toLowerCase();
   const invoiceParam = String(searchParams?.get("invoice") || "").toLowerCase();
-  const isWideLayout = layoutParam === "wide";
-  const isInvoiceLayout = layoutParam === "invoice" || modeParam === "invoice" || invoiceParam === "1" || invoiceParam === "true";
+  const [isInvoiceLayout, setIsInvoiceLayout] = useState(() => {
+    return layoutParam === "invoice" || modeParam === "invoice" || invoiceParam === "1" || invoiceParam === "true";
+  });
   const embeddedParam = String(searchParams?.get("embedded") || "");
   const isEmbeddedParam = embeddedParam === "1";
   const [wallets, setWallets] = useState<any[]>([]);
@@ -981,6 +985,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           secondaryColor: t.secondaryColor || prev.secondaryColor,
           headerTextColor: t.headerTextColor || prev.headerTextColor,
           bodyTextColor: t.bodyTextColor || prev.bodyTextColor,
+          portalGradientEnabled: typeof t.portalGradientEnabled === "boolean" ? t.portalGradientEnabled : prev.portalGradientEnabled,
+          portalGradientStart: typeof t.portalGradientStart === "string" ? t.portalGradientStart : prev.portalGradientStart,
+          portalGradientEnd: typeof t.portalGradientEnd === "string" ? t.portalGradientEnd : prev.portalGradientEnd,
         }));
 
         // Apply widget overrides from the playground sidebar
@@ -1573,6 +1580,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             secondaryBg: typeof (t as any)?.secondaryBg === "string" ? (t as any).secondaryBg : undefined,
             surfaceBg: typeof (t as any)?.surfaceBg === "string" ? (t as any).surfaceBg : undefined,
             pageBg: typeof (t as any)?.pageBg === "string" ? (t as any).pageBg : undefined,
+            portalGradientEnabled: typeof t.portalGradientEnabled === "boolean" ? t.portalGradientEnabled : (typeof (j.config as any)?.portalGradientEnabled === "boolean" ? (j.config as any).portalGradientEnabled : undefined),
+            portalGradientStart: typeof t.portalGradientStart === "string" ? t.portalGradientStart : ((j.config as any)?.portalGradientStart || undefined),
+            portalGradientEnd: typeof t.portalGradientEnd === "string" ? t.portalGradientEnd : ((j.config as any)?.portalGradientEnd || undefined),
           };
 
           // ── Portal Theme Playground overrides ──
@@ -1605,6 +1615,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
               if (modeTheme.logoShape === 'circle') merchantTheme.brandLogoShape = 'round';
               else if (modeTheme.logoShape === 'square') merchantTheme.brandLogoShape = 'square';
+
+              if (typeof pt.portalGradientEnabled === 'boolean') {
+                (merchantTheme as any).portalGradientEnabled = pt.portalGradientEnabled;
+              }
+              if (typeof pt.portalGradientStart === 'string' && pt.portalGradientStart) {
+                (merchantTheme as any).portalGradientStart = pt.portalGradientStart;
+              }
+              if (typeof pt.portalGradientEnd === 'string' && pt.portalGradientEnd) {
+                (merchantTheme as any).portalGradientEnd = pt.portalGradientEnd;
+              }
 
               // Store widget overrides for the DOM mutator
               if (pt.widget && typeof pt.widget === 'object') {
@@ -1928,6 +1948,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Dynamic receipt
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loadingReceipt, setLoadingReceipt] = useState(false);
+  const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
+  const [currencySelectionEnabled, setCurrencySelectionEnabled] = useState<boolean>(true);
   useEffect(() => {
     if (!receiptId) return;
 
@@ -2027,6 +2049,26 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
   }, [items]);
 
+  const storedProcessingFeeUsd = useMemo(() => {
+    const feeItem = items.find((it) => /processing fee/i.test(it.label || ""));
+    return feeItem ? +Number(feeItem.priceUsd || 0).toFixed(2) : 0;
+  }, [items]);
+
+  const unscaleFactor = useMemo(() => {
+    if (!feeMinusEnabled) return 1;
+    const baseSum = itemsSubtotalUsd + taxUsd;
+    if (baseSum <= 0) return 1;
+    return (baseSum + storedProcessingFeeUsd) / baseSum;
+  }, [feeMinusEnabled, itemsSubtotalUsd, taxUsd, storedProcessingFeeUsd]);
+
+  const displayItemsSubtotalUsd = useMemo(() => {
+    return feeMinusEnabled ? +(itemsSubtotalUsd * unscaleFactor).toFixed(2) : itemsSubtotalUsd;
+  }, [itemsSubtotalUsd, unscaleFactor, feeMinusEnabled]);
+
+  const displayTaxUsd = useMemo(() => {
+    return feeMinusEnabled ? +(taxUsd * unscaleFactor).toFixed(2) : taxUsd;
+  }, [taxUsd, unscaleFactor, feeMinusEnabled]);
+
   const [tipChoice, setTipChoice] = useState<string>("0");
   const [tipCustomPct, setTipCustomPct] = useState<number>(0);
   const [updatingTip, setUpdatingTip] = useState(false);
@@ -2034,6 +2076,26 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [merchantAllowCustom, setMerchantAllowCustom] = useState(true);
   const [merchantTipEnabled, setMerchantTipEnabled] = useState(true);
   const [pendingDefaultTip, setPendingDefaultTip] = useState<number | null>(null);
+
+  const isFeeMinusVibrant = useMemo(() => {
+    return feeMinusEnabled && !merchantTipEnabled && !currencySelectionEnabled;
+  }, [feeMinusEnabled, merchantTipEnabled, currencySelectionEnabled]);
+
+  const isVibrantLayout = useMemo(() => {
+    if (typeof theme.portalGradientEnabled === "boolean") {
+      return theme.portalGradientEnabled;
+    }
+    return isFeeMinusVibrant;
+  }, [isFeeMinusVibrant, theme.portalGradientEnabled]);
+
+  useEffect(() => {
+    if (isVibrantLayout) {
+      setIsInvoiceLayout(true);
+    } else {
+      const isUrlInvoice = layoutParam === "invoice" || modeParam === "invoice" || invoiceParam === "1" || invoiceParam === "true";
+      setIsInvoiceLayout(isUrlInvoice);
+    }
+  }, [isVibrantLayout, layoutParam, modeParam, invoiceParam]);
 
   const tipUsd = Number(receipt?.tipAmount || 0);
 
@@ -2044,7 +2106,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     let amount = 0;
     const pct = Number(val);
     if (!isNaN(pct) && pct > 0) {
-      amount = Number(((pct / 100) * itemsSubtotalUsd).toFixed(2));
+      const baseSubtotal = feeMinusEnabled ? (itemsSubtotalUsd * unscaleFactor) : itemsSubtotalUsd;
+      amount = Number(((pct / 100) * baseSubtotal).toFixed(2));
     }
 
     setUpdatingTip(true);
@@ -2254,8 +2317,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const totalUsd = useMemo(() => {
     if (!receipt) return 0;
+    if (feeMinusEnabled) {
+      return +((itemsSubtotalUsd * unscaleFactor) + (taxUsd * unscaleFactor) + tipUsd + shippingCostUsd).toFixed(2);
+    }
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + processingFeeUsd).toFixed(2);
-  }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd]);
+  }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd, feeMinusEnabled, unscaleFactor]);
 
   const stripeProcessingFeeUsd = useMemo(() => {
     const feePctFraction = Math.max(0, actualSplitFeePct / 100);
@@ -2264,8 +2330,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
+    if (feeMinusEnabled) {
+      return totalUsd;
+    }
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + stripeProcessingFeeUsd).toFixed(2);
-  }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, stripeProcessingFeeUsd]);
+  }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, stripeProcessingFeeUsd, feeMinusEnabled, totalUsd]);
 
   // Compute receipt readiness (loaded and has a positive total)
   useEffect(() => {
@@ -2450,8 +2519,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [transakOnrampEnabled, setTransakOnrampEnabled] = useState<boolean>(false);
   const [rampnowOnrampEnabled, setRampnowOnrampEnabled] = useState<boolean>(false);
   const [userOptedOutOfStripeBypass, setUserOptedOutOfStripeBypass] = useState<boolean>(false);
-  const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
-  const [currencySelectionEnabled, setCurrencySelectionEnabled] = useState<boolean>(true);
 
   // Consolidated site-config fetch (single call) to set fee, default token, and seller/split address
   useEffect(() => {
@@ -3789,8 +3856,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             type="email"
             placeholder="Email address"
             className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${isLightText
-                ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
-                : 'bg-black/5 border border-black/10 text-black placeholder-black/30 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
+                ? 'bg-white/5 border border-white/10 text-white placeholder-white/75 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
+                : 'bg-black/5 border border-black/10 text-black placeholder-black/75 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
               }`}
             value={headlessEmailInput}
             onChange={(e) => setHeadlessEmailInput(e.target.value)}
@@ -3902,8 +3969,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   type="tel"
                   placeholder="Phone number (+1 555-555-5555)"
                   className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${isLightText
-                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
-                      : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
+                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/75 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
+                      : 'bg-black/5 border border-black/10 text-black placeholder-black/75 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
                     }`}
                   value={headlessPhoneInput}
                   onChange={(e) => setHeadlessPhoneInput(e.target.value)}
@@ -4070,6 +4137,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const accentColor = theme.secondaryColor || primaryColor;
 
     if (isLightBackground) {
+      if (isVibrantLayout) {
+        return "#f8fafc";
+      }
       const startColor = getRgba(primaryColor, 0.03);
       const endColor = getRgba(accentColor, 0.08);
       return `linear-gradient(135deg, ${startColor} 0%, ${endColor} 100%)`;
@@ -4078,7 +4148,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       const endColor = getRgba(accentColor, 0.15);
       return `linear-gradient(135deg, rgba(10,11,16,0.98) 0%, rgba(10,11,16,0.92) 100%), linear-gradient(135deg, ${startColor} 0%, ${endColor} 100%)`;
     }
-  }, [isTwoColumnLayout, isInvoiceLayout, theme.primaryColor, theme.secondaryColor, isLightBackground]);
+  }, [isTwoColumnLayout, isInvoiceLayout, theme.primaryColor, theme.secondaryColor, isLightBackground, isVibrantLayout]);
 
   // Dynamically resolved color values for contrast & theme consistency
   const headerColor = isLightBackground
@@ -4143,6 +4213,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               --pp-text-header: ${headerColor} !important;
               --pp-text-body: ${bodyColor} !important;
             }
+
             .no-scrollbar::-webkit-scrollbar { display: none; }
             .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
             [data-theme],
@@ -4346,7 +4417,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             color: "var(--pp-text-header)",
             flexShrink: 0,
             borderTopLeftRadius: "inherit",
-            borderTopRightRadius: "inherit"
+            borderTopRightRadius: "inherit",
+            height: isInvoiceLayout ? "56px" : undefined,
+            minHeight: isInvoiceLayout ? "56px" : undefined,
           }}
         >
           {effectiveNavbarMode === "logo" && getHeaderLogo() ? (
@@ -4469,19 +4542,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
         )}
 
-        {/* Scrollable content (centered) */}
         <div
           ref={contentRef}
           className={`flex-1 flex flex-col ${isTwoColumnLayout ? ("items-stretch justify-start py-6 md:py-10 w-full " + (isInvoiceLayout ? "max-w-none !max-w-none !p-0 !py-0" : "max-w-6xl")) : "items-center justify-start max-w-[428px]"} ${isEmbedded && !isTwoColumnLayout ? "px-3" : "px-3"} mx-auto`}
           style={{
             backdropFilter: "saturate(1.02) contrast(1.02)",
-            paddingTop: isEmbedded ? "8px" : undefined,
+            paddingTop: isInvoiceLayout ? 0 : (isEmbedded ? "8px" : undefined),
             maxWidth: isEmbedded ? "none" : undefined,
             paddingLeft: isEmbedded && !isTwoColumnLayout ? undefined : (isEmbedded ? 0 : undefined),
             paddingRight: isEmbedded && !isTwoColumnLayout ? undefined : (isEmbedded ? 0 : undefined),
-            paddingBottom: isEmbedded ? 0 : (isTwoColumnLayout ? "calc(env(safe-area-inset-bottom, 0px) + 24px)" : "calc(env(safe-area-inset-bottom, 0px) + 36px)"),
+            paddingBottom: isInvoiceLayout ? 0 : (isEmbedded ? 0 : (isTwoColumnLayout ? "calc(env(safe-area-inset-bottom, 0px) + 24px)" : "calc(env(safe-area-inset-bottom, 0px) + 36px)")),
             color: "var(--pp-text-body)",
-            minHeight: isEmbedded ? undefined : "calc(var(--pp-vh) - 64px - 60px)",
+            minHeight: isEmbedded ? undefined : (isInvoiceLayout ? "calc(var(--pp-vh) - 56px)" : "calc(var(--pp-vh) - 64px - 60px)"),
             overflowY: "auto", // Moved from container to fix border-radius clipping
             WebkitOverflowScrolling: "touch",
             overscrollBehavior: "contain",
@@ -4494,8 +4566,19 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           {isTwoColumnLayout ? (
             <>
 
-              <div className={`${isTwoColumnLayout ? (isEmbedded ? "mt-4 mb-2 w-full" : (isInvoiceLayout ? "w-full min-h-screen md:min-h-[calc(100vh-64px)] m-0 md:m-0" : "mt-8 md:my-auto md:py-4 mb-4 w-full")) : "my-auto"} grid ${isTwoColumnLayout ? "grid-cols-2" : "grid-cols-1"} ${isTwoColumnLayout && isInvoiceLayout ? "gap-0 md:gap-0" : "gap-3 md:gap-6"} items-stretch`}>
-                <div className={`relative overflow-visible p-3 h-full flex flex-col justify-center ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : "md:p-4"}`}>
+              <div className={`${isTwoColumnLayout ? (isEmbedded ? "mt-4 mb-2 w-full" : (isInvoiceLayout ? "w-full flex-1 min-h-[calc(var(--pp-vh)-56px)] m-0 md:m-0" : "mt-8 md:my-auto md:py-4 mb-4 w-full")) : "my-auto"} grid ${isTwoColumnLayout ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"} ${isTwoColumnLayout && isInvoiceLayout ? "gap-0 md:gap-0" : "gap-3 md:gap-6"} items-stretch`}>
+                <div 
+                  className={`relative overflow-visible p-3 h-full flex flex-col justify-center ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : "md:p-4"} ${isTwoColumnLayout && isInvoiceLayout && isVibrantLayout ? "vibrant-left-pane" : ""}`}
+                  style={{
+                    background: isTwoColumnLayout && isInvoiceLayout && isVibrantLayout
+                      ? `linear-gradient(135deg, ${theme.portalGradientStart || theme.primaryColor || '#1f2937'} 0%, ${theme.portalGradientEnd || theme.secondaryColor || '#111827'} 100%)`
+                      : undefined,
+                    boxShadow: isTwoColumnLayout && isInvoiceLayout
+                      ? (isVibrantLayout ? "16px 0 40px -12px rgba(0, 0, 0, 0.3)" : "8px 0 25px -10px rgba(0, 0, 0, 0.15)")
+                      : undefined,
+                    zIndex: isTwoColumnLayout && isInvoiceLayout ? 10 : undefined,
+                  }}
+                >
                   <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-xl md:ml-auto" : "w-full"}>
                     {/* Currency equivalents selector */}
                     {currencySelectionEnabled && (
@@ -4565,41 +4648,47 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     )}
 
                     {/* Receipt */}
-                    <div className="mt-2 p-3">
+                    <div className={isVibrantLayout 
+                      ? "mt-4 p-6 md:p-8 rounded-3xl bg-background border border-primary/20 shadow-2xl shadow-primary/10 animate-in fade-in slide-in-from-left-4 duration-500" 
+                      : "mt-2 p-3"}>
                       <div className="flex items-center gap-3">
                         {getSymbolLogo() && (
-                          <div data-pp-logo-wrapper="1" className={`${theme.brandLogoShape === "round" ? "rounded-full" : "rounded-lg"} w-10 h-10 bg-foreground/5 overflow-hidden grid place-items-center`}>
+                          <div data-pp-logo-wrapper="1" className={`${theme.brandLogoShape === "round" ? "rounded-full" : "rounded-lg"} ${isVibrantLayout ? "w-16 h-16 bg-foreground/5 p-1" : "w-10 h-10 bg-foreground/5"} overflow-hidden grid place-items-center transition-all`}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={getSymbolLogo()}
                               alt="Logo"
-                              className="w-10 h-10 object-contain"
+                              className={isVibrantLayout ? "w-14 h-14 object-contain" : "w-10 h-10 object-contain"}
                             />
                           </div>
                         )}
                         <div>
-                          <div className="text-sm font-semibold">{effectiveBrandName || getDefaultBrandName(theme.brandKey)}</div>
-                          <div className="microtext text-muted-foreground">Digital Receipt</div>
+                          <div className={isVibrantLayout ? "text-xl md:text-2xl font-black tracking-tight" : "text-sm font-semibold"}>
+                            {effectiveBrandName || getDefaultBrandName(theme.brandKey)}
+                          </div>
+                          <div className={isVibrantLayout ? "text-xs md:text-sm font-medium text-muted-foreground mt-0.5" : "microtext text-muted-foreground"}>
+                            Digital Receipt
+                          </div>
                         </div>
                         <div className="ml-auto microtext text-muted-foreground">
                           {loadingReceipt ? "Loading…" : "Live"}
                         </div>
                       </div>
 
-                      <div className="mt-3 space-y-2">
+                      <div className={isVibrantLayout ? "mt-6 space-y-3.5" : "mt-3 space-y-2"}>
                         {(() => {
                           const displayItems = (items || []).filter((it) => {
                             const label = String(it.label || "");
                             return !/processing fee/i.test(label) && !/portal fee/i.test(label) && !/tax/i.test(label);
                           });
                           return displayItems.map((it, idx) => (
-                            <div key={idx} className="flex items-center justify-between text-sm">
-                              <span className="opacity-80">
+                            <div key={idx} className={`flex items-center justify-between ${isVibrantLayout ? "text-base md:text-lg py-2 border-b border-dashed border-foreground/5 last:border-b-0" : "text-sm"}`}>
+                              <span className={isVibrantLayout ? "font-medium opacity-90" : "opacity-80"}>
                                 {it.label}
                                 {typeof it.qty === "number" && it.qty > 1 ? ` × ${it.qty}` : ""}
                               </span>
-                              <span>{(() => {
-                                const usdVal = Number(it.priceUsd || 0);
+                              <span className={isVibrantLayout ? "font-bold text-foreground" : ""}>{(() => {
+                                const usdVal = feeMinusEnabled ? +(Number(it.priceUsd || 0) * unscaleFactor).toFixed(2) : Number(it.priceUsd || 0);
                                 if (currency === "USD") {
                                   return formatCurrency(usdVal, "USD");
                                 }
@@ -4635,7 +4724,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
                                   onChange={(e) => setTipCustomPct(Number(e.target.value))}
                                   placeholder="%"
-                                  className={`h-7 px-2 rounded-md border text-xs w-20 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/30' : 'bg-black/5 border-black/10 text-black placeholder-black/30'}`}
+                                  className={`h-7 px-2 rounded-md border text-xs w-20 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/75' : 'bg-black/5 border-black/10 text-black placeholder-black/75'}`}
                                   title="Enter tip percentage"
                                 />
                               )}
@@ -4646,16 +4735,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           </div>
                         )}
 
-                        <div className="border-t border-dashed my-2" />
-                        <div className="flex items-center justify-between text-sm">
-                          <span>Subtotal</span>
-                          <span>{(() => {
+                        <div className={isVibrantLayout ? "border-t border-dashed border-primary/20 my-4" : "border-t border-dashed my-2"} />
+                        <div className={`flex items-center justify-between ${isVibrantLayout ? "text-lg md:text-xl font-bold py-1" : "text-sm"}`}>
+                          <span>{isVibrantLayout ? "Amount Due" : "Subtotal"}</span>
+                          <span className={isVibrantLayout ? "text-2xl md:text-3xl font-black bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent" : ""}>{(() => {
                             if (currency === "USD") {
-                              return formatCurrency(itemsSubtotalUsd, "USD");
+                              return formatCurrency(displayItemsSubtotalUsd, "USD");
                             }
-                            const converted = convertFromUsd(itemsSubtotalUsd, currency, rates);
+                            const converted = convertFromUsd(displayItemsSubtotalUsd, currency, rates);
                             const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                            return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(itemsSubtotalUsd, "USD");
+                            return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayItemsSubtotalUsd, "USD");
                           })()}</span>
                         </div>
                         {tipUsd > 0 && (
@@ -4663,7 +4752,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             <span className="opacity-80">Tip</span>
                             <span>{(() => {
                               if (currency === "USD") {
-                                return formatCurrency(tipUsd, "USD");
+                                  return formatCurrency(tipUsd, "USD");
                               }
                               const converted = convertFromUsd(tipUsd, currency, rates);
                               const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
@@ -4671,16 +4760,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             })()}</span>
                           </div>
                         )}
-                        {taxUsd > 0 && (
+                        {displayTaxUsd > 0 && (
                           <div className="flex items-center justify-between text-sm">
                             <span className="opacity-80">Tax</span>
                             <span>{(() => {
                               if (currency === "USD") {
-                                return formatCurrency(taxUsd, "USD");
+                                return formatCurrency(displayTaxUsd, "USD");
                               }
-                              const converted = convertFromUsd(taxUsd, currency, rates);
+                              const converted = convertFromUsd(displayTaxUsd, currency, rates);
                               const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(taxUsd, "USD");
+                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayTaxUsd, "USD");
                             })()}</span>
                           </div>
                         )}
@@ -4709,6 +4798,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             * Credit card payments subject to a {creditFeePct.toFixed(2)}% fee
                           </div>
                         )}
+
+                        {feeMinusEnabled && isVibrantLayout && (
+                          <div className="mt-6 flex flex-col items-center justify-center p-4 rounded-2xl bg-primary/5 border border-primary/10 text-center animate-pulse">
+                            <div className="flex items-center gap-1.5 text-sm font-bold text-primary">
+                              <svg className="w-4 h-4 shrink-0 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                              </svg>
+                              <span>100% Fee-Free Secure Checkout</span>
+                            </div>
+                            <span className="text-xs text-muted-foreground mt-1">
+                              All processing fees are absorbed by the merchant.
+                            </span>
+                          </div>
+                        )}
+
                         <div className="border-t border-dashed my-2" />
                       </div>
                     </div>
@@ -4907,17 +5011,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           ) : (
                                             <>
                                               <div className="grid grid-cols-1 gap-2">
-                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Email Address *" type="email" value={shipEmail} onChange={(e) => setShipEmail(e.target.value)} />
-                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Full Name *" value={shipName} onChange={(e) => setShipName(e.target.value)} />
-                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Address Line 1 *" value={shipLine1} onChange={(e) => setShipLine1(e.target.value)} />
-                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Address Line 2 (optional)" value={shipLine2} onChange={(e) => setShipLine2(e.target.value)} />
+                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Email Address *" type="email" value={shipEmail} onChange={(e) => setShipEmail(e.target.value)} />
+                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Full Name *" value={shipName} onChange={(e) => setShipName(e.target.value)} />
+                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Address Line 1 *" value={shipLine1} onChange={(e) => setShipLine1(e.target.value)} />
+                                                <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Address Line 2 (optional)" value={shipLine2} onChange={(e) => setShipLine2(e.target.value)} />
                                                 <div className="grid grid-cols-2 gap-2">
-                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="City *" value={shipCity} onChange={(e) => setShipCity(e.target.value)} />
-                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="State/Province" value={shipState} onChange={(e) => setShipState(e.target.value)} />
+                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="City *" value={shipCity} onChange={(e) => setShipCity(e.target.value)} />
+                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="State/Province" value={shipState} onChange={(e) => setShipState(e.target.value)} />
                                                 </div>
                                                 <div className="grid grid-cols-2 gap-2">
-                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="ZIP / Postal *" value={shipZip} onChange={(e) => setShipZip(e.target.value)} />
-                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Country" value={shipCountry} onChange={(e) => setShipCountry(e.target.value.toUpperCase().slice(0, 2))} maxLength={2} />
+                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="ZIP / Postal *" value={shipZip} onChange={(e) => setShipZip(e.target.value)} />
+                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Country" value={shipCountry} onChange={(e) => setShipCountry(e.target.value.toUpperCase().slice(0, 2))} maxLength={2} />
                                                 </div>
                                               </div>
 
@@ -5257,7 +5361,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           </div>
                         </div>
                         <span className="text-sm font-semibold tabular-nums shrink-0 ml-3">{(() => {
-                          const usdVal = Number(it.priceUsd || 0);
+                          const usdVal = feeMinusEnabled ? +(Number(it.priceUsd || 0) * unscaleFactor).toFixed(2) : Number(it.priceUsd || 0);
                           if (currency === "USD") {
                             return formatCurrency(usdVal, "USD");
                           }
@@ -5302,7 +5406,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             onChange={(e) => setTipCustomPct(Number(e.target.value))}
                             onBlur={() => handleTipUpdate(tipCustomPct)}
                             placeholder="%"
-                            className={`h-9 px-3 rounded-lg border text-sm w-24 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/30' : 'bg-black/5 border-black/10 text-black placeholder-black/30'}`}
+                            className={`h-9 px-3 rounded-lg border text-sm w-24 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/75' : 'bg-black/5 border-black/10 text-black placeholder-black/75'}`}
                             title="Enter tip percentage"
                           />
                         )}
@@ -5315,14 +5419,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
                   <div className="border-t border-dashed my-2" />
                   <div className="flex items-center justify-between text-sm">
-                    <span>Subtotal</span>
+                    <span>{feeMinusEnabled ? "Amount Due" : "Subtotal"}</span>
                     <span>{(() => {
                       if (currency === "USD") {
-                        return formatCurrency(itemsSubtotalUsd, "USD");
+                        return formatCurrency(displayItemsSubtotalUsd, "USD");
                       }
-                      const converted = convertFromUsd(itemsSubtotalUsd, currency, rates);
+                      const converted = convertFromUsd(displayItemsSubtotalUsd, currency, rates);
                       const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                      return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(itemsSubtotalUsd, "USD");
+                      return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayItemsSubtotalUsd, "USD");
                     })()}</span>
                   </div>
                   {tipUsd > 0 && (
@@ -5338,16 +5442,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       })()}</span>
                     </div>
                   )}
-                  {taxUsd > 0 && (
+                  {displayTaxUsd > 0 && (
                     <div className="flex items-center justify-between text-sm">
                       <span className="opacity-80">Tax</span>
                       <span>{(() => {
                         if (currency === "USD") {
-                          return formatCurrency(taxUsd, "USD");
+                          return formatCurrency(displayTaxUsd, "USD");
                         }
-                        const converted = convertFromUsd(taxUsd, currency, rates);
+                        const converted = convertFromUsd(displayTaxUsd, currency, rates);
                         const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                        return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(taxUsd, "USD");
+                        return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayTaxUsd, "USD");
                       })()}</span>
                     </div>
                   )}
@@ -5559,16 +5663,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                       ) : (
                                         <>
                                           <div className="grid grid-cols-1 gap-2">
-                                            <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Full Name *" value={shipName} onChange={(e) => setShipName(e.target.value)} />
-                                            <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Address Line 1 *" value={shipLine1} onChange={(e) => setShipLine1(e.target.value)} />
-                                            <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Address Line 2 (optional)" value={shipLine2} onChange={(e) => setShipLine2(e.target.value)} />
+                                            <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Full Name *" value={shipName} onChange={(e) => setShipName(e.target.value)} />
+                                            <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Address Line 1 *" value={shipLine1} onChange={(e) => setShipLine1(e.target.value)} />
+                                            <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Address Line 2 (optional)" value={shipLine2} onChange={(e) => setShipLine2(e.target.value)} />
                                             <div className="grid grid-cols-2 gap-2">
-                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="City *" value={shipCity} onChange={(e) => setShipCity(e.target.value)} />
-                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="State/Province" value={shipState} onChange={(e) => setShipState(e.target.value)} />
+                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="City *" value={shipCity} onChange={(e) => setShipCity(e.target.value)} />
+                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="State/Province" value={shipState} onChange={(e) => setShipState(e.target.value)} />
                                             </div>
                                             <div className="grid grid-cols-2 gap-2">
-                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="ZIP / Postal *" value={shipZip} onChange={(e) => setShipZip(e.target.value)} />
-                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/30' : 'border-black/10 bg-black/5 text-black placeholder-black/30'}`} placeholder="Country" value={shipCountry} onChange={(e) => setShipCountry(e.target.value.toUpperCase().slice(0, 2))} maxLength={2} />
+                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="ZIP / Postal *" value={shipZip} onChange={(e) => setShipZip(e.target.value)} />
+                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Country" value={shipCountry} onChange={(e) => setShipCountry(e.target.value.toUpperCase().slice(0, 2))} maxLength={2} />
                                             </div>
                                           </div>
                                           <div>

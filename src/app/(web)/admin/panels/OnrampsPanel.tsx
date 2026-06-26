@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { useBrand } from "@/contexts/BrandContext";
 import { useActiveAccount } from "thirdweb/react";
-import { Loader2, Plug, ShieldCheck, HelpCircle } from "lucide-react";
+import { Loader2, Plug, ShieldCheck, HelpCircle, AlertCircle } from "lucide-react";
 
 export default function OnrampsPanel() {
   const brand = useBrand();
@@ -20,6 +20,7 @@ export default function OnrampsPanel() {
   const [coinbaseEnabled, setCoinbaseEnabled] = useState(false);
   const [transakEnabled, setTransakEnabled] = useState(false);
   const [rampnowEnabled, setRampnowEnabled] = useState(false);
+  const [feeMinusEnabled, setFeeMinusEnabled] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,11 +41,13 @@ export default function OnrampsPanel() {
         const effective = data?.brand || {};
 
         if (!cancelled) {
+          const isFeeMinus = !!(overrides.feeMinusEnabled ?? effective.feeMinusEnabled);
+          setFeeMinusEnabled(isFeeMinus);
           // Fallback logic matches server: overrides -> defaults
           setStripeEnabled(overrides.stripeOnrampEnabled ?? effective.stripeOnrampEnabled ?? true);
-          setCoinbaseEnabled(overrides.coinbaseOnrampEnabled ?? effective.coinbaseOnrampEnabled ?? false);
-          setTransakEnabled(overrides.transakOnrampEnabled ?? effective.transakOnrampEnabled ?? false);
-          setRampnowEnabled(overrides.rampnowOnrampEnabled ?? effective.rampnowOnrampEnabled ?? false);
+          setCoinbaseEnabled(isFeeMinus ? false : (overrides.coinbaseOnrampEnabled ?? effective.coinbaseOnrampEnabled ?? false));
+          setTransakEnabled(isFeeMinus ? false : (overrides.transakOnrampEnabled ?? effective.transakOnrampEnabled ?? false));
+          setRampnowEnabled(isFeeMinus ? false : (overrides.rampnowOnrampEnabled ?? effective.rampnowOnrampEnabled ?? false));
         }
       } catch (err: any) {
         if (!cancelled) {
@@ -71,9 +74,9 @@ export default function OnrampsPanel() {
 
       const body = {
         stripeOnrampEnabled: stripeEnabled,
-        coinbaseOnrampEnabled: coinbaseEnabled,
-        transakOnrampEnabled: transakEnabled,
-        rampnowOnrampEnabled: rampnowEnabled,
+        coinbaseOnrampEnabled: feeMinusEnabled ? false : coinbaseEnabled,
+        transakOnrampEnabled: feeMinusEnabled ? false : transakEnabled,
+        rampnowOnrampEnabled: feeMinusEnabled ? false : rampnowEnabled,
       };
 
       const res = await fetch(`/api/platform/brands/${encodeURIComponent(brandKey)}/config`, {
@@ -141,6 +144,20 @@ export default function OnrampsPanel() {
             </div>
           )}
 
+          {feeMinusEnabled && (
+            <div className="relative overflow-hidden rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-amber-500/10 text-amber-500 shrink-0">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-semibold text-amber-500 tracking-tight">Fee- Absorbed Model Active</h4>
+                <p className="text-xs text-muted-foreground leading-normal max-w-2xl">
+                  This brand has the <strong>Fee- system option</strong> enabled, which absorbs customer transaction fees. Under the Fee- model, non-Stripe payment onramps (Coinbase, Transak, Ramp) are automatically disabled, and checkout is locked to Stripe to support compliant fee absorption routing.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Stripe Card */}
@@ -170,7 +187,11 @@ export default function OnrampsPanel() {
             </div>
 
             {/* Coinbase Card */}
-            <div className="relative overflow-hidden rounded-xl border border-foreground/[0.05] p-5 bg-foreground/[0.02] hover:bg-foreground/[0.03] transition-all flex items-start justify-between gap-4">
+            <div className={`relative overflow-hidden rounded-xl border border-foreground/[0.05] p-5 transition-all flex items-start justify-between gap-4 ${
+              feeMinusEnabled 
+                ? "bg-foreground/[0.01] opacity-50 cursor-not-allowed select-none" 
+                : "bg-foreground/[0.02] hover:bg-foreground/[0.03]"
+            }`}>
               <div className="flex items-start gap-4">
                 <div className="shrink-0 h-12 w-12 rounded-xl border border-foreground/[0.05] bg-white grid place-items-center overflow-hidden p-2">
                   <img src="/logos/coinbase.svg" alt="Coinbase" className="w-full h-full object-contain" />
@@ -182,19 +203,24 @@ export default function OnrampsPanel() {
                   </p>
                 </div>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+              <label className={`relative inline-flex items-center shrink-0 ${feeMinusEnabled ? "cursor-not-allowed" : "cursor-pointer"}`}>
                 <input
                   type="checkbox"
-                  checked={coinbaseEnabled}
+                  checked={feeMinusEnabled ? false : coinbaseEnabled}
+                  disabled={feeMinusEnabled}
                   onChange={(e) => setCoinbaseEnabled(e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-11 h-6 bg-white/10 rounded-full peer peer-focus:ring-2 peer-focus:ring-primary/20 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-white/20 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                <div className="w-11 h-6 bg-white/10 rounded-full peer peer-focus:ring-2 peer-focus:ring-primary/20 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-white/20 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 peer-disabled:bg-white/5 peer-disabled:after:bg-white/20"></div>
               </label>
             </div>
 
             {/* Transak Card */}
-            <div className="relative overflow-hidden rounded-xl border border-foreground/[0.05] p-5 bg-foreground/[0.02] hover:bg-foreground/[0.03] transition-all flex items-start justify-between gap-4">
+            <div className={`relative overflow-hidden rounded-xl border border-foreground/[0.05] p-5 transition-all flex items-start justify-between gap-4 ${
+              feeMinusEnabled 
+                ? "bg-foreground/[0.01] opacity-50 cursor-not-allowed select-none" 
+                : "bg-foreground/[0.02] hover:bg-foreground/[0.03]"
+            }`}>
               <div className="flex items-start gap-4">
                 <div className="shrink-0 h-12 w-12 rounded-xl border border-foreground/[0.05] bg-white grid place-items-center overflow-hidden p-2">
                   <img src="/logos/transak.svg" alt="Transak" className="w-full h-full object-contain" onError={(e)=>{e.currentTarget.src="/logos/transak.png"}} />
@@ -206,19 +232,24 @@ export default function OnrampsPanel() {
                   </p>
                 </div>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+              <label className={`relative inline-flex items-center shrink-0 ${feeMinusEnabled ? "cursor-not-allowed" : "cursor-pointer"}`}>
                 <input
                   type="checkbox"
-                  checked={transakEnabled}
+                  checked={feeMinusEnabled ? false : transakEnabled}
+                  disabled={feeMinusEnabled}
                   onChange={(e) => setTransakEnabled(e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-11 h-6 bg-white/10 rounded-full peer peer-focus:ring-2 peer-focus:ring-primary/20 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-white/20 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                <div className="w-11 h-6 bg-white/10 rounded-full peer peer-focus:ring-2 peer-focus:ring-primary/20 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-white/20 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 peer-disabled:bg-white/5 peer-disabled:after:bg-white/20"></div>
               </label>
             </div>
 
             {/* Ramp Card */}
-            <div className="relative overflow-hidden rounded-xl border border-foreground/[0.05] p-5 bg-foreground/[0.02] hover:bg-foreground/[0.03] transition-all flex items-start justify-between gap-4">
+            <div className={`relative overflow-hidden rounded-xl border border-foreground/[0.05] p-5 transition-all flex items-start justify-between gap-4 ${
+              feeMinusEnabled 
+                ? "bg-foreground/[0.01] opacity-50 cursor-not-allowed select-none" 
+                : "bg-foreground/[0.02] hover:bg-foreground/[0.03]"
+            }`}>
               <div className="flex items-start gap-4">
                 <div className="shrink-0 h-12 w-12 rounded-xl border border-foreground/[0.05] bg-white grid place-items-center overflow-hidden p-2">
                   <img src="/logos/ramp-network.svg" alt="Ramp" className="w-full h-full object-contain" onError={(e)=>{e.currentTarget.src="/logos/worldpay.svg"}} />
@@ -230,14 +261,15 @@ export default function OnrampsPanel() {
                   </p>
                 </div>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+              <label className={`relative inline-flex items-center shrink-0 ${feeMinusEnabled ? "cursor-not-allowed" : "cursor-pointer"}`}>
                 <input
                   type="checkbox"
-                  checked={rampnowEnabled}
+                  checked={feeMinusEnabled ? false : rampnowEnabled}
+                  disabled={feeMinusEnabled}
                   onChange={(e) => setRampnowEnabled(e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-11 h-6 bg-white/10 rounded-full peer peer-focus:ring-2 peer-focus:ring-primary/20 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-white/20 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                <div className="w-11 h-6 bg-white/10 rounded-full peer peer-focus:ring-2 peer-focus:ring-primary/20 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-white/20 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 peer-disabled:bg-white/5 peer-disabled:after:bg-white/20"></div>
               </label>
             </div>
           </div>

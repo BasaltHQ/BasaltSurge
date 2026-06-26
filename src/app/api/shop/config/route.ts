@@ -47,6 +47,9 @@ type ShopTheme = {
   layoutMode?: "minimalist" | "balanced" | "maximalist";
   maximalistBannerUrl?: string;
   galleryImages?: string[];
+  portalGradientEnabled?: boolean;
+  portalGradientStart?: string;
+  portalGradientEnd?: string;
 };
 
 
@@ -139,6 +142,9 @@ function defaults(brandKey?: string): Required<Omit<ShopConfig, "wallet" | "id" 
       layoutMode: "balanced",
       maximalistBannerUrl: "",
       galleryImages: [],
+      portalGradientEnabled: false,
+      portalGradientStart: "",
+      portalGradientEnd: "",
     },
     arrangement: "grid",
     xpPerDollar: 1,
@@ -235,6 +241,9 @@ function normalize(raw?: any, brandKey?: string): Omit<ShopConfig, "wallet" | "i
       galleryImages: Array.isArray(t.galleryImages)
         ? [...t.galleryImages.slice(0, 5), ...Array(Math.max(0, 5 - t.galleryImages.length)).fill("")].map((x: any) => isValidUrl(x) ? String(x) : "")
         : Array(5).fill(""),
+      portalGradientEnabled: typeof t.portalGradientEnabled === "boolean" ? t.portalGradientEnabled : d.theme.portalGradientEnabled,
+      portalGradientStart: typeof t.portalGradientStart === "string" ? t.portalGradientStart : d.theme.portalGradientStart,
+      portalGradientEnd: typeof t.portalGradientEnd === "string" ? t.portalGradientEnd : d.theme.portalGradientEnd,
     };
 
     const arr = String(raw.arrangement || "").toLowerCase();

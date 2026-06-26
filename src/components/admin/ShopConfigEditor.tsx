@@ -14,6 +14,9 @@ type ShopConfigEditorProps = {
         primaryColor?: string;
         secondaryColor?: string;
         layoutMode?: "minimalist" | "balanced" | "maximalist";
+        portalGradientEnabled?: boolean;
+        portalGradientStart?: string;
+        portalGradientEnd?: string;
     };
     onSave: (data: any) => Promise<void>;
 };
@@ -40,6 +43,9 @@ export default function ShopConfigEditor({ wallet, brandKey, initialData, onSave
             layoutMode: initialData.layoutMode || "balanced",
             brandLogoUrl: initialData.logoUrl || "",
             brandFaviconUrl: initialData.faviconUrl || "",
+            portalGradientEnabled: initialData.portalGradientEnabled ?? false,
+            portalGradientStart: initialData.portalGradientStart || "",
+            portalGradientEnd: initialData.portalGradientEnd || "",
         }
     });
 
@@ -67,6 +73,9 @@ export default function ShopConfigEditor({ wallet, brandKey, initialData, onSave
                                 layoutMode: prev.theme.layoutMode !== "balanced" ? prev.theme.layoutMode : (c.theme?.layoutMode || "balanced"),
                                 brandLogoUrl: prev.theme.brandLogoUrl || c.theme?.brandLogoUrl || "",
                                 brandFaviconUrl: prev.theme.brandFaviconUrl || c.theme?.brandFaviconUrl || "",
+                                portalGradientEnabled: prev.theme.portalGradientEnabled !== false ? prev.theme.portalGradientEnabled : (c.theme?.portalGradientEnabled ?? false),
+                                portalGradientStart: prev.theme.portalGradientStart || c.theme?.portalGradientStart || "",
+                                portalGradientEnd: prev.theme.portalGradientEnd || c.theme?.portalGradientEnd || "",
                             }
                         };
                     });
@@ -204,6 +213,88 @@ export default function ShopConfigEditor({ wallet, brandKey, initialData, onSave
                         />
                     </div>
                 </div>
+            </div>
+
+            {/* Portal Left-Pane Gradient Customization */}
+            <div className="border-t border-white/5 pt-4 space-y-4">
+                <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                        <label className="text-xs font-semibold text-foreground">Portal Left-Pane Gradient</label>
+                        <p className="text-[10px] text-muted-foreground">Show a vibrant background gradient on the payment page's left preview pane.</p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setConfig({
+                            ...config,
+                            theme: {
+                                ...config.theme,
+                                portalGradientEnabled: !config.theme.portalGradientEnabled
+                            }
+                        })}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            config.theme.portalGradientEnabled ? "bg-emerald-500" : "bg-zinc-700"
+                        }`}
+                    >
+                        <span
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                config.theme.portalGradientEnabled ? "translate-x-4" : "translate-x-0"
+                            }`}
+                        />
+                    </button>
+                </div>
+
+                {config.theme.portalGradientEnabled && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="space-y-1">
+                            <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Gradient Start Color</label>
+                            <div className="flex gap-2">
+                                <input
+                                    type="color"
+                                    value={config.theme.portalGradientStart || config.theme.primaryColor || "#0ea5e9"}
+                                    onChange={e => setConfig({
+                                        ...config,
+                                        theme: { ...config.theme, portalGradientStart: e.target.value }
+                                    })}
+                                    className="w-8 h-8 rounded border border-white/10 shrink-0 bg-transparent cursor-pointer p-0"
+                                />
+                                <input
+                                    type="text"
+                                    placeholder="Default to Primary Color"
+                                    value={config.theme.portalGradientStart || ""}
+                                    onChange={e => setConfig({
+                                        ...config,
+                                        theme: { ...config.theme, portalGradientStart: e.target.value }
+                                    })}
+                                    className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm font-mono"
+                                />
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Gradient End Color</label>
+                            <div className="flex gap-2">
+                                <input
+                                    type="color"
+                                    value={config.theme.portalGradientEnd || config.theme.secondaryColor || "#22c55e"}
+                                    onChange={e => setConfig({
+                                        ...config,
+                                        theme: { ...config.theme, portalGradientEnd: e.target.value }
+                                    })}
+                                    className="w-8 h-8 rounded border border-white/10 shrink-0 bg-transparent cursor-pointer p-0"
+                                />
+                                <input
+                                    type="text"
+                                    placeholder="Default to Secondary Color"
+                                    value={config.theme.portalGradientEnd || ""}
+                                    onChange={e => setConfig({
+                                        ...config,
+                                        theme: { ...config.theme, portalGradientEnd: e.target.value }
+                                    })}
+                                    className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm font-mono"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-white/5 pt-4">

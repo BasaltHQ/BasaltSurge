@@ -36,6 +36,9 @@ export type SiteTheme = {
   navbarMode?: 'symbol' | 'logo';
   brandKey?: string;
   footerLogoUrl?: string;
+  portalGradientEnabled?: boolean;
+  portalGradientStart?: string;
+  portalGradientEnd?: string;
 };
 
 type ThemeContextType = {

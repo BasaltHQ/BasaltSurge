@@ -32,6 +32,9 @@ export default function PortalThemePlayground({ wallet, brandKey, shopConfig, on
       };
       base.dark = { ...base.dark, ...shopSeed };
       base.light = { ...base.light, ...shopSeed };
+      base.portalGradientEnabled = st.portalGradientEnabled ?? false;
+      base.portalGradientStart = st.portalGradientStart || '';
+      base.portalGradientEnd = st.portalGradientEnd || '';
     }
 
     // If merchant already saved a portalTheme, overlay it on top
@@ -43,6 +46,9 @@ export default function PortalThemePlayground({ wallet, brandKey, shopConfig, on
         light: { ...base.light, ...(saved.light || {}) },
         widget: { ...base.widget, ...(saved.widget || {}) },
         touchpointThemeId: saved.touchpointThemeId || base.touchpointThemeId,
+        portalGradientEnabled: saved.portalGradientEnabled !== undefined ? saved.portalGradientEnabled : base.portalGradientEnabled,
+        portalGradientStart: saved.portalGradientStart !== undefined ? saved.portalGradientStart : base.portalGradientStart,
+        portalGradientEnd: saved.portalGradientEnd !== undefined ? saved.portalGradientEnd : base.portalGradientEnd,
       };
     }
 
@@ -66,6 +72,12 @@ export default function PortalThemePlayground({ wallet, brandKey, shopConfig, on
 
       const body = {
         ...shopConfig,
+        theme: {
+          ...shopConfig.theme,
+          portalGradientEnabled: config.portalGradientEnabled,
+          portalGradientStart: config.portalGradientStart,
+          portalGradientEnd: config.portalGradientEnd,
+        },
         portalTheme: config,
       };
 

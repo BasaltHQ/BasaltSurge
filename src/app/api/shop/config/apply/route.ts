@@ -115,6 +115,9 @@ export async function POST(req: NextRequest) {
             maximalistBannerUrl: "",
             galleryImages: [] as string[],
             brandFaviconUrl: "",
+            portalGradientEnabled: false,
+            portalGradientStart: "",
+            portalGradientEnd: "",
         };
 
         const prevTheme = prev?.theme || {};
@@ -136,6 +139,9 @@ export async function POST(req: NextRequest) {
                 : (prevTheme.layoutMode || defaultTheme.layoutMode),
             maximalistBannerUrl: prevTheme.maximalistBannerUrl || "",
             galleryImages: prevTheme.galleryImages || [],
+            portalGradientEnabled: typeof bodyTheme.portalGradientEnabled === "boolean" ? bodyTheme.portalGradientEnabled : (prevTheme.portalGradientEnabled ?? defaultTheme.portalGradientEnabled),
+            portalGradientStart: typeof bodyTheme.portalGradientStart === "string" ? bodyTheme.portalGradientStart : (prevTheme.portalGradientStart || defaultTheme.portalGradientStart),
+            portalGradientEnd: typeof bodyTheme.portalGradientEnd === "string" ? bodyTheme.portalGradientEnd : (prevTheme.portalGradientEnd || defaultTheme.portalGradientEnd),
         };
 
         const doc = {
