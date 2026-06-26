@@ -21,8 +21,12 @@ export async function executeGaslessTransferServer(
     const { base } = await import("thirdweb/chains");
     const { inAppWallet } = await import("thirdweb/wallets");
 
+    const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
+    const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
+    const clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+
     const twClient = createThirdwebClient({
-      clientId: process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "",
+      clientId,
       secretKey: process.env.THIRDWEB_SECRET_KEY,
     });
 
@@ -265,6 +269,10 @@ async function runBackgroundPoll(params: {
           // Set TTL to -1 to prevent auto-delete since it is paid
           receipt.ttl = -1;
 
+          // Persist card funding if resolved
+          receipt.isCreditCard = isCreditCard;
+          receipt.detectedCardFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
+
           await container.items.upsert(receipt);
           console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to paid with txHash: ${txHash}`);
         } else {
@@ -387,6 +395,8 @@ export async function POST(req: NextRequest) {
         receipt.onrampAmount = amount;
         receipt.splitAddress = splitAddress;
         receipt.splitAddressCredit = splitAddressCredit || null;
+        receipt.detectedCardFunding = detectedCardFunding || null;
+        receipt.isCreditCard = detectedCardFunding === "credit";
         receipt.lastUpdatedAt = Date.now();
         await container.items.upsert(receipt);
         console.log(`[BACKGROUND POLL] Immediately saved Stripe metadata to receipt ${receiptId}`);

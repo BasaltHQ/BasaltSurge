@@ -87,40 +87,7 @@ export default function PartnerManagementPanel() {
   const [reconcileResult, setReconcileResult] = useState<any>(null);
   const [reconcileError, setReconcileError] = useState("");
 
-  // Temporary recovery state
-  const [reconcilingTemp, setReconcilingTemp] = useState(false);
-  const [reconcileTempResult, setReconcileTempResult] = useState<any>(null);
-  const [reconcileTempError, setReconcileTempError] = useState("");
 
-  async function triggerTempRecovery() {
-    if (!window.confirm("Are you sure you want to trigger the temporary recovery for the lost Stripe headless payments from mmfmilton@icloud.com? This will verify their derived guest wallet balances in production and sweep them directly on-chain.")) {
-      return;
-    }
-
-    try {
-      setReconcilingTemp(true);
-      setReconcileTempError("");
-      setReconcileTempResult(null);
-
-      const res = await fetch("/api/admin/reconcile-temp-lost", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        throw new Error(data.message || data.error || "Recovery failed");
-      }
-
-      setReconcileTempResult(data);
-    } catch (err: any) {
-      setReconcileTempError(err.message || "An unexpected error occurred");
-    } finally {
-      setReconcilingTemp(false);
-    }
-  }
 
   async function triggerStuckPaymentsReconciliation() {
     if (!window.confirm("Are you sure you want to scan for and reconcile stuck guest EOA payments? This will check all pending/failed Stripe onramp receipts from the last 7 days, inspect their derived guest wallet balances, and sweep any found USDC to target split contracts.")) {
@@ -2761,66 +2728,7 @@ export default function PartnerManagementPanel() {
               </button>
             </div>
 
-            {/* Temporary Lost Payments Recovery (Today's Outage) */}
-            <div className="border-t border-foreground/5 pt-4 mt-4 space-y-4">
-              <h5 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Temporary Lost Payments Recovery (Today's Outage)</h5>
-              <div className="text-xs text-muted-foreground/70">
-                Specifically sweep and reconcile today's lost Stripe headless checkouts (R-904400 and R-497694) for <strong>mmfmilton@icloud.com</strong> using live production client IDs.
-              </div>
 
-              {reconcileTempError && (
-                <div className="p-3 rounded-lg border border-red-500/20 bg-red-500/[0.02] text-xs text-red-500">
-                  ⚠️ {reconcileTempError}
-                </div>
-              )}
-
-              {reconcileTempResult && (
-                <div className="p-3 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.02] text-xs space-y-2">
-                  <div className="font-semibold text-emerald-500">✓ Recovery run complete:</div>
-                  {reconcileTempResult.results && reconcileTempResult.results.length > 0 && (
-                    <div className="space-y-2">
-                      {reconcileTempResult.results.map((r: any, idx: number) => (
-                        <div key={idx} className="border-b border-foreground/5 pb-2 last:border-0 last:pb-0 space-y-1">
-                          <div className="flex justify-between font-semibold">
-                            <span>Receipt {r.receiptId} ({r.brandKey})</span>
-                            <span className={r.swept ? "text-emerald-500" : "text-amber-500"}>
-                              {r.swept ? "Swept successfully" : "Not swept"}
-                            </span>
-                          </div>
-                          <div className="text-[11px] text-muted-foreground/80 space-y-0.5">
-                            <p>Derived wallet: <code className="font-mono">{r.resolvedWallet || "N/A"}</code></p>
-                            {r.txHash && (
-                              <p>Sweep Tx: <a href={`https://basescan.org/tx/${r.txHash}`} target="_blank" rel="noreferrer" className="underline font-mono text-emerald-400">{r.txHash}</a></p>
-                            )}
-                            <p>Database updated: {r.dbUpdated ? "✓ Yes" : "❌ No"}</p>
-                            {r.attempts && r.attempts.length > 0 && (
-                              <div className="mt-1 pl-2 border-l border-foreground/10 space-y-0.5">
-                                <p className="text-[10px] text-muted-foreground/60">Attempts per Client ID:</p>
-                                {r.attempts.map((att: any, attIdx: number) => (
-                                  <p key={attIdx} className="text-[10px] text-muted-foreground/75">
-                                    Client ID {att.clientId}: {att.success ? "Success" : `Failed (${att.error || "No balance"})`} {att.walletAddress ? `(${att.walletAddress.slice(0, 8)}... balance: ${att.balance} USDC)` : ""}
-                                  </p>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="flex items-center justify-end">
-                <button
-                  className="px-4 py-2.5 rounded-lg border border-rose-500/20 hover:bg-rose-500/10 transition-colors text-sm font-medium text-rose-400 flex items-center gap-2 bg-rose-500/5"
-                  onClick={triggerTempRecovery}
-                  disabled={reconcilingTemp}
-                >
-                  {reconcilingTemp ? "Running Recovery…" : "Run Specific Recovery (Today's Case)"}
-                </button>
-              </div>
-            </div>
           </div>
         </div>
 

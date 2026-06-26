@@ -17,14 +17,6 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const queryBrandKey = url.searchParams.get("brandKey")?.toLowerCase().trim();
 
-    let query = `
-      SELECT c.id, c.wallet, c.displayName, c.contact, c.firstSeen, c.lastSeen, c.xp
-      FROM c
-      WHERE c.type = 'user' AND IS_DEFINED(c.contact) AND IS_DEFINED(c.contact.email)
-    `;
-
-    const parameters: { name: string; value: any }[] = [];
-
     let targetBrandKey = "";
     if (isPartner) {
       targetBrandKey = containerIdentity.brandKey.toLowerCase();
@@ -32,8 +24,16 @@ export async function GET(req: NextRequest) {
       targetBrandKey = queryBrandKey;
     }
 
+    let query = `
+      SELECT *
+      FROM c
+      WHERE c.type = 'user' AND IS_DEFINED(c.contact) AND IS_DEFINED(c.contact.email)
+    `;
+
+    const parameters: { name: string; value: any }[] = [];
+
     if (targetBrandKey) {
-      query += ` AND c.id = CONCAT(c.wallet, ':user:', @brandKey)`;
+      query += ` AND (c.id = CONCAT(c.wallet, ':user:', @brandKey) OR c.id = CONCAT(c.wallet, ':user'))`;
       parameters.push({ name: "@brandKey", value: targetBrandKey });
     }
 
@@ -44,15 +44,99 @@ export async function GET(req: NextRequest) {
     };
 
     const { resources } = await container.items.query(querySpec).fetchAll();
-    
+
+    const brandScopedProfiles = new Map<string, any>();
+    const legacyProfiles: any[] = [];
+
+    for (const r of resources) {
+      const wallet = String(r.wallet || "").toLowerCase().trim();
+      const id = String(r.id || "");
+      if (targetBrandKey && id === `${wallet}:user:${targetBrandKey}`) {
+        brandScopedProfiles.set(wallet, r);
+      } else if (id === `${wallet}:user`) {
+        legacyProfiles.push(r);
+      }
+    }
+
+    // Resolve brand-specific Thirdweb Client ID dynamically
+    const bKey = targetBrandKey ? targetBrandKey.toUpperCase() : "";
+    const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
+
+    if (envClientId && targetBrandKey) {
+      try {
+        const { createThirdwebClient } = await import("thirdweb");
+        const { inAppWallet } = await import("thirdweb/wallets");
+        const { base } = await import("thirdweb/chains");
+        const { markEmailVerified } = await import("@/app/api/auth/thirdweb-verify/route");
+
+        const brandTwClient = createThirdwebClient({
+          clientId: envClientId,
+          secretKey: process.env.THIRDWEB_SECRET_KEY,
+        });
+
+        for (const legacyProfile of legacyProfiles) {
+          const wallet = String(legacyProfile.wallet || "").toLowerCase().trim();
+          const email = String(legacyProfile.contact?.email || "").toLowerCase().trim();
+
+          // Skip if already backfilled/checked
+          if (brandScopedProfiles.has(wallet)) {
+            continue;
+          }
+
+          try {
+            const verificationToken = markEmailVerified(email);
+            const tempWallet = inAppWallet({
+              auth: { options: ["auth_endpoint" as any] },
+              executionMode: { mode: "EIP7702", sponsorGas: true },
+            });
+            const account = await tempWallet.connect({
+              client: brandTwClient,
+              chain: base,
+              strategy: "auth_endpoint" as any,
+              payload: JSON.stringify({ email, verificationToken }),
+            });
+            const derivedAddress = account.address.toLowerCase().trim();
+
+            if (derivedAddress === wallet) {
+              console.log(`[custom-auth-wallets] EOA matched: email ${email} derived ${derivedAddress} == wallet ${wallet} using client ID ${envClientId}`);
+              
+              // Create the brand-scoped profile
+              const nextDoc = {
+                ...legacyProfile,
+                id: `${wallet}:user:${targetBrandKey}`,
+                brandKey: targetBrandKey,
+                lastSeen: Date.now()
+              };
+
+              await container.items.upsert(nextDoc);
+              console.log(`[custom-auth-wallets] Successfully backfilled user profile for ${targetBrandKey}: ${nextDoc.id}`);
+              brandScopedProfiles.set(wallet, nextDoc);
+            }
+          } catch (deriveErr) {
+            console.warn(`[custom-auth-wallets] Failed EOA derivation check for email ${email} under brand ${targetBrandKey}:`, deriveErr);
+          }
+        }
+      } catch (importErr) {
+        console.error(`[custom-auth-wallets] Failed to load Thirdweb SDK for derivation:`, importErr);
+      }
+    }
+
+    // Determine final resources list to output
+    let finalResources: any[] = [];
+    if (targetBrandKey) {
+      finalResources = Array.from(brandScopedProfiles.values());
+    } else {
+      finalResources = resources;
+    }
+
     const seenKeys = new Set<string>();
     const seenIds = new Set<string>();
     const items: any[] = [];
 
     // Sort resources by lastSeen descending first to prioritize the most recent records
-    resources.sort((a: any, b: any) => (b.lastSeen || 0) - (a.lastSeen || 0));
+    finalResources.sort((a: any, b: any) => (b.lastSeen || 0) - (a.lastSeen || 0));
 
-    for (const r of resources) {
+    for (const r of finalResources) {
       const email = String(r.contact?.email || "").toLowerCase().trim();
       const wallet = String(r.wallet || "").toLowerCase().trim();
       const id = String(r.id || "");

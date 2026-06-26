@@ -197,16 +197,19 @@ export async function POST(req: NextRequest) {
         // Update receipt status if we have a receiptId
         const receiptId = metadata.receiptId;
         if (receiptId) {
+          const detectedFunding = cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined);
           await fetch(`${baseOrigin}/api/receipts/status`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               receiptId: String(receiptId),
               wallet: merchantWallet,
-              status: 'reconciled'
+              status: 'reconciled',
+              detectedCardFunding: detectedFunding,
+              isCreditCard: cardFunding === "credit"
             })
           });
-          console.log(`[STRIPE WEBHOOK] Updated receipt ${receiptId} to reconciled`);
+          console.log(`[STRIPE WEBHOOK] Updated receipt ${receiptId} to reconciled with cardFunding=${cardFunding}`);
         }
       } catch (e) {
         console.error('[STRIPE WEBHOOK] Error triggering split/receipt:', e);
@@ -217,13 +220,16 @@ export async function POST(req: NextRequest) {
     if (status === 'fulfillment_processing' && merchantWallet && metadata.receiptId) {
       const baseOrigin = req.nextUrl.origin;
       try {
+        const detectedFunding = cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined);
         await fetch(`${baseOrigin}/api/receipts/status`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             receiptId: String(metadata.receiptId),
             wallet: merchantWallet,
-            status: 'pending'
+            status: 'pending',
+            detectedCardFunding: detectedFunding,
+            isCreditCard: cardFunding === "credit"
           })
         });
       } catch (e) {

@@ -200,9 +200,28 @@ export async function POST(req: NextRequest) {
       let email = receipt.customerEmail || receipt.email;
       const merchantWallet = receipt.wallet;
       const amount = receipt.onrampAmount || receipt.totalUsd;
-      const splitAddress = receipt.splitAddress;
-      const splitAddressCredit = receipt.splitAddressCredit;
       const brandKey = receipt.brandKey || "";
+
+      // Resolve site configuration dynamically to get the latest splits
+      const siteConfig = await getSiteConfigForWallet(merchantWallet, brandKey);
+      let splitAddress = receipt.splitAddress;
+      let splitAddressCredit = receipt.splitAddressCredit;
+      if (siteConfig) {
+        splitAddress = siteConfig.splitAddress || siteConfig.split?.address || splitAddress;
+        splitAddressCredit = siteConfig.splitAddressCredit || siteConfig.splitCredit?.address || splitAddressCredit;
+      }
+      if (!splitAddress) {
+        splitAddress = merchantWallet;
+      }
+
+      // Resolve brand-specific Thirdweb Client ID dynamically
+      const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
+      const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
+      const clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+      const brandTwClient = createThirdwebClient({
+        clientId,
+        secretKey: process.env.THIRDWEB_SECRET_KEY,
+      });
 
       // If email is missing, fetch it from Stripe's session API using the sessionId
       if (!email && sessionId) {
@@ -331,14 +350,41 @@ export async function POST(req: NextRequest) {
         }
 
         // Verify card funding type
-        const isCredit =
-          onrampData.payment_details?.card?.funding === "credit" ||
-          receipt.detectedCardFunding === "credit" ||
-          receipt.isCreditCard === true;
+        const cardFunding = onrampData.payment_details?.card?.funding || receipt.detectedCardFunding || "";
+        const isCredit = cardFunding === "credit" || receipt.isCreditCard === true;
 
-        const targetSplitAddress = isCredit && splitAddressCredit
-          ? splitAddressCredit
-          : splitAddress;
+        // Resolve target split address with support for both checkout and webhook strategies
+        let targetSplitAddress = splitAddress;
+
+        // 1. Try to find the resolved split address from the Stripe webhook event in Cosmos DB
+        try {
+          const eventQuery = {
+            query: "SELECT * FROM c WHERE c.type = 'payment_event_stripe_onramp' AND c.sessionId = @sessionId AND c.status = 'fulfillment_complete'",
+            parameters: [{ name: "@sessionId", value: sessionId }]
+          };
+          const { resources: events } = await container.items.query(eventQuery).fetchAll();
+          const eventDoc = events?.[0];
+          if (eventDoc && eventDoc.splitAddress) {
+            targetSplitAddress = eventDoc.splitAddress;
+            console.log(`[cron/reconcile-stuck] Resolved target split address from Stripe webhook event: ${targetSplitAddress}`);
+          }
+        } catch (eventErr) {
+          console.warn(`[cron/reconcile-stuck] Failed to query webhook event for split address:`, eventErr);
+        }
+
+        // 2. If not resolved from webhook event, fallback to standard card-type checks
+        if (!targetSplitAddress || targetSplitAddress === merchantWallet) {
+          targetSplitAddress = isCredit && splitAddressCredit
+            ? splitAddressCredit
+            : splitAddress;
+
+          // Webhook style fallback: if dual split is enabled and card is debit, it resolves to splitAddressCredit
+          const isDual = siteConfig?.isDualSplitEnabled || false;
+          const isDebit = cardFunding === "debit" || cardFunding === "prepaid";
+          if (isDual && isDebit && splitAddressCredit) {
+            targetSplitAddress = splitAddressCredit;
+          }
+        }
 
         // Connect to guest EOA to check balance
         const verificationToken = markEmailVerified(email);
@@ -348,7 +394,7 @@ export async function POST(req: NextRequest) {
         });
 
         const account = await wallet.connect({
-          client: twClient,
+          client: brandTwClient,
           chain: base,
           strategy: "auth_endpoint" as any,
           payload: JSON.stringify({ email, verificationToken }),
@@ -356,7 +402,7 @@ export async function POST(req: NextRequest) {
 
         const guestAddress = account.address;
         const usdcContract = getContract({
-          client: twClient,
+          client: brandTwClient,
           chain: base,
           address: BASE_USDC_ADDRESS,
         });
