@@ -142,7 +142,7 @@ function defaults(brandKey?: string): Required<Omit<ShopConfig, "wallet" | "id" 
       layoutMode: "balanced",
       maximalistBannerUrl: "",
       galleryImages: [],
-      portalGradientEnabled: false,
+      portalGradientEnabled: true,
       portalGradientStart: "",
       portalGradientEnd: "",
     },
@@ -364,7 +364,7 @@ function normalize(raw?: any, brandKey?: string): Omit<ShopConfig, "wallet" | "i
   // Clamp colors to strings
   try {
     for (const k of Object.keys(out.theme || {})) {
-      if (k === "galleryImages") continue; // Preserve array
+      if (k === "galleryImages" || k === "portalGradientEnabled") continue; // Preserve array and boolean
       const v = (out.theme as any)[k];
       (out.theme as any)[k] = typeof v === "string" ? v : (d.theme as any)[k];
     }

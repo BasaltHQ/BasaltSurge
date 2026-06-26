@@ -370,7 +370,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       fontFamily:
         "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
       receiptBackgroundUrl: "/watermark.png",
-      brandLogoShape: isBS ? "square" : "round",
+      brandLogoShape: "square",
+      portalGradientEnabled: true,
       navbarMode: isBS ? "logo" : undefined,
       textColor: "#ffffff",
       headerTextColor: "#ffffff",
@@ -1084,6 +1085,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             textColor: "#ffffff",
             headerTextColor: "#ffffff",
             bodyTextColor: "#e5e7eb",
+            portalGradientEnabled: true,
             ...(shopTheme || {}) // Spread shop theme over defaults
           };
 
@@ -1581,7 +1583,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             secondaryBg: typeof (t as any)?.secondaryBg === "string" ? (t as any).secondaryBg : undefined,
             surfaceBg: typeof (t as any)?.surfaceBg === "string" ? (t as any).surfaceBg : undefined,
             pageBg: typeof (t as any)?.pageBg === "string" ? (t as any).pageBg : undefined,
-            portalGradientEnabled: typeof t.portalGradientEnabled === "boolean" ? t.portalGradientEnabled : (typeof (j.config as any)?.portalGradientEnabled === "boolean" ? (j.config as any).portalGradientEnabled : undefined),
+            portalGradientEnabled: typeof t.portalGradientEnabled === "boolean" ? t.portalGradientEnabled : (typeof (j.config as any)?.portalGradientEnabled === "boolean" ? (j.config as any).portalGradientEnabled : true),
             portalGradientStart: typeof t.portalGradientStart === "string" ? t.portalGradientStart : ((j.config as any)?.portalGradientStart || undefined),
             portalGradientEnd: typeof t.portalGradientEnd === "string" ? t.portalGradientEnd : ((j.config as any)?.portalGradientEnd || undefined),
           };
@@ -1720,6 +1722,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             textColor: "#ffffff",
             headerTextColor: "#ffffff",
             bodyTextColor: "#e5e7eb",
+            portalGradientEnabled: true,
           } as any;
 
           setTheme(fallbackTheme);

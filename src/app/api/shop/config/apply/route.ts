@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
             maximalistBannerUrl: "",
             galleryImages: [] as string[],
             brandFaviconUrl: "",
-            portalGradientEnabled: false,
+            portalGradientEnabled: true,
             portalGradientStart: "",
             portalGradientEnd: "",
         };
