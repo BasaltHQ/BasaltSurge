@@ -48,6 +48,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
     const [basePlatformFeePct, setBasePlatformFeePct] = useState<number>(0.5);
     const [taxRate, setTaxRate] = useState<number>(0);
     const [hasDefaultTax, setHasDefaultTax] = useState<boolean>(false);
+    const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
     const [terminalLogoUrl, setTerminalLogoUrl] = useState<string>(logoUrl || "");
 
     const { pushQRToCustomerScreen, clearCustomerScreen } = useQRCodeDisplay();
@@ -65,6 +66,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
             .then((r) => r.json())
             .then((j: any) => {
                 const cfg = j?.config || {};
+                setFeeMinusEnabled(!!cfg?.feeMinusEnabled);
                 const feePct = Math.max(0, Number(cfg?.processingFeePct || 0));
                 setProcessingFeePct(feePct);
 
@@ -139,8 +141,12 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
     const activeTaxRate = hasDefaultTax ? Math.max(0, Math.min(1, taxRate || 0)) : 0;
     const taxUsd = +(baseUsd * activeTaxRate).toFixed(2);
     const feePctFraction = Math.max(0, (basePlatformFeePct + processingFeePct) / 100);
-    const processingFeeUsd = +((baseUsd + taxUsd) * feePctFraction).toFixed(2);
-    const totalUsd = +((baseUsd + taxUsd + processingFeeUsd)).toFixed(2);
+    const processingFeeUsd = feeMinusEnabled 
+        ? +((baseUsd + taxUsd) - ((baseUsd + taxUsd) / (1 + feePctFraction))).toFixed(2)
+        : +((baseUsd + taxUsd) * feePctFraction).toFixed(2);
+    const totalUsd = feeMinusEnabled
+        ? +(baseUsd + taxUsd).toFixed(2)
+        : +((baseUsd + taxUsd + processingFeeUsd)).toFixed(2);
 
     // Conversion
     const baseConverted = useMemo(() => {

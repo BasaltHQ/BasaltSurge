@@ -15,7 +15,7 @@ async function run() {
     const db = client.db(dbId);
     const col = db.collection(collectionId);
 
-    const targetIds = ["receipt:R-904400", "receipt:R-497694"];
+    const targetIds = ["site:config:xoinpay"];
     for (const id of targetIds) {
         console.log(`\n--- DETAILS FOR ${id} ---`);
         const doc = await col.findOne({ id });
