@@ -12,9 +12,20 @@ import { isPlatformContext } from "@/lib/env";
  * Platform context (including localhost) always uses "portalpay".
  * Partner context uses the configured BRAND_KEY.
  */
-function resolveBrandKey(): string {
+async function resolveBrandKeyAsync(req?: NextRequest): Promise<string> {
   try {
-    const k = (getBrandKey() || "basaltsurge").toLowerCase();
+    const url = req ? new URL(req.url) : null;
+    const host = req?.headers.get("host") || url?.hostname || "";
+    if (host) {
+      const { getContainerIdentity } = require("@/lib/brand-config");
+      const containerIdentity = await getContainerIdentity(host);
+      if (containerIdentity.brandKey) {
+        return containerIdentity.brandKey.toLowerCase();
+      }
+    }
+  } catch {}
+  try {
+    const k = (getBrandKey(req) || "basaltsurge").toLowerCase();
     return k;
   } catch {
     return "basaltsurge";
@@ -494,7 +505,7 @@ export async function GET(req: NextRequest) {
     let brandKey: string | undefined = undefined;
     try {
       const qBrand = url.searchParams.get("brandKey");
-      brandKey = qBrand ? String(qBrand).toLowerCase() : resolveBrandKey();
+      brandKey = qBrand ? String(qBrand).toLowerCase() : await resolveBrandKeyAsync(req);
     } catch {
       brandKey = undefined;
     }
@@ -720,7 +731,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (e: any) {
     let brandKey: string | undefined = undefined;
-    try { brandKey = resolveBrandKey(); } catch { }
+    try { brandKey = await resolveBrandKeyAsync(req); } catch { }
     return jsonResponse(
       { config: normalize(undefined, brandKey), degraded: true, reason: e?.message || "cosmos_unavailable" },
       {
@@ -754,7 +765,7 @@ export async function POST(req: NextRequest) {
     let prev: any = undefined;
     // Prefer brand-scoped doc first when brand is configured; fallback to legacy id
     let brandKey: string | undefined = undefined;
-    try { brandKey = resolveBrandKey(); } catch { brandKey = undefined; }
+    try { brandKey = await resolveBrandKeyAsync(req); } catch { brandKey = undefined; }
     try {
       const c = await getContainer();
       if (brandKey) {

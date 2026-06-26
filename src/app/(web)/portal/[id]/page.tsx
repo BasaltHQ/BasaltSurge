@@ -2092,11 +2092,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [feeMinusEnabled, merchantTipEnabled, currencySelectionEnabled]);
 
   const isVibrantLayout = useMemo(() => {
+    if (feeMinusEnabled) return true;
     if (typeof theme.portalGradientEnabled === "boolean") {
       return theme.portalGradientEnabled;
     }
     return isFeeMinusVibrant;
-  }, [isFeeMinusVibrant, theme.portalGradientEnabled]);
+  }, [feeMinusEnabled, isFeeMinusVibrant, theme.portalGradientEnabled]);
 
   useEffect(() => {
     if (isVibrantLayout) {

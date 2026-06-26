@@ -23,6 +23,8 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "icunow.azurewebsites.net": "icunow-store",
   "xpaypass.com": "xoinpay",
   "www.xpaypass.com": "xoinpay",
+  "checkout.aipowerpay.com": "aipowerpay",
+  "www.checkout.aipowerpay.com": "aipowerpay",
   "bt-checkout.aipowerpay.com": "aipowerpay",
   "www.bt-checkout.aipowerpay.com": "aipowerpay"
 };
@@ -248,6 +250,19 @@ export async function deriveContainerIdentityFromHostname(host: string): Promise
       }
     }
   }
+
+  // Fallback: Check if any segment of the host matches a known partner pattern
+  for (const part of parts) {
+    if (KNOWN_PARTNER_PATTERNS[part]) {
+      return { brandKey: KNOWN_PARTNER_PATTERNS[part], containerType: "partner" };
+    }
+  }
+
+  // Substring match fallback (same as getBrandKey)
+  if (hostLower.includes("paynex")) return { brandKey: "paynex", containerType: "partner" };
+  if (hostLower.includes("xpaypass") || hostLower.includes("xoinpay")) return { brandKey: "xoinpay", containerType: "partner" };
+  if (hostLower.includes("icunow")) return { brandKey: "icunow-store", containerType: "partner" };
+  if (hostLower.includes("aipowerpay")) return { brandKey: "aipowerpay", containerType: "partner" };
 
   return null;
 }

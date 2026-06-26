@@ -16,12 +16,23 @@ const getDocId = (brandKey: string) => `global:program:${brandKey}`;
  * Platform context (including localhost) always uses "portalpay".
  * Partner context uses the configured BRAND_KEY.
  */
-function resolveBrandKey(): string {
+async function resolveBrandKeyAsync(req?: NextRequest): Promise<string> {
     if (isPlatformContext()) {
         return "portalpay";
     }
     try {
-        return getBrandKey() || "portalpay";
+        const url = req ? new URL(req.url) : null;
+        const host = req?.headers.get("host") || url?.hostname || "";
+        if (host) {
+            const { getContainerIdentity } = require("@/lib/brand-config");
+            const containerIdentity = await getContainerIdentity(host);
+            if (containerIdentity.brandKey) {
+                return containerIdentity.brandKey.toLowerCase();
+            }
+        }
+    } catch {}
+    try {
+        return getBrandKey(req) || "portalpay";
     } catch {
         return "portalpay";
     }
@@ -45,7 +56,7 @@ export type GlobalProgramConfig = {
 export async function GET(req: NextRequest) {
     try {
         const caller = await requireRole(req, "admin");
-        const brandKey = resolveBrandKey();
+        const brandKey = await resolveBrandKeyAsync(req);
         console.log("GET global program - brandKey:", brandKey, "isPlatform:", isPlatformContext());
 
         const container = await getContainer();
@@ -85,7 +96,7 @@ export async function POST(req: NextRequest) {
         try { requireCsrf(req); } catch (e) { return NextResponse.json({ error: "csrf" }, { status: 403 }); }
 
         const body = await req.json();
-        const brandKey = resolveBrandKey();
+        const brandKey = await resolveBrandKeyAsync(req);
         console.log("POST global program - brandKey:", brandKey, "isPlatform:", isPlatformContext());
 
         const container = await getContainer();
