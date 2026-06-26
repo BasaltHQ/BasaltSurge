@@ -785,7 +785,6 @@ export default async function RootLayout({
         <link rel="stylesheet" href="https://use.typekit.net/eur3bvn.css" />
         <meta name="base:app_id" content="69614c80b8395f034ac21fe2" />
         <meta name="talentapp:project_verification" content="4fcbdd3d1a22b3bbdb9b60465f2559a71c1e54cb0b5c770a107ca32bae1d012e44c9348820c266379ed6ffd8dd3a468e973d61fba686fcf26330a46ac88d5171" />
-        <Script id="dynamic-domains" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: `window.__DYNAMIC_DOMAINS__ = ${JSON.stringify(dynamicDomains)};` }} />
         <noscript>
           <img height="1" width="1" style={{ display: 'none' }} alt="" src="https://px.ads.linkedin.com/collect/?pid=8943644&fmt=gif" />
         </noscript>
@@ -795,7 +794,7 @@ export default async function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         style={{ overflowX: 'hidden' }}
       >
-        <PPInitScript />
+        <PPInitScript domains={dynamicDomains} />
         <DeviceStyleInjector />
         <Script id="linkedin-insight-tag" strategy="afterInteractive" dangerouslySetInnerHTML={{ __html: `
           _linkedin_partner_id = "8943644";

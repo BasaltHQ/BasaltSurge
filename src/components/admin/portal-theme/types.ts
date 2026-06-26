@@ -38,6 +38,9 @@ export type PortalThemeConfig = {
   light: PortalModeTheme;
   widget: WidgetOverrides;
   touchpointThemeId: string;
+  portalGradientEnabled?: boolean;
+  portalGradientStart?: string;
+  portalGradientEnd?: string;
 };
 
 // ── Defaults ──
@@ -97,6 +100,9 @@ export function defaultPortalTheme(): PortalThemeConfig {
     light: { ...DEFAULT_LIGHT },
     widget: { ...DEFAULT_WIDGET },
     touchpointThemeId: 'modern',
+    portalGradientEnabled: false,
+    portalGradientStart: '',
+    portalGradientEnd: '',
   };
 }
 

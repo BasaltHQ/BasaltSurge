@@ -2040,31 +2040,47 @@ export default function PartnerManagementPanel() {
                   }
                 />
               </div>
-              <div className="flex items-center">
-                <label className="flex items-center gap-2.5 text-xs font-medium cursor-pointer select-none mt-5">
-                  <input
-                    type="checkbox"
-                    checked={!!config?.unifiedFeeEnabled}
-                    onChange={(e) =>
-                      setConfig((prev: any) => ({ ...prev, unifiedFeeEnabled: e.target.checked }))
-                    }
-                    className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4"
+              <div className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-white/5 mt-5 w-full">
+                <div>
+                  <div className="text-xs font-semibold">Unified Fee Display</div>
+                  <div className="text-[10px] text-muted-foreground">Show a single aggregated fee line to customers.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setConfig((prev: any) => ({ ...prev, unifiedFeeEnabled: !prev?.unifiedFeeEnabled }))
+                  }
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    config?.unifiedFeeEnabled ? "bg-emerald-500" : "bg-zinc-700"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      config?.unifiedFeeEnabled ? "translate-x-4" : "translate-x-0"
+                    }`}
                   />
-                  <span>Unified Fee Display</span>
-                </label>
+                </button>
               </div>
-              <div className="flex items-center">
-                <label className="flex items-center gap-2.5 text-xs font-medium cursor-pointer select-none mt-5">
-                  <input
-                    type="checkbox"
-                    checked={!!config?.feeMinusEnabled}
-                    onChange={(e) =>
-                      setConfig((prev: any) => ({ ...prev, feeMinusEnabled: e.target.checked }))
-                    }
-                    className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4"
+              <div className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-white/5 mt-5 w-full">
+                <div>
+                  <div className="text-xs font-semibold">Enable Fee- System Option</div>
+                  <div className="text-[10px] text-muted-foreground">Allow merchants to absorb processing fees.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setConfig((prev: any) => ({ ...prev, feeMinusEnabled: !prev?.feeMinusEnabled }))
+                  }
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    config?.feeMinusEnabled ? "bg-emerald-500" : "bg-zinc-700"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      config?.feeMinusEnabled ? "translate-x-4" : "translate-x-0"
+                    }`}
                   />
-                  <span>Enable Fee- System Option</span>
-                </label>
+                </button>
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">Thirdweb Client ID</label>
@@ -2862,20 +2878,34 @@ export default function PartnerManagementPanel() {
                             )}
                           </td>
                           <td className="px-4 py-3 text-sm text-center">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4"
-                              checked={!!u.kioskEnabled}
-                              onChange={(e) => toggleMerchantFeature(u.merchant, 'kioskEnabled', e.target.checked)}
-                            />
+                            <button
+                              type="button"
+                              onClick={() => toggleMerchantFeature(u.merchant, 'kioskEnabled', !u.kioskEnabled)}
+                              className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                u.kioskEnabled ? "bg-emerald-500" : "bg-zinc-700"
+                              }`}
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                  u.kioskEnabled ? "translate-x-3" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
                           </td>
                           <td className="px-4 py-3 text-sm text-center">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4"
-                              checked={!!u.terminalEnabled}
-                              onChange={(e) => toggleMerchantFeature(u.merchant, 'terminalEnabled', e.target.checked)}
-                            />
+                            <button
+                              type="button"
+                              onClick={() => toggleMerchantFeature(u.merchant, 'terminalEnabled', !u.terminalEnabled)}
+                              className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                u.terminalEnabled ? "bg-emerald-500" : "bg-zinc-700"
+                              }`}
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                  u.terminalEnabled ? "translate-x-3" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
                           </td>
                           <td className="px-4 py-3 text-sm">
                             <div className="flex items-center gap-1.5 flex-wrap">

@@ -276,6 +276,9 @@ export async function GET(req: NextRequest) {
                     faviconUrl: conf?.theme?.brandFaviconUrl || req.faviconUrl,
                     primaryColor: conf?.theme?.primaryColor || req.primaryColor,
                     secondaryColor: conf?.theme?.secondaryColor || req.secondaryColor,
+                    portalGradientEnabled: typeof conf?.theme?.portalGradientEnabled === "boolean" ? conf.theme.portalGradientEnabled : (typeof req.portalGradientEnabled === "boolean" ? req.portalGradientEnabled : undefined),
+                    portalGradientStart: conf?.theme?.portalGradientStart || req.portalGradientStart,
+                    portalGradientEnd: conf?.theme?.portalGradientEnd || req.portalGradientEnd,
                     slug: conf?.slug || req.slug,
                     // Industry pack data (for restaurant tables, hotel PMS, etc.)
                     industryPack: shopConf?.config?.industryPack || conf?.config?.industryPack || shopConf?.industryPack || conf?.industryPack || null,
@@ -370,6 +373,9 @@ export async function GET(req: NextRequest) {
                 faviconUrl: shopTheme.brandFaviconUrl || (!isDefaultLogo(theme.brandFaviconUrl) ? theme.brandFaviconUrl : "") || conf.faviconUrl || "",
                 primaryColor: shopTheme.primaryColor || (!isDefaultColor(theme.primaryColor) ? theme.primaryColor : "") || conf.primaryColor || "",
                 secondaryColor: shopTheme.secondaryColor || (!isDefaultColor(theme.secondaryColor) ? theme.secondaryColor : "") || conf.secondaryColor || "",
+                portalGradientEnabled: typeof shopTheme.portalGradientEnabled === "boolean" ? shopTheme.portalGradientEnabled : (typeof theme.portalGradientEnabled === "boolean" ? theme.portalGradientEnabled : undefined),
+                portalGradientStart: shopTheme.portalGradientStart || theme.portalGradientStart || "",
+                portalGradientEnd: shopTheme.portalGradientEnd || theme.portalGradientEnd || "",
                 // Status: treat as approved since they are already operating
                 status: "approved",
                 createdAt: toMs(conf.createdAt) || toMs(shopConf?.createdAt) || ((conf._ts || 0) * 1000) || ((shopConf?._ts || 0) * 1000) || Date.now(),
@@ -725,6 +731,15 @@ export async function PATCH(req: NextRequest) {
             if (shopConfigUpdate.slug) updatedDoc.slug = shopConfigUpdate.slug;
             if (shopConfigUpdate.description) updatedDoc.description = shopConfigUpdate.description;
             if (shopConfigUpdate.layoutMode) updatedDoc.layoutMode = shopConfigUpdate.layoutMode;
+            if (shopConfigUpdate.theme?.portalGradientEnabled !== undefined) {
+                updatedDoc.portalGradientEnabled = shopConfigUpdate.theme.portalGradientEnabled;
+            }
+            if (shopConfigUpdate.theme?.portalGradientStart !== undefined) {
+                updatedDoc.portalGradientStart = shopConfigUpdate.theme.portalGradientStart;
+            }
+            if (shopConfigUpdate.theme?.portalGradientEnd !== undefined) {
+                updatedDoc.portalGradientEnd = shopConfigUpdate.theme.portalGradientEnd;
+            }
             // Also preserve touchpointThemes if passed (though client_request doc doesn't explicitly type it, it's flexible)
             if (shopConfigUpdate.touchpointThemes) updatedDoc.touchpointThemes = shopConfigUpdate.touchpointThemes;
         }

@@ -24,6 +24,9 @@ export type SiteTheme = {
   brandName: string;
   fontFamily: string;
   receiptBackgroundUrl: string;
+  portalGradientEnabled?: boolean;
+  portalGradientStart?: string;
+  portalGradientEnd?: string;
 };
 
 export type SiteConfig = {

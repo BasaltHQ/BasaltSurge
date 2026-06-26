@@ -191,6 +191,40 @@ export default function PortalThemeControls({ config, onChange }: Props) {
           <SliderField label="Blur Strength" value={parseInt(modeTheme.blurStrength) || 0} min={0} max={30} step={2} unit="px" onChange={(v) => setMode({ blurStrength: `${v}px` })} />
         </Section>
 
+        {/* Left-Pane Gradient */}
+        <Section title="Left-Pane Gradient" defaultOpen={false}>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-[10px] uppercase tracking-wider text-white/40 font-medium">Enable Gradient</label>
+            <button
+              type="button"
+              onClick={() => onChange({ ...config, portalGradientEnabled: !config.portalGradientEnabled })}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                config.portalGradientEnabled ? "bg-emerald-500" : "bg-zinc-700"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  config.portalGradientEnabled ? "translate-x-4" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+          {config.portalGradientEnabled && (
+            <div className="space-y-3 pt-1 animate-in fade-in slide-in-from-top-1 duration-200">
+              <ColorField
+                label="Gradient Start"
+                value={config.portalGradientStart || modeTheme.primaryColor || "#10b981"}
+                onChange={(v) => onChange({ ...config, portalGradientStart: v })}
+              />
+              <ColorField
+                label="Gradient End"
+                value={config.portalGradientEnd || modeTheme.secondaryColor || "#6366f1"}
+                onChange={(v) => onChange({ ...config, portalGradientEnd: v })}
+              />
+            </div>
+          )}
+        </Section>
+
         {/* Typography */}
         <Section title="Typography" defaultOpen={false}>
           <SelectField
