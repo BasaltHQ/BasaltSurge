@@ -193,6 +193,7 @@ Fields:
 | `returnUrl` | string | No | Optional redirect URL. Customer's browser will be redirected here after successful payment (also accepted as `return_url`) |
 | `webhook_url` | string | No | HTTPS endpoint to receive push notifications when receipt status changes. Webhooks are signed with your API key (same `Ocp-Apim-Subscription-Key` used for authentication). Also accepted as `webhookUrl`. See [Webhooks Guide](./webhooks.md). |
 | `onSuccess` | string | No | Optional custom logic. Can be a redirect URL or a raw JavaScript code snippet string to be evaluated after successful payment |
+| `stripeEmail` | string | No | Buyer's email to pre-populate in Stripe Link / credit card email field. Passing this allows the checkout portal to bypass the email prompt and automatically proceed. |
 
 Example Requests:
 

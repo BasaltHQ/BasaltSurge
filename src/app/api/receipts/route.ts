@@ -52,6 +52,7 @@ export type Receipt = {
   shippingMethod?: 'standard' | 'express' | 'overnight' | 'freight';
   shippingCostUsd?: number;
   tracking?: { carrier?: string; trackingNumber?: string; trackingUrl?: string; shippedAt?: number; updatedAt?: number };
+  stripeEmail?: string;
 };
 
 // ... existing imports
@@ -238,6 +239,7 @@ export async function POST(req: NextRequest) {
     const employeeId = typeof body?.employeeId === "string" ? body.employeeId : undefined;
     const employeeName = typeof body?.employeeName === "string" ? body.employeeName : undefined;
     const sessionId = typeof body?.sessionId === "string" ? body.sessionId : undefined;
+    const stripeEmail = typeof body?.stripeEmail === "string" ? body.stripeEmail.trim() : "";
 
     // Optional redirect_url — buyer is navigated here after successful payment
     const rawRedirectUrl = String(body?.redirect_url || body?.redirectUrl || "").trim();
@@ -292,6 +294,7 @@ export async function POST(req: NextRequest) {
       ...(redirectUrl ? { redirectUrl } : {}),
       ...(returnUrl ? { returnUrl } : {}),
       ...(onSuccess ? { onSuccess } : {}),
+      ...(stripeEmail ? { stripeEmail } : {}),
       ...(webhookUrl ? {
         webhookUrl,
         // Use the developer's own API key as the HMAC signing secret.
@@ -320,7 +323,7 @@ export async function POST(req: NextRequest) {
     } catch (e: any) {
       try {
         // Degraded mode: push to in-memory store
-        pushReceipts([{ receiptId: id, totalUsd, currency: "USD", lineItems, createdAt: now, brandName, status: "pending", wallet } as any]);
+        pushReceipts([{ receiptId: id, totalUsd, currency: "USD", lineItems, createdAt: now, brandName, status: "pending", wallet, stripeEmail } as any]);
       } catch { }
     }
 
@@ -336,6 +339,7 @@ export async function POST(req: NextRequest) {
     if (redirectUrl) tParams.set("redirect_url", redirectUrl);
     if (returnUrl) tParams.set("returnUrl", returnUrl);
     if (onSuccess) tParams.set("onSuccess", onSuccess);
+    if (stripeEmail) tParams.set("stripeEmail", stripeEmail);
     const paymentUrl = `${origin}/portal/${encodeURIComponent(id)}?${tParams.toString()}`;
     return NextResponse.json(
       {

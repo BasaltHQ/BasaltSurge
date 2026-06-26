@@ -89,6 +89,7 @@ export type Receipt = {
   note?: string;
   kitchenStatus?: string;
   source?: string;
+  stripeEmail?: string;
 };
 
 function toCents(n: number) {
@@ -258,6 +259,7 @@ export async function POST(req: NextRequest) {
     const webhookUrl = rawWebhookUrl && isValidWebhookUrl(rawWebhookUrl) ? rawWebhookUrl : undefined;
 
     const onSuccess = typeof body?.onSuccess === "string" ? String(body.onSuccess).trim() : undefined;
+    const stripeEmail = typeof body?.stripeEmail === "string" ? body.stripeEmail.trim() : "";
 
     // Fetch site config for brand, processing fee, tax presets, and fallback default token (prefer per-wallet, fallback global)
     const cfg = await getSiteConfigForWallet(wallet, effectiveBrandKey, req).catch(() => null as any);
@@ -1057,7 +1059,8 @@ export async function POST(req: NextRequest) {
       // @ts-ignore
       servedBy,
       // @ts-ignore
-      note
+      note,
+      stripeEmail,
     };
 
     const doc = {
@@ -1093,6 +1096,7 @@ export async function POST(req: NextRequest) {
       returnUrl,
       webhookUrl,
       onSuccess,
+      stripeEmail,
       ...(webhookUrl ? {
         webhookSigningSecret: String(
           req.headers.get("x-api-key") || req.headers.get("ocp-apim-subscription-key") || ""
@@ -1136,6 +1140,7 @@ export async function POST(req: NextRequest) {
       if (redirectUrl) tParams.set("redirect_url", redirectUrl);
       if (returnUrl) tParams.set("returnUrl", returnUrl);
       if (onSuccess) tParams.set("onSuccess", onSuccess);
+      if (stripeEmail) tParams.set("stripeEmail", stripeEmail);
 
       const portalLink = `${orderOrigin}/portal/${receiptId}?${tParams.toString()}`;
 
@@ -1152,6 +1157,7 @@ export async function POST(req: NextRequest) {
       if (redirectUrl) tParams.set("redirect_url", redirectUrl);
       if (returnUrl) tParams.set("returnUrl", returnUrl);
       if (onSuccess) tParams.set("onSuccess", onSuccess);
+      if (stripeEmail) tParams.set("stripeEmail", stripeEmail);
       const portalLink = `${orderOrigin}/portal/${receiptId}?${tParams.toString()}`;
       return NextResponse.json(
         { ok: true, degraded: true, reason: e?.message || "cosmos_unavailable", receipt, portalLink },
