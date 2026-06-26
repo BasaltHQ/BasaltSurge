@@ -538,12 +538,49 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     const feePctFraction = totalFeePct / 100;
     const processingFeeCents = Math.round(baseWithoutFeeCents * feePctFraction);
 
-    const finalLineItems: ReceiptLineItem[] = [
-      ...cleanItems,
-      ...(taxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(taxCents) }] : []),
-      ...(processingFeeCents > 0 ? [{ label: "Processing Fee", priceUsd: fromCents(processingFeeCents) }] : []),
-    ];
-    const totalUsd = fromCents(baseWithoutFeeCents + processingFeeCents);
+    const isFeeMinus = !!cfg?.feeMinusEnabled;
+    let finalLineItems: ReceiptLineItem[];
+    let totalUsd: number;
+
+    if (isFeeMinus) {
+      const originalSubtotalCents = subtotalCents;
+      const originalTaxCents = taxCents;
+      const originalBaseWithoutFeeCents = baseWithoutFeeCents; // Customer total
+
+      const adjustedBaseWithoutFeeCents = Math.round(originalBaseWithoutFeeCents / (1 + feePctFraction));
+      const finalProcessingFeeCents = originalBaseWithoutFeeCents - adjustedBaseWithoutFeeCents;
+      
+      const scaleFactor = originalBaseWithoutFeeCents > 0 ? (adjustedBaseWithoutFeeCents / originalBaseWithoutFeeCents) : 1;
+      const adjustedSubtotalCents = Math.round(originalSubtotalCents * scaleFactor);
+      const adjustedTaxCents = adjustedBaseWithoutFeeCents - adjustedSubtotalCents;
+
+      const adjustedItems = cleanItems.map((it) => ({
+        ...it,
+        priceUsd: fromCents(Math.round(toCents(it.priceUsd) * scaleFactor))
+      }));
+
+      // Adjust rounding difference on the last item
+      const sumAdjustedItemsCents = adjustedItems.reduce((s, it) => s + toCents(it.priceUsd), 0);
+      const diff = adjustedSubtotalCents - sumAdjustedItemsCents;
+      if (diff !== 0 && adjustedItems.length > 0) {
+        const lastIdx = adjustedItems.length - 1;
+        adjustedItems[lastIdx].priceUsd = fromCents(toCents(adjustedItems[lastIdx].priceUsd) + diff);
+      }
+
+      finalLineItems = [
+        ...adjustedItems,
+        ...(adjustedTaxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(adjustedTaxCents) }] : []),
+        ...(finalProcessingFeeCents > 0 ? [{ label: "Processing Fee", priceUsd: fromCents(finalProcessingFeeCents) }] : []),
+      ];
+      totalUsd = fromCents(originalBaseWithoutFeeCents);
+    } else {
+      finalLineItems = [
+        ...cleanItems,
+        ...(taxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(taxCents) }] : []),
+        ...(processingFeeCents > 0 ? [{ label: "Processing Fee", priceUsd: fromCents(processingFeeCents) }] : []),
+      ];
+      totalUsd = fromCents(baseWithoutFeeCents + processingFeeCents);
+    }
 
     const ts = Date.now();
     const brandName = (existing?.brandName as string) || (cfg?.theme?.brandName || "PortalPay");

@@ -162,6 +162,8 @@ export const SiteConfigUpdateSchema = z.object({
       z.object({}).passthrough(),
     ])
   ).optional(),
+  feeMinusEnabled: z.boolean().optional(),
+  currencySelectionEnabled: z.boolean().optional(),
 });
 
 /**

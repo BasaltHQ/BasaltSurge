@@ -1012,6 +1012,9 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
     config.tipConfig = out;
   })();
 
+  config.feeMinusEnabled = typeof config.feeMinusEnabled === "boolean" ? config.feeMinusEnabled : false;
+  config.currencySelectionEnabled = typeof config.currencySelectionEnabled === "boolean" ? config.currencySelectionEnabled : true;
+
   // Do not apply environment defaults; rely solely on live brand config or persisted config
   try { /* no-op */ } catch { }
   try { /* no-op */ } catch { }
@@ -1736,6 +1739,16 @@ export async function POST(req: NextRequest) {
       }
       
       candidate.integrations = merged;
+    }
+
+    // Optional feeMinusEnabled update
+    if (typeof body.feeMinusEnabled === "boolean") {
+      candidate.feeMinusEnabled = body.feeMinusEnabled;
+    }
+
+    // Optional currencySelectionEnabled update
+    if (typeof body.currencySelectionEnabled === "boolean") {
+      candidate.currencySelectionEnabled = body.currencySelectionEnabled;
     }
 
     // Optional split config update

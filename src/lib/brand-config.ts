@@ -162,6 +162,7 @@ export type BrandConfigDoc = {
   coinbaseOnrampEnabled?: boolean;
   transakOnrampEnabled?: boolean;
   rampnowOnrampEnabled?: boolean;
+  feeMinusEnabled?: boolean;
 
   // Thirdweb Keys
   thirdwebClientId?: string;
@@ -376,6 +377,7 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     coinbaseOnrampEnabled: false,
     transakOnrampEnabled: false,
     rampnowOnrampEnabled: false,
+    feeMinusEnabled: false,
   };
 
   const withDefaults = applyBrandDefaults(baseRaw);
@@ -428,6 +430,7 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     coinbaseOnrampEnabled: typeof overrides.coinbaseOnrampEnabled === "boolean" ? overrides.coinbaseOnrampEnabled : withDefaults.coinbaseOnrampEnabled,
     transakOnrampEnabled: typeof overrides.transakOnrampEnabled === "boolean" ? overrides.transakOnrampEnabled : withDefaults.transakOnrampEnabled,
     rampnowOnrampEnabled: typeof overrides.rampnowOnrampEnabled === "boolean" ? overrides.rampnowOnrampEnabled : withDefaults.rampnowOnrampEnabled,
+    feeMinusEnabled: typeof overrides.feeMinusEnabled === "boolean" ? overrides.feeMinusEnabled : withDefaults.feeMinusEnabled,
   });
 
   // BasaltSurge defaults: only apply when the DB doesn't have explicit values.

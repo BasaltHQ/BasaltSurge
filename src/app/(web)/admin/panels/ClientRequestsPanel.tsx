@@ -1530,7 +1530,7 @@ export default function ClientRequestsPanel() {
                                                 <tr className="bg-foreground/[0.02]">
                                                     <td colSpan={5} className="px-4 py-4 border-t border-foreground/5">
                                                         <div className="flex items-center gap-4 mb-4 border-b border-white/5 pb-2">
-                                                            {["details", "config", "team", "api", "reserve", "themes", ...(req.industryPack === "restaurant" ? ["tables"] : [])].map(tab => (
+                                                            {["details", "config", "settings", "team", "api", "reserve", "themes", ...(req.industryPack === "restaurant" ? ["tables"] : [])].map(tab => (
                                                                 <button
                                                                     key={tab}
                                                                     onClick={() => setActiveTabs(prev => ({ ...prev, [req.id]: tab }))}
@@ -1539,7 +1539,7 @@ export default function ClientRequestsPanel() {
                                                                         : "border-transparent text-muted-foreground hover:text-zinc-300"
                                                                         }`}
                                                                 >
-                                                                    {tab === "details" ? "Details" : tab === "config" ? "Shop Config" : tab === "team" ? "Team" : tab === "api" ? "API Keys" : tab === "reserve" ? "Reserve" : tab === "tables" ? "Tables" : "Themes"}
+                                                                    {tab === "details" ? "Details" : tab === "config" ? "Shop Config" : tab === "settings" ? "Settings" : tab === "team" ? "Team" : tab === "api" ? "API Keys" : tab === "reserve" ? "Reserve" : tab === "tables" ? "Tables" : "Themes"}
                                                                 </button>
                                                             ))}
                                                         </div>
@@ -1639,6 +1639,13 @@ export default function ClientRequestsPanel() {
                                                                     />
                                                                 </div>
                                                             </div>
+                                                        ) : (activeTabs[req.id] === "settings") ? (
+                                                            <MerchantSettingsTab
+                                                                merchantWallet={req.wallet}
+                                                                adminWallet={account?.address || ""}
+                                                                brandKey={brandKey}
+                                                                partnerFeeMinusEnabled={!!brand?.feeMinusEnabled}
+                                                            />
                                                         ) : (activeTabs[req.id] === "themes") ? (
                                                             <TouchpointThemesTab
                                                                 merchantWallet={req.wallet}
@@ -3006,6 +3013,173 @@ export default function ClientRequestsPanel() {
                         document.body
                     );
                 })()}
+            </div>
+        </div>
+    );
+}
+
+
+// ──────────────────────────────────────────────────────
+// MERCHANT SETTINGS TAB — Tipping, fee-, currency selection dropdown
+// ──────────────────────────────────────────────────────
+function MerchantSettingsTab({
+    merchantWallet,
+    adminWallet,
+    brandKey,
+    partnerFeeMinusEnabled
+}: {
+    merchantWallet: string;
+    adminWallet: string;
+    brandKey: string;
+    partnerFeeMinusEnabled: boolean;
+}) {
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [saveStatus, setSaveStatus] = useState("");
+    const [config, setConfig] = useState<any>({
+        feeMinusEnabled: false,
+        currencySelectionEnabled: true,
+        tipConfig: { enabled: false, allowCustom: true, presets: [15, 18, 20], defaultTip: null }
+    });
+
+    useEffect(() => {
+        if (!merchantWallet) return;
+        setLoading(true);
+        (async () => {
+            try {
+                const r = await fetch(`/api/site/config?wallet=${merchantWallet}`);
+                const j = await r.json();
+                const cfg = j.config || {};
+                setConfig({
+                    feeMinusEnabled: !!cfg.feeMinusEnabled,
+                    currencySelectionEnabled: cfg.currencySelectionEnabled !== false,
+                    tipConfig: cfg.tipConfig || { enabled: false, allowCustom: true, presets: [15, 18, 20], defaultTip: null }
+                });
+            } catch (e) {
+                console.error("Failed to load merchant settings", e);
+            } finally {
+                setLoading(false);
+            }
+        })();
+    }, [merchantWallet]);
+
+    const saveSettings = async (updates: any) => {
+        if (!merchantWallet || !adminWallet) return;
+        setSaving(true);
+        setSaveStatus("");
+        
+        const nextConfig = { ...config, ...updates };
+        setConfig(nextConfig);
+
+        try {
+            const r = await fetch(`/api/site/config?wallet=${merchantWallet}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    feeMinusEnabled: nextConfig.feeMinusEnabled,
+                    currencySelectionEnabled: nextConfig.currencySelectionEnabled,
+                    tipConfig: nextConfig.tipConfig
+                }),
+            });
+            const j = await r.json();
+            if (r.ok && !j.error) {
+                setSaveStatus("Saved successfully.");
+            } else {
+                setSaveStatus(`Error: ${j.error || "Save failed"}`);
+            }
+        } catch (e: any) {
+            console.error("Failed to save settings", e);
+            setSaveStatus(`Error: ${e?.message || "Save failed"}`);
+        } finally {
+            setSaving(false);
+            setTimeout(() => setSaveStatus(""), 3000);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center p-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500"></div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="animate-in fade-in slide-in-from-top-1 duration-200 space-y-6">
+            <div className="glass-pane bg-black/20 p-6 rounded-lg border border-white/5 space-y-6">
+                <div>
+                    <h4 className="text-sm font-medium mb-1">Merchant Settings</h4>
+                    <p className="text-xs text-muted-foreground">Configure payment portal behavior for this merchant.</p>
+                </div>
+
+                <div className="space-y-4">
+                    {/* Tipping switch */}
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-white/5">
+                        <div>
+                            <div className="text-xs font-semibold">Tipping Enabled</div>
+                            <div className="text-[11px] text-muted-foreground">Allow customers to leave a tip during checkout.</div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={!!config.tipConfig?.enabled}
+                                onChange={(e) => {
+                                    const nextTip = { ...config.tipConfig, enabled: e.target.checked };
+                                    saveSettings({ tipConfig: nextTip });
+                                }}
+                                className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4"
+                            />
+                        </label>
+                    </div>
+
+                    {/* Fee Minus switch */}
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-white/5">
+                        <div>
+                            <div className="text-xs font-semibold">Absorb Processing Fee (Fee- System)</div>
+                            <div className="text-[11px] text-muted-foreground">
+                                {partnerFeeMinusEnabled 
+                                    ? "Merchant absorbs the processing fee. Customer pays subtotal + tax only." 
+                                    : "This option is disabled because your partner brand has not enabled fee- system option."
+                                }
+                            </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                disabled={!partnerFeeMinusEnabled}
+                                checked={!!config.feeMinusEnabled}
+                                onChange={(e) => {
+                                    saveSettings({ feeMinusEnabled: e.target.checked });
+                                }}
+                                className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4 disabled:opacity-30 disabled:cursor-not-allowed"
+                            />
+                        </label>
+                    </div>
+
+                    {/* Currency Selection switch */}
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-white/5">
+                        <div>
+                            <div className="text-xs font-semibold">Currency Selection Dropdown</div>
+                            <div className="text-[11px] text-muted-foreground">Show or hide the currency conversion selector in the payment portal.</div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={!!config.currencySelectionEnabled}
+                                onChange={(e) => {
+                                    saveSettings({ currencySelectionEnabled: e.target.checked });
+                                }}
+                                className="rounded bg-black border-white/20 text-emerald-500 accent-emerald-500 focus:ring-0 w-4 h-4"
+                            />
+                        </label>
+                    </div>
+                </div>
+
+                {saveStatus && (
+                    <div className={`text-xs ${saveStatus.startsWith("Error") ? "text-red-400" : "text-emerald-400"}`}>
+                        {saveStatus}
+                    </div>
+                )}
             </div>
         </div>
     );
