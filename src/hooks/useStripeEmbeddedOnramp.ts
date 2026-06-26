@@ -368,9 +368,15 @@ export function useStripeEmbeddedOnramp({
       const { inAppWallet } = await import("thirdweb/wallets");
       const { base } = await import("thirdweb/chains");
 
-      const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
-      const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
-      const clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+      let clientId = "";
+      if (typeof window !== "undefined") {
+        clientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id") || "";
+      }
+      if (!clientId) {
+        const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
+        const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
+        clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+      }
 
       const twClient = createThirdwebClient({
         clientId,
@@ -421,9 +427,15 @@ export function useStripeEmbeddedOnramp({
       const { createThirdwebClient, getContract, prepareContractCall, sendTransaction, readContract } = await import("thirdweb");
       const { base } = await import("thirdweb/chains");
 
-      const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
-      const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
-      const clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+      let clientId = "";
+      if (typeof window !== "undefined") {
+        clientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id") || "";
+      }
+      if (!clientId) {
+        const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
+        const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
+        clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+      }
 
       const twClient = createThirdwebClient({
         clientId,

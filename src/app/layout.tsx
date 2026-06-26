@@ -760,6 +760,11 @@ export default async function RootLayout({
     }
   }
 
+  const brandNormalizedKey = brand.key ? brand.key.toUpperCase().replace(/-/g, "_") : "";
+  const brandIsPlatform = !brand.key || brand.key.toLowerCase() === "basaltsurge" || brand.key.toLowerCase() === "portalpay";
+  const brandSpecificClientId = (!brandIsPlatform && brandNormalizedKey) ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${brandNormalizedKey}`] : undefined;
+  const layoutTwClientId = brandSpecificClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+
   return (
     <html
       lang="en"
@@ -767,6 +772,7 @@ export default async function RootLayout({
       data-pp-container-type={containerIdentity.containerType}
       data-pp-brand-key={brand.key}
       data-pp-brand-name={brand.name}
+      data-pp-thirdweb-client-id={layoutTwClientId}
       data-pp-owner-wallet={getEnv().NEXT_PUBLIC_OWNER_WALLET}
       data-pp-admin-wallets={[...(getEnv().ADMIN_WALLETS || []), ...dbAdminWalletsList].join(",")}
       data-pp-admin-roles={JSON.stringify(dbAdminRoles)}

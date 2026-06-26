@@ -2355,7 +2355,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const debitStripeFeePct = useMemo(() => {
     const activeSplitConfig = splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit;
-    const platformBps = activeSplitConfig && typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50;
+    const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
     const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
       ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
       : 0;
@@ -2365,7 +2365,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const creditStripeFeePct = useMemo(() => {
     const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig;
-    const platformBps = activeSplitConfig && typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50;
+    const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
     const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
       ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
       : 0;
@@ -2379,13 +2379,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [detectedCardFunding, debitStripeFeePct, creditStripeFeePct]);
 
   const stripeProcessingFeeUsd = useMemo(() => {
-    return +(totalUsd * stripeFeePct).toFixed(2);
+    return +(totalUsd * (stripeFeePct / 100)).toFixed(2);
   }, [totalUsd, stripeFeePct]);
 
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
-    return +(totalUsd - stripeProcessingFeeUsd).toFixed(2);
-  }, [receipt, totalUsd, stripeProcessingFeeUsd]);
+    if (feeMinusEnabled) {
+      return +(totalUsd - stripeProcessingFeeUsd).toFixed(2);
+    }
+    return totalUsd;
+  }, [receipt, totalUsd, stripeProcessingFeeUsd, feeMinusEnabled]);
 
   // Compute receipt readiness (loaded and has a positive total)
   useEffect(() => {
@@ -3355,8 +3358,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     enabled: stripeHeadless,
     isEcommerceMode,
     feeMinusEnabled,
-    debitFeePct: debitStripeFeePct * 100,
-    creditFeePct: creditStripeFeePct * 100,
+    debitFeePct: debitStripeFeePct,
+    creditFeePct: creditStripeFeePct,
     totalUsd,
     onCardDetected: (card) => {
       if (card) {

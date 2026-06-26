@@ -191,12 +191,14 @@ function TerminalPanel() {
 
   const [processingFeePct, setProcessingFeePct] = useState<number>(0);
   const [basePlatformFeePct, setBasePlatformFeePct] = useState<number>(0.5);
+  const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
 
   useEffect(() => {
     fetch("/api/site/config", { cache: "no-store", credentials: "omit", headers: { "x-theme-caller": "terminal_panel" } })
       .then((r) => r.json())
       .then((j: any) => {
         const cfg = j?.config || {};
+        setFeeMinusEnabled(!!cfg?.feeMinusEnabled);
         if (typeof cfg.processingFeePct === "number") setProcessingFeePct(cfg.processingFeePct);
 
         // basePlatformFeePct (presentedFeeBps > splitConfig platform + partner + agent fees)
@@ -260,18 +262,44 @@ function TerminalPanel() {
 
   const baseUsd = parseAmount();
   const taxRate = siteMeta.hasDefault ? Math.max(0, Math.min(1, siteMeta.taxRate || 0)) : 0;
-  const taxUsd = +(baseUsd * taxRate).toFixed(2);
+
+  let taxUsd = 0;
+  let processingFeeUsd = 0;
+  let totalUsd = 0;
+  let displayBaseUsd = baseUsd;
+
   const feePctFraction = Math.max(0, (basePlatformFeePct + processingFeePct) / 100);
-  const processingFeeUsd = +((baseUsd + taxUsd) * feePctFraction).toFixed(2);
-  const totalUsd = +((baseUsd + taxUsd + processingFeeUsd)).toFixed(2);
+
+  if (feeMinusEnabled) {
+    const rawSubtotal = baseUsd;
+    const rawTax = +(rawSubtotal * taxRate).toFixed(2);
+    const rawTotal = rawSubtotal + rawTax;
+
+    const adjustedTotal = rawTotal;
+    const adjustedBaseWithoutFee = +(adjustedTotal / (1 + feePctFraction)).toFixed(2);
+    const finalFee = +(adjustedTotal - adjustedBaseWithoutFee).toFixed(2);
+
+    const scaleFactor = rawTotal > 0 ? (adjustedBaseWithoutFee / rawTotal) : 1;
+    const adjustedSubtotal = +(rawSubtotal * scaleFactor).toFixed(2);
+    const adjustedTax = +(adjustedBaseWithoutFee - adjustedSubtotal).toFixed(2);
+
+    displayBaseUsd = adjustedSubtotal;
+    taxUsd = adjustedTax;
+    processingFeeUsd = finalFee;
+    totalUsd = adjustedTotal;
+  } else {
+    taxUsd = +(baseUsd * taxRate).toFixed(2);
+    processingFeeUsd = +((baseUsd + taxUsd) * feePctFraction).toFixed(2);
+    totalUsd = +((baseUsd + taxUsd + processingFeeUsd)).toFixed(2);
+  }
 
   const baseConverted = React.useMemo(() => {
-    if (terminalCurrency === "USD") return baseUsd;
+    if (terminalCurrency === "USD") return displayBaseUsd;
     const usdRate = Number(usdRates[terminalCurrency] || 0);
-    if (usdRate > 0) return roundForCurrency(baseUsd * usdRate, terminalCurrency);
-    const converted = convertFromUsd(baseUsd, terminalCurrency, rates);
-    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : baseUsd;
-  }, [baseUsd, terminalCurrency, usdRates, rates]);
+    if (usdRate > 0) return roundForCurrency(displayBaseUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(displayBaseUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : displayBaseUsd;
+  }, [displayBaseUsd, terminalCurrency, usdRates, rates]);
 
   const taxConverted = React.useMemo(() => {
     if (terminalCurrency === "USD") return taxUsd;
