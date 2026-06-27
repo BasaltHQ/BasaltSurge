@@ -3404,7 +3404,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const authEl = headlessAuthElement;
     const payEl = headlessPaymentElement;
     
-    const runCleanup = () => {
+    return () => {
       if (authEl) {
         try {
           (authEl as any).unmount?.();
@@ -3444,12 +3444,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         console.warn("[PORTAL] Failed to clean global Stripe elements:", err);
       }
     };
-
-    runCleanup();
-    return () => {
-      runCleanup();
-    };
-  }, [headlessAuthElement, headlessPaymentElement, headlessStep]);
+  }, [headlessAuthElement, headlessPaymentElement]);
 
   // Client-side logging pipeline for portal errors & console logs
   usePortalLogger({
