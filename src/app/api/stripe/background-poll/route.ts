@@ -263,9 +263,9 @@ async function runBackgroundPoll(params: {
   if (resolvedStatus === "success") {
     console.log(`[BACKGROUND POLL] Stripe onramp fulfilled. Executing EIP-7702 transfer...`);
 
-    const targetSplitAddress = isCreditCard && splitAddressCredit
-      ? splitAddressCredit
-      : splitAddress;
+    const targetSplitAddress = isCreditCard
+      ? splitAddress
+      : (splitAddressCredit || splitAddress);
 
     // Execute transfer
     const txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey);

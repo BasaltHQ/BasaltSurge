@@ -706,9 +706,9 @@ export function useStripeEmbeddedOnramp({
 
     updateStep("transferring");
 
-    const targetSplitAddress = (isCreditCard || detectedCardFunding === "credit") && splitAddressCredit
-      ? splitAddressCredit
-      : (splitAddress || "");
+    const targetSplitAddress = (isCreditCard || detectedCardFunding === "credit")
+      ? (splitAddress || "")
+      : (splitAddressCredit || splitAddress || "");
 
     const finalAmount = getOnrampAmount(detectedCardFunding || (isCreditCard ? "credit" : "debit"));
     const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, finalAmount);

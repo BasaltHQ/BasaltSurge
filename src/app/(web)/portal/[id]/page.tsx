@@ -2001,7 +2001,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           if (rec && typeof rec.totalUsd === "number") {
             setReceipt(rec);
             // Prepopulate stripeEmail if returned from receipt API
-            const emailVal = rec.stripeEmail || rec.shippingAddress?.email || "";
+            const emailVal = rec.stripeEmail || (rec as any).customerEmail || (rec as any).buyerEmail || rec.shippingAddress?.email || "";
             if (emailVal) {
               setShipEmail((prev) => prev || emailVal);
               setHeadlessEmailInput((prev) => prev || emailVal);
@@ -3028,6 +3028,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     } catch { }
   }, [loggedIn, receiptId, account?.address]);
 
+  useEffect(() => {
+    try {
+      const emailToSend = shipEmail || (receipt as any)?.customerEmail || (receipt as any)?.buyerEmail || receipt?.stripeEmail;
+      if (paymentConfirmed && emailToSend && emailToSend.includes("@") && receiptId) {
+        console.log("[PORTAL] Triggering client-side auto-email to:", emailToSend);
+        fetch(`/api/receipts/${receiptId.replace("receipt:", "")}/email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: emailToSend.trim().toLowerCase() })
+        }).then(res => {
+          if (res.ok) console.log("[PORTAL] Successfully auto-emailed receipt to:", emailToSend);
+        }).catch(err => console.error("[PORTAL] Failed to auto-email receipt:", err));
+      }
+    } catch { }
+  }, [paymentConfirmed, shipEmail, receipt, receiptId]);
+
   const usdRate = Number(rates["USD"] || 0);
   const ethAmount = useMemo(() => {
     if (!usdRate || usdRate <= 0) return 0;
@@ -3363,7 +3379,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     buyerWalletAddress: headlessBuyerWallet,
     sessionId: headlessSessionId,
   } = useStripeEmbeddedOnramp({
-    email: shipEmail || undefined,
+    email: shipEmail || headlessEmailInput || undefined,
     fullName: shipName || undefined,
     splitAddress: sellerAddress as string,
     splitAddressCredit: sellerAddressCredit as string,
@@ -3404,7 +3420,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         txHash,
         paymentMethod: "stripe_headless",
         stripeSessionId: result.sessionId,
-        customerEmail: shipEmail || undefined,
+        customerEmail: shipEmail || headlessEmailInput || undefined,
       });
     },
     onError: (error) => {
@@ -6200,15 +6216,29 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               </a>
             )}
 
-            <div className="mt-4 flex justify-center w-full max-w-[320px] mx-auto">
-              <button
-                onClick={() => setEmailModalOpen(true)}
-                className="w-full py-3 rounded-xl font-bold transition-colors shadow-lg active:scale-95 text-black"
-                style={{ backgroundColor: theme.primaryColor || '#10b981' }}
-              >
-                Email Receipt
-              </button>
-            </div>
+            {(() => {
+              const displayEmail = shipEmail || (receipt as any)?.customerEmail || (receipt as any)?.buyerEmail || receipt?.stripeEmail;
+              return (
+                <>
+                  {!displayEmail && (
+                    <div className="mt-4 flex justify-center w-full max-w-[320px] mx-auto">
+                      <button
+                        onClick={() => setEmailModalOpen(true)}
+                        className="w-full py-3 rounded-xl font-bold transition-colors shadow-lg active:scale-95 text-black"
+                        style={{ backgroundColor: theme.primaryColor || '#10b981' }}
+                      >
+                        Email Receipt
+                      </button>
+                    </div>
+                  )}
+                  {displayEmail && (
+                    <p className="text-xs text-emerald-400 font-medium animate-pulse mt-4">
+                      ✓ Receipt automatically sent to <span className="underline">{displayEmail}</span>
+                    </p>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Claim / Link Wallet Section */}
             <div className="mt-8 pt-6 border-t border-white/10 w-full max-w-[320px] flex flex-col items-center">

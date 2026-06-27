@@ -414,15 +414,13 @@ export async function POST(req: NextRequest) {
 
         // 2. If not resolved from webhook event, fallback to standard card-type checks
         if (!targetSplitAddress || targetSplitAddress === merchantWallet) {
-          targetSplitAddress = isCredit && splitAddressCredit
-            ? splitAddressCredit
-            : splitAddress;
-
-          // Webhook style fallback: if dual split is enabled and card is credit, it resolves to splitAddressCredit
-          const isDual = siteConfig?.isDualSplitEnabled || false;
           const isCreditCardType = cardFunding === "credit" || isCredit;
-          if (isDual && isCreditCardType && splitAddressCredit) {
+          const isDual = siteConfig?.isDualSplitEnabled || false;
+          
+          if (isDual && !isCreditCardType && splitAddressCredit) {
             targetSplitAddress = splitAddressCredit;
+          } else {
+            targetSplitAddress = splitAddress || merchantWallet;
           }
         }
 
