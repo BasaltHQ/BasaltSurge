@@ -50,8 +50,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         logoUrl = siteConfig?.theme?.brandLogoUrl || undefined;
         if (siteConfig?.theme?.primaryColor) brandColor = siteConfig.theme.primaryColor;
 
+        let brandOrigin = "";
         if (brandKey && brandKey.toLowerCase() !== "portalpay") {
             const brandDoc = await readBrandOverridesFromCosmos(brandKey);
+            if (brandDoc?.appUrl) {
+                try {
+                    brandOrigin = new URL(brandDoc.appUrl).origin;
+                } catch {
+                    brandOrigin = brandDoc.appUrl;
+                }
+            }
             if (brandDoc?.email?.senderEmail) {
                 senderEmail = brandDoc.email.senderEmail;
                 senderName = brandDoc.email.senderName || brandDoc.name || senderName;
@@ -79,8 +87,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             if (theme.primaryColor) brandColor = theme.primaryColor;
         }
 
+        // Construct the robust origin
+        const xfProto = req.headers.get("x-forwarded-proto") || "https";
+        const xfHost = req.headers.get("x-forwarded-host") || req.headers.get("host");
+        const origin = brandOrigin || process.env.NEXT_PUBLIC_APP_URL || (xfHost ? `${xfProto}://${xfHost}` : req.nextUrl.origin);
+
         if (typeof logoUrl === "string" && logoUrl.startsWith("/")) {
-            logoUrl = `${req.nextUrl.origin}${logoUrl}`;
+            logoUrl = `${origin}${logoUrl}`;
+        }
+
+        // If senderName is still the default fallback, use the resolved brandName/merchant name
+        if (senderName === "PortalPay Receipts" && brandName !== "PortalPay") {
+            senderName = `${brandName} Receipts`;
         }
 
         // Initialize itemsHtml for the receipt
@@ -159,7 +177,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                     ${itemsHtml}
 
                     <div style="margin-top: 32px; text-align: center;">
-                        <a href="${req.nextUrl.origin}/portal/${id.replace('receipt:', '')}?recipient=${encodeURIComponent(wallet)}" style="display: inline-block; padding: 14px 28px; background-color: ${brandColor}; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">
+                        <a href="${origin}/portal/${id.replace('receipt:', '')}?recipient=${encodeURIComponent(wallet)}" style="display: inline-block; padding: 14px 28px; background-color: ${brandColor}; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">
                             View Receipt Online
                         </a>
                     </div>
