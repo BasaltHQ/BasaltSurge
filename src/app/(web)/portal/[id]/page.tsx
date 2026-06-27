@@ -4067,12 +4067,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 />
                 {headlessAuthElement && (
                   <div
-                    className="absolute bottom-[26px] left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
+                    className="absolute bottom-[14px] left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
                     style={{
                       backgroundColor: "#ffffff",
                       color: "#697386",
                       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                      height: "54px",
+                      height: "78px",
                       filter: !isLightBackground ? "invert(0.93) hue-rotate(180deg) brightness(1.1) contrast(0.95)" : undefined,
                     }}
                   >

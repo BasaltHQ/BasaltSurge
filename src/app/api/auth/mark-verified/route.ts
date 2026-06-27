@@ -3,7 +3,7 @@ import { markEmailVerified } from "../thirdweb-verify/route";
 
 export const dynamic = 'force-dynamic';
 
-const STRIPE_API_VERSION = "2026-03-25.dahlia";
+const STRIPE_API_VERSION = "2026-06-24.dahlia";
 
 /**
  * POST /api/auth/mark-verified
