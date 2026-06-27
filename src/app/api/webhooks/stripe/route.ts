@@ -63,15 +63,23 @@ async function resolveMerchantFromMetadata(
       if (match) {
         let splitAddress: string;
         if (useSeparateSplit) {
-          const splitTop = String(match.splitAddressCredit || '').toLowerCase();
-          const splitObj = String(match.splitCredit?.address || '').toLowerCase();
-          splitAddress = splitTop || splitObj || mw;
-        } else {
           const splitTop = String(match.splitAddress || '').toLowerCase();
           const splitObj = String(match.split?.address || '').toLowerCase();
           const splitCfgTop = String(match.config?.splitAddress || '').toLowerCase();
           const splitCfgObj = String(match.config?.split?.address || '').toLowerCase();
           splitAddress = splitTop || splitObj || splitCfgTop || splitCfgObj || mw;
+        } else {
+          const splitCreditTop = String(match.splitAddressCredit || '').toLowerCase();
+          const splitCreditObj = String(match.splitCredit?.address || '').toLowerCase();
+          const splitAddressCreditResolved = splitCreditTop || splitCreditObj;
+
+          const splitTop = String(match.splitAddress || '').toLowerCase();
+          const splitObj = String(match.split?.address || '').toLowerCase();
+          const splitCfgTop = String(match.config?.splitAddress || '').toLowerCase();
+          const splitCfgObj = String(match.config?.split?.address || '').toLowerCase();
+          const splitAddressResolved = splitTop || splitObj || splitCfgTop || splitCfgObj || mw;
+
+          splitAddress = splitAddressCreditResolved || splitAddressResolved;
         }
         return { merchantWallet: mw, splitAddress, fundingType: useSeparateSplit ? "credit" : "debit" };
       }
