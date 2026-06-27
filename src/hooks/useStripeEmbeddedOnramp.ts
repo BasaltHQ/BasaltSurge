@@ -1001,6 +1001,10 @@ export function useStripeEmbeddedOnramp({
 
       const onramp = await loadCryptoOnrampAndInitialize(publishableKey, {
         theme: "dark",
+        wallets: {
+          applePay: "auto",
+          googlePay: "auto",
+        },
       });
 
       if (!mountedRef.current) return;
