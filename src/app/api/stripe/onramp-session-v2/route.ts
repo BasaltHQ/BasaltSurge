@@ -3,7 +3,7 @@ import { getContainer } from "@/lib/cosmos";
 
 export const dynamic = 'force-dynamic';
 
-const STRIPE_API_VERSION = "2026-04-22.preview";
+const STRIPE_API_VERSION = "2026-06-24.dahlia";
 
 /**
  * POST /api/stripe/onramp-session-v2

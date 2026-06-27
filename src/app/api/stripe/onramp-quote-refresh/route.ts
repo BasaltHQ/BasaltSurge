@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = 'force-dynamic';
 
-const STRIPE_API_VERSION = "2026-04-22.preview";
+const STRIPE_API_VERSION = "2026-03-25.dahlia";
 
 /**
  * POST /api/stripe/onramp-quote-refresh
