@@ -2378,17 +2378,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return isCredit ? creditStripeFeePct : debitStripeFeePct;
   }, [detectedCardFunding, debitStripeFeePct, creditStripeFeePct]);
 
-  const stripeProcessingFeeUsd = useMemo(() => {
-    return +(totalUsd * (stripeFeePct / 100)).toFixed(2);
-  }, [totalUsd, stripeFeePct]);
-
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
     if (feeMinusEnabled) {
-      return +(totalUsd - stripeProcessingFeeUsd).toFixed(2);
+      const isCredit = detectedCardFunding === "credit";
+      const rate = isCredit ? 3.5 : 2.25;
+      return +(totalUsd / (1 + rate / 100)).toFixed(2);
     }
     return totalUsd;
-  }, [receipt, totalUsd, stripeProcessingFeeUsd, feeMinusEnabled]);
+  }, [receipt, totalUsd, detectedCardFunding, feeMinusEnabled]);
+
+  const stripeProcessingFeeUsd = useMemo(() => {
+    if (feeMinusEnabled) {
+      return +(totalUsd - stripeTotalUsd).toFixed(2);
+    }
+    return +(totalUsd * (stripeFeePct / 100)).toFixed(2);
+  }, [totalUsd, stripeFeePct, stripeTotalUsd, feeMinusEnabled]);
 
   // Compute receipt readiness (loaded and has a positive total)
   useEffect(() => {
