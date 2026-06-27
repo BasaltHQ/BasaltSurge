@@ -236,9 +236,9 @@ async function runBackgroundPoll(params: {
 
       if (status === "fulfillment_complete") {
         resolvedStatus = "success";
-        isCreditCard =
-          isCreditCard ||
-          data.payment_details?.card?.funding === "credit";
+        const stripeFunding = data.payment_details?.card?.funding || data.payment_method_details?.card?.funding;
+        const resolvedFunding = stripeFunding || detectedCardFunding;
+        isCreditCard = resolvedFunding === "credit" || resolvedFunding === null || resolvedFunding === undefined;
         break;
       }
 
