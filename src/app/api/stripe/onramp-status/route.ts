@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
 
     const headers: Record<string, string> = {
       "Authorization": `Bearer ${stripeKey}`,
-      "Stripe-Version": "2026-03-25.dahlia",
+      "Stripe-Version": "2026-06-24.dahlia",
     };
     if (oauthToken) {
       headers["Stripe-OAuth-Token"] = oauthToken;

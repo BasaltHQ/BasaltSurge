@@ -7,7 +7,7 @@ import { markEmailVerified } from "@/app/api/auth/thirdweb-verify/route";
 
 export const dynamic = 'force-dynamic';
 
-const STRIPE_API_VERSION = "2026-03-25.dahlia";
+const STRIPE_API_VERSION = "2026-06-24.dahlia";
 const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
 export async function executeGaslessTransferServer(

@@ -15,7 +15,7 @@ import * as crypto from "node:crypto";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const STRIPE_API_VERSION = "2026-03-25.dahlia";
+const STRIPE_API_VERSION = "2026-06-24.dahlia";
 const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
 async function logCronError(errorDetails: {
@@ -461,7 +461,7 @@ export async function POST(req: NextRequest) {
           try {
             const stripeKey = process.env.STRIPE_API_KEY;
             if (stripeKey) {
-              const STRIPE_API_VERSION = "2026-03-25.dahlia";
+              const STRIPE_API_VERSION = "2026-06-24.dahlia";
               const response = await fetch(
                 `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(receipt.stripeSessionId)}`,
                 {
