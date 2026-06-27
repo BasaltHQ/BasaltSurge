@@ -2995,6 +2995,19 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           ...extra,
         }),
       });
+
+      // Auto-email receipt if customer email is available and status is successfully posted as paid
+      const customerEmail = extra?.customerEmail || shipEmail;
+      if (status === "paid" && customerEmail && customerEmail.includes("@")) {
+        console.log("[PORTAL] Triggering automatic receipt email to:", customerEmail);
+        fetch(`/api/receipts/${receiptId.replace("receipt:", "")}/email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: customerEmail.trim().toLowerCase() })
+        }).then(res => {
+          if (res.ok) console.log("[PORTAL] Successfully auto-emailed receipt to:", customerEmail);
+        }).catch(err => console.error("[PORTAL] Failed to auto-email receipt:", err));
+      }
     } catch { }
   }
 
@@ -4059,7 +4072,24 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
                 </div>
                 <h3 className={`text-base font-bold mb-1.5 ${isLightText ? 'text-white' : 'text-black'}`}>Payment Complete</h3>
-                <p className={`text-xs mb-6 max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>USDC has been transferred successfully.</p>
+                <p className={`text-xs ${shipEmail ? 'mb-2' : 'mb-6'} max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>USDC has been transferred successfully.</p>
+                {shipEmail && (
+                  <p className="text-[11px] text-emerald-400 font-medium animate-pulse mb-6">
+                    ✓ Receipt automatically sent to <span className="underline">{shipEmail}</span>
+                  </p>
+                )}
+                {!shipEmail && (
+                  <button
+                    onClick={() => setEmailModalOpen(true)}
+                    className={`w-full mb-3 py-2 rounded-xl font-bold transition-all text-xs hover:opacity-90 shadow-md ${
+                      isLightText 
+                        ? "bg-white/10 hover:bg-white/20 text-white" 
+                        : "bg-black/10 hover:bg-black/20 text-black"
+                    }`}
+                  >
+                    Email Receipt
+                  </button>
+                )}
                 <button
                   onClick={() => window.location.reload()}
                   className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 shadow-md ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
@@ -5001,10 +5031,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     Show this screen to merchant
                                   </div>
                                 </div>
-                                <div className="mt-4 flex gap-2">
-                                  <button className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isLightText ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-black/10 hover:bg-black/20 text-black'}`} onClick={() => window.location.reload()}>
-                                    Refresh Receipt
-                                  </button>
+                                <div className="mt-4 flex flex-col items-center gap-3">
+                                  <div className="flex gap-2">
+                                    <button className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isLightText ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-black/10 hover:bg-black/20 text-black'}`} onClick={() => window.location.reload()}>
+                                      Refresh Receipt
+                                    </button>
+                                    {!shipEmail && (
+                                      <button className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-lg active:scale-95 ${isColorLight(theme.primaryColor || '#10b981') ? 'text-neutral-900' : 'text-white'}`} style={{ backgroundColor: theme.primaryColor || '#10b981' }} onClick={() => setEmailModalOpen(true)}>
+                                        Email Receipt
+                                      </button>
+                                    )}
+                                  </div>
+                                  {shipEmail && (
+                                    <p className="text-[11px] text-emerald-400 font-medium animate-pulse mt-1">
+                                      ✓ Receipt automatically sent to <span className="font-semibold underline">{shipEmail}</span>
+                                    </p>
+                                  )}
                                 </div>
 
                                 {/* Claim / Link Wallet Section */}

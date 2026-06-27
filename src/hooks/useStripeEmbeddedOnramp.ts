@@ -687,8 +687,9 @@ export function useStripeEmbeddedOnramp({
           fundsDelivered = true;
           const method = statusData.paymentMethod || null;
           const funding = statusData.paymentDetails?.card?.funding || null;
-          isCreditCard = (method !== null && method !== "debit_card") || (funding === "credit");
-          console.log("[EMBEDDED ONRAMP] ✓ USDC delivered to buyer's smart wallet. Credit card:", isCreditCard);
+          const resolvedFunding = funding || detectedCardFunding || (method === "debit_card" ? "debit" : null);
+          isCreditCard = resolvedFunding === "credit" || resolvedFunding === null;
+          console.log("[EMBEDDED ONRAMP] ✓ USDC delivered to buyer's smart wallet. Credit card:", isCreditCard, "Resolved funding:", resolvedFunding);
           break;
         }
       } catch (pollErr) {
