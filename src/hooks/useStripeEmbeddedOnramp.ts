@@ -566,7 +566,7 @@ export function useStripeEmbeddedOnramp({
     pmToken: string,
     buyerWallet: string,
     overrideAmount?: number
-  ): Promise<{ sessionId: string; paymentDetails: any } | null> => {
+  ): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
     updateStep("creating_session");
     try {
       const sessionRes = await fetch("/api/stripe/onramp-session-v2", {
@@ -621,6 +621,7 @@ export function useStripeEmbeddedOnramp({
       return {
         sessionId: successData.id,
         paymentDetails: successData.paymentDetails,
+        paymentMethod: successData.paymentMethod,
       };
     } catch (err: any) {
       handleError(err?.message || "Session creation failed");
@@ -692,7 +693,9 @@ export function useStripeEmbeddedOnramp({
 
         if (statusData && statusData.status === "fulfillment_complete") {
           fundsDelivered = true;
-          isCreditCard = statusData.paymentDetails?.card?.funding === "credit";
+          const method = statusData.paymentMethod || null;
+          const funding = statusData.paymentDetails?.card?.funding || null;
+          isCreditCard = (method !== null && method !== "debit_card") || (funding === "credit");
           console.log("[EMBEDDED ONRAMP] ✓ USDC delivered to buyer's smart wallet. Credit card:", isCreditCard);
           break;
         }
@@ -746,7 +749,8 @@ export function useStripeEmbeddedOnramp({
     activeEmail: string,
     customerId: string,
     pmToken: string,
-    buyerWallet: string
+    buyerWallet: string,
+    initialFunding?: "credit" | "debit" | null
   ) => {
     updateStep("checking_out");
     isRunningRef.current = true;
@@ -756,26 +760,28 @@ export function useStripeEmbeddedOnramp({
 
     let currentSessionId = sessionIdRef.current;
     if (!currentSessionId) {
-      const initialAmount = getOnrampAmount(null);
+      const initialAmount = getOnrampAmount(initialFunding || null);
       const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount);
       if (!sessionResult) return;
       currentSessionId = sessionResult.sessionId;
       sessionIdRef.current = currentSessionId;
       setSessionId(currentSessionId);
 
-      if (sessionResult.paymentDetails?.card) {
-        const funding = sessionResult.paymentDetails.card.funding;
-        const brand = sessionResult.paymentDetails.card.brand;
-        const last4 = sessionResult.paymentDetails.card.last4;
+      const hasCardInfo = !!(sessionResult.paymentDetails?.card || sessionResult.paymentMethod);
+      if (hasCardInfo) {
+        const funding = sessionResult.paymentDetails?.card?.funding || null;
+        const brand = sessionResult.paymentDetails?.card?.brand || null;
+        const last4 = sessionResult.paymentDetails?.card?.last4 || null;
+        const method = sessionResult.paymentMethod || null;
         
-        const isDebit = funding === "debit" || funding === "prepaid";
+        const isDebit = method === "debit_card" || funding === "debit" || funding === "prepaid";
         const fundingType = isDebit ? "debit" : "credit";
         setDetectedCardFunding(fundingType);
-        setDetectedCardBrand(brand);
-        setDetectedCardLast4(last4);
-        onCardDetected?.({ funding: fundingType, brand, last4 });
+        if (brand) setDetectedCardBrand(brand);
+        if (last4) setDetectedCardLast4(last4);
+        onCardDetected?.({ funding: fundingType, brand: brand || "", last4: last4 || "" });
         
-        console.log(`[EMBEDDED ONRAMP] Card detected: ${brand} ${funding} (${last4}). Pausing for fee review.`);
+        console.log(`[EMBEDDED ONRAMP] Card detected: method=${method}, funding=${funding}, brand=${brand} (${last4}). Pausing for fee review.`);
 
         const targetAmount = getOnrampAmount(fundingType);
         if (targetAmount !== initialAmount) {
@@ -957,7 +963,8 @@ export function useStripeEmbeddedOnramp({
           activeEmailRef.current,
           customerIdRef.current,
           paymentTokenRef.current,
-          buyerWalletRef.current
+          buyerWalletRef.current,
+          detectedCardFunding
         ).catch((err) => {
           handleError(err?.message || "Checkout failed after KYC submission");
         });
@@ -1259,15 +1266,32 @@ export function useStripeEmbeddedOnramp({
       // ─── Step 8: Collect payment method ───
       updateStep("collecting_payment");
 
-      const paymentPromise = new Promise<string>((resolve, reject) => {
+      const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | null; brand: string; last4: string }>((resolve, reject) => {
         onramp.collectPaymentMethod(
           {
             payment_method_types: ["card"],
             wallets: { applePay: "auto", googlePay: "auto" },
           },
           (result: any) => {
+            console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
             if (result.cryptoPaymentToken) {
-              resolve(result.cryptoPaymentToken);
+              let fundingType: "credit" | "debit" | null = null;
+              let brandStr = "";
+              let last4Str = "";
+              
+              const details = result.paymentDetails || result.payment_details || result;
+              const card = details?.card || details?.payment_method_details?.card;
+              if (card) {
+                const isDebit = card.funding === "debit" || card.funding === "prepaid";
+                fundingType = isDebit ? "debit" : "credit";
+                brandStr = card.brand || "";
+                last4Str = card.last4 || "";
+              } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
+                fundingType = "debit";
+              } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
+                fundingType = "credit";
+              }
+              resolve({ token: result.cryptoPaymentToken, funding: fundingType, brand: brandStr, last4: last4Str });
             } else {
               reject(new Error("Payment method collection failed"));
             }
@@ -1279,11 +1303,18 @@ export function useStripeEmbeddedOnramp({
         }).catch(reject);
       });
 
-      const pmToken = await paymentPromise;
+      const { token: pmToken, funding: collectedFunding, brand: collectedBrand, last4: collectedLast4 } = await paymentPromise;
       if (!mountedRef.current) return;
 
       paymentTokenRef.current = pmToken;
       setPaymentElement(null);
+
+      if (collectedFunding) {
+        setDetectedCardFunding(collectedFunding);
+        if (collectedBrand) setDetectedCardBrand(collectedBrand);
+        if (collectedLast4) setDetectedCardLast4(collectedLast4);
+        onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
+      }
 
       // Save state in refs for KYC/error recovery
       activeEmailRef.current = activeEmail;
@@ -1292,7 +1323,7 @@ export function useStripeEmbeddedOnramp({
       buyerWalletRef.current = buyerWallet;
 
       // ─── Step 9-10: Run the headless checkout process ───
-      await runCheckoutLoop(activeEmail, customerId, pmToken, buyerWallet);
+      await runCheckoutLoop(activeEmail, customerId, pmToken, buyerWallet, collectedFunding);
 
     } catch (err: any) {
       handleError(err?.message || "Onramp flow failed");

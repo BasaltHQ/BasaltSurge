@@ -104,10 +104,40 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // Initialize itemsHtml for the receipt
         let itemsHtml = "";
         if (Array.isArray(receipt.lineItems) && receipt.lineItems.length > 0) {
+            let processedItems = receipt.lineItems;
+
+            const isFeeMinus = !!siteConfig?.feeMinusEnabled;
+            if (isFeeMinus) {
+                const customerTotal = Number(receipt.totalUsd || 0);
+                const tip = Number(receipt.tipAmount || 0);
+                const customerBase = customerTotal - tip;
+
+                const baseAndTaxItems = receipt.lineItems.filter((it: any) => 
+                    it.label !== "Processing Fee" && it.label !== "Gratuity"
+                );
+                const scaledBase = baseAndTaxItems.reduce((acc: number, it: any) => 
+                    acc + Number(it.priceUsd || 0), 0
+                );
+
+                const scaleFactor = scaledBase > 0 ? (customerBase / scaledBase) : 1;
+
+                processedItems = receipt.lineItems
+                    .filter((it: any) => it.label !== "Processing Fee")
+                    .map((it: any) => {
+                        if (it.label === "Gratuity") {
+                            return it;
+                        }
+                        return {
+                            ...it,
+                            priceUsd: +(Number(it.priceUsd || 0) * scaleFactor).toFixed(2)
+                        };
+                    });
+            }
+
             itemsHtml = `
             <div style="margin-top: 24px; border-top: 1px solid #eaeaea; padding-top: 20px;">
                 <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 15px;">
-                    ${receipt.lineItems.map((it: any) => `
+                    ${processedItems.map((it: any) => `
                         <tr>
                             <td style="padding: 10px 0; border-bottom: 1px solid #f5f5f5; color: #333;">
                                 <strong style="color: #666;">${it.qty || 1}x</strong> ${it.label || "Item"}

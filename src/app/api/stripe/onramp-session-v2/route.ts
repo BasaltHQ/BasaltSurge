@@ -158,6 +158,7 @@ export async function POST(req: NextRequest) {
       quoteExpiresAt: data.quote?.expires_at || null,
       transactionDetails: data.transaction_details || null,
       paymentDetails: data.payment_details || null,
+      paymentMethod: data.payment_method || null,
     });
   } catch (e: any) {
     console.error("[ONRAMP V2] Error:", e);
