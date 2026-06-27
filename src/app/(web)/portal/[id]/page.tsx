@@ -3399,6 +3399,58 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     },
   });
 
+  // Clean up Stripe headless elements on unmount or when they are cleared/replaced
+  useEffect(() => {
+    const authEl = headlessAuthElement;
+    const payEl = headlessPaymentElement;
+    
+    const runCleanup = () => {
+      if (authEl) {
+        try {
+          (authEl as any).unmount?.();
+          (authEl as any).destroy?.();
+          authEl.remove();
+          console.log("[PORTAL] Cleaned up headless auth element successfully");
+        } catch (e) {
+          console.warn("[PORTAL] Failed to clean up auth element:", e);
+        }
+      }
+      if (payEl) {
+        try {
+          (payEl as any).unmount?.();
+          (payEl as any).destroy?.();
+          payEl.remove();
+          console.log("[PORTAL] Cleaned up headless payment element successfully");
+        } catch (e) {
+          console.warn("[PORTAL] Failed to clean up payment element:", e);
+        }
+      }
+      
+      // Manually find and remove/hide any leftover iframe components or global Stripe overlays
+      try {
+        const activeContainer = document.querySelector('.stripe-embedded-container');
+        const stripeIframes = document.querySelectorAll('iframe[src*="stripe.com"], iframe[src*="link.com"]');
+        stripeIframes.forEach(iframe => {
+          if (!activeContainer || !activeContainer.contains(iframe)) {
+            (iframe as HTMLElement).style.display = "none";
+            if (iframe.parentNode && iframe.parentNode !== document.body) {
+              try {
+                iframe.parentNode.removeChild(iframe);
+              } catch {}
+            }
+          }
+        });
+      } catch (err) {
+        console.warn("[PORTAL] Failed to clean global Stripe elements:", err);
+      }
+    };
+
+    runCleanup();
+    return () => {
+      runCleanup();
+    };
+  }, [headlessAuthElement, headlessPaymentElement, headlessStep]);
+
   // Client-side logging pipeline for portal errors & console logs
   usePortalLogger({
     receiptId,
@@ -4089,17 +4141,43 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               </div>
             ) : (
               <div className="text-center flex flex-col items-center justify-center gap-4 min-h-[320px] px-4 py-8 w-full animate-in fade-in duration-300">
-                <div className="relative flex items-center justify-center">
-                  {/* Rotating Outer Ring */}
-                  <div className={`absolute w-14 h-14 rounded-full border-2 animate-spin ${isLightText ? 'border-white/5 border-t-white/30' : 'border-black/5 border-t-black/30'}`}></div>
+                <p className={`font-semibold text-sm tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>{headlessStatus}</p>
+                
+                <div className="relative flex items-center justify-center mt-2 mb-4 scale-110">
+                  {/* Glowing blur background */}
+                  <div 
+                    className="absolute w-24 h-24 rounded-full blur-xl opacity-20 animate-pulse duration-2000"
+                    style={{ backgroundColor: theme.primaryColor || "#635BFF" }}
+                  />
+                  
+                  {/* Rotating Outer Dashed Ring */}
+                  <div 
+                    className={`absolute w-18 h-18 rounded-full border-2 border-dashed animate-spin duration-10000 ${
+                      isLightText ? 'border-white/10 border-t-white/40' : 'border-black/10 border-t-black/40'
+                    }`}
+                  />
+                  
+                  {/* Rotating Inner Ring (reverse spin) */}
+                  <div 
+                    className={`absolute w-14 h-14 rounded-full border border-dotted animate-spin duration-3000 ${
+                      isLightText ? 'border-white/20 border-t-emerald-400' : 'border-black/20 border-t-[#635BFF]'
+                    }`}
+                    style={{ animationDirection: "reverse" }}
+                  />
+                  
                   {/* Glowing Core */}
-                  <div className={`w-9 h-9 rounded-full border flex items-center justify-center ${isLightText ? 'bg-white/[0.02] border-white/10' : 'bg-black/[0.02] border-black/10'}`}>
-                    <svg className={`h-4.5 w-4.5 animate-pulse ${isLightText ? 'text-white/80' : 'text-black/80'}`} viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.25z" />
+                  <div 
+                    className={`w-10.5 h-10.5 rounded-full border flex items-center justify-center shadow-lg transition-all ${
+                      isLightText 
+                        ? 'bg-white/[0.04] border-white/15 text-emerald-400 shadow-white/5' 
+                        : 'bg-black/[0.04] border-black/15 text-[#635BFF] shadow-black/5'
+                    }`}
+                  >
+                    <svg className="h-5 w-5 animate-pulse duration-1500" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1s1 .45 1 1v3c0 .55-.45 1-1 1zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
                     </svg>
                   </div>
                 </div>
-                <p className={`font-semibold text-sm tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>{headlessStatus}</p>
                 {headlessStep === "awaiting_funds" ? (
                   <div className="w-full max-w-xs flex flex-col items-stretch px-2 animate-in fade-in zoom-in duration-500">
                     <div className={`w-full h-2 rounded-full overflow-hidden relative ${isLightText ? 'bg-white/10' : 'bg-black/10'}`}>
