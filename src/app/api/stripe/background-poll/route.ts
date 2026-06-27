@@ -21,17 +21,39 @@ export async function executeGaslessTransferServer(
     const { base } = await import("thirdweb/chains");
     const { inAppWallet } = await import("thirdweb/wallets");
 
-    const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
-    const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
-    const clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+    let clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+    let secretKey = process.env.THIRDWEB_SECRET_KEY || "";
+    let authEndpointSecret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
+
+    if (brandKey) {
+      try {
+        const { getContainer } = await import("@/lib/cosmos");
+        const container = await getContainer();
+        const { resource: brandConfigDoc } = await container.item("brand:config", brandKey).read<any>();
+        if (brandConfigDoc) {
+          if (brandConfigDoc.thirdwebClientId) {
+            clientId = brandConfigDoc.thirdwebClientId;
+          }
+          if (brandConfigDoc.thirdwebSecretKey) {
+            secretKey = brandConfigDoc.thirdwebSecretKey;
+          }
+          if (brandConfigDoc.thirdwebAuthEndpointSecret) {
+            authEndpointSecret = brandConfigDoc.thirdwebAuthEndpointSecret;
+          }
+          console.log(`[BACKGROUND POLL] Loaded brand-specific Thirdweb credentials for ${brandKey} from DB`);
+        }
+      } catch (brandErr) {
+        console.warn("[BACKGROUND POLL] Failed to load brand config credentials:", brandErr);
+      }
+    }
 
     const twClient = createThirdwebClient({
       clientId,
-      secretKey: process.env.THIRDWEB_SECRET_KEY,
+      secretKey,
     });
 
-    // Generate stateless verification token for email auth bypass
-    const verificationToken = markEmailVerified(fromWalletEmail);
+    // Generate stateless verification token for email auth bypass using dynamic secret
+    const verificationToken = markEmailVerified(fromWalletEmail, authEndpointSecret);
 
     const wallet = inAppWallet({
       auth: {

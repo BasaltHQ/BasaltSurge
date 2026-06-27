@@ -66,8 +66,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const brandKey = String(body.brandKey || "").trim();
+    let customSecret: string | undefined;
+    if (brandKey) {
+      try {
+        const { getContainer } = await import("@/lib/cosmos");
+        const container = await getContainer();
+        // Query brand config document
+        const { resource: brandConfigDoc } = await container.item("brand:config", brandKey).read<any>();
+        if (brandConfigDoc && brandConfigDoc.thirdwebAuthEndpointSecret) {
+          customSecret = brandConfigDoc.thirdwebAuthEndpointSecret;
+          console.log(`[MARK VERIFIED] Found custom thirdwebAuthEndpointSecret for brand ${brandKey}`);
+        }
+      } catch (err) {
+        console.warn("[MARK VERIFIED] Failed to load brand config for custom secret:", err);
+      }
+    }
+
     // Stateless signed token (expires in 10 minutes)
-    const verificationToken = markEmailVerified(email);
+    const verificationToken = markEmailVerified(email, customSecret);
 
     console.log("[MARK VERIFIED] SECURE: Email verified via active Stripe Link OAuth token:", email.slice(0, 3) + "***");
 

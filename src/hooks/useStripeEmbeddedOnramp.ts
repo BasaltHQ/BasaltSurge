@@ -420,8 +420,7 @@ export function useStripeEmbeddedOnramp({
   const executeGaslessTransfer = useCallback(async (
     fromWalletEmail: string,
     toAddress: string,
-    usdcAmount: number,
-    connectedWallet?: any
+    usdcAmount: number
   ): Promise<string | null> => {
     try {
       const { createThirdwebClient, getContract, prepareContractCall, sendTransaction, readContract } = await import("thirdweb");
@@ -446,27 +445,10 @@ export function useStripeEmbeddedOnramp({
       if (buyerAccountRef.current) {
         console.log("[EMBEDDED ONRAMP] Using active guest EOA account (EIP-7702 mode):", buyerAccountRef.current.address);
         account = buyerAccountRef.current;
-      } else if (connectedWallet) {
-        if (connectedWallet.personalAccount) {
-          console.log("[EMBEDDED ONRAMP] Using connected Smart Account directly:", connectedWallet.address);
-          account = connectedWallet;
-        } else {
-          console.log("[EMBEDDED ONRAMP] Wrapping EOA connected wallet with Smart Wallet for EIP-4337/7702 gasless execution...");
-          const { smartWallet } = await import("thirdweb/wallets");
-          const wallet = smartWallet({
-            chain: base,
-            gasless: true,
-          });
-
-          account = await wallet.connect({
-            client: twClient,
-            personalAccount: connectedWallet,
-          });
-          console.log("[EMBEDDED ONRAMP] Smart Account active for EOA:", account.address);
-        }
       } else {
         const { inAppWallet } = await import("thirdweb/wallets");
         // Re-connect the wallet as EOA with EIP-7702 gasless sponsored execution
+        console.log("[EMBEDDED ONRAMP] Re-connecting guest EOA wallet for EIP-7702 gasless transfer...");
         const wallet = inAppWallet({
           auth: {
             options: ["auth_endpoint" as any],
@@ -484,6 +466,7 @@ export function useStripeEmbeddedOnramp({
           payload: JSON.stringify({
             email: fromWalletEmail,
             verificationToken: verificationTokenRef.current || "",
+            brandKey: brandKey || "",
           }),
         });
         console.log("[EMBEDDED ONRAMP] Guest EOA re-connected:", account.address);
@@ -572,65 +555,70 @@ export function useStripeEmbeddedOnramp({
     overrideAmount?: number
   ): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
     updateStep("creating_session");
-    try {
-      const sessionRes = await fetch("/api/stripe/onramp-session-v2", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cryptoCustomerId: customerId,
-          cryptoPaymentToken: pmToken,
-          sourceAmount: overrideAmount ?? amount,
-          sourceCurrency: "usd",
-          destinationCurrency,
-          destinationNetwork: network,
-          walletAddress: buyerWallet,
-          oauthToken: oauthTokenRef.current,
-          receiptId,
-          merchantWallet,
-          brandKey,
-        }),
-      });
+    
+    const execute = async (amt?: number): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
+      try {
+        const sessionRes = await fetch("/api/stripe/onramp-session-v2", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cryptoCustomerId: customerId,
+            cryptoPaymentToken: pmToken,
+            sourceAmount: amt ?? amount,
+            sourceCurrency: "usd",
+            destinationCurrency,
+            destinationNetwork: network,
+            walletAddress: buyerWallet,
+            oauthToken: oauthTokenRef.current,
+            receiptId,
+            merchantWallet,
+            brandKey,
+          }),
+        });
 
-      if (!sessionRes.ok) {
-        const errData = await sessionRes.json().catch(() => ({}));
-        const errMessage = String(errData.error || "").toLowerCase();
-        const errCode = String(errData.code || "").toLowerCase();
+        if (!sessionRes.ok) {
+          const errData = await sessionRes.json().catch(() => ({}));
+          const errMessage = String(errData.error || "").toLowerCase();
+          const errCode = String(errData.code || "").toLowerCase();
 
-        if (
-          errMessage.includes("verification") || 
-          errMessage.includes("kyc") || 
-          errCode.includes("verification") || 
-          errCode.includes("kyc")
-        ) {
-          console.log("[EMBEDDED ONRAMP] Document verification required during session creation. Launching verifyDocuments...");
-          updateStep("verifying_identity");
-          if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
-          
-          try {
-            await onrampRef.current.verifyDocuments();
-            console.log("[EMBEDDED ONRAMP] Document verification completed. Retrying session creation...");
-            return await createSessionHelper(customerId, pmToken, buyerWallet, overrideAmount);
-          } catch (verifyErr: any) {
-            throw new Error(verifyErr?.message || "Identity verification failed or was cancelled");
+          if (
+            errMessage.includes("verification") || 
+            errMessage.includes("kyc") || 
+            errCode.includes("verification") || 
+            errCode.includes("kyc")
+          ) {
+            console.log("[EMBEDDED ONRAMP] Document verification required during session creation. Launching verifyDocuments...");
+            updateStep("verifying_identity");
+            if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
+            
+            try {
+              await onrampRef.current.verifyDocuments();
+              console.log("[EMBEDDED ONRAMP] Document verification completed. Retrying session creation...");
+              return await execute(amt);
+            } catch (verifyErr: any) {
+              throw new Error(verifyErr?.message || "Identity verification failed or was cancelled");
+            }
+          } else {
+            throw new Error(errData.error || "Session creation failed");
           }
-        } else {
-          throw new Error(errData.error || "Session creation failed");
         }
-      }
 
-      const successData = await sessionRes.json().catch(() => ({}));
-      if (!successData.id) {
-        throw new Error("No session ID returned");
+        const successData = await sessionRes.json().catch(() => ({}));
+        if (!successData.id) {
+          throw new Error("No session ID returned");
+        }
+        return {
+          sessionId: successData.id,
+          paymentDetails: successData.paymentDetails,
+          paymentMethod: successData.paymentMethod,
+        };
+      } catch (err: any) {
+        handleError(err?.message || "Session creation failed");
+        return null;
       }
-      return {
-        sessionId: successData.id,
-        paymentDetails: successData.paymentDetails,
-        paymentMethod: successData.paymentMethod,
-      };
-    } catch (err: any) {
-      handleError(err?.message || "Session creation failed");
-      return null;
-    }
+    };
+
+    return execute(overrideAmount);
   }, [
     amount,
     destinationCurrency,
@@ -722,7 +710,7 @@ export function useStripeEmbeddedOnramp({
       : (splitAddress || "");
 
     const finalAmount = getOnrampAmount(detectedCardFunding || (isCreditCard ? "credit" : "debit"));
-    const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, finalAmount, connectedWallet);
+    const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, finalAmount);
 
     if (!txHash) {
       handleError("Failed to transfer funds to merchant");
@@ -745,7 +733,6 @@ export function useStripeEmbeddedOnramp({
     onSuccess,
     handleError,
     executeGaslessTransfer,
-    connectedWallet,
     getOnrampAmount
   ]);
 
@@ -1145,6 +1132,7 @@ export function useStripeEmbeddedOnramp({
           email: activeEmail,
           customerId,
           oauthToken: oauthTokenRef.current,
+          brandKey: brandKey || "",
         }),
       });
 
@@ -1163,70 +1151,40 @@ export function useStripeEmbeddedOnramp({
 
       let buyerWallet: string;
 
-      if (connectedWalletAddress && connectedWallet) {
-        try {
-          fetch("/api/users/profile", {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              "x-wallet": connectedWalletAddress,
-              ...(brandKey ? { "x-brand-key": brandKey } : {}),
+      // Always create/use the guest EOA wallet for Stripe Onramp to ensure gasless execution and server-side recovery
+      const createdWallet = await createBuyerWallet(activeEmail);
+
+      if (!createdWallet) {
+        handleError("Failed to create buyer wallet");
+        return;
+      }
+
+      buyerWallet = createdWallet;
+      console.log("[EMBEDDED ONRAMP] Created/retrieved guest EOA wallet:", buyerWallet);
+
+      try {
+        fetch("/api/users/profile", {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "x-wallet": buyerWallet,
+            ...(brandKey ? { "x-brand-key": brandKey } : {}),
+          },
+          body: JSON.stringify({
+            wallet: buyerWallet,
+            contact: {
+              email: activeEmail,
             },
-            body: JSON.stringify({
-              wallet: connectedWalletAddress,
-              contact: {
-                email: activeEmail,
-              },
-            }),
-          }).then(res => {
-            if (res.ok) {
-              console.log("[EMBEDDED ONRAMP] Email linked to connected EOA profile successfully:", activeEmail);
-            }
-          }).catch(err => {
-            console.warn("[EMBEDDED ONRAMP] Failed to link email to EOA profile:", err);
-          });
-        } catch (linkErr) {
-          console.warn("[EMBEDDED ONRAMP] Error in profile link attempt:", linkErr);
-        }
-
-        buyerWallet = connectedWalletAddress;
-        buyerAccountRef.current = connectedWallet;
-        console.log("[EMBEDDED ONRAMP] Using connected EOA wallet:", buyerWallet);
-      } else {
-        const createdWallet = await createBuyerWallet(activeEmail);
-
-        if (!createdWallet) {
-          handleError("Failed to create buyer wallet");
-          return;
-        }
-
-        buyerWallet = createdWallet;
-        console.log("[EMBEDDED ONRAMP] Created/retrieved guest EOA wallet:", buyerWallet);
-
-        try {
-          fetch("/api/users/profile", {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              "x-wallet": buyerWallet,
-              ...(brandKey ? { "x-brand-key": brandKey } : {}),
-            },
-            body: JSON.stringify({
-              wallet: buyerWallet,
-              contact: {
-                email: activeEmail,
-              },
-            }),
-          }).then(res => {
-            if (res.ok) {
-              console.log("[EMBEDDED ONRAMP] Email linked to guest EOA profile successfully:", activeEmail);
-            }
-          }).catch(err => {
-            console.warn("[EMBEDDED ONRAMP] Failed to link email to guest EOA profile:", err);
-          });
-        } catch (linkErr) {
-          console.warn("[EMBEDDED ONRAMP] Error in profile link attempt for guest wallet:", linkErr);
-        }
+          }),
+        }).then(res => {
+          if (res.ok) {
+            console.log("[EMBEDDED ONRAMP] Email linked to guest EOA profile successfully:", activeEmail);
+          }
+        }).catch(err => {
+          console.warn("[EMBEDDED ONRAMP] Failed to link email to guest EOA profile:", err);
+        });
+      } catch (linkErr) {
+        console.warn("[EMBEDDED ONRAMP] Error in profile link attempt for guest wallet:", linkErr);
       }
 
       setBuyerWalletAddress(buyerWallet);
