@@ -777,16 +777,14 @@ export function useStripeEmbeddedOnramp({
         
         console.log(`[EMBEDDED ONRAMP] Card detected: ${brand} ${funding} (${last4}). Pausing for fee review.`);
 
-        if (fundingType === "credit") {
-          const creditAmount = getOnrampAmount("credit");
-          if (creditAmount !== initialAmount) {
-            console.log(`[EMBEDDED ONRAMP] Credit card detected. Re-creating session with credit amount: ${creditAmount} (was ${initialAmount})`);
-            const creditSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, creditAmount);
-            if (!creditSessionResult) return;
-            currentSessionId = creditSessionResult.sessionId;
-            sessionIdRef.current = currentSessionId;
-            setSessionId(currentSessionId);
-          }
+        const targetAmount = getOnrampAmount(fundingType);
+        if (targetAmount !== initialAmount) {
+          console.log(`[EMBEDDED ONRAMP] ${fundingType} card detected. Re-creating session with target amount: ${targetAmount} (was ${initialAmount})`);
+          const newSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount);
+          if (!newSessionResult) return;
+          currentSessionId = newSessionResult.sessionId;
+          sessionIdRef.current = currentSessionId;
+          setSessionId(currentSessionId);
         }
         
         updateStep("confirming_fees");
