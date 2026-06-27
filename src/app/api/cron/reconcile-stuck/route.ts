@@ -214,13 +214,35 @@ export async function POST(req: NextRequest) {
         splitAddress = merchantWallet;
       }
 
-      // Resolve brand-specific Thirdweb Client ID dynamically
-      const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
-      const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
-      const clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+      // Resolve brand-specific Thirdweb Client ID dynamically from database
+      let clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+      let secretKey = process.env.THIRDWEB_SECRET_KEY || "";
+      let authEndpointSecret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
+
+      if (brandKey) {
+        try {
+          const { readBrandOverridesCached } = await import("@/lib/brand-config");
+          const brandConfigDoc = await readBrandOverridesCached(brandKey);
+          if (brandConfigDoc) {
+            if (brandConfigDoc.thirdwebClientId) {
+              clientId = brandConfigDoc.thirdwebClientId;
+            }
+            if (brandConfigDoc.thirdwebSecretKey) {
+              secretKey = brandConfigDoc.thirdwebSecretKey;
+            }
+            if (brandConfigDoc.thirdwebAuthEndpointSecret) {
+              authEndpointSecret = brandConfigDoc.thirdwebAuthEndpointSecret;
+            }
+            console.log(`[cron/reconcile-stuck] Loaded brand-specific Thirdweb credentials for ${brandKey} from DB`);
+          }
+        } catch (brandErr) {
+          console.warn("[cron/reconcile-stuck] Failed to load brand config credentials:", brandErr);
+        }
+      }
+
       const brandTwClient = createThirdwebClient({
         clientId,
-        secretKey: process.env.THIRDWEB_SECRET_KEY,
+        secretKey,
       });
 
       // If email is missing, fetch it from Stripe's session API using the sessionId
@@ -396,7 +418,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Connect to guest EOA to check balance
-        const verificationToken = markEmailVerified(email);
+        const verificationToken = markEmailVerified(email, authEndpointSecret);
         const wallet = inAppWallet({
           auth: { options: ["auth_endpoint" as any] },
           executionMode: { mode: "EIP7702", sponsorGas: true },
@@ -406,7 +428,7 @@ export async function POST(req: NextRequest) {
           client: brandTwClient,
           chain: base,
           strategy: "auth_endpoint" as any,
-          payload: JSON.stringify({ email, verificationToken }),
+          payload: JSON.stringify({ email, verificationToken, brandKey: brandKey || "" }),
         });
 
         const guestAddress = account.address;

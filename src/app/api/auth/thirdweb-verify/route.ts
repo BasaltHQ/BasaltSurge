@@ -32,10 +32,10 @@ const VERIFICATION_TTL_MS = 10 * 60 * 1000; // 10 minutes
  * Mark an email as verified by Stripe Link.
  * Called from the onramp flow after Stripe Link auth succeeds.
  */
-export function markEmailVerified(email: string): string {
+export function markEmailVerified(email: string, customSecret?: string): string {
   const normalizedEmail = email.trim().toLowerCase();
   const expiresAt = Date.now() + VERIFICATION_TTL_MS;
-  const secret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
+  const secret = customSecret || process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
 
   const dataToSign = `${normalizedEmail}:${expiresAt}`;
   const signature = crypto.createHmac("sha256", secret).update(dataToSign).digest("hex");
@@ -48,7 +48,7 @@ export function markEmailVerified(email: string): string {
 /**
  * Check if an email was recently verified by Stripe Link.
  */
-function isEmailVerified(email: string, token?: string): boolean {
+function isEmailVerified(email: string, token?: string, customSecret?: string): boolean {
   if (!token) return false;
   
   try {
@@ -63,7 +63,7 @@ function isEmailVerified(email: string, token?: string): boolean {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const secret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
+    const secret = customSecret || process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
     const dataToSign = `${normalizedEmail}:${expiresAt}`;
     const expectedSignature = crypto.createHmac("sha256", secret).update(dataToSign).digest("hex");
 
@@ -86,19 +86,46 @@ function consumeVerification(email: string): void {
 
 export async function POST(req: NextRequest) {
   try {
+    // Read body first to get brandKey
+    const rawBody = await req.clone().json().catch(() => ({}));
+    let payload = rawBody.payload || rawBody;
+    if (typeof payload === "string") {
+      try {
+        payload = JSON.parse(payload);
+      } catch {}
+    }
+    const brandKey = String(payload?.brandKey || "").trim();
+
+    let expectedSecret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET;
+    let customSecret: string | undefined;
+
+    if (brandKey) {
+      try {
+        const { getContainer } = await import("@/lib/cosmos");
+        const container = await getContainer();
+        const { resource: brandConfigDoc } = await container.item("brand:config", brandKey).read<any>();
+        if (brandConfigDoc && brandConfigDoc.thirdwebAuthEndpointSecret) {
+          customSecret = brandConfigDoc.thirdwebAuthEndpointSecret;
+          expectedSecret = customSecret; // Use the brand's secret as the expected header auth secret
+          console.log(`[TW AUTH] Using brand ${brandKey} thirdwebAuthEndpointSecret for verification`);
+        }
+      } catch (err) {
+        console.warn("[TW AUTH] Failed to load brand config for custom secret:", err);
+      }
+    }
+
     // 1. Validate the shared secret header
     const authSecret = req.headers.get("x-thirdweb-auth-secret");
-    const expectedSecret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET;
 
     if (!expectedSecret) {
-      console.error("[TW AUTH] THIRDWEB_AUTH_ENDPOINT_SECRET not configured");
+      console.error("[TW AUTH] Auth secret not configured");
       return NextResponse.json(
         { error: "auth_not_configured" },
         { status: 500 }
       );
     }
 
-    if (authSecret !== expectedSecret) {
+    if (authSecret !== expectedSecret && authSecret !== process.env.THIRDWEB_AUTH_ENDPOINT_SECRET) {
       console.warn("[TW AUTH] Invalid auth secret header");
       return NextResponse.json(
         { error: "unauthorized" },
@@ -108,19 +135,19 @@ export async function POST(req: NextRequest) {
 
     // 2. Parse the payload from Thirdweb
     const body = await req.json().catch(() => ({}));
-    let payload = body.payload || body;
+    let parsedPayload = body.payload || body;
 
     // Handle case where payload is forwarded as a JSON-stringified string
-    if (typeof payload === "string") {
+    if (typeof parsedPayload === "string") {
       try {
-        payload = JSON.parse(payload);
+        parsedPayload = JSON.parse(parsedPayload);
       } catch (e) {
         console.warn("[TW AUTH] Failed to parse stringified payload:", e);
       }
     }
 
-    const email = String(payload.email || payload.userId || "").trim().toLowerCase();
-    const verificationToken = String(payload.verificationToken || payload.token || "").trim();
+    const email = String(parsedPayload.email || parsedPayload.userId || "").trim().toLowerCase();
+    const verificationToken = String(parsedPayload.verificationToken || parsedPayload.token || "").trim();
 
     if (!email || !email.includes("@")) {
       console.warn("[TW AUTH] Invalid email in payload");
@@ -131,7 +158,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Verify the email was authenticated by Stripe Link
-    if (!isEmailVerified(email, verificationToken || undefined)) {
+    if (!isEmailVerified(email, verificationToken || undefined, customSecret)) {
       console.warn("[TW AUTH] Email not verified or token mismatch:", email.slice(0, 3) + "***");
       return NextResponse.json(
         { error: "email_not_verified" },
