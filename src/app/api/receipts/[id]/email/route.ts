@@ -50,8 +50,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         logoUrl = siteConfig?.theme?.brandLogoUrl || undefined;
         if (siteConfig?.theme?.primaryColor) brandColor = siteConfig.theme.primaryColor;
 
+        let brandOrigin = "";
         if (brandKey && brandKey.toLowerCase() !== "portalpay") {
             const brandDoc = await readBrandOverridesFromCosmos(brandKey);
+            if (brandDoc?.appUrl) {
+                try {
+                    brandOrigin = new URL(brandDoc.appUrl).origin;
+                } catch {
+                    brandOrigin = brandDoc.appUrl;
+                }
+            }
             if (brandDoc?.email?.senderEmail) {
                 senderEmail = brandDoc.email.senderEmail;
                 senderName = brandDoc.email.senderName || brandDoc.name || senderName;
@@ -82,7 +90,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // Construct the robust origin
         const xfProto = req.headers.get("x-forwarded-proto") || "https";
         const xfHost = req.headers.get("x-forwarded-host") || req.headers.get("host");
-        const origin = process.env.NEXT_PUBLIC_APP_URL || (xfHost ? `${xfProto}://${xfHost}` : req.nextUrl.origin);
+        const origin = brandOrigin || process.env.NEXT_PUBLIC_APP_URL || (xfHost ? `${xfProto}://${xfHost}` : req.nextUrl.origin);
 
         if (typeof logoUrl === "string" && logoUrl.startsWith("/")) {
             logoUrl = `${origin}${logoUrl}`;

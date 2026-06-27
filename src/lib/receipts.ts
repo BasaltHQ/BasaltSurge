@@ -100,7 +100,7 @@ export function recalculateReceiptForCardFunding(
     stripeFeePct = Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
   }
 
-  const totalFeePct = Math.max(0, basePlatformFeePct + processingFeePct + stripeFeePct * 100);
+  const totalFeePct = Math.max(0, basePlatformFeePct + processingFeePct + stripeFeePct);
   const feePct = totalFeePct / 100;
 
   // Helpers for cents math

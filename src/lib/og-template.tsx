@@ -122,7 +122,7 @@ export async function generateBasaltOG({
             {/* Center Medallion */}
             {medallionImage && (
                 <div style={{ position: 'absolute', left: 425, top: 140, width: 350, height: 350, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', overflow: 'hidden' }}>
-                    <img src={medallionImage} width={350} height={350} style={{
+                    <img src={medallionImage} width={250} height={250} style={{
                         objectFit: 'contain',
                     }} />
                 </div>

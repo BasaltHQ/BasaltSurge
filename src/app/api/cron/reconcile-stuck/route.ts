@@ -350,7 +350,16 @@ export async function POST(req: NextRequest) {
         }
 
         // Verify card funding type
-        const cardFunding = onrampData.payment_details?.card?.funding || receipt.detectedCardFunding || "";
+        const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
+        const cardFundingDetail = String(onrampData.payment_details?.card?.funding || "").toLowerCase();
+        let cardFunding = receipt.detectedCardFunding || "";
+        if (cardFundingDetail) {
+          cardFunding = cardFundingDetail;
+        } else if (paymentMethod.includes("debit")) {
+          cardFunding = "debit";
+        } else if (paymentMethod.includes("credit")) {
+          cardFunding = "credit";
+        }
         const isCredit = cardFunding === "credit" || receipt.isCreditCard === true;
 
         // Resolve target split address with support for both checkout and webhook strategies
@@ -378,10 +387,10 @@ export async function POST(req: NextRequest) {
             ? splitAddressCredit
             : splitAddress;
 
-          // Webhook style fallback: if dual split is enabled and card is debit, it resolves to splitAddressCredit
+          // Webhook style fallback: if dual split is enabled and card is credit, it resolves to splitAddressCredit
           const isDual = siteConfig?.isDualSplitEnabled || false;
-          const isDebit = cardFunding === "debit" || cardFunding === "prepaid";
-          if (isDual && isDebit && splitAddressCredit) {
+          const isCreditCardType = cardFunding === "credit" || isCredit;
+          if (isDual && isCreditCardType && splitAddressCredit) {
             targetSplitAddress = splitAddressCredit;
           }
         }

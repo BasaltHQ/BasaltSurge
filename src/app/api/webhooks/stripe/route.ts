@@ -73,12 +73,12 @@ async function resolveMerchantFromMetadata(
           const splitCfgObj = String(match.config?.split?.address || '').toLowerCase();
           splitAddress = splitTop || splitObj || splitCfgTop || splitCfgObj || mw;
         }
-        return { merchantWallet: mw, splitAddress, fundingType: useSeparateSplit ? "debit" : "credit" };
+        return { merchantWallet: mw, splitAddress, fundingType: useSeparateSplit ? "credit" : "debit" };
       }
     } catch (e) {
       console.error('[STRIPE WEBHOOK] Error resolving merchant:', e);
     }
-    return { merchantWallet: mw, splitAddress: mw, fundingType: useSeparateSplit ? "debit" : "credit" };
+    return { merchantWallet: mw, splitAddress: mw, fundingType: useSeparateSplit ? "credit" : "debit" };
   }
   return null;
 }
@@ -134,7 +134,16 @@ export async function POST(req: NextRequest) {
 
     const { isDualSplitEnabled } = await import("@/lib/env");
     const isDual = isDualSplitEnabled();
-    const cardFunding = session?.payment_details?.card?.funding || "";
+    const paymentMethod = String(session?.payment_method || "").toLowerCase();
+    const cardFundingDetail = String(session?.payment_details?.card?.funding || "").toLowerCase();
+    let cardFunding = "";
+    if (cardFundingDetail) {
+      cardFunding = cardFundingDetail;
+    } else if (paymentMethod.includes("debit")) {
+      cardFunding = "debit";
+    } else if (paymentMethod.includes("credit")) {
+      cardFunding = "credit";
+    }
     const useSeparateSplit = isDual && cardFunding === "credit";
 
     // Resolve merchant context from metadata
@@ -150,7 +159,7 @@ export async function POST(req: NextRequest) {
         brandKey,
         merchantWallet,
         splitAddress,
-        fundingType: context?.fundingType || (useSeparateSplit ? "debit" : "credit"),
+        fundingType: context?.fundingType || (useSeparateSplit ? "credit" : "debit"),
         sessionId,
         status,
         stripeEventType: type,
