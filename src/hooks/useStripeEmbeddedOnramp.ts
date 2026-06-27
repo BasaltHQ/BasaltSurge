@@ -632,9 +632,11 @@ export function useStripeEmbeddedOnramp({
 
   const postCheckoutHandler = useCallback(async (
     sessionId: string,
-    activeEmail: string
+    activeEmail: string,
+    overrideFunding?: "credit" | "debit" | null
   ) => {
-    console.log("[EMBEDDED ONRAMP] Checking eCommerce mode before Step 11. isEcommerceMode:", isEcommerceMode);
+    const fundingTypeToUse = overrideFunding !== undefined ? overrideFunding : detectedCardFunding;
+    console.log("[EMBEDDED ONRAMP] Checking eCommerce mode before Step 11. isEcommerceMode:", isEcommerceMode, "fundingTypeToUse:", fundingTypeToUse);
     if (isEcommerceMode) {
       console.log("[EMBEDDED ONRAMP] eCommerce mode active. Launching background task and completing client flow.");
       fetch("/api/stripe/background-poll", {
@@ -645,11 +647,11 @@ export function useStripeEmbeddedOnramp({
           receiptId,
           merchantWallet,
           email: activeEmail,
-          amount: getOnrampAmount(detectedCardFunding),
+          amount: getOnrampAmount(fundingTypeToUse),
           splitAddress,
           splitAddressCredit,
           brandKey,
-          detectedCardFunding,
+          detectedCardFunding: fundingTypeToUse,
         }),
       }).catch((err) => {
         console.error("[EMBEDDED ONRAMP] Failed to kick off background poll:", err);
@@ -706,11 +708,11 @@ export function useStripeEmbeddedOnramp({
 
     updateStep("transferring");
 
-    const targetSplitAddress = (isCreditCard || detectedCardFunding === "credit")
+    const targetSplitAddress = (isCreditCard || fundingTypeToUse === "credit")
       ? (splitAddress || "")
       : (splitAddressCredit || splitAddress || "");
 
-    const finalAmount = getOnrampAmount(detectedCardFunding || (isCreditCard ? "credit" : "debit"));
+    const finalAmount = getOnrampAmount(fundingTypeToUse || (isCreditCard ? "credit" : "debit"));
     const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, finalAmount);
 
     if (!txHash) {
@@ -749,6 +751,7 @@ export function useStripeEmbeddedOnramp({
 
     const MAX_ATTEMPTS = 5;
     let checkoutSucceeded = false;
+    let resolvedFunding = initialFunding || detectedCardFunding || null;
 
     let currentSessionId = sessionIdRef.current;
     if (!currentSessionId) {
@@ -768,6 +771,7 @@ export function useStripeEmbeddedOnramp({
         
         const isDebit = method === "debit_card" || funding === "debit" || funding === "prepaid";
         const fundingType = isDebit ? "debit" : "credit";
+        resolvedFunding = fundingType;
         setDetectedCardFunding(fundingType);
         if (brand) setDetectedCardBrand(brand);
         if (last4) setDetectedCardLast4(last4);
@@ -928,7 +932,7 @@ export function useStripeEmbeddedOnramp({
       return;
     }
 
-    await postCheckoutHandler(currentSessionId, activeEmail);
+    await postCheckoutHandler(currentSessionId, activeEmail, resolvedFunding);
   }, [
     createSessionHelper,
     postCheckoutHandler,

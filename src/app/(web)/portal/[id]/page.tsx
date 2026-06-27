@@ -674,6 +674,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const contentRef = useRef<HTMLDivElement | null>(null);
   const lastPreferredHeightRef = useRef<number>(0);
   const loadedMerchantWalletRef = useRef<string>("");
+  const autoEmailSentRef = useRef<boolean>(false);
 
   // ── Playground PostMessage bridge ──
   // Injects a <style> tag with !important rules to override ALL portal styling.
@@ -2999,14 +3000,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       // Auto-email receipt if customer email is available and status is successfully posted as paid
       const customerEmail = extra?.customerEmail || shipEmail;
       if (status === "paid" && customerEmail && customerEmail.includes("@")) {
-        console.log("[PORTAL] Triggering automatic receipt email to:", customerEmail);
-        fetch(`/api/receipts/${receiptId.replace("receipt:", "")}/email`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: customerEmail.trim().toLowerCase() })
-        }).then(res => {
-          if (res.ok) console.log("[PORTAL] Successfully auto-emailed receipt to:", customerEmail);
-        }).catch(err => console.error("[PORTAL] Failed to auto-email receipt:", err));
+        if (!autoEmailSentRef.current) {
+          autoEmailSentRef.current = true;
+          console.log("[PORTAL] Triggering automatic receipt email to:", customerEmail);
+          fetch(`/api/receipts/${receiptId.replace("receipt:", "")}/email`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: customerEmail.trim().toLowerCase() })
+          }).then(res => {
+            if (res.ok) console.log("[PORTAL] Successfully auto-emailed receipt to:", customerEmail);
+          }).catch(err => console.error("[PORTAL] Failed to auto-email receipt:", err));
+        }
       }
     } catch { }
   }
@@ -3032,14 +3036,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     try {
       const emailToSend = shipEmail || (receipt as any)?.customerEmail || (receipt as any)?.buyerEmail || receipt?.stripeEmail;
       if (paymentConfirmed && emailToSend && emailToSend.includes("@") && receiptId) {
-        console.log("[PORTAL] Triggering client-side auto-email to:", emailToSend);
-        fetch(`/api/receipts/${receiptId.replace("receipt:", "")}/email`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: emailToSend.trim().toLowerCase() })
-        }).then(res => {
-          if (res.ok) console.log("[PORTAL] Successfully auto-emailed receipt to:", emailToSend);
-        }).catch(err => console.error("[PORTAL] Failed to auto-email receipt:", err));
+        if (!autoEmailSentRef.current) {
+          autoEmailSentRef.current = true;
+          console.log("[PORTAL] Triggering client-side auto-email to:", emailToSend);
+          fetch(`/api/receipts/${receiptId.replace("receipt:", "")}/email`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: emailToSend.trim().toLowerCase() })
+          }).then(res => {
+            if (res.ok) console.log("[PORTAL] Successfully auto-emailed receipt to:", emailToSend);
+          }).catch(err => console.error("[PORTAL] Failed to auto-email receipt:", err));
+        }
       }
     } catch { }
   }, [paymentConfirmed, shipEmail, receipt, receiptId]);
