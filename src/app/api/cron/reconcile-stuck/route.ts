@@ -100,21 +100,26 @@ export async function POST(req: NextRequest) {
 
     // 2. Fetch pending/failed receipts from Cosmos DB within the last 7 days that have a stripeSessionId
     const minTime = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const minTimeStr = new Date(minTime).toISOString();
     const container = await getContainer();
     
     let querySpec: any;
     if (isPartner && currentBrandKey) {
       querySpec = {
-        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending') AND IS_DEFINED(c.stripeSessionId) AND c.createdAt > @minTime AND c.brandKey = @brandKey",
+        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending') AND IS_DEFINED(c.stripeSessionId) AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr) AND c.brandKey = @brandKey",
         parameters: [
           { name: "@minTime", value: minTime },
+          { name: "@minTimeStr", value: minTimeStr },
           { name: "@brandKey", value: currentBrandKey }
         ]
       };
     } else {
       querySpec = {
-        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending') AND IS_DEFINED(c.stripeSessionId) AND c.createdAt > @minTime",
-        parameters: [{ name: "@minTime", value: minTime }]
+        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending') AND IS_DEFINED(c.stripeSessionId) AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr)",
+        parameters: [
+          { name: "@minTime", value: minTime },
+          { name: "@minTimeStr", value: minTimeStr }
+        ]
       };
     }
 
@@ -130,16 +135,20 @@ export async function POST(req: NextRequest) {
       let eventQuerySpec: any;
       if (isPartner && currentBrandKey) {
         eventQuerySpec = {
-          query: "SELECT * FROM c WHERE c.type = 'payment_event_stripe_onramp' AND c.status = 'fulfillment_complete' AND c.receivedAt > @minTime AND c.brandKey = @brandKey",
+          query: "SELECT * FROM c WHERE c.type = 'payment_event_stripe_onramp' AND c.status = 'fulfillment_complete' AND (c.receivedAt > @minTime OR c.receivedAt > @minTimeStr) AND c.brandKey = @brandKey",
           parameters: [
             { name: "@minTime", value: minTime },
+            { name: "@minTimeStr", value: minTimeStr },
             { name: "@brandKey", value: currentBrandKey }
           ]
         };
       } else {
         eventQuerySpec = {
-          query: "SELECT * FROM c WHERE c.type = 'payment_event_stripe_onramp' AND c.status = 'fulfillment_complete' AND c.receivedAt > @minTime",
-          parameters: [{ name: "@minTime", value: minTime }]
+          query: "SELECT * FROM c WHERE c.type = 'payment_event_stripe_onramp' AND c.status = 'fulfillment_complete' AND (c.receivedAt > @minTime OR c.receivedAt > @minTimeStr)",
+          parameters: [
+            { name: "@minTime", value: minTime },
+            { name: "@minTimeStr", value: minTimeStr }
+          ]
         };
       }
       const { resources: onrampEvents } = await container.items.query(eventQuerySpec).fetchAll();
