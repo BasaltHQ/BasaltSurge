@@ -279,7 +279,19 @@ export async function POST(req: NextRequest) {
 
     if (!accessToken) {
       return NextResponse.json(
-        { error: "oauth_required", message: "OAuth authorization is missing. Please uninstall and reinstall the Shopify app." },
+        {
+          error: "oauth_required",
+          message: "OAuth authorization is missing. Please uninstall and reinstall the Shopify app.",
+          debug: {
+            shop,
+            pendingDocId,
+            resolvedBrandKey: brandKey,
+            shopDocExists: !!shopDoc,
+            shopDocBrandKey: shopDoc?.brandKey || null,
+            shopDocWallet: shopDoc?.wallet || null,
+            shopifyConfig: shopDoc?.shopify || null
+          }
+        },
         { status: 400, headers: { "x-correlation-id": correlationId } }
       );
     }

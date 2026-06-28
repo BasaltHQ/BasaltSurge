@@ -484,7 +484,13 @@ export default function GlobalSplitGuard() {
         // Respect server flags; never attempt silent redeploy
         const requiresDeploy = (j?.requiresDeploy === true) || (isDual && jCredit?.requiresDeploy === true) || (partnerContext && (!has || !hasCredit));
 
-        const shouldOpen = !properlyConfigured && (!has || !hasCredit || misconfigured || misconfiguredCredit || partnerMisconfigured || partnerMisconfiguredCredit || requiresDeploy);
+        let shouldOpen = !properlyConfigured && (!has || !hasCredit || misconfigured || misconfiguredCredit || partnerMisconfigured || partnerMisconfiguredCredit || requiresDeploy);
+
+        // Exemption: Platform Admins / Platform Owner do not need a merchant split contract modal to show up
+        const isPlatformAdmin = authCheck?.isPlatformAdmin === true || (!!authCheck?.authed && userIsAdmin && !partnerContext);
+        if (isPlatformAdmin) {
+          shouldOpen = false;
+        }
 
         if (shouldOpen) {
           if (!prevOpenRef.current) { setAck(false); }
