@@ -106,13 +106,46 @@ export async function GET(req: NextRequest) {
     let hasPendingToken = false;
     if (shop) {
       const pendingDocId = `shopify_pending_auth:${shop}`;
-      const { resources } = await container.items
-        .query({
-          query: "SELECT VALUE COUNT(1) FROM c WHERE c.id = @id",
-          parameters: [{ name: "@id", value: pendingDocId }]
-        })
-        .fetchAll();
-      hasPendingToken = resources[0] > 0;
+      try {
+        const { resources: pendings } = await container.items
+          .query({
+            query: "SELECT * FROM c WHERE c.id = @id",
+            parameters: [{ name: "@id", value: pendingDocId }]
+          })
+          .fetchAll();
+
+        if (pendings.length > 0) {
+          const pending = pendings[0];
+          if (pending?.accessToken && shopConfig) {
+            // Auto-merge the new access token into the shop config
+            if (!shopConfig.shopify) {
+              shopConfig.shopify = {};
+            }
+            shopConfig.shopify.accessToken = pending.accessToken;
+            shopConfig.shopify.shop = shop;
+            shopConfig.shopify.updatedAt = Date.now();
+
+            await container.items.upsert(shopConfig);
+            console.log(`[Shopify Settings GET] Auto-merged pending access token for shop: ${shop}`);
+
+            // Clean up the pending document
+            const pk = pending.wallet || pending.brandKey;
+            try {
+              await container.item(pendingDocId, undefined).delete();
+            } catch {}
+            if (pk) {
+              try {
+                await container.item(pendingDocId, pk).delete();
+              } catch {}
+            }
+            hasPendingToken = false;
+          } else {
+            hasPendingToken = true;
+          }
+        }
+      } catch (e) {
+        console.error("[Shopify Settings GET] Failed to retrieve/merge pending token:", e);
+      }
     }
 
     if (!shopConfig) {
@@ -125,12 +158,17 @@ export async function GET(req: NextRequest) {
     }
 
     const walletAddr = shopConfig.wallet;
+    const brandKey = shopConfig.brandKey || "basaltsurge";
     let siteConfig: any = null;
     if (walletAddr) {
+      const targetDocId = `site:config:${brandKey.toLowerCase()}`;
       const { resources: siteConfigs } = await container.items
         .query({
-          query: "SELECT * FROM c WHERE c.type = 'site_config' AND LOWER(c.wallet) = @w",
-          parameters: [{ name: "@w", value: walletAddr.toLowerCase() }]
+          query: "SELECT * FROM c WHERE c.type = 'site_config' AND c.id = @id AND LOWER(c.wallet) = @w",
+          parameters: [
+            { name: "@id", value: targetDocId },
+            { name: "@w", value: walletAddr.toLowerCase() }
+          ]
         })
         .fetchAll();
       if (siteConfigs.length > 0) {
@@ -138,10 +176,38 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    let surgeItemsCount = 0;
+    let shopifyItemsCount = 0;
+
+    if (walletAddr) {
+      try {
+        const { resources: r1 } = await container.items
+          .query({
+            query: "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'inventory_item' AND c.wallet = @w",
+            parameters: [{ name: "@w", value: walletAddr.toLowerCase() }]
+          })
+          .fetchAll();
+        surgeItemsCount = r1[0] || 0;
+
+        const { resources: r2 } = await container.items
+          .query({
+            query: "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'inventory_item' AND c.wallet = @w AND IS_DEFINED(c.shopifyProductId)",
+            parameters: [{ name: "@w", value: walletAddr.toLowerCase() }]
+          })
+          .fetchAll();
+        shopifyItemsCount = r2[0] || 0;
+      } catch (countErr) {
+        console.error("[Shopify Settings GET] Failed to fetch inventory counts:", countErr);
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       connected: !!shopConfig.shopify?.accessToken,
       hasPendingToken,
+      surgeItemsCount,
+      shopifyItemsCount,
+      lastSyncTime: shopConfig.shopify?.updatedAt || null,
       config: {
         wallet: shopConfig.wallet,
         shop: shopConfig.shopify?.shop || shop || "",
@@ -356,15 +422,19 @@ export async function POST(req: NextRequest) {
     console.log(`[Shopify Settings] Linked shop ${shop} to wallet ${wallet}`);
 
     // 8. Update merchant's site_config document for reserve parameters
+    const targetDocId = `site:config:${brandKey.toLowerCase()}`;
     const { resources: siteConfigs } = await container.items
       .query({
-        query: "SELECT * FROM c WHERE c.type = 'site_config' AND LOWER(c.wallet) = @w",
-        parameters: [{ name: "@w", value: wallet.toLowerCase() }]
+        query: "SELECT * FROM c WHERE c.type = 'site_config' AND c.id = @id AND LOWER(c.wallet) = @w",
+        parameters: [
+          { name: "@id", value: targetDocId },
+          { name: "@w", value: wallet.toLowerCase() }
+        ]
       })
       .fetchAll();
 
     let siteDoc = siteConfigs.length > 0 ? siteConfigs[0] : null;
-    const siteDocId = siteDoc?.id || `site:config:${wallet}`;
+    const siteDocId = siteDoc?.id || targetDocId;
     
     if (!siteDoc) {
       siteDoc = {

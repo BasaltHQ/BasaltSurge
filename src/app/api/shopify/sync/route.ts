@@ -37,231 +37,293 @@ export async function POST(req: NextRequest) {
     }
 
     const shopDoc = resources[0];
-    const accessToken = shopDoc.shopify.accessToken;
+    let accessToken = shopDoc.shopify.accessToken;
     const brandKey = shopDoc.brandKey || "basaltsurge";
-    const now = Date.now();
 
-    // ─── DIRECTION: PUSH (Shopify -> Surge) ───
-    if (direction === "push") {
-      const shopifyUrl = `https://${shop}/admin/api/2024-10/products.json?limit=250`;
-      console.log(`[Shopify Sync] Pushing from Shopify to Surge catalog: ${shopifyUrl}`);
-      
-      const shopifyRes = await fetch(shopifyUrl, {
-        headers: {
-          "X-Shopify-Access-Token": accessToken,
-          "Content-Type": "application/json"
-        }
-      });
+    // Check if there is a pending OAuth token that needs to be merged
+    const pendingDocId = `shopify_pending_auth:${shop}`;
+    try {
+      const { resources: pendings } = await container.items
+        .query({
+          query: "SELECT * FROM c WHERE c.id = @id",
+          parameters: [{ name: "@id", value: pendingDocId }]
+        })
+        .fetchAll();
 
-      if (!shopifyRes.ok) {
-        const errBody = await shopifyRes.json().catch(() => ({}));
-        console.error("[Shopify Sync] Shopify API catalog pull failed:", errBody);
-        return NextResponse.json(
-          { error: "shopify_api_failed", message: "Shopify API returned an error during catalog retrieval." },
-          { status: 502, headers: { "x-correlation-id": correlationId } }
-        );
-      }
-
-      const data = await shopifyRes.json();
-      const shopifyProducts = Array.isArray(data.products) ? data.products : [];
-      let syncedCount = 0;
-
-      for (const prod of shopifyProducts) {
-        const title = String(prod.title || "").trim();
-        const desc = String(prod.body_html || "").trim();
-        const imageUrl = prod.images && prod.images.length > 0 ? String(prod.images[0].src) : undefined;
-        const category = String(prod.product_type || "").trim();
-
-        const variants = Array.isArray(prod.variants) ? prod.variants : [];
-        for (const variant of variants) {
-          const sku = String(variant.sku || "").trim() || `shopify_${variant.id}`;
-          const name = variant.title === "Default Title" ? title : `${title} - ${variant.title}`;
-          const price = Number(variant.price) || 0;
-          const stock = variant.inventory_quantity !== undefined ? Number(variant.inventory_quantity) : -1;
-
-          const itemId = `inventory:${wallet}:${variant.id}`;
-          const inventoryItem = {
-            id: itemId,
-            type: "inventory_item",
-            wallet,
-            sku,
-            name,
-            priceUsd: price,
-            currency: "USD",
-            stockQty: stock,
-            category: category || undefined,
-            description: desc || undefined,
-            images: imageUrl ? [imageUrl] : undefined,
-            createdAt: now,
-            updatedAt: now,
-            brandKey: brandKey.toLowerCase(),
-            shopifyProductVariantId: String(variant.id),
-            shopifyProductId: String(prod.id)
-          };
-
-          await container.items.upsert(inventoryItem);
-          syncedCount++;
+      if (pendings.length > 0) {
+        const pending = pendings[0];
+        if (pending?.accessToken) {
+          accessToken = pending.accessToken;
+          shopDoc.shopify.accessToken = accessToken;
+          shopDoc.shopify.updatedAt = Date.now();
+          await container.items.upsert(shopDoc);
+          console.log(`[Shopify Sync] Auto-merged pending access token for shop: ${shop}`);
+          
+          // Clean up pending document
+          const pk = pending.wallet || pending.brandKey || brandKey;
+          try {
+            await container.item(pendingDocId, undefined).delete();
+          } catch {}
+          try {
+            await container.item(pendingDocId, pk).delete();
+          } catch {}
         }
       }
-
-      return NextResponse.json({
-        ok: true,
-        direction,
-        syncedCount
-      }, { headers: { "x-correlation-id": correlationId } });
+    } catch (e) {
+      console.warn("[Shopify Sync] Failed to retrieve/merge pending token:", e);
     }
 
-    // ─── DIRECTION: PULL (Surge -> Shopify) ───
-    if (direction === "pull") {
-      console.log(`[Shopify Sync] Pulling from Surge to Shopify catalog for wallet: ${wallet}`);
+    const now = Date.now();
+    const encoder = new TextEncoder();
+    const transformStream = new TransformStream();
+    const writer = transformStream.writable.getWriter();
 
-      let items: any[] = [];
-      const apiKey = shopDoc.shopify?.apiKey;
-
-      if (apiKey) {
-        console.log(`[Shopify Sync] Fetching inventory from live Surge API for wallet: ${wallet}`);
-        try {
-          const surgeRes = await fetch("https://surge.basalthq.com/api/inventory", {
-            headers: {
-              "x-api-key": apiKey,
-              "Accept": "application/json"
-            }
-          });
-          if (surgeRes.ok) {
-            const data = await surgeRes.json();
-            items = Array.isArray(data.items) ? data.items : [];
-          } else {
-            console.error(`[Shopify Sync] Live Surge API inventory fetch failed with status ${surgeRes.status}`);
-          }
-        } catch (fetchErr) {
-          console.error("[Shopify Sync] Failed to fetch inventory from live Surge API:", fetchErr);
-        }
-      }
-
-      // Fallback to local DB if live API fetch was empty or failed
-      if (items.length === 0) {
-        console.log(`[Shopify Sync] Falling back to local DB query for wallet: ${wallet}`);
-        const { resources } = await container.items
-          .query({
-            query: "SELECT * FROM c WHERE c.type = 'inventory_item' AND c.wallet = @w",
-            parameters: [{ name: "@w", value: wallet }]
-          })
-          .fetchAll();
-        items = resources;
-      }
-
-      if (items.length === 0) {
-        return NextResponse.json({
-          ok: true,
-          direction,
-          syncedCount: 0,
-          message: "No inventory items found on Surge to synchronize."
-        });
-      }
-
+    // Run the background work
+    (async () => {
       let syncedCount = 0;
-
-      for (const item of items) {
-        const itemImages = Array.isArray(item.images) && item.images.length > 0
-          ? item.images.map((img: string) => {
-              const src = img.startsWith("http") ? img : `https://surge.basalthq.com${img.startsWith("/") ? "" : "/"}${img}`;
-              return { src };
-            })
-          : undefined;
-
-        const payload = {
-          product: {
-            title: item.name,
-            body_html: item.description || "",
-            product_type: item.category || "",
-            images: itemImages,
-            variants: [
-              {
-                sku: item.sku,
-                price: String(item.priceUsd),
-                inventory_management: item.stockQty !== -1 ? "shopify" : undefined
-              }
-            ]
-          }
-        };
-
-        let shopifyProduct: any = null;
-
-        // Try updating existing product if references exist
-        if (item.shopifyProductId) {
-          const putUrl = `https://${shop}/admin/api/2024-10/products/${item.shopifyProductId}.json`;
-          try {
-            const putRes = await fetch(putUrl, {
-              method: "PUT",
-              headers: {
-                "X-Shopify-Access-Token": accessToken,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({
-                product: {
-                  id: Number(item.shopifyProductId),
-                  title: item.name,
-                  body_html: item.description || "",
-                  product_type: item.category || "",
-                  images: itemImages
-                }
-              })
-            });
-
-            if (putRes.ok) {
-              const resData = await putRes.json();
-              shopifyProduct = resData.product;
-            }
-          } catch (err) {
-            console.warn(`[Shopify Sync] Failed to update product ${item.shopifyProductId}, falling back to create:`, err);
-          }
-        }
-
-        // If no existing product or update failed, create a new one
-        if (!shopifyProduct) {
-          const postUrl = `https://${shop}/admin/api/2024-10/products.json`;
-          const postRes = await fetch(postUrl, {
-            method: "POST",
+      try {
+        if (direction === "push") {
+          const shopifyUrl = `https://${shop}/admin/api/2024-10/products.json?limit=250`;
+          console.log(`[Shopify Sync] Pushing from Shopify to Surge catalog: ${shopifyUrl}`);
+          
+          const shopifyRes = await fetch(shopifyUrl, {
             headers: {
               "X-Shopify-Access-Token": accessToken,
               "Content-Type": "application/json"
-            },
-            body: JSON.stringify(payload)
+            }
           });
 
-          if (postRes.ok) {
-            const resData = await postRes.json();
-            shopifyProduct = resData.product;
-            
-            // Save the newly created Shopify IDs back to Surge database document
-            item.shopifyProductId = String(shopifyProduct.id);
-            if (shopifyProduct.variants && shopifyProduct.variants.length > 0) {
-              item.shopifyProductVariantId = String(shopifyProduct.variants[0].id);
-            }
-            item.updatedAt = Date.now();
-            await container.items.upsert(item);
-          } else {
-            const errBody = await postRes.json().catch(() => ({}));
-            console.error(`[Shopify Sync] Failed to create product in Shopify for SKU ${item.sku}:`, errBody);
+          if (!shopifyRes.ok) {
+            const errBody = await shopifyRes.json().catch(() => ({}));
+            throw new Error(`Shopify API catalog pull failed: ${JSON.stringify(errBody)}`);
           }
-        }
 
-        if (shopifyProduct) {
-          syncedCount++;
+          const data = await shopifyRes.json();
+          const shopifyProducts = Array.isArray(data.products) ? data.products : [];
+          
+          // Flatten variants to sync
+          const itemsToSync: any[] = [];
+          for (const prod of shopifyProducts) {
+            const title = String(prod.title || "").trim();
+            const desc = String(prod.body_html || "").trim();
+            const imageUrl = prod.images && prod.images.length > 0 ? String(prod.images[0].src) : undefined;
+            const category = String(prod.product_type || "").trim();
+            const variants = Array.isArray(prod.variants) ? prod.variants : [];
+            for (const variant of variants) {
+              itemsToSync.push({ prod, variant, title, desc, imageUrl, category });
+            }
+          }
+
+          const total = itemsToSync.length;
+          await writer.write(encoder.encode(JSON.stringify({ type: "start", total }) + "\n"));
+
+          let current = 0;
+          for (const itemToSync of itemsToSync) {
+            const { prod, variant, title, desc, imageUrl, category } = itemToSync;
+            const sku = String(variant.sku || "").trim() || `shopify_${variant.id}`;
+            const name = variant.title === "Default Title" ? title : `${title} - ${variant.title}`;
+            const price = Number(variant.price) || 0;
+            const stock = variant.inventory_quantity !== undefined ? Number(variant.inventory_quantity) : -1;
+
+            const itemId = `inventory:${wallet}:${variant.id}`;
+            const inventoryItem = {
+              id: itemId,
+              type: "inventory_item",
+              wallet,
+              sku,
+              name,
+              priceUsd: price,
+              currency: "USD" as const,
+              stockQty: stock,
+              category: category || undefined,
+              description: desc || undefined,
+              images: imageUrl ? [imageUrl] : undefined,
+              createdAt: now,
+              updatedAt: now,
+              brandKey: brandKey.toLowerCase(),
+              shopifyProductVariantId: String(variant.id),
+              shopifyProductId: String(prod.id)
+            };
+
+            await container.items.upsert(inventoryItem);
+            syncedCount++;
+            current++;
+            
+            await writer.write(encoder.encode(JSON.stringify({ type: "progress", current, total }) + "\n"));
+          }
+
+          // Update updatedAt in shopConfig.shopify
+          shopDoc.shopify.updatedAt = Date.now();
+          await container.items.upsert(shopDoc);
+
+          await writer.write(encoder.encode(JSON.stringify({ type: "complete", syncedCount, direction }) + "\n"));
+
+        } else if (direction === "pull") {
+          // Get all inventory items from Surge
+          let items: any[] = [];
+          const apiKey = shopDoc.shopify?.apiKey;
+
+          if (apiKey) {
+            console.log(`[Shopify Sync] Fetching inventory from live Surge API for wallet: ${wallet}`);
+            try {
+              const surgeRes = await fetch("https://surge.basalthq.com/api/inventory", {
+                headers: {
+                  "x-api-key": apiKey,
+                  "Accept": "application/json"
+                }
+              });
+              if (surgeRes.ok) {
+                const data = await surgeRes.json();
+                items = Array.isArray(data.items) ? data.items : [];
+              } else {
+                console.error(`[Shopify Sync] Live Surge API inventory fetch failed with status ${surgeRes.status}`);
+              }
+            } catch (fetchErr) {
+              console.error("[Shopify Sync] Failed to fetch inventory from live Surge API:", fetchErr);
+            }
+          }
+
+          // Fallback to local DB if live API fetch was empty or failed
+          if (items.length === 0) {
+            console.log(`[Shopify Sync] Falling back to local DB query for wallet: ${wallet}`);
+            const { resources } = await container.items
+              .query({
+                query: "SELECT * FROM c WHERE c.type = 'inventory_item' AND c.wallet = @w",
+                parameters: [{ name: "@w", value: wallet }]
+              })
+              .fetchAll();
+            items = resources;
+          }
+
+          const total = items.length;
+          await writer.write(encoder.encode(JSON.stringify({ type: "start", total }) + "\n"));
+
+          let current = 0;
+          for (const item of items) {
+            const itemImages = Array.isArray(item.images) && item.images.length > 0
+              ? item.images.map((img: string) => {
+                  const src = img.startsWith("http") ? img : `https://surge.basalthq.com${img.startsWith("/") ? "" : "/"}${img}`;
+                  return { src };
+                })
+              : undefined;
+
+            const payload = {
+              product: {
+                title: item.name,
+                body_html: item.description || "",
+                product_type: item.category || "",
+                images: itemImages,
+                variants: [
+                  {
+                    sku: item.sku,
+                    price: String(item.priceUsd),
+                    inventory_management: item.stockQty !== -1 ? "shopify" : null
+                  }
+                ]
+              }
+            };
+
+            let shopifyProduct: any = null;
+
+            // Try updating existing product if references exist
+            if (item.shopifyProductId) {
+              const putUrl = `https://${shop}/admin/api/2024-10/products/${item.shopifyProductId}.json`;
+              try {
+                const putRes = await fetch(putUrl, {
+                  method: "PUT",
+                  headers: {
+                    "X-Shopify-Access-Token": accessToken,
+                    "Content-Type": "application/json"
+                  },
+                  body: JSON.stringify({
+                    product: {
+                      id: Number(item.shopifyProductId),
+                      title: item.name,
+                      body_html: item.description || "",
+                      product_type: item.category || "",
+                      images: itemImages,
+                      variants: item.shopifyProductVariantId ? [
+                        {
+                          id: Number(item.shopifyProductVariantId),
+                          price: String(item.priceUsd),
+                          sku: item.sku,
+                          inventory_management: item.stockQty !== -1 ? "shopify" : null
+                        }
+                      ] : undefined
+                    }
+                  })
+                });
+
+                if (putRes.ok) {
+                  const resData = await putRes.json();
+                  shopifyProduct = resData.product;
+                }
+              } catch (err) {
+                console.warn(`[Shopify Sync] Failed to update product ${item.shopifyProductId}, falling back to create:`, err);
+              }
+            }
+
+            // If no existing product or update failed, create a new one
+            if (!shopifyProduct) {
+              const postUrl = `https://${shop}/admin/api/2024-10/products.json`;
+              const postRes = await fetch(postUrl, {
+                method: "POST",
+                headers: {
+                  "X-Shopify-Access-Token": accessToken,
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+              });
+
+              if (postRes.ok) {
+                const resData = await postRes.json();
+                shopifyProduct = resData.product;
+                
+                // Save the newly created Shopify IDs back to Surge database document
+                item.shopifyProductId = String(shopifyProduct.id);
+                if (shopifyProduct.variants && shopifyProduct.variants.length > 0) {
+                  item.shopifyProductVariantId = String(shopifyProduct.variants[0].id);
+                }
+                item.updatedAt = Date.now();
+                await container.items.upsert(item);
+              } else {
+                const errBody = await postRes.json().catch(() => ({}));
+                console.error(`[Shopify Sync] Failed to create product in Shopify for SKU ${item.sku}:`, errBody);
+              }
+            }
+
+            if (shopifyProduct) {
+              syncedCount++;
+            }
+            current++;
+            
+            await writer.write(encoder.encode(JSON.stringify({ type: "progress", current, total }) + "\n"));
+          }
+
+          // Update updatedAt in shopConfig.shopify
+          shopDoc.shopify.updatedAt = Date.now();
+          await container.items.upsert(shopDoc);
+
+          await writer.write(encoder.encode(JSON.stringify({ type: "complete", syncedCount, direction }) + "\n"));
+        } else {
+          throw new Error("Invalid synchronization direction specified.");
         }
+      } catch (err: any) {
+        console.error("[Shopify Sync POST] Background error:", err);
+        await writer.write(encoder.encode(JSON.stringify({ type: "error", message: err.message || "Sync execution failed" }) + "\n"));
+      } finally {
+        await writer.close();
       }
+    })();
 
-      return NextResponse.json({
-        ok: true,
-        direction,
-        syncedCount
-      }, { headers: { "x-correlation-id": correlationId } });
-    }
-
-    return NextResponse.json(
-      { error: "invalid_direction", message: "Invalid synchronization direction specified." },
-      { status: 400, headers: { "x-correlation-id": correlationId } }
-    );
+    return new NextResponse(transformStream.readable, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "x-correlation-id": correlationId
+      }
+    });
   } catch (e: any) {
     console.error("[Shopify Sync POST] Error:", e);
     return NextResponse.json(

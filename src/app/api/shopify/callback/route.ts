@@ -69,6 +69,7 @@ export async function GET(req: NextRequest) {
     const clientId = pluginDoc?.shopifyAppId || process.env.SHOPIFY_CLIENT_ID || "";
     const clientSecret = process.env[`SHOPIFY_CLIENT_SECRET_${brandKey.toUpperCase()}`] ||
                          process.env.SHOPIFY_CLIENT_SECRET ||
+                         pluginDoc?.shopifyAppSecret ||
                          process.env.SHOPIFY_API_SECRET_KEY || "";
 
     if (!clientId || !clientSecret) {
