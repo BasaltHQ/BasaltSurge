@@ -59,7 +59,16 @@ function ShopifySettingsContent() {
   useEffect(() => {
     if (!loading && !connected && !hasPendingToken && shop) {
       console.log("[Shopify settings] Not connected and no pending token. Redirecting to authorize...");
-      window.location.href = `/api/integrations/shopify/brands/${brandKey}?shop=${encodeURIComponent(shop)}`;
+      const authorizeUrl = `/api/integrations/shopify/brands/${brandKey}?shop=${encodeURIComponent(shop)}&direct=1`;
+      try {
+        if (window.top && window.top !== window.self) {
+          window.top.location.href = authorizeUrl;
+        } else {
+          window.location.href = authorizeUrl;
+        }
+      } catch {
+        window.location.href = authorizeUrl;
+      }
     }
   }, [loading, connected, hasPendingToken, shop, brandKey]);
 
