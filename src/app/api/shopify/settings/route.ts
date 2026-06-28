@@ -150,44 +150,105 @@ export async function POST(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   try {
     const body = await req.json().catch(() => ({}));
-    const wallet = String(body.wallet || "").trim().toLowerCase();
     const shop = String(body.shop || "").trim().toLowerCase();
     const apiKey = String(body.apiKey || "").trim();
-    const syncInventory = body.syncInventory !== false;
-    const syncOrders = body.syncOrders !== false;
-    const enabled = body.enabled === true;
-    const buttonLabel = String(body.buttonLabel || "Pay with Crypto").trim().slice(0, 64);
-    const minTotal = Math.max(0, Number(body.minTotal) || 0);
+    const action = String(body.action || "").trim(); // "save" or "disconnect"
 
-    if (!wallet || !shop) {
+    if (!shop) {
       return NextResponse.json(
-        { error: "missing_parameters", message: "Wallet address and Shopify shop domain are required." },
+        { error: "missing_parameters", message: "Shopify shop domain is required." },
         { status: 400, headers: { "x-correlation-id": correlationId } }
       );
     }
 
     const container = await getContainer();
 
-    // 1. Find merchant's shop_config document
-    const { resources } = await container.items
+    // 1. Handle Disconnect Action
+    if (action === "disconnect") {
+      // Find shop configuration matching shopify store domain
+      const { resources } = await container.items
+        .query({
+          query: "SELECT * FROM c WHERE c.type = 'shop_config' AND LOWER(c.shopify.shop) = @s",
+          parameters: [{ name: "@s", value: shop }]
+        })
+        .fetchAll();
+
+      if (resources.length > 0) {
+        const shopDoc = resources[0];
+        const accessToken = shopDoc.shopify?.accessToken;
+        
+        // Remove ScriptTag from Shopify if connected
+        if (accessToken) {
+          const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
+          const scriptSrc = `${hostUrl.replace(/\/$/, "")}/js/shopify-cart-hijack.js`;
+          await deregisterScriptTag(shop, accessToken, scriptSrc);
+        }
+
+        // Reset Shopify fields
+        shopDoc.shopify = null;
+        await container.items.upsert(shopDoc);
+      }
+
+      console.log(`[Shopify Settings] Disconnected shop: ${shop}`);
+      return NextResponse.json({ ok: true, connected: false });
+    }
+
+    // 2. Validate API Key Input
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "api_key_required", message: "API Key is required to enable payments." },
+        { status: 400, headers: { "x-correlation-id": correlationId } }
+      );
+    }
+
+    // 3. Resolve wallet address from API Key hash lookup
+    const keyHash = crypto.createHash("sha256").update(apiKey).digest("hex");
+    const { resources: keyDocs } = await container.items
+      .query({
+        query: "SELECT TOP 1 c.wallet FROM c WHERE c.type = 'api_key' AND c.keyHash = @hash AND c.isActive = true",
+        parameters: [{ name: "@hash", value: keyHash }]
+      })
+      .fetchAll();
+
+    if (keyDocs.length === 0) {
+      return NextResponse.json(
+        { error: "invalid_api_key", message: "Invalid API Key. Please make sure the key is active and generated from your PortalPay dashboard." },
+        { status: 400, headers: { "x-correlation-id": correlationId } }
+      );
+    }
+
+    const wallet = keyDocs[0].wallet.toLowerCase();
+
+    // 4. Find or Create shop_config document for this merchant wallet
+    const { resources: shopDocs } = await container.items
       .query({
         query: "SELECT * FROM c WHERE c.type = 'shop_config' AND LOWER(c.wallet) = @w",
         parameters: [{ name: "@w", value: wallet }]
       })
       .fetchAll();
 
-    if (resources.length === 0) {
-      return NextResponse.json(
-        { error: "merchant_profile_missing", message: "No merchant shop configuration found. Please create a storefront profile first." },
-        { status: 400, headers: { "x-correlation-id": correlationId } }
-      );
+    let shopDoc: any = null;
+    const now = Date.now();
+    
+    if (shopDocs.length > 0) {
+      shopDoc = shopDocs[0];
+    } else {
+      // Auto-create shop config to ease onboarding if not already present
+      shopDoc = {
+        id: `shop_config:${wallet}`,
+        type: "shop_config",
+        wallet,
+        name: "Shopify Store",
+        slug: shop.replace(".myshopify.com", ""),
+        createdAt: now,
+        updatedAt: now
+      };
     }
 
-    const shopDoc = resources[0];
     let accessToken = shopDoc.shopify?.accessToken || "";
     let brandKey = shopDoc.brandKey || "basaltsurge";
 
-    // 2. Retrieve pending oauth token if available
+    // 5. Retrieve pending OAuth access token if available
     const pendingDocId = `shopify_pending_auth:${shop}`;
     try {
       const { resource: pending } = await container.item(pendingDocId, brandKey).read<any>();
@@ -198,51 +259,48 @@ export async function POST(req: NextRequest) {
         await container.item(pendingDocId, brandKey).delete();
       }
     } catch {
-      // No pending document, fallback to existing token
+      // Fallback to existing token
     }
 
     if (!accessToken) {
       return NextResponse.json(
-        { error: "oauth_required", message: "Please install the app in Shopify first to authorize access." },
+        { error: "oauth_required", message: "OAuth authorization is missing. Please uninstall and reinstall the Shopify app." },
         { status: 400, headers: { "x-correlation-id": correlationId } }
       );
     }
 
-    // 3. Register or Remove Shopify ScriptTag
+    // 6. Register Cart Redirection ScriptTag
     const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
     const scriptSrc = `${hostUrl.replace(/\/$/, "")}/js/shopify-cart-hijack.js`;
 
-    let scriptOk = false;
-    if (enabled) {
-      scriptOk = await registerScriptTag(shop, accessToken, scriptSrc);
-    } else {
-      scriptOk = await deregisterScriptTag(shop, accessToken, scriptSrc);
-    }
-
+    const scriptOk = await registerScriptTag(shop, accessToken, scriptSrc);
     if (!scriptOk) {
-      console.warn(`[Shopify Settings] Failed to sync script tag state with Shopify: enabled=${enabled}`);
+      console.warn(`[Shopify Settings] Failed to register checkout script tag on ${shop}`);
     }
 
-    // 4. Update settings in the shop config document
+    // 7. Save Shopify connection parameters
     shopDoc.shopify = {
       shop,
       accessToken,
       apiKey,
-      syncInventory,
-      syncOrders,
-      enabled,
-      buttonLabel,
-      minTotal,
-      updatedAt: Date.now()
+      enabled: true,
+      buttonLabel: "Pay with Crypto",
+      minTotal: 0,
+      syncInventory: true,
+      syncOrders: true,
+      updatedAt: now
     };
 
+    if (!shopDoc.brandKey) {
+      shopDoc.brandKey = brandKey;
+    }
+
     await container.items.upsert(shopDoc);
-    console.log(`[Shopify Settings] Saved configuration for shop ${shop} (wallet: ${wallet})`);
+    console.log(`[Shopify Settings] Linked shop ${shop} to wallet ${wallet}`);
 
     return NextResponse.json({
       ok: true,
       connected: true,
-      scriptSynced: scriptOk,
       config: shopDoc.shopify
     });
   } catch (e: any) {

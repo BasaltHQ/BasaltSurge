@@ -206,7 +206,7 @@ export async function POST(req: NextRequest) {
 
   // Step 5: Build Shopify app config
   const baseUrl = new URL(req.url).origin;
-  const applicationUrl = body?.applicationUrl || plugin?.urls?.appUrl || `${baseUrl}/api/integrations/shopify/brands/${brandKey}`;
+  const applicationUrl = body?.applicationUrl || plugin?.urls?.appUrl || `${baseUrl}/shopify/settings?brandKey=${brandKey}`;
 
   const appConfig: ShopifyAppConfig = {
     name: String(plugin?.pluginName || brandKey).trim(),
