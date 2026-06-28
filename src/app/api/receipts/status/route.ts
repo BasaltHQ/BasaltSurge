@@ -300,6 +300,13 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      try {
+        const { checkAndSyncShopifyOrder } = await import("@/lib/shopify/sync-order");
+        next = await checkAndSyncShopifyOrder(next, status);
+      } catch (shopifyErr) {
+        console.error("[STATUS API] Failed to run Shopify sync:", shopifyErr);
+      }
+
       await container.items.upsert(next as any);
       try {
         await auditEvent(req, {
