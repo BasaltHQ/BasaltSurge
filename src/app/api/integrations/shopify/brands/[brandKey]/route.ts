@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { applyBrandDefaults } from "@/config/brands";
+import crypto from "node:crypto";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -32,11 +33,56 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
   if (!key) return headerJson({ error: "brandKey_required" }, { status: 400 });
 
   const url = new URL(req.url);
-  const shop = url.searchParams.get("shop");
+  const shop = String(url.searchParams.get("shop") || "").trim().toLowerCase();
   if (shop) {
+    const container = await getContainer();
     const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
-    const redirectUrl = `${hostUrl.replace(/\/$/, "")}/shopify/settings?shop=${encodeURIComponent(shop)}&brandKey=${encodeURIComponent(key)}`;
-    return NextResponse.redirect(redirectUrl);
+    
+    // Check if we already have an authorized store connection in database
+    const { resources } = await container.items
+      .query({
+        query: "SELECT * FROM c WHERE c.type = 'shop_config' AND LOWER(c.shopify.shop) = @s",
+        parameters: [{ name: "@s", value: shop }]
+      })
+      .fetchAll();
+
+    const isConnected = resources.length > 0 && !!resources[0].shopify?.accessToken;
+
+    if (isConnected) {
+      // Redirect directly to settings page
+      const settingsUrl = `${hostUrl.replace(/\/$/, "")}/shopify/settings?shop=${encodeURIComponent(shop)}&brandKey=${encodeURIComponent(key)}`;
+      return NextResponse.redirect(settingsUrl);
+    } else {
+      // Initiate OAuth installation consent flow
+      const docId = `shopify_plugin_config:${key}`;
+      let pluginDoc: any = null;
+      try {
+        const { resource } = await container.item(docId, key).read();
+        pluginDoc = resource;
+      } catch (e) {
+        console.warn(`[Shopify Install] Plugin config not found for ${key}`);
+      }
+
+      const defaultScopes = ["read_products", "read_orders", "write_script_tags"];
+      const scopes = pluginDoc?.oauth?.scopes || defaultScopes;
+      const clientId = pluginDoc?.shopifyAppId || process.env.SHOPIFY_CLIENT_ID || "";
+      
+      if (!clientId) {
+        return NextResponse.json(
+          { error: "not_configured", message: `Shopify App client ID not configured for brand '${key}'.` },
+          { status: 503 }
+        );
+      }
+
+      const redirectUri = `${hostUrl.replace(/\/$/, "")}/api/integrations/shopify/brands/${key}/auth/callback`;
+      const stateObj = { brandKey: key, nonce: crypto.randomUUID() };
+      const state = Buffer.from(JSON.stringify(stateObj)).toString("base64");
+
+      const authorizeUrl = `https://${shop}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes.join(",")}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
+      
+      console.log(`[Shopify Redirect] Redirecting unauthorized shop ${shop} to Shopify OAuth`);
+      return NextResponse.redirect(authorizeUrl);
+    }
   }
 
   try {
