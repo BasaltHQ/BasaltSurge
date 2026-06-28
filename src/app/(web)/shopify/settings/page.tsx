@@ -7,7 +7,6 @@ import dynamicLoader from "next/dynamic";
 import { usePortalThirdwebTheme, getConnectButtonStyle, connectButtonClass } from "@/lib/thirdweb/theme";
 import { client, chain } from "@/lib/thirdweb/client";
 import { useBrand } from "@/contexts/BrandContext";
-import { Toggle } from "@/components/ui/toggle";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -277,13 +276,19 @@ function ShopifySettingsContent() {
                           Intercept checkout buttons and route customers automatically.
                         </p>
                       </div>
-                      <Toggle
-                        pressed={enabled}
-                        onPressedChange={setEnabled}
-                        className="data-[state=on]:bg-emerald-500 data-[state=on]:text-black"
+                      <button
+                        type="button"
+                        onClick={() => setEnabled(!enabled)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          enabled ? "bg-emerald-500" : "bg-zinc-700"
+                        }`}
                       >
-                        {enabled ? "Active" : "Disabled"}
-                      </Toggle>
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-black shadow ring-0 transition duration-200 ease-in-out ${
+                            enabled ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 pt-2">
@@ -320,13 +325,19 @@ function ShopifySettingsContent() {
                           Keep products and variants synchronized automatically.
                         </p>
                       </div>
-                      <Toggle
-                        pressed={syncInventory}
-                        onPressedChange={setSyncInventory}
-                        className="data-[state=on]:bg-emerald-500 data-[state=on]:text-black"
+                      <button
+                        type="button"
+                        onClick={() => setSyncInventory(!syncInventory)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          syncInventory ? "bg-emerald-500" : "bg-zinc-700"
+                        }`}
                       >
-                        {syncInventory ? "Enabled" : "Disabled"}
-                      </Toggle>
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-black shadow ring-0 transition duration-200 ease-in-out ${
+                            syncInventory ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
                     </div>
 
                     <div className="flex items-center justify-between">
@@ -336,13 +347,19 @@ function ShopifySettingsContent() {
                           Sync order paid status back to Shopify on confirmation.
                         </p>
                       </div>
-                      <Toggle
-                        pressed={syncOrders}
-                        onPressedChange={setSyncOrders}
-                        className="data-[state=on]:bg-emerald-500 data-[state=on]:text-black"
+                      <button
+                        type="button"
+                        onClick={() => setSyncOrders(!syncOrders)}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          syncOrders ? "bg-emerald-500" : "bg-zinc-700"
+                        }`}
                       >
-                        {syncOrders ? "Enabled" : "Disabled"}
-                      </Toggle>
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-black shadow ring-0 transition duration-200 ease-in-out ${
+                            syncOrders ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
                     </div>
                   </div>
                 </div>
