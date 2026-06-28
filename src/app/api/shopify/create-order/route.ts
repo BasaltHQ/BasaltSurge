@@ -77,61 +77,51 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Resolve fee splits (Standard platform calculations)
-    const now = Date.now();
-    const id = crypto.randomUUID().replace(/\-/g, "").slice(0, 16);
-    const docId = `receipt:${id}`;
-
-    // Standard fee defaults
-    const grossMinor = Math.round(totalUsd * 100);
-    const platformFeeBps = 50; // 0.5% default platform fee
-    const amountPlatformMinor = Math.round((grossMinor * platformFeeBps) / 10000);
-    const amountMerchantMinor = grossMinor - amountPlatformMinor;
-
+    const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
     const returnUrl = `https://${shop}/cart/clear?return_to=${encodeURIComponent("/")}`;
 
-    // 4. Construct receipt doc
-    const receiptDoc = {
-      id: docId,
-      type: "receipt",
-      wallet,
-      receiptId: id,
-      totalUsd,
-      currency: "USD",
-      lineItems,
-      createdAt: now,
-      brandKey: brandKey.toLowerCase(),
-      brandName,
-      status: "pending",
-      statusHistory: [{ status: "pending", ts: now }],
-      paymentMethod: "stripe_headless", // eCommerce checkout mode
-      shopifyShop: shop,
-      ttl: 3600, // Expires in 1h if unpaid
-      redirectUrl: returnUrl,
-      returnUrl,
-      grossMinor,
-      platformFeeBps,
-      partnerFeeBps: 0,
-      agentFeeBps: 0,
-      merchantFeeBps: 0,
-      amountPlatformMinor,
-      amountPartnerMinor: 0,
-      amountAgentMinor: 0,
-      amountMerchantMinor,
-      effectiveProcessingFeeBps: platformFeeBps
-    };
+    // Call /api/orders
+    const ordersUrl = `${hostUrl.replace(/\/$/, "")}/api/orders`;
+    const ordersRes = await fetch(ordersUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-wallet": wallet,
+        "x-correlation-id": correlationId
+      },
+      body: JSON.stringify({
+        items: cart.items.map((item: any) => ({
+          sku: item.sku || `shopify_${item.variant_id}`,
+          qty: Math.max(1, Number(item.quantity) || 1)
+        })),
+        redirectUrl: returnUrl,
+        returnUrl: returnUrl,
+        brandKey: brandKey.toLowerCase(),
+        paymentMethod: "stripe_headless",
+        source: "shopify",
+        shopifyShop: shop,
+        ttl: 3600
+      })
+    });
 
-    // 5. Persist in Cosmos DB
-    await container.items.upsert(receiptDoc);
-    console.log(`[Shopify Create Order] Registered pending receipt ${id} for shop ${shop} (amount: ${totalUsd} USD)`);
+    if (!ordersRes.ok) {
+      const errText = await ordersRes.text();
+      throw new Error(`Orders API returned status ${ordersRes.status}: ${errText}`);
+    }
 
-    // 6. Return payment landing page URL
-    const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
-    const paymentUrl = `${hostUrl.replace(/\/$/, "")}/portal/${id}`;
+    const ordersData = await ordersRes.json();
+    if (!ordersData.ok || !ordersData.portalLink) {
+      throw new Error(ordersData.message || "Failed to generate portalLink from orders API");
+    }
+
+    const receiptId = ordersData.receipt?.receiptId || ordersData.receiptId;
+    const paymentUrl = ordersData.portalLink;
+
+    console.log(`[Shopify Create Order] Successfully generated checkout order ${receiptId} via Orders API`);
 
     return NextResponse.json({
       ok: true,
-      receiptId: id,
+      receiptId,
       paymentUrl
     }, { headers: { "x-correlation-id": correlationId } });
   } catch (e: any) {

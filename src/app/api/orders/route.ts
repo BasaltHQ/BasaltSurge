@@ -1097,6 +1097,8 @@ export async function POST(req: NextRequest) {
       webhookUrl,
       onSuccess,
       stripeEmail,
+      shopifyShop: typeof body.shopifyShop === "string" ? body.shopifyShop : undefined,
+      ttl: typeof body.ttl === "number" ? body.ttl : undefined,
       ...(webhookUrl ? {
         webhookSigningSecret: String(
           req.headers.get("x-api-key") || req.headers.get("ocp-apim-subscription-key") || ""

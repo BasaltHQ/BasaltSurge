@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { CheckCircle2, AlertCircle, RefreshCw, LogOut, Key, Settings, Sliders, ArrowRight, ExternalLink, HelpCircle, ShoppingBag } from "lucide-react";
+import { CheckCircle2, AlertCircle, RefreshCw, LogOut, Key, Settings, Sliders, ArrowRight, ExternalLink, HelpCircle, ShoppingBag, Clock, Database } from "lucide-react";
 import { useBrand } from "@/contexts/BrandContext";
 
 interface SwitchProps {
@@ -26,7 +26,7 @@ function Switch({ id, checked, onChange, disabled, activeColor }: SwitchProps) {
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-205 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
+      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-250 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
         checked ? "" : "bg-zinc-250 dark:bg-zinc-700"
       }`}
       style={{
@@ -69,6 +69,11 @@ function ShopifySettingsContent() {
   const [syncOrders, setSyncOrders] = useState(true);
   const [buttonLabel, setButtonLabel] = useState("Pay with Crypto");
   const [minTotal, setMinTotal] = useState(0);
+
+  const [surgeItemsCount, setSurgeItemsCount] = useState(0);
+  const [shopifyItemsCount, setShopifyItemsCount] = useState(0);
+  const [lastSyncTime, setLastSyncTime] = useState<number | null>(null);
+  const [syncProgress, setSyncProgress] = useState<{ current: number; total: number } | null>(null);
 
   // Reserve Settings
   const [defaultPaymentToken, setDefaultPaymentToken] = useState("USDC");
@@ -115,6 +120,9 @@ function ShopifySettingsContent() {
         if (data.ok && !cancelled) {
           setConnected(data.connected);
           setHasPendingToken(data.hasPendingToken);
+          setSurgeItemsCount(data.surgeItemsCount || 0);
+          setShopifyItemsCount(data.shopifyItemsCount || 0);
+          setLastSyncTime(data.lastSyncTime || null);
           if (data.config?.apiKey) {
             setApiKey(data.config.apiKey);
           }
@@ -152,6 +160,7 @@ function ShopifySettingsContent() {
       setSyncing(direction);
       setError("");
       setSuccess("");
+      setSyncProgress({ current: 0, total: 100 });
 
       const res = await fetch("/api/shopify/sync", {
         method: "POST",
@@ -159,17 +168,69 @@ function ShopifySettingsContent() {
         body: JSON.stringify({ wallet, shop, direction })
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
         throw new Error(data.message || `Inventory sync failed`);
       }
 
-      setSuccess(`Inventory synchronization complete: successfully synced ${data.syncedCount} items ${direction === "push" ? "to Surge" : "from Surge"}!`);
-      setTimeout(() => setSuccess(""), 6000);
+      // Check if it's a stream
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("text/event-stream")) {
+        const reader = res.body?.getReader();
+        const decoder = new TextDecoder();
+        if (!reader) throw new Error("Unable to read sync stream");
+
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // keep incomplete line in buffer
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const chunk = JSON.parse(trimmed);
+              if (chunk.type === "start") {
+                setSyncProgress({ current: 0, total: chunk.total || 100 });
+              } else if (chunk.type === "progress") {
+                setSyncProgress({ current: chunk.current, total: chunk.total });
+              } else if (chunk.type === "complete") {
+                setSuccess(`Inventory synchronization complete: successfully synced ${chunk.syncedCount} items ${direction === "push" ? "to Surge" : "from Surge"}!`);
+                
+                // Fetch the updated counts!
+                const refreshRes = await fetch(`/api/shopify/settings?shop=${shop}`, { cache: "no-store" });
+                if (refreshRes.ok) {
+                  const refreshData = await refreshRes.json();
+                  if (refreshData.ok) {
+                    setSurgeItemsCount(refreshData.surgeItemsCount || 0);
+                    setShopifyItemsCount(refreshData.shopifyItemsCount || 0);
+                    setLastSyncTime(refreshData.lastSyncTime || null);
+                  }
+                }
+
+                setTimeout(() => setSuccess(""), 6000);
+              } else if (chunk.type === "error") {
+                throw new Error(chunk.message || "Streaming failed");
+              }
+            } catch (jsonErr) {
+              console.error("Failed to parse stream chunk:", jsonErr);
+            }
+          }
+        }
+      } else {
+        const data = await res.json();
+        setSuccess(`Inventory synchronization complete: successfully synced ${data.syncedCount} items ${direction === "push" ? "to Surge" : "from Surge"}!`);
+        setTimeout(() => setSuccess(""), 6000);
+      }
     } catch (err: any) {
       setError(err.message || "Failed to sync inventory. Please check connection and try again.");
     } finally {
       setSyncing(null);
+      setSyncProgress(null);
     }
   };
 
@@ -531,6 +592,64 @@ function ShopifySettingsContent() {
                             <span>Pull from Surge</span>
                           </button>
                         </div>
+
+                        {/* Status Card & Progress Bar */}
+                        {connected && (
+                          <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800 space-y-4">
+                            {/* Sync Status Card */}
+                            <div className="p-4 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-zinc-50/20 dark:bg-zinc-900/50 space-y-3">
+                              <h3 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                                <Database className="w-3.5 h-3.5" style={{ color: tabConfig.sync.color }} />
+                                <span>Catalog Sync Status</span>
+                              </h3>
+                              
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="p-3 bg-white dark:bg-zinc-900 rounded-lg border border-zinc-100 dark:border-zinc-800 flex flex-col">
+                                  <span className="text-[9px] text-zinc-400 font-semibold uppercase">Surge Catalog</span>
+                                  <span className="text-sm font-bold text-zinc-800 dark:text-zinc-100 mt-0.5">{surgeItemsCount} items</span>
+                                </div>
+                                
+                                <div className="p-3 bg-white dark:bg-zinc-900 rounded-lg border border-zinc-100 dark:border-zinc-800 flex flex-col">
+                                  <span className="text-[9px] text-zinc-400 font-semibold uppercase">Shopify Synced</span>
+                                  <span className="text-sm font-bold text-zinc-800 dark:text-zinc-100 mt-0.5">{shopifyItemsCount} items</span>
+                                </div>
+                              </div>
+                              
+                              {lastSyncTime ? (
+                                <div className="text-[9px] text-zinc-400 flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-zinc-400" />
+                                  <span>Last synchronized: {new Date(lastSyncTime).toLocaleString()}</span>
+                                </div>
+                              ) : (
+                                <div className="text-[9px] text-zinc-400 flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-zinc-400" />
+                                  <span>Never synchronized</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Progress Bar */}
+                            {syncProgress && (
+                              <div className="p-4 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-zinc-50/20 dark:bg-zinc-900/50 space-y-2">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="font-semibold text-zinc-650 dark:text-zinc-400">Syncing products catalog...</span>
+                                  <span className="font-mono text-zinc-800 dark:text-zinc-200">
+                                    {syncProgress.current} / {syncProgress.total} ({Math.round((syncProgress.current / (syncProgress.total || 1)) * 100)}%)
+                                  </span>
+                                </div>
+                                <div className="w-full bg-zinc-200 dark:bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                                  <div 
+                                    className="h-full rounded-full transition-all duration-300 ease-out"
+                                    style={{ 
+                                      width: `${(syncProgress.current / (syncProgress.total || 1)) * 100}%`,
+                                      backgroundColor: tabConfig.sync.color 
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
