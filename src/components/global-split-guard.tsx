@@ -403,9 +403,9 @@ export default function GlobalSplitGuard() {
               prevOpenRef.current = false;
             }
             setOpen(shouldOpen);
-          } catch {
-            // On read failure, still surface modal so user can attempt deploy later after login
-            setOpen(true);
+          } catch (e) {
+            console.error("Split preview fetch failed during page load:", e);
+            setOpen(false);
           } finally {
             // Not authenticated yet; wait for pp:auth:logged_in to re-run guard and proceed to actual deploy
             setAwaitAuth(true);
@@ -494,9 +494,9 @@ export default function GlobalSplitGuard() {
           prevOpenRef.current = false;
           setOpen(false);
         }
-      } catch {
-        // On read failure, still surface modal so user can attempt deploy
-        setOpen(true);
+      } catch (e) {
+        console.error("Split check failed during page load:", e);
+        setOpen(false);
       } finally {
         setChecking(false);
       }
