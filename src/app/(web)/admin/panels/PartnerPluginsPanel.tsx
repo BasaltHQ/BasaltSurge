@@ -91,6 +91,7 @@ export default function PartnerPluginsPanel() {
     status: "draft",
     listingUrl: "",
     shopifyAppId: "",
+    shopifyAppSecret: "",
     shopifyAppSlug: "",
     partnerOrgId: "",
     verification: {
@@ -189,6 +190,7 @@ export default function PartnerPluginsPanel() {
           status: conf?.status || "draft",
           listingUrl: conf?.listingUrl || "",
           shopifyAppId: conf?.shopifyAppId || "",
+          shopifyAppSecret: conf?.shopifyAppSecret || "",
           shopifyAppSlug: conf?.shopifyAppSlug || "",
           partnerOrgId: conf?.partnerOrgId || "",
           verification: {
@@ -217,6 +219,7 @@ export default function PartnerPluginsPanel() {
           status: "draft",
           listingUrl: "",
           shopifyAppId: "",
+          shopifyAppSecret: "",
           shopifyAppSlug: "",
           partnerOrgId: "",
           verification: {
@@ -323,7 +326,17 @@ export default function PartnerPluginsPanel() {
       if (!brandKey?.trim()) { setError("Enter brandKey"); return; }
       const targetBrand = getEffectiveBrandKey(brandKey);
       if (!targetBrand) { setError("Invalid brandKey"); return; }
-      const r = await fetch(`/api/admin/shopify/apps/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ brandKey: targetBrand, listingUrl: plugin?.listingUrl || undefined, shopifyAppId: plugin?.shopifyAppId || undefined, shopifyAppSlug: plugin?.shopifyAppSlug || undefined }) });
+      const r = await fetch(`/api/admin/shopify/apps/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          brandKey: targetBrand,
+          listingUrl: plugin?.listingUrl || undefined,
+          shopifyAppId: plugin?.shopifyAppId || undefined,
+          shopifyAppSecret: plugin?.shopifyAppSecret || undefined,
+          shopifyAppSlug: plugin?.shopifyAppSlug || undefined
+        })
+      });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) { setError(j?.error || "Publish failed"); return; }
       setInfo("Published.");

@@ -30,6 +30,7 @@ type PublishBody = {
   brandKey?: string;
   listingUrl?: string;
   shopifyAppId?: string;
+  shopifyAppSecret?: string;
   shopifyAppSlug?: string;
 };
 
@@ -84,6 +85,7 @@ export async function POST(req: NextRequest) {
 
   const listingUrl = typeof body?.listingUrl === "string" ? body.listingUrl.trim() : undefined;
   const shopifyAppId = typeof body?.shopifyAppId === "string" ? body.shopifyAppId.trim() : undefined;
+  const shopifyAppSecret = typeof body?.shopifyAppSecret === "string" ? body.shopifyAppSecret.trim() : undefined;
   const shopifyAppSlug = typeof body?.shopifyAppSlug === "string" ? body.shopifyAppSlug.trim() : undefined;
 
   try {
@@ -94,6 +96,7 @@ export async function POST(req: NextRequest) {
       ...base,
       ...(listingUrl ? { listingUrl } : {}),
       ...(shopifyAppId ? { shopifyAppId } : {}),
+      ...(shopifyAppSecret ? { shopifyAppSecret } : {}),
       ...(shopifyAppSlug ? { shopifyAppSlug } : {}),
       status: "published",
       updatedAt: Date.now()
@@ -101,11 +104,23 @@ export async function POST(req: NextRequest) {
     await c.items.upsert(doc as any);
 
     // Progress: published
-    const dep = await appendProgress(brandKey, { step: "published", ok: true, info: { listingUrl, shopifyAppId, shopifyAppSlug } });
+    const dep = await appendProgress(brandKey, { step: "published", ok: true, info: { listingUrl, shopifyAppId, shopifyAppSecret, shopifyAppSlug } });
 
     try { await auditEvent(req, { who: caller.wallet, roles: caller.roles, what: "shopify_app_publish", target: brandKey, correlationId, ok: true }); } catch {}
 
-    return headerJson({ ok: true, brandKey, plugin: { status: doc.status, listingUrl: doc.listingUrl, shopifyAppId: doc.shopifyAppId, shopifyAppSlug: doc.shopifyAppSlug }, deployment: dep, correlationId });
+    return headerJson({
+      ok: true,
+      brandKey,
+      plugin: {
+        status: doc.status,
+        listingUrl: doc.listingUrl,
+        shopifyAppId: doc.shopifyAppId,
+        shopifyAppSecret: doc.shopifyAppSecret,
+        shopifyAppSlug: doc.shopifyAppSlug
+      },
+      deployment: dep,
+      correlationId
+    });
   } catch (e: any) {
     try { await auditEvent(req, { who: caller.wallet, roles: caller.roles, what: "shopify_app_publish", target: brandKey, correlationId, ok: false, metadata: { error: e?.message || "cosmos_failed" } }); } catch {}
     return headerJson({ error: e?.message || "failed", correlationId }, { status: 500 });

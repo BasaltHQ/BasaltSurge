@@ -881,9 +881,9 @@ export default function PlatformPluginsPanel() {
       eligibility: { minTotal: 0, currency: "USD" },
       palette: { primary: "#0ea5e9", accent: "#22c55e" }
     },
-    status: "draft",
     listingUrl: "",
     shopifyAppId: "",
+    shopifyAppSecret: "",
     shopifyAppSlug: "",
     partnerOrgId: "",
     verification: {
@@ -1146,6 +1146,7 @@ export default function PlatformPluginsPanel() {
             status: conf?.status || "draft",
             listingUrl: conf?.listingUrl || "",
             shopifyAppId: conf?.shopifyAppId || "",
+            shopifyAppSecret: conf?.shopifyAppSecret || "",
             shopifyAppSlug: conf?.shopifyAppSlug || "",
             partnerOrgId: conf?.partnerOrgId || "",
             verification: {
@@ -1176,9 +1177,9 @@ export default function PlatformPluginsPanel() {
             urls: { supportUrl: "", privacyUrl: "", docsUrl: "", termsUrl: "" },
             oauth: { redirectUrls: [], scopes: [] },
             extension: { enabled: true, buttonLabel: "Pay with Crypto", eligibility: { minTotal: 0, currency: "USD" }, palette: { primary: "#0ea5e9", accent: "#22c55e" } },
-            status: "draft",
             listingUrl: "",
             shopifyAppId: "",
+            shopifyAppSecret: "",
             shopifyAppSlug: "",
             partnerOrgId: "",
             verification: {
@@ -1283,7 +1284,13 @@ export default function PlatformPluginsPanel() {
       const r = await fetch(`/api/admin/shopify/apps/publish`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brandKey, listingUrl: plugin?.listingUrl || undefined, shopifyAppId: plugin?.shopifyAppId || undefined, shopifyAppSlug: plugin?.shopifyAppSlug || undefined })
+        body: JSON.stringify({
+          brandKey,
+          listingUrl: plugin?.listingUrl || undefined,
+          shopifyAppId: plugin?.shopifyAppId || undefined,
+          shopifyAppSecret: plugin?.shopifyAppSecret || undefined,
+          shopifyAppSlug: plugin?.shopifyAppSlug || undefined
+        })
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j?.ok) { setError(j?.error || "Publish failed"); return; }
@@ -2381,9 +2388,14 @@ export default function PlatformPluginsPanel() {
                   <div className="microtext text-muted-foreground mt-1">Required for deep links. Found in Partner Dashboard URL.</div>
                 </div>
                 <div>
-                  <label className="microtext">Shopify App ID</label>
+                  <label className="microtext">Shopify App ID (Client ID)</label>
                   <input className="mt-1 h-9 w-full px-3 border rounded-md bg-background" value={plugin.shopifyAppId} onChange={(e) => setPlugin({ ...plugin, shopifyAppId: e.target.value })} placeholder="1234567" />
                   <div className="microtext text-muted-foreground mt-1">Found in Partners Dashboard → App → Overview</div>
+                </div>
+                <div>
+                  <label className="microtext">Shopify App Secret (Client Secret)</label>
+                  <input className="mt-1 h-9 w-full px-3 border rounded-md bg-background" type="password" value={plugin.shopifyAppSecret} onChange={(e) => setPlugin({ ...plugin, shopifyAppSecret: e.target.value })} placeholder="shpss_..." />
+                  <div className="microtext text-muted-foreground mt-1">Credentials API Secret Key from Partners Dashboard</div>
                 </div>
                 <div>
                   <label className="microtext">Shopify App Slug</label>

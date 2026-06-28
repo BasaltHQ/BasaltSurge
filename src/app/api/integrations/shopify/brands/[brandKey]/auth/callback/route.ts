@@ -54,9 +54,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
       console.warn(`[Shopify Callback] Plugin config not found for ${key}.`);
     }
 
-    const clientId = pluginDoc?.shopifyAppId || process.env.SHOPIFY_CLIENT_ID || "";
+    const clientId = process.env[`SHOPIFY_CLIENT_ID_${key.toUpperCase()}`] ||
+                     process.env.SHOPIFY_CLIENT_ID ||
+                     pluginDoc?.shopifyAppId || "";
     const clientSecret = process.env[`SHOPIFY_CLIENT_SECRET_${key.toUpperCase()}`] ||
                          process.env.SHOPIFY_CLIENT_SECRET ||
+                         pluginDoc?.shopifyAppSecret ||
                          process.env.SHOPIFY_API_SECRET_KEY || "";
 
     if (!clientId || !clientSecret) {
