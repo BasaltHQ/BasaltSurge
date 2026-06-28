@@ -309,6 +309,13 @@ async function runBackgroundPoll(params: {
             console.error("[BACKGROUND POLL] Failed to recalculate receipt line items:", recalcErr);
           }
 
+          try {
+            const { checkAndSyncShopifyOrder } = await import("@/lib/shopify/sync-order");
+            finalReceipt = await checkAndSyncShopifyOrder(finalReceipt, "paid");
+          } catch (shopifyErr) {
+            console.error("[BACKGROUND POLL] Failed to run Shopify sync:", shopifyErr);
+          }
+
           await container.items.upsert(finalReceipt);
           console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to paid with txHash: ${txHash}`);
         } else {

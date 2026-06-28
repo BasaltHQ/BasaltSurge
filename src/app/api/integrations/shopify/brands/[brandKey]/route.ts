@@ -31,6 +31,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
   const key = String(brandKey || "").toLowerCase();
   if (!key) return headerJson({ error: "brandKey_required" }, { status: 400 });
 
+  const url = new URL(req.url);
+  const shop = url.searchParams.get("shop");
+  if (shop) {
+    const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
+    const redirectUrl = `${hostUrl.replace(/\/$/, "")}/shopify/settings?shop=${encodeURIComponent(shop)}&brandKey=${encodeURIComponent(key)}`;
+    return NextResponse.redirect(redirectUrl);
+  }
+
   try {
     const c = await getContainer();
     const { resource } = await c.item(pluginDocId(key), key).read<any>();

@@ -108,9 +108,6 @@ ${config.termsUrl ? `# Terms: ${config.termsUrl}` : ""}` : ""}
 `;
 }
 
-/**
- * Generate checkout UI extension configuration (shopify.extension.toml)
- */
 export function generateExtensionToml(config: ShopifyAppConfig): string {
   if (!config.extension?.enabled) {
     return "";
@@ -146,6 +143,18 @@ key = "min_total"
 type = "number_integer"
 name = "Minimum Order Total"
 description = "Minimum order total required to show crypto payment option"
+
+[[extensions.settings.fields]]
+key = "api_key"
+type = "single_line_text_field"
+name = "PortalPay API Key"
+description = "Your PortalPay API Key (pk_live_...)"
+
+[[extensions.settings.fields]]
+key = "api_url"
+type = "single_line_text_field"
+name = "PortalPay API URL"
+description = "Optional custom PortalPay API URL (e.g. for testing on localhost)"
 `;
 }
 
@@ -178,6 +187,8 @@ function CryptoPaymentOption() {
   
   const buttonLabel = settings.button_label ?? "${ext.buttonLabel}";
   const minTotal = settings.min_total ?? ${ext.minTotal};
+  const apiKey = settings.api_key ?? "";
+  const apiUrl = settings.api_url ?? "${config.applicationUrl}";
   
   // Calculate cart total
   const cartTotal = cartLines.reduce((sum, line) => {
@@ -192,7 +203,7 @@ function CryptoPaymentOption() {
   const handleCryptoPayment = () => {
     // Open crypto payment modal/redirect
     // This integrates with your backend payment processing
-    const paymentUrl = \`\${extension.scriptUrl}/api/payments/crypto?session=\${extension.sessionToken}\`;
+    const paymentUrl = \`\${apiUrl}/api/payments/crypto?session=\${extension.sessionToken}&apiKey=\${apiKey}\`;
     window.open(paymentUrl, '_blank');
   };
 
@@ -206,8 +217,9 @@ function CryptoPaymentOption() {
         appearance="monochrome"
         onPress={handleCryptoPayment}
         accessibilityLabel={buttonLabel}
+        disabled={!apiKey}
       >
-        {buttonLabel}
+        {apiKey ? buttonLabel : "Please configure PortalPay API Key"}
       </Button>
     </Banner>
   );
