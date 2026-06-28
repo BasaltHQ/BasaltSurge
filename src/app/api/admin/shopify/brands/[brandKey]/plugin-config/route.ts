@@ -54,6 +54,7 @@ type ShopifyPluginConfigDoc = {
   // Shopify identifiers and listing
   listingUrl?: string;
   shopifyAppId?: string;
+  shopifyAppSecret?: string;
   shopifyAppSlug?: string;
   // Status and bookkeeping
   status?: "draft" | "packaged" | "deploying" | "in_review" | "published" | "error";
@@ -152,6 +153,7 @@ function normalizePatch(raw: any, brandKey: string): Partial<ShopifyPluginConfig
     if (u) out.listingUrl = u;
   }
   if (typeof raw?.shopifyAppId === "string") out.shopifyAppId = raw.shopifyAppId.trim();
+  if (typeof raw?.shopifyAppSecret === "string") out.shopifyAppSecret = raw.shopifyAppSecret.trim();
   if (typeof raw?.shopifyAppSlug === "string") out.shopifyAppSlug = raw.shopifyAppSlug.trim();
 
   if (typeof raw?.status === "string") out.status = clampStatus(raw.status);

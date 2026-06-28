@@ -53,7 +53,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
 
       const defaultScopes = ["read_products", "read_orders", "write_script_tags"];
       const scopes = pluginDoc?.oauth?.scopes || defaultScopes;
-      const clientId = pluginDoc?.shopifyAppId || process.env.SHOPIFY_CLIENT_ID || "";
+      const clientId = process.env[`SHOPIFY_CLIENT_ID_${key.toUpperCase()}`] ||
+                       process.env.SHOPIFY_CLIENT_ID ||
+                       pluginDoc?.shopifyAppId || "";
       
       if (!clientId) {
         return NextResponse.json(
