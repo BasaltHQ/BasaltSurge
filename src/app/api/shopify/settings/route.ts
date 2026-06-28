@@ -305,16 +305,21 @@ export async function POST(req: NextRequest) {
       console.warn(`[Shopify Settings] Failed to register checkout script tag on ${shop}`);
     }
 
+    const syncInventory = typeof body.syncInventory === "boolean" ? body.syncInventory : true;
+    const syncOrders = typeof body.syncOrders === "boolean" ? body.syncOrders : true;
+    const buttonLabel = typeof body.buttonLabel === "string" ? body.buttonLabel : "Pay with Crypto";
+    const minTotal = typeof body.minTotal === "number" ? body.minTotal : 0;
+
     // 7. Save Shopify connection parameters
     shopDoc.shopify = {
       shop,
       accessToken,
       apiKey,
       enabled: true,
-      buttonLabel: "Pay with Crypto",
-      minTotal: 0,
-      syncInventory: true,
-      syncOrders: true,
+      buttonLabel,
+      minTotal,
+      syncInventory,
+      syncOrders,
       updatedAt: now
     };
 
