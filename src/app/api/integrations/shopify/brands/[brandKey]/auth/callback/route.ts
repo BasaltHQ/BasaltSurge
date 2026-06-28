@@ -115,6 +115,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
       type: "shopify_pending_auth",
       shop,
       accessToken,
+      wallet: key, // Set the partition key field to match adapter filters
       brandKey: key,
       createdAt: Date.now()
     };
