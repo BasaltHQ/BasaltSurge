@@ -1,9 +1,23 @@
 /**
  * Shopify Cart Checkout Hijack Script
- * Automatically intercepts checkout button clicks and routes them to PortalPay.
+ * Automatically intercepts checkout button clicks and routes them to the payment gateway.
  */
 (function() {
-  console.log("[PortalPay] Shopify Cart Hijack active.");
+  // Determine brand dynamically from hostname or script source origin
+  const scriptEl = document.currentScript || document.querySelector('script[src*="shopify-cart-hijack.js"]');
+  let backendHost = "";
+  if (scriptEl && scriptEl.src) {
+    try {
+      backendHost = new URL(scriptEl.src).origin;
+    } catch {}
+  }
+  if (!backendHost) {
+    backendHost = window.location.origin; // fallback
+  }
+  const isPlatform = backendHost.includes("basaltsurge") || backendHost.includes("surge");
+  const brandName = isPlatform ? "BasaltSurge" : "PortalPay";
+
+  console.log(`[${brandName}] Shopify Cart Hijack active.`);
 
   // Run initialization on load and when DOM changes
   function init() {
@@ -20,7 +34,7 @@
         e.preventDefault();
         e.stopPropagation();
         
-        console.log("[PortalPay] Checkout intercepted. Processing cart...");
+        console.log(`[${brandName}] Checkout intercepted. Processing cart...`);
         
         // Show loading state if button has text/value
         const originalText = btn.tagName === 'INPUT' ? btn.value : btn.textContent;
@@ -38,18 +52,6 @@
           })
           .then(cart => {
             const shop = (window.Shopify && window.Shopify.shop) || window.location.hostname;
-            // Get brandKey or backend host (script source location or standard)
-            const scriptEl = document.currentScript || document.querySelector('script[src*="shopify-cart-hijack.js"]');
-            let backendHost = "";
-            if (scriptEl && scriptEl.src) {
-              try {
-                backendHost = new URL(scriptEl.src).origin;
-              } catch {}
-            }
-            if (!backendHost) {
-              backendHost = window.location.origin; // fallback
-            }
-
             return fetch(`${backendHost}/api/shopify/create-order`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -66,14 +68,14 @@
           })
           .then(data => {
             if (data?.paymentUrl) {
-              console.log("[PortalPay] Redirecting to PortalPay Checkout:", data.paymentUrl);
+              console.log(`[${brandName}] Redirecting to Checkout:`, data.paymentUrl);
               window.location.href = data.paymentUrl;
             } else {
               throw new Error("Missing payment URL in response");
             }
           })
           .catch(err => {
-            console.error("[PortalPay] Checkout intercept error:", err);
+            console.error(`[${brandName}] Checkout intercept error:`, err);
             // Fallback: Proceed with standard Shopify checkout if our server fails
             setBtnText(originalText);
             btn.disabled = false;
