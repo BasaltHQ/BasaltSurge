@@ -1,7 +1,14 @@
 import { createThirdwebClient } from "thirdweb";
 import { base, baseSepolia, optimism, arbitrum, polygon, sepolia } from "thirdweb/chains";
 
-const clientCache = new Map<string, ReturnType<typeof createThirdwebClient>>();
+const globalForThirdweb = globalThis as unknown as {
+  clientCache?: Map<string, ReturnType<typeof createThirdwebClient>>;
+};
+
+const clientCache = globalForThirdweb.clientCache || new Map<string, ReturnType<typeof createThirdwebClient>>();
+if (process.env.NODE_ENV !== "production") {
+  globalForThirdweb.clientCache = clientCache;
+}
 
 export function getClient() {
   const secret = process.env.THIRDWEB_SECRET_KEY;

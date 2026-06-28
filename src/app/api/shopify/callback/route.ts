@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const code = url.searchParams.get("code") || "";
-    const shop = url.searchParams.get("shop") || "";
+    const shop = String(url.searchParams.get("shop") || "").trim().toLowerCase();
     const stateB64 = url.searchParams.get("state") || "";
 
     if (!code || !shop || !stateB64) {
