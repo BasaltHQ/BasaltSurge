@@ -102,14 +102,6 @@ export async function GET(req: NextRequest) {
       if (resources.length > 0) shopConfig = resources[0];
     }
 
-    if (!shopConfig) {
-      return NextResponse.json({
-        ok: true,
-        connected: false,
-        message: "No connected merchant profile found."
-      });
-    }
-
     // Check if there is a pending oauth token for this store that needs completion
     let hasPendingToken = false;
     if (shop) {
@@ -121,6 +113,15 @@ export async function GET(req: NextRequest) {
         })
         .fetchAll();
       hasPendingToken = resources[0] > 0;
+    }
+
+    if (!shopConfig) {
+      return NextResponse.json({
+        ok: true,
+        connected: false,
+        hasPendingToken,
+        message: "No connected merchant profile found."
+      });
     }
 
     return NextResponse.json({

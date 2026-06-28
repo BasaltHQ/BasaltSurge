@@ -31,12 +31,20 @@ export function getClient() {
   const normalizedKey = brandKey ? brandKey.toUpperCase().replace(/-/g, "_") : "";
   
   let clientId: string | undefined = undefined;
-  if (typeof window !== "undefined") {
-    clientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id") || undefined;
-  }
-  if (!clientId) {
-    const specificClientId = (!isPlatform && normalizedKey) ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${normalizedKey}`] : undefined;
-    clientId = specificClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
+  
+  if (isPlatform) {
+    clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
+  } else {
+    if (typeof window !== "undefined") {
+      clientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id") || undefined;
+      if (clientId === "undefined" || clientId === "null" || clientId === "") {
+        clientId = undefined;
+      }
+    }
+    if (!clientId && normalizedKey) {
+      clientId = process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${normalizedKey}`];
+    }
+    clientId = clientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
   }
 
   const cacheKey = secret ? `secret_${secret}` : `client_${clientId}`;
