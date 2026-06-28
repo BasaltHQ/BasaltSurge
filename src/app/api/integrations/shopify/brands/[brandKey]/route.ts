@@ -34,26 +34,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
 
   const url = new URL(req.url);
   const shop = String(url.searchParams.get("shop") || "").trim().toLowerCase();
+  const direct = url.searchParams.get("direct") === "1";
+
   if (shop) {
     const container = await getContainer();
     const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
     
-    // Check if we already have an authorized store connection in database
-    const { resources } = await container.items
-      .query({
-        query: "SELECT * FROM c WHERE c.type = 'shop_config' AND LOWER(c.shopify.shop) = @s",
-        parameters: [{ name: "@s", value: shop }]
-      })
-      .fetchAll();
-
-    const isConnected = resources.length > 0 && !!resources[0].shopify?.accessToken;
-
-    if (isConnected) {
-      // Redirect directly to settings page
-      const settingsUrl = `${hostUrl.replace(/\/$/, "")}/shopify/settings?shop=${encodeURIComponent(shop)}&brandKey=${encodeURIComponent(key)}`;
-      return NextResponse.redirect(settingsUrl);
-    } else {
-      // Initiate OAuth installation consent flow
+    if (direct) {
+      // Initiate OAuth installation consent flow directly in parent window
       const docId = `shopify_plugin_config:${key}`;
       let pluginDoc: any = null;
       try {
@@ -80,8 +68,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
 
       const authorizeUrl = `https://${shop}/admin/oauth/authorize?client_id=${clientId}&scope=${scopes.join(",")}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
       
-      console.log(`[Shopify Redirect] Redirecting unauthorized shop ${shop} to Shopify OAuth`);
+      console.log(`[Shopify Redirect] Redirecting unauthorized shop ${shop} to Shopify OAuth (parent window)`);
       return NextResponse.redirect(authorizeUrl);
+    } else {
+      // Redirect iframe request to settings page workspace
+      const settingsUrl = `${hostUrl.replace(/\/$/, "")}/shopify/settings?shop=${encodeURIComponent(shop)}&brandKey=${encodeURIComponent(key)}`;
+      return NextResponse.redirect(settingsUrl);
     }
   }
 

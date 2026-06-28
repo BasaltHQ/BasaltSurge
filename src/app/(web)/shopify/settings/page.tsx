@@ -55,14 +55,6 @@ function ShopifySettingsContent() {
     return () => { cancelled = true; };
   }, [shop]);
 
-  // Redirect to install flow if not authorized on Shopify
-  useEffect(() => {
-    if (!loading && !connected && !hasPendingToken && shop) {
-      console.log("[Shopify settings] Not connected and no pending token. Redirecting to authorize...");
-      window.location.href = `/api/integrations/shopify/brands/${brandKey}?shop=${encodeURIComponent(shop)}`;
-    }
-  }, [loading, connected, hasPendingToken, shop, brandKey]);
-
   // 2. Enable or Update Payments (Save Settings)
   const handleConnect = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -174,65 +166,87 @@ function ShopifySettingsContent() {
               </div>
             )}
 
-            {/* Input API Key Form */}
-            <form onSubmit={handleConnect} className="bg-white border border-[#e3e3e3] rounded-xl p-6 shadow-sm space-y-5">
-              <div className="space-y-1">
-                <h2 className="text-md font-bold text-[#202223]">
-                  {connected ? "Gateway Settings" : "Setup Payment Gateway"}
-                </h2>
-                <p className="text-xs text-[#6d7175]">
-                  Input your {displayName} API Key to enable crypto checkouts on your store cart.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="apiKey" className="text-xs font-bold text-[#202223] flex items-center gap-1">
-                  <Key className="w-3.5 h-3.5 text-[#6d7175]" />
-                  <span>{displayName} API Key</span>
-                </Label>
-                <Input
-                  id="apiKey"
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="sk_live_..."
-                  className="h-10 text-xs bg-zinc-50 border-[#ccc] text-[#202223] focus:border-[#008060] focus:ring-1 focus:ring-[#008060]"
-                />
-                <p className="text-[10px] text-[#6d7175]">
-                  Create or copy your active API Key from the developer settings inside your {displayName} Admin Console.
-                </p>
-              </div>
-
-              {error && (
-                <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-100 p-2.5 rounded-lg flex items-start gap-1.5">
-                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>{error}</span>
+            {!connected && !hasPendingToken ? (
+              /* Require Authorization breakout card */
+              <div className="bg-white border border-[#e3e3e3] rounded-xl p-6 shadow-sm space-y-5 text-center">
+                <div className="space-y-2">
+                  <h2 className="text-md font-bold text-[#202223]">Authorize {displayName} Payments</h2>
+                  <p className="text-xs text-[#6d7175] leading-relaxed">
+                    Permissions are required to manage your checkout buttons and synchronize order status.
+                  </p>
                 </div>
-              )}
 
-              <div className="space-y-3">
-                <Button
-                  type="submit"
-                  disabled={saving}
-                  className="w-full bg-[#008060] hover:bg-[#006e52] text-white font-bold h-10 rounded-lg transition-colors text-xs"
-                >
-                  {saving ? <RefreshCw className="w-4 h-4 animate-spin mr-1.5 inline" /> : null}
-                  <span>{connected ? "Save Configurations" : "Enable Payments"}</span>
-                </Button>
-
-                {connected && (
-                  <button
-                    type="button"
-                    onClick={handleDisconnect}
-                    disabled={saving}
-                    className="w-full h-10 border border-rose-600/30 text-rose-600 hover:bg-rose-50 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                <div className="pt-2">
+                  <a
+                    href={`/api/integrations/shopify/brands/${brandKey}?shop=${encodeURIComponent(shop)}&direct=1`}
+                    target="_top"
+                    className="w-full bg-[#008060] hover:bg-[#006e52] text-white font-bold h-10 rounded-lg transition-colors text-xs flex items-center justify-center cursor-pointer"
                   >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Disconnect {displayName}</span>
-                  </button>
-                )}
+                    Install & Authorize App
+                  </a>
+                </div>
               </div>
-            </form>
+            ) : (
+              /* Input API Key Form */
+              <form onSubmit={handleConnect} className="bg-white border border-[#e3e3e3] rounded-xl p-6 shadow-sm space-y-5">
+                <div className="space-y-1">
+                  <h2 className="text-md font-bold text-[#202223]">
+                    {connected ? "Gateway Settings" : "Setup Payment Gateway"}
+                  </h2>
+                  <p className="text-xs text-[#6d7175]">
+                    Input your {displayName} API Key to enable crypto checkouts on your store cart.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="apiKey" className="text-xs font-bold text-[#202223] flex items-center gap-1">
+                    <Key className="w-3.5 h-3.5 text-[#6d7175]" />
+                    <span>{displayName} API Key</span>
+                  </Label>
+                  <Input
+                    id="apiKey"
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk_live_..."
+                    className="h-10 text-xs bg-zinc-50 border-[#ccc] text-[#202223] focus:border-[#008060] focus:ring-1 focus:ring-[#008060]"
+                  />
+                  <p className="text-[10px] text-[#6d7175]">
+                    Create or copy your active API Key from the developer settings inside your {displayName} Admin Console.
+                  </p>
+                </div>
+
+                {error && (
+                  <div className="text-xs font-semibold text-rose-600 bg-rose-50 border border-rose-100 p-2.5 rounded-lg flex items-start gap-1.5">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  <Button
+                    type="submit"
+                    disabled={saving}
+                    className="w-full bg-[#008060] hover:bg-[#006e52] text-white font-bold h-10 rounded-lg transition-colors text-xs"
+                  >
+                    {saving ? <RefreshCw className="w-4 h-4 animate-spin mr-1.5 inline" /> : null}
+                    <span>{connected ? "Save Configurations" : "Enable Payments"}</span>
+                  </Button>
+
+                  {connected && (
+                    <button
+                      type="button"
+                      onClick={handleDisconnect}
+                      disabled={saving}
+                      className="w-full h-10 border border-rose-600/30 text-rose-600 hover:bg-rose-50 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Disconnect {displayName}</span>
+                    </button>
+                  )}
+                </div>
+              </form>
+            )}
           </div>
         )}
 

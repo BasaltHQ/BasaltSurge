@@ -120,11 +120,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
     await container.items.upsert(pendingDoc);
     console.log(`[Shopify Callback] Cached pending access token for shop: ${shop}`);
 
-    // Redirect merchant to settings panel
-    const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
-    const settingsUrl = `${hostUrl.replace(/\/$/, "")}/shopify/settings?shop=${encodeURIComponent(shop)}&brandKey=${encodeURIComponent(key)}`;
-
-    return NextResponse.redirect(settingsUrl);
+    // Redirect merchant back to their Shopify Admin embedded app panel
+    const adminUrl = `https://${shop}/admin/apps/${clientId}`;
+    return NextResponse.redirect(adminUrl);
   } catch (e: any) {
     console.error("[Shopify Callback] Critical Error:", e);
     return NextResponse.json(
