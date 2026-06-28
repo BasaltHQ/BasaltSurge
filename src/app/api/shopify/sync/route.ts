@@ -115,13 +115,40 @@ export async function POST(req: NextRequest) {
     if (direction === "pull") {
       console.log(`[Shopify Sync] Pulling from Surge to Shopify catalog for wallet: ${wallet}`);
 
-      // Get all inventory items from Surge
-      const { resources: items } = await container.items
-        .query({
-          query: "SELECT * FROM c WHERE c.type = 'inventory_item' AND c.wallet = @w",
-          parameters: [{ name: "@w", value: wallet }]
-        })
-        .fetchAll();
+      let items: any[] = [];
+      const apiKey = shopDoc.shopify?.apiKey;
+
+      if (apiKey) {
+        console.log(`[Shopify Sync] Fetching inventory from live Surge API for wallet: ${wallet}`);
+        try {
+          const surgeRes = await fetch("https://surge.basalthq.com/api/inventory", {
+            headers: {
+              "x-api-key": apiKey,
+              "Accept": "application/json"
+            }
+          });
+          if (surgeRes.ok) {
+            const data = await surgeRes.json();
+            items = Array.isArray(data.items) ? data.items : [];
+          } else {
+            console.error(`[Shopify Sync] Live Surge API inventory fetch failed with status ${surgeRes.status}`);
+          }
+        } catch (fetchErr) {
+          console.error("[Shopify Sync] Failed to fetch inventory from live Surge API:", fetchErr);
+        }
+      }
+
+      // Fallback to local DB if live API fetch was empty or failed
+      if (items.length === 0) {
+        console.log(`[Shopify Sync] Falling back to local DB query for wallet: ${wallet}`);
+        const { resources } = await container.items
+          .query({
+            query: "SELECT * FROM c WHERE c.type = 'inventory_item' AND c.wallet = @w",
+            parameters: [{ name: "@w", value: wallet }]
+          })
+          .fetchAll();
+        items = resources;
+      }
 
       if (items.length === 0) {
         return NextResponse.json({
@@ -135,11 +162,19 @@ export async function POST(req: NextRequest) {
       let syncedCount = 0;
 
       for (const item of items) {
+        const itemImages = Array.isArray(item.images) && item.images.length > 0
+          ? item.images.map((img: string) => {
+              const src = img.startsWith("http") ? img : `https://surge.basalthq.com${img.startsWith("/") ? "" : "/"}${img}`;
+              return { src };
+            })
+          : undefined;
+
         const payload = {
           product: {
             title: item.name,
             body_html: item.description || "",
             product_type: item.category || "",
+            images: itemImages,
             variants: [
               {
                 sku: item.sku,
@@ -167,7 +202,8 @@ export async function POST(req: NextRequest) {
                   id: Number(item.shopifyProductId),
                   title: item.name,
                   body_html: item.description || "",
-                  product_type: item.category || ""
+                  product_type: item.category || "",
+                  images: itemImages
                 }
               })
             });

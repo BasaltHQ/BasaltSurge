@@ -414,6 +414,27 @@ function ShopifySettingsContent() {
                             Generate a secure live API key from your developer panel and paste it here to link your shop to your payout wallet.
                           </p>
                         </div>
+
+                        {connected && (
+                          <div className="pt-4 mt-4 border-t border-zinc-100 dark:border-zinc-800 space-y-3">
+                            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl border border-zinc-200/80 dark:border-zinc-800 bg-zinc-50/30 dark:bg-zinc-900/50">
+                              <div className="space-y-1">
+                                <h4 className="text-xs font-bold text-[#202223] dark:text-zinc-200">Re-authorize Connection</h4>
+                                <p className="text-[10px] text-[#6d7175] dark:text-zinc-400 leading-normal">
+                                  If your access token expired or synchronization is failing with unauthorized errors, refresh the Shopify credentials here.
+                                </p>
+                              </div>
+                              <a
+                                href={`/api/integrations/shopify/brands/${brandKey}?shop=${encodeURIComponent(shop)}&direct=1`}
+                                target="_top"
+                                className="h-9 px-4 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shrink-0 border border-zinc-200 dark:border-zinc-700"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                <span>Re-authorize</span>
+                              </a>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}

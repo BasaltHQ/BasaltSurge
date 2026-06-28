@@ -288,13 +288,14 @@ export async function POST(req: NextRequest) {
         if (pending?.accessToken) {
           accessToken = pending.accessToken;
           brandKey = pending.brandKey || brandKey;
-          // Clean up pending document using its actual partition key (wallet)
+          // Clean up pending document. Try both with and without partition key to ensure it is cleared.
           const pk = pending.wallet || pending.brandKey || brandKey;
           try {
+            await container.item(pendingDocId, undefined).delete();
+          } catch (delErr) {}
+          try {
             await container.item(pendingDocId, pk).delete();
-          } catch (delErr) {
-            console.error(`[Shopify Settings] Failed to delete pending doc ${pendingDocId}:`, delErr);
-          }
+          } catch (delErr) {}
         }
       }
     } catch (e) {
