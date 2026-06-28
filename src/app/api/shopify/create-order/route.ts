@@ -54,7 +54,8 @@ export async function POST(req: NextRequest) {
     const shopDoc = resources[0];
     const wallet = shopDoc.wallet;
     const brandKey = shopDoc.brandKey || "basaltsurge";
-    const brandName = shopDoc.name || "PortalPay Store";
+    const displayName = brandKey.toLowerCase() === "portalpay" ? "PortalPay" : "BasaltSurge";
+    const brandName = shopDoc.name || `${displayName} Store`;
 
     // 2. Parse cart items
     const lineItems = cart.items.map((item: any) => {

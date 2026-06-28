@@ -124,18 +124,38 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    const walletAddr = shopConfig.wallet;
+    let siteConfig: any = null;
+    if (walletAddr) {
+      const { resources: siteConfigs } = await container.items
+        .query({
+          query: "SELECT * FROM c WHERE c.type = 'site_config' AND LOWER(c.wallet) = @w",
+          parameters: [{ name: "@w", value: walletAddr.toLowerCase() }]
+        })
+        .fetchAll();
+      if (siteConfigs.length > 0) {
+        siteConfig = siteConfigs[0];
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       connected: !!shopConfig.shopify?.accessToken,
       hasPendingToken,
       config: {
+        wallet: shopConfig.wallet,
         shop: shopConfig.shopify?.shop || shop || "",
         apiKey: shopConfig.shopify?.apiKey || "",
         syncInventory: shopConfig.shopify?.syncInventory ?? true,
         syncOrders: shopConfig.shopify?.syncOrders ?? true,
         enabled: shopConfig.shopify?.enabled ?? false,
         buttonLabel: shopConfig.shopify?.buttonLabel || "Pay with Crypto",
-        minTotal: shopConfig.shopify?.minTotal ?? 0
+        minTotal: shopConfig.shopify?.minTotal ?? 0,
+        theme: shopConfig.theme || null,
+        defaultPaymentToken: siteConfig?.defaultPaymentToken || "USDC",
+        processingFeePct: siteConfig?.processingFeePct ?? 0,
+        currencySelectionEnabled: siteConfig?.currencySelectionEnabled !== false,
+        tippingEnabled: siteConfig?.tipConfig?.enabled ?? false
       }
     });
   } catch (e: any) {
@@ -202,6 +222,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const bodyBrandKey = String(body.brandKey || "").trim().toLowerCase();
+    const brandKeyResolved = bodyBrandKey || "basaltsurge";
+    const displayName = brandKeyResolved === "portalpay" ? "PortalPay" : "BasaltSurge";
+
     // 3. Resolve wallet address from API Key hash lookup
     const keyHash = crypto.createHash("sha256").update(apiKey).digest("hex");
     const { resources: keyDocs } = await container.items
@@ -213,7 +237,7 @@ export async function POST(req: NextRequest) {
 
     if (keyDocs.length === 0) {
       return NextResponse.json(
-        { error: "invalid_api_key", message: "Invalid API Key. Please make sure the key is active and generated from your PortalPay dashboard." },
+        { error: "invalid_api_key", message: `Invalid API Key. Please make sure the key is active and generated from your ${displayName} dashboard.` },
         { status: 400, headers: { "x-correlation-id": correlationId } }
       );
     }
@@ -329,6 +353,42 @@ export async function POST(req: NextRequest) {
 
     await container.items.upsert(shopDoc);
     console.log(`[Shopify Settings] Linked shop ${shop} to wallet ${wallet}`);
+
+    // 8. Update merchant's site_config document for reserve parameters
+    const { resources: siteConfigs } = await container.items
+      .query({
+        query: "SELECT * FROM c WHERE c.type = 'site_config' AND LOWER(c.wallet) = @w",
+        parameters: [{ name: "@w", value: wallet.toLowerCase() }]
+      })
+      .fetchAll();
+
+    let siteDoc = siteConfigs.length > 0 ? siteConfigs[0] : null;
+    const siteDocId = siteDoc?.id || `site:config:${wallet}`;
+    
+    if (!siteDoc) {
+      siteDoc = {
+        id: siteDocId,
+        type: "site_config",
+        wallet: wallet,
+        createdAt: now,
+        brandKey: brandKey.toLowerCase()
+      };
+    }
+
+    siteDoc.defaultPaymentToken = typeof body.defaultPaymentToken === "string" ? body.defaultPaymentToken : (siteDoc.defaultPaymentToken || "USDC");
+    siteDoc.processingFeePct = typeof body.processingFeePct === "number" ? body.processingFeePct : (siteDoc.processingFeePct ?? 0);
+    siteDoc.currencySelectionEnabled = typeof body.currencySelectionEnabled === "boolean" ? body.currencySelectionEnabled : (siteDoc.currencySelectionEnabled !== false);
+    
+    if (typeof body.tippingEnabled === "boolean") {
+      if (!siteDoc.tipConfig) {
+        siteDoc.tipConfig = { enabled: false, allowCustom: true, presets: [15, 18, 20], defaultTip: null };
+      }
+      siteDoc.tipConfig.enabled = body.tippingEnabled;
+    }
+    
+    siteDoc.updatedAt = now;
+    await container.items.upsert(siteDoc);
+    console.log(`[Shopify Settings] Updated site_config for wallet ${wallet}`);
 
     return NextResponse.json({
       ok: true,
