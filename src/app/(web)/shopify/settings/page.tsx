@@ -20,6 +20,7 @@ function ShopifySettingsContent() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [hasPendingToken, setHasPendingToken] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -39,6 +40,7 @@ function ShopifySettingsContent() {
         
         if (data.ok && !cancelled) {
           setConnected(data.connected);
+          setHasPendingToken(data.hasPendingToken);
           if (data.config?.apiKey) {
             setApiKey(data.config.apiKey);
           }
@@ -52,6 +54,14 @@ function ShopifySettingsContent() {
 
     return () => { cancelled = true; };
   }, [shop]);
+
+  // Redirect to install flow if not authorized on Shopify
+  useEffect(() => {
+    if (!loading && !connected && !hasPendingToken && shop) {
+      console.log("[Shopify settings] Not connected and no pending token. Redirecting to authorize...");
+      window.location.href = `/api/integrations/shopify/brands/${brandKey}?shop=${encodeURIComponent(shop)}`;
+    }
+  }, [loading, connected, hasPendingToken, shop, brandKey]);
 
   // 2. Enable or Update Payments (Save Settings)
   const handleConnect = async (e?: React.FormEvent) => {
