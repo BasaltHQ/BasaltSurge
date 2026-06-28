@@ -252,15 +252,29 @@ export async function POST(req: NextRequest) {
     // 5. Retrieve pending OAuth access token if available
     const pendingDocId = `shopify_pending_auth:${shop}`;
     try {
-      const { resource: pending } = await container.item(pendingDocId, brandKey).read<any>();
-      if (pending?.accessToken) {
-        accessToken = pending.accessToken;
-        brandKey = pending.brandKey || brandKey;
-        // Clean up pending document
-        await container.item(pendingDocId, brandKey).delete();
+      const { resources: pendings } = await container.items
+        .query({
+          query: "SELECT * FROM c WHERE c.id = @id",
+          parameters: [{ name: "@id", value: pendingDocId }]
+        })
+        .fetchAll();
+
+      if (pendings.length > 0) {
+        const pending = pendings[0];
+        if (pending?.accessToken) {
+          accessToken = pending.accessToken;
+          brandKey = pending.brandKey || brandKey;
+          // Clean up pending document using its actual partition key (wallet)
+          const pk = pending.wallet || pending.brandKey || brandKey;
+          try {
+            await container.item(pendingDocId, pk).delete();
+          } catch (delErr) {
+            console.error(`[Shopify Settings] Failed to delete pending doc ${pendingDocId}:`, delErr);
+          }
+        }
       }
-    } catch {
-      // Fallback to existing token
+    } catch (e) {
+      console.error("[Shopify Settings] Failed to retrieve pending oauth token:", e);
     }
 
     if (!accessToken) {
