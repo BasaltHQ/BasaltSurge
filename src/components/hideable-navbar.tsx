@@ -55,6 +55,7 @@ export function HideableNavbar({ isServerCustomDomain = false }: { isServerCusto
     isCustomDomain ||
     pathname === "/portal" || pathname.startsWith("/portal/") ||
     pathname.startsWith("/shop/") ||
+    pathname.startsWith("/shopify/") || pathname === "/shopify" ||
     pathname === "/apply" || pathname.startsWith("/apply/") ||
     pathname === "/kiosk" || pathname.startsWith("/kiosk/") ||
     pathname === "/kitchen" || pathname.startsWith("/kitchen/") ||

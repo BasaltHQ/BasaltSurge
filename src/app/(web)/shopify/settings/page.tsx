@@ -6,10 +6,16 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { CheckCircle2, AlertCircle, RefreshCw, LogOut, Key } from "lucide-react";
+import { useBrand } from "@/contexts/BrandContext";
 
 function ShopifySettingsContent() {
   const searchParams = useSearchParams();
   const shop = String(searchParams.get("shop") || "").trim().toLowerCase();
+  const queryBrandKey = String(searchParams.get("brandKey") || "").trim().toLowerCase();
+
+  const brand = useBrand();
+  const brandKey = queryBrandKey || brand?.key || "basaltsurge";
+  const displayName = brand?.name || (brandKey.charAt(0).toUpperCase() + brandKey.slice(1));
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -87,7 +93,7 @@ function ShopifySettingsContent() {
 
   // 3. Disconnect App
   const handleDisconnect = async () => {
-    if (!window.confirm("Are you sure you want to disconnect PortalPay? Customers will no longer be able to check out with crypto.")) {
+    if (!window.confirm(`Are you sure you want to disconnect ${displayName}? Customers will no longer be able to check out with crypto.`)) {
       return;
     }
 
@@ -139,7 +145,7 @@ function ShopifySettingsContent() {
         {/* Shopify Header Brand */}
         <div className="flex items-center justify-between pb-2">
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-[#202223]">PortalPay Integration</h1>
+            <h1 className="text-xl font-bold tracking-tight text-[#202223]">{displayName} Integration</h1>
             <p className="text-xs text-[#6d7175] mt-0.5">{shop}</p>
           </div>
         </div>
@@ -165,14 +171,14 @@ function ShopifySettingsContent() {
                   {connected ? "Gateway Settings" : "Setup Payment Gateway"}
                 </h2>
                 <p className="text-xs text-[#6d7175]">
-                  Input your PortalPay API Key to enable crypto checkouts on your store cart.
+                  Input your {displayName} API Key to enable crypto checkouts on your store cart.
                 </p>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="apiKey" className="text-xs font-bold text-[#202223] flex items-center gap-1">
                   <Key className="w-3.5 h-3.5 text-[#6d7175]" />
-                  <span>PortalPay API Key</span>
+                  <span>{displayName} API Key</span>
                 </Label>
                 <Input
                   id="apiKey"
@@ -183,7 +189,7 @@ function ShopifySettingsContent() {
                   className="h-10 text-xs bg-zinc-50 border-[#ccc] text-[#202223] focus:border-[#008060] focus:ring-1 focus:ring-[#008060]"
                 />
                 <p className="text-[10px] text-[#6d7175]">
-                  Create or copy your active API Key from the developer settings inside your PortalPay Admin Console.
+                  Create or copy your active API Key from the developer settings inside your {displayName} Admin Console.
                 </p>
               </div>
 
@@ -212,7 +218,7 @@ function ShopifySettingsContent() {
                     className="w-full h-10 border border-rose-600/30 text-rose-600 hover:bg-rose-50 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5"
                   >
                     <LogOut className="w-3.5 h-3.5" />
-                    <span>Disconnect Gateway</span>
+                    <span>Disconnect {displayName}</span>
                   </button>
                 )}
               </div>
