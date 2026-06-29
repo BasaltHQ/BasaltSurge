@@ -6,8 +6,16 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Copy, CheckCircle, ExternalLink } from "lucide-react";
 import { useActiveAccount } from "thirdweb/react";
+import { Copy, CheckCircle, ExternalLink } from "lucide-react";
+
+function resolveS3Url(url?: string): string {
+  if (!url) return "";
+  if (url.startsWith("s3://basaltsurge/")) {
+    return url.replace("s3://basaltsurge/", "https://basaltsurge.s3.us-west-or.io.cloud.ovh.us/");
+  }
+  return url;
+}
 
 type ShopifyTile = {
   brandKey: string;
@@ -46,7 +54,7 @@ type CatalogPlugin = { key: CatalogKey; name: string; icon: string; description:
 
 const catalog: CatalogPlugin[] = [
   { key: "shopify", name: "Shopify", icon: "/logos/shopify-payments.svg", description: "Shopify app & checkout extension" },
-  { key: "woocommerce", name: "WooCommerce", icon: "/logos/woocommerce.svg", description: "WooCommerce plugin (coming soon)" },
+  { key: "woocommerce", name: "WooCommerce", icon: "/logos/woocommerce.svg", description: "WordPress WooCommerce integration" },
   { key: "stripe", name: "Stripe", icon: "/logos/stripe.svg", description: "Card payments + wallets" },
   { key: "paypal", name: "PayPal", icon: "/logos/paypal.svg", description: "PayPal payments" },
   { key: "square", name: "Square", icon: "/logos/square.svg", description: "Square payments" },
@@ -74,6 +82,7 @@ export default function IntegrationsPanel() {
   const [tile, setTile] = React.useState<ShopifyTile | null>(null);
   const [xEnabled, setXEnabled] = React.useState(false);
   const [showXSetup, setShowXSetup] = useState(false);
+  const [woocommerceConfig, setWoocommerceConfig] = React.useState<{ enabled: boolean; downloadUrl?: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [shopSlug, setShopSlug] = useState("");
 
@@ -94,6 +103,19 @@ export default function IntegrationsPanel() {
           setLoading(false);
           return;
         }
+
+        // Fetch WooCommerce Status
+        (async () => {
+          try {
+            const rw = await fetch(`/api/admin/plugins/woocommerce/config/${encodeURIComponent(bk)}`, { cache: "no-store" });
+            if (rw.ok) {
+              const jw = await rw.json().catch(() => ({}));
+              if (jw?.config) {
+                if (!cancelled) setWoocommerceConfig(jw.config);
+              }
+            }
+          } catch { }
+        })();
 
         // Fetch X Shopping Status
         (async () => {
@@ -171,12 +193,13 @@ export default function IntegrationsPanel() {
   function renderCard(p: CatalogPlugin) {
     const isShopify = p.key === "shopify";
     const isXShopping = p.key === "xshopping";
+    const isWoocommerce = p.key === "woocommerce";
 
     // Visibility Check: X Shopping only visible if enabled by Partner
     if (isXShopping && !xEnabled) return null;
 
-    const enabled = isShopify ? (!!tile?.enabled) : (isXShopping ? true : false); // If visible (xEnabled=true), it's "enabled" for merchant use
-    const configured = isShopify ? (!!tile?.listingUrl || !!tile?.installUrl) : (isXShopping ? true : false); // X Shopping is always "configured" if enabled (simple feed URL)
+    const enabled = isShopify ? (!!tile?.enabled) : (isXShopping ? true : (isWoocommerce ? (!!woocommerceConfig?.enabled) : false));
+    const configured = isShopify ? (!!tile?.listingUrl || !!tile?.installUrl) : (isXShopping ? true : (isWoocommerce ? (!!woocommerceConfig?.enabled) : false));
 
     const tagline = isShopify ? (tile?.tagline || p.description) : p.description;
 
@@ -316,6 +339,42 @@ export default function IntegrationsPanel() {
                     </div>
                   </DialogContent>
                 </Dialog>
+              ) : isWoocommerce ? (
+                woocommerceConfig?.enabled ? (
+                  <div className="flex flex-col gap-2 w-full">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <a
+                        href={resolveS3Url(woocommerceConfig.downloadUrl)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-1.5"
+                        title="Download plugin package"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        <span>Download Package</span>
+                      </a>
+                      <button
+                        className="px-3 py-2 border rounded-lg bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors inline-flex items-center gap-1.5"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(resolveS3Url(woocommerceConfig.downloadUrl)).then(() => {
+                            setCopied(true);
+                            setTimeout(() => setCopied(false), 2000);
+                          });
+                        }}
+                      >
+                        {copied ? <CheckCircle className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                        <span>{copied ? "Copied!" : "Copy Download Link"}</span>
+                      </button>
+                    </div>
+                    <div className="microtext text-muted-foreground">
+                      Download the WordPress WooCommerce plugin zip package to install on your WordPress store.
+                    </div>
+                  </div>
+                ) : (
+                  <span className="text-xs text-muted-foreground italic">WooCommerce integration is disabled for this brand. Contact your account manager to enable it.</span>
+                )
               ) : (
                 <button className="px-4 py-2 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm text-muted-foreground cursor-not-allowed font-medium">
                   Coming soon
@@ -353,8 +412,8 @@ export default function IntegrationsPanel() {
         {[...catalog]
           .sort((a, b) => {
             const statusLower = String(tile?.status || "").toLowerCase();
-            const aEnabled = a.key === "shopify" ? (statusLower === "published") : (a.key === "xshopping" ? xEnabled : false);
-            const bEnabled = b.key === "shopify" ? (statusLower === "published") : (b.key === "xshopping" ? xEnabled : false);
+            const aEnabled = a.key === "shopify" ? (!!tile?.enabled) : (a.key === "xshopping" ? xEnabled : (a.key === "woocommerce" ? !!woocommerceConfig?.enabled : false));
+            const bEnabled = b.key === "shopify" ? (!!tile?.enabled) : (b.key === "xshopping" ? xEnabled : (b.key === "woocommerce" ? !!woocommerceConfig?.enabled : false));
             if (aEnabled && !bEnabled) return -1;
             if (!aEnabled && bEnabled) return 1;
             return 0;

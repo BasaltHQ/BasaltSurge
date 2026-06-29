@@ -139,6 +139,16 @@ export default function PlatformPluginsPanel() {
           }
         })
         .catch(e => console.error("Failed to load X Shopping config:", e));
+    } else if (selectedPlugin === 'woocommerce') {
+      fetch(`/api/admin/plugins/woocommerce/config/${encodeURIComponent(brandKey)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.config) {
+            setWoocommerceEnabled(!!data.config.enabled);
+            setWoocommerceDownloadUrl(data.config.downloadUrl || "s3://basaltsurge/plugins/wordpress/basaltsurge/basaltsurge-woocommerce-0.0.4.zip");
+          }
+        })
+        .catch(e => console.error("Failed to load WooCommerce config:", e));
     } else if (selectedPlugin === 'jira') {
       fetch(`/api/admin/plugins/jira/config/${encodeURIComponent(brandKey)}`)
         .then(r => r.json())
@@ -218,7 +228,96 @@ export default function PlatformPluginsPanel() {
     if (selectedPlugin === 'xshopping') return renderXShoppingContent(section);
     if (selectedPlugin === 'jira') return renderJiraContent(section);
     if (selectedPlugin === 'shopify') return renderShopifySection(section);
+    if (selectedPlugin === 'woocommerce') return renderWoocommerceContent(section);
     return renderPlaceholderSection(section, selectedPlugin || "");
+  }
+
+  function renderWoocommerceContent(section: WorkspaceSection) {
+    switch (section) {
+      case 'overview':
+        return (
+          <div className="space-y-4 text-left">
+            <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] p-6 space-y-4">
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 bg-white rounded-lg flex items-center justify-center border p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/logos/woocommerce.svg" alt="WooCommerce" className="h-12 w-12 object-contain" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-foreground">WooCommerce Integration</h3>
+                  <p className="text-muted-foreground text-sm">Self-hosted WordPress plugin integration for your partner merchants.</p>
+                </div>
+              </div>
+              <div className="pt-4 border-t space-y-2">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-sm font-medium text-muted-foreground">State</div>
+                    <div className="text-sm mt-1">{woocommerceEnabled ? 'Enabled' : 'Disabled'}</div>
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium text-muted-foreground">Download Artifact</div>
+                    <div className="text-sm mt-1 break-all font-mono text-xs">{woocommerceDownloadUrl || '—'}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      case 'configuration':
+        return (
+          <div className="rounded-2xl border border-foreground/[0.05] bg-background p-6 space-y-6 text-left">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="font-semibold text-foreground">WooCommerce Brand Configuration</h4>
+                <p className="text-xs text-muted-foreground">Configure the active download zip package and toggle the plugin for merchants.</p>
+              </div>
+              <button 
+                type="button" 
+                className="px-4 py-2 border border-foreground/[0.05] rounded-lg text-sm bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-all shadow-sm"
+                onClick={() => saveWoocommerceConfig(woocommerceEnabled, woocommerceDownloadUrl)}
+                disabled={saving}
+              >
+                {saving ? "Saving…" : "Save Configuration"}
+              </button>
+            </div>
+
+            <div className="space-y-4 pt-4 border-t">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium text-sm">Enable WooCommerce Plugin</div>
+                  <div className="microtext text-muted-foreground">Allow merchants under this brand to download the WooCommerce plugin package.</div>
+                </div>
+                <button
+                  type="button"
+                  className={`w-12 h-6 rounded-full transition-colors flex items-center px-0.5 ${woocommerceEnabled ? 'bg-green-500' : 'bg-slate-200'}`}
+                  onClick={() => setWoocommerceEnabled(!woocommerceEnabled)}
+                >
+                  <div className={`h-5 w-5 bg-white rounded-full shadow transition-transform ${woocommerceEnabled ? 'translate-x-[22px]' : 'translate-x-0'}`} />
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground block">Download S3 URL / Package Link</label>
+                <input
+                  className="h-10 w-full px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none placeholder-muted-foreground font-mono"
+                  value={woocommerceDownloadUrl}
+                  onChange={(e) => setWoocommerceDownloadUrl(e.target.value)}
+                  placeholder="s3://..."
+                />
+                <p className="microtext text-muted-foreground">
+                  The S3 address of the WordPress WooCommerce zip package (e.g. s3://basaltsurge/plugins/wordpress/basaltsurge/basaltsurge-woocommerce-0.0.4.zip)
+                </p>
+              </div>
+            </div>
+
+            {(info || error) && (
+              <div className={`rounded-md border p-2 text-sm ${error ? "text-red-600" : "text-emerald-600"}`}>{error || info}</div>
+            )}
+          </div>
+        );
+      default:
+        return <div className="p-4 text-muted-foreground">Not applicable.</div>;
+    }
   }
 
   function renderXShoppingContent(section: WorkspaceSection) {
@@ -847,6 +946,8 @@ export default function PlatformPluginsPanel() {
 
   // Per-plugin enabled state for current brand (Shopify wired; others default disabled for now)
   const [shopifyEnabled, setShopifyEnabled] = React.useState<boolean>(false);
+  const [woocommerceEnabled, setWoocommerceEnabled] = React.useState<boolean>(false);
+  const [woocommerceDownloadUrl, setWoocommerceDownloadUrl] = React.useState<string>("s3://basaltsurge/plugins/wordpress/basaltsurge/basaltsurge-woocommerce-0.0.4.zip");
 
   // Selected plugin workspace
 
@@ -873,7 +974,7 @@ export default function PlatformPluginsPanel() {
     features: [] as string[],
     categories: [] as string[],
     assets: { iconUrl: "", squareIconUrl: "", bannerUrl: "", screenshots: [] as string[] },
-    urls: { supportUrl: "", privacyUrl: "", docsUrl: "", termsUrl: "" },
+    urls: { appUrl: "", supportUrl: "", privacyUrl: "", docsUrl: "", termsUrl: "" },
     oauth: { redirectUrls: [] as string[], scopes: [] as string[] },
     extension: {
       enabled: true,
@@ -960,6 +1061,7 @@ export default function PlatformPluginsPanel() {
       appProxyUrl: `${origin}/api/integrations/shopify/proxy`,
       urls: {
         ...prev.urls,
+        appUrl: `${origin}/shopify/settings?brandKey=${brandKey}`,
         supportUrl: `${origin}/support`,
         docsUrl: `${origin}/docs`,
         privacyUrl: `${origin}/legal/privacy`,
@@ -1120,6 +1222,13 @@ export default function PlatformPluginsPanel() {
         const j = await r.json().catch(() => ({}));
         const ok = r.ok && j?.plugin;
         setShopifyEnabled(ok ? j.plugin.enabled !== false : false);
+
+        try {
+          const rw = await fetch(`/api/admin/plugins/woocommerce/config/${encodeURIComponent(brandKey)}`, { cache: "no-store" });
+          const jw = await rw.json().catch(() => ({}));
+          setWoocommerceEnabled(!!jw?.config?.enabled);
+          setWoocommerceDownloadUrl(jw?.config?.downloadUrl || "s3://basaltsurge/plugins/wordpress/basaltsurge/basaltsurge-woocommerce-0.0.4.zip");
+        } catch { }
         if (ok) {
           const conf = j.plugin || {};
           setPlugin({
@@ -1136,6 +1245,7 @@ export default function PlatformPluginsPanel() {
               screenshots: Array.isArray(conf?.assets?.screenshots) ? conf.assets.screenshots : [],
             },
             urls: {
+              appUrl: conf?.urls?.appUrl || "",
               supportUrl: conf?.urls?.supportUrl || "",
               privacyUrl: conf?.urls?.privacyUrl || "",
               docsUrl: conf?.urls?.docsUrl || "",
@@ -1191,7 +1301,7 @@ export default function PlatformPluginsPanel() {
             features: [],
             categories: [],
             assets: { iconUrl: "", squareIconUrl: "", bannerUrl: "", screenshots: [] },
-            urls: { supportUrl: "", privacyUrl: "", docsUrl: "", termsUrl: "" },
+            urls: { appUrl: "", supportUrl: "", privacyUrl: "", docsUrl: "", termsUrl: "" },
             oauth: { redirectUrls: [], scopes: [] },
             extension: { enabled: true, buttonLabel: "Pay with Crypto", eligibility: { minTotal: 0, currency: "USD" }, palette: { primary: "#0ea5e9", accent: "#22c55e" } },
             listingUrl: "",
@@ -1242,6 +1352,27 @@ export default function PlatformPluginsPanel() {
     } catch (e: any) {
       setError(e?.message || "Failed to save");
     } finally { setSaving(false); }
+  }
+
+  async function saveWoocommerceConfig(enabled: boolean, downloadUrl: string) {
+    setError(""); setInfo(""); setSaving(true);
+    try {
+      if (!brandKey) { setError("Select a brandKey"); return; }
+      const r = await fetch(`/api/admin/plugins/woocommerce/config/${encodeURIComponent(brandKey)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled, downloadUrl })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setError(j?.error || "Failed to save WooCommerce config"); return; }
+      setWoocommerceEnabled(enabled);
+      setWoocommerceDownloadUrl(downloadUrl);
+      setInfo("WooCommerce configuration saved.");
+    } catch (e: any) {
+      setError(e?.message || "Failed to save WooCommerce config");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function saveSection(section: WorkspaceSection) {
@@ -1422,6 +1553,11 @@ export default function PlatformPluginsPanel() {
         { key: 'configuration', label: 'Configuration' },
       ];
     } else if (selectedPlugin === 'xshopping') {
+      tabs = [
+        { key: 'overview', label: 'Overview' },
+        { key: 'configuration', label: 'Configuration' },
+      ];
+    } else if (selectedPlugin === 'woocommerce') {
       tabs = [
         { key: 'overview', label: 'Overview' },
         { key: 'configuration', label: 'Configuration' },
@@ -1668,6 +1804,10 @@ export default function PlatformPluginsPanel() {
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="md:col-span-2">
+                  <label className="microtext">Shopify App Settings URL (Custom Base URL, e.g. https://pay.data-opt.com/shopify/settings?brandKey=data-opt)</label>
+                  <input className="mt-1 h-9 w-full px-3 border rounded-md bg-background" placeholder="https://your-custom-domain.com/shopify/settings?brandKey=data-opt" value={plugin.urls.appUrl || ""} onChange={(e) => setPlugin({ ...plugin, urls: { ...plugin.urls, appUrl: e.target.value } })} />
+                </div>
                 <div>
                   <label className="microtext">Support URL</label>
                   <input className="mt-1 h-9 w-full px-3 border rounded-md bg-background" value={plugin.urls.supportUrl} onChange={(e) => setPlugin({ ...plugin, urls: { ...plugin.urls, supportUrl: e.target.value } })} />
@@ -2733,7 +2873,11 @@ export default function PlatformPluginsPanel() {
           </div>
           <div>
             {catalog.map((p) => {
-              const enabled = p.key === 'shopify' ? shopifyEnabled : false;
+              const enabled = p.key === 'shopify' ? shopifyEnabled
+                : p.key === 'woocommerce' ? woocommerceEnabled
+                : p.key === 'xshopping' ? xshoppingConfig.enabled
+                : p.key === 'jira' ? jiraEnabled
+                : false;
               return CatalogItemList(p, enabled);
             })}
           </div>
@@ -2767,7 +2911,11 @@ export default function PlatformPluginsPanel() {
         </div>
         <div className={gridClass}>
           {catalog.map((p) => {
-            const enabled = p.key === 'shopify' ? shopifyEnabled : false;
+            const enabled = p.key === 'shopify' ? shopifyEnabled
+              : p.key === 'woocommerce' ? woocommerceEnabled
+              : p.key === 'xshopping' ? xshoppingConfig.enabled
+              : p.key === 'jira' ? jiraEnabled
+              : false;
             return viewMode === 'grid-compact' ? CatalogItemCompact(p, enabled) : CatalogItemFull(p, enabled);
           })}
         </div>
@@ -2819,7 +2967,15 @@ export default function PlatformPluginsPanel() {
               )}
               <div className="text-sm font-semibold">{selectedName} Workspace — {brandKey}</div>
             </div>
-            <div className="text-xs text-muted-foreground">State: {selectedPlugin === 'shopify' ? (shopifyEnabled ? 'Enabled' : 'Disabled') : 'Disabled'}</div>
+            <div className="text-xs text-muted-foreground">
+              State: {
+                selectedPlugin === 'shopify' ? (shopifyEnabled ? 'Enabled' : 'Disabled') :
+                selectedPlugin === 'woocommerce' ? (woocommerceEnabled ? 'Enabled' : 'Disabled') :
+                selectedPlugin === 'xshopping' ? (xshoppingConfig.enabled ? 'Enabled' : 'Disabled') :
+                selectedPlugin === 'jira' ? (jiraEnabled ? 'Enabled' : 'Disabled') :
+                'Disabled'
+              }
+            </div>
           </div>
 
           {/* Navbar */}
