@@ -670,7 +670,7 @@ export function ThemeLoader() {
       }
     } catch { }
 
-    async function applyForWallet(w?: string) {
+    async function applyForWallet(w?: string, forceReload = false) {
       try {
         const root = document.documentElement;
         try {
@@ -690,7 +690,7 @@ export function ThemeLoader() {
           const stageNow = root.getAttribute("data-pp-theme-stage") || "";
           const availAttrNow = root.getAttribute("data-pp-theme-merchant-available");
           const merchantAvailNow = availAttrNow === "1";
-          if (stageNow === "merchant" || merchantAvailNow) {
+          if (!forceReload && (stageNow === "merchant" || merchantAvailNow)) {
             return;
           }
         } catch { }
@@ -814,8 +814,8 @@ export function ThemeLoader() {
     const onLogin = (ev: any) => {
       try {
         const w = String(ev?.detail?.wallet || "").toLowerCase();
-        applyForWallet(w);
-      } catch { applyForWallet(""); }
+        applyForWallet(w, true);
+      } catch { applyForWallet("", true); }
     };
     const onLogout = () => {
       // Clear all merchant theme caches from sessionStorage
