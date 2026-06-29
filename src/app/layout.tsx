@@ -788,6 +788,17 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function() {
+            try {
+              var bk = document.documentElement.getAttribute('data-pp-brand-key') || 'basaltsurge';
+              var cached = localStorage.getItem('pp-thirdweb-client-id:' + bk);
+              if (cached) {
+                document.documentElement.setAttribute('data-pp-thirdweb-client-id', cached);
+              }
+            } catch(e) {}
+          })();
+        ` }} />
         {/* Cache invalidate comment */}
         <link rel="stylesheet" href="https://use.typekit.net/eur3bvn.css" />
         <meta name="base:app_id" content="69614c80b8395f034ac21fe2" />

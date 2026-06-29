@@ -30,9 +30,12 @@ export default function PartnerPluginsPanel() {
     return key.trim().toLowerCase() || "basaltsurge";
   };
 
-  // Brand selection (partners locked to their container brand key)
+  const isPlatformContainer = !brand?.key || brand.key.toLowerCase() === "basaltsurge" || brand.key.toLowerCase() === "portalpay";
+  const [brandsList, setBrandsList] = React.useState<string[]>(["basaltsurge"]);
+
+  // Brand selection (partners locked to their container brand key, platform has dropdown)
   const [brandKey, setBrandKey] = React.useState<string>(() => {
-    return brand?.key?.toLowerCase() || "";
+    return isPlatformContainer ? "basaltsurge" : (brand?.key?.toLowerCase() || "");
   });
 
   // Enabled states
@@ -42,6 +45,21 @@ export default function PartnerPluginsPanel() {
   const [xshoppingEnabled, setXShoppingEnabled] = React.useState<boolean>(false);
   const [jiraEnabled, setJiraEnabled] = React.useState<boolean>(false);
   const [jiraConfig, setJiraConfig] = React.useState<any>({});
+
+  // Fetch all brands if platform container to populate dropdown select options
+  React.useEffect(() => {
+    if (isPlatformContainer) {
+      (async () => {
+        try {
+          const r = await fetch("/api/platform/brands", { cache: "no-store" });
+          const j = await r.json().catch(() => ({}));
+          const arr = Array.isArray(j?.brands) ? j.brands.map((b: any) => String(b || '').toLowerCase()).filter(Boolean) : [];
+          const merged = Array.from(new Set(["basaltsurge", ...arr]));
+          setBrandsList(merged);
+        } catch { /* no-op */ }
+      })();
+    }
+  }, [isPlatformContainer]);
 
   // Workspace state
   type CatalogKey =
@@ -689,12 +707,28 @@ export default function PartnerPluginsPanel() {
         <div className="text-xs text-muted-foreground">Admin Wallet: {account?.address || "(not connected)"}</div>
       </div>
 
-      <div className="flex items-center gap-2">
-        <div className="text-xs font-mono px-3 py-1.5 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-muted-foreground select-none">
-          Brand Key: <span className="text-foreground font-semibold">{brandKey || "Loading..."}</span>
+      {isPlatformContainer ? (
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-muted-foreground mr-1">Brand</label>
+          <select
+            className="h-9 px-3 border border-foreground/[0.05] rounded-lg bg-background w-60 text-sm focus:border-foreground/30 focus:outline-none"
+            value={brandKey}
+            onChange={(e) => setBrandKey(e.target.value.toLowerCase())}
+          >
+            {brandsList.map((bk) => (
+              <option key={bk} value={bk}>{bk}</option>
+            ))}
+          </select>
+          {loading && <span className="microtext text-muted-foreground animate-pulse ml-2">Loading plugin config...</span>}
         </div>
-        {loading && <span className="microtext text-muted-foreground animate-pulse ml-2">Loading plugin config...</span>}
-      </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <div className="text-xs font-mono px-3 py-1.5 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-muted-foreground select-none">
+            Brand Key: <span className="text-foreground font-semibold">{brandKey || "Loading..."}</span>
+          </div>
+          {loading && <span className="microtext text-muted-foreground animate-pulse ml-2">Loading plugin config...</span>}
+        </div>
+      )}
 
       </div>
 
