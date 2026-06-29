@@ -137,7 +137,7 @@ export default function PartnerPluginsPanel() {
       const r = await fetch(`/api/admin/shopify/brands/${encodeURIComponent(targetBrand)}/plugin-config`, { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       const ok = r.ok && j?.plugin;
-      setShopifyEnabled(!!ok);
+      setShopifyEnabled(ok ? j.plugin.enabled !== false : false);
 
       // Load X Shopping Config
       try {
@@ -363,6 +363,28 @@ export default function PartnerPluginsPanel() {
       setInfo(enabled ? "X Shopping enabled." : "X Shopping disabled.");
     } catch (e: any) {
       setError(e.message || "Failed to save X Shopping config");
+    }
+  }
+
+  async function saveShopifyEnabled(enabled: boolean) {
+    setError(""); setInfo("");
+    try {
+      if (!brandKey?.trim()) { setError("Enter brandKey"); return; }
+      const targetBrand = getEffectiveBrandKey(brandKey);
+      if (!targetBrand) { setError("Invalid brandKey"); return; }
+
+      const r = await fetch(`/api/admin/shopify/brands/${encodeURIComponent(targetBrand)}/plugin-config`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setError(j?.error || "Failed to toggle Shopify plugin"); return; }
+
+      setShopifyEnabled(enabled);
+      setInfo(enabled ? "Shopify plugin enabled." : "Shopify plugin disabled.");
+    } catch (e: any) {
+      setError(e.message || "Failed to toggle Shopify plugin");
     }
   }
 
@@ -759,117 +781,39 @@ export default function PartnerPluginsPanel() {
             <div className="flex items-center gap-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={catalog.find(c => c.key === 'shopify')?.icon || '/logos/crypto.svg'} alt={selectedPlugin} className="h-6 w-6 object-contain rounded-md" />
-              <div className="text-sm font-semibold">Shopify Workspace — {brandKey || '—'}</div>
+              <div className="text-sm font-semibold">Shopify Integration — {brandKey || '—'}</div>
             </div>
             <div className="text-xs text-muted-foreground">State: {shopifyEnabled ? 'Enabled' : 'Disabled'}</div>
           </div>
 
-          {!shopifyEnabled ? (
-            <div className="rounded-md border p-3 bg-foreground/5 microtext text-muted-foreground">
-              This plugin is not yet enabled for your brand. Please reach out to PortalPay LLC to request activation.
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="microtext">Plugin Name</label>
-                  <input className="mt-1 h-10 w-full px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none placeholder-muted-foreground" value={plugin.pluginName} onChange={(e) => setPlugin({ ...plugin, pluginName: e.target.value })} />
-                </div>
-                <div>
-                  <label className="microtext">Tagline</label>
-                  <input className="mt-1 h-10 w-full px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none placeholder-muted-foreground" value={plugin.tagline} onChange={(e) => setPlugin({ ...plugin, tagline: e.target.value })} />
-                </div>
-                <div>
-                  <label className="microtext">Short Description</label>
-                  <input className="mt-1 h-10 w-full px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none placeholder-muted-foreground" value={plugin.shortDescription} onChange={(e) => setPlugin({ ...plugin, shortDescription: e.target.value })} />
-                </div>
-                <div>
-                  <label className="microtext">Features (comma separated)</label>
-                  <input className="mt-1 h-10 w-full px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none placeholder-muted-foreground" value={stringifyCsv(plugin.features)} onChange={(e) => setPlugin({ ...plugin, features: parseCsvInput(e.target.value) })} />
-                </div>
-              </div>
+          <div className="rounded-xl border border-foreground/[0.05] bg-background p-6 space-y-6">
+            <div className="flex items-center justify-between">
               <div>
-                <label className="microtext">Long Description</label>
-                <textarea className="mt-1 w-full h-24 px-3 py-2 border rounded-md bg-background" value={plugin.longDescription} onChange={(e) => setPlugin({ ...plugin, longDescription: e.target.value })} />
+                <div className="font-medium">Enable Integration</div>
+                <div className="microtext text-muted-foreground">Allow merchants under this brand to integrate their Shopify stores.</div>
               </div>
+              {/* Simple Toggle */}
+              <button
+                className={`w-12 h-6 rounded-full transition-colors flex items-center px-0.5 ${shopifyEnabled ? 'bg-green-500' : 'bg-slate-200'}`}
+                onClick={() => saveShopifyEnabled(!shopifyEnabled)}
+              >
+                <div className={`h-5 w-5 bg-white rounded-full shadow transition-transform ${shopifyEnabled ? 'translate-x-[22px]' : 'translate-x-0'}`} />
+              </button>
+            </div>
 
-              <div className="rounded-md border p-3 bg-background">
-                <div className="text-sm font-medium mb-2">Verification Status</div>
-                <div className="space-y-4">
-
-                  {/* Business & Legal */}
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Business & Legal</div>
-                    <div className="flex items-center gap-2">
-                      <input type="checkbox" checked={plugin.verification.domainVerified} onChange={(e) => setPlugin({ ...plugin, verification: { ...plugin.verification, domainVerified: e.target.checked } })} />
-                      <span className="microtext">Domain Ownership Verified</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input type="checkbox" checked={plugin.verification.businessVerified} onChange={(e) => setPlugin({ ...plugin, verification: { ...plugin.verification, businessVerified: e.target.checked } })} />
-                      <span className="microtext">Business Verification Complete</span>
-                    </div>
-                  </div>
-
-                  {/* Technical */}
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Technical</div>
-                    <div className="flex items-center gap-2">
-                      <input type="checkbox" checked={plugin.verification.gdprWebhooks} onChange={(e) => setPlugin({ ...plugin, verification: { ...plugin.verification, gdprWebhooks: e.target.checked } })} />
-                      <span className="microtext">GDPR Webhooks Implemented</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input type="checkbox" checked={plugin.verification.lighthouseScore} onChange={(e) => setPlugin({ ...plugin, verification: { ...plugin.verification, lighthouseScore: e.target.checked } })} />
-                      <span className="microtext">Lighthouse Performance Check</span>
-                    </div>
-                  </div>
-
-                  {/* Listing */}
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Listing Details</div>
-                    <div className="grid grid-cols-1 gap-2">
-                      <input
-                        className="h-8 w-full px-2 border rounded-md bg-background text-xs"
-                        value={plugin.verification.demoUrl}
-                        onChange={(e) => setPlugin({ ...plugin, verification: { ...plugin.verification, demoUrl: e.target.value } })}
-                        placeholder="Demo Store URL"
-                      />
-                      <input
-                        className="h-8 w-full px-2 border rounded-md bg-background text-xs"
-                        value={plugin.verification.screencastUrl}
-                        onChange={(e) => setPlugin({ ...plugin, verification: { ...plugin.verification, screencastUrl: e.target.value } })}
-                        placeholder="Screencast URL"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 mt-2">
-                      <input type="checkbox" checked={plugin.verification.appReviewSubmitted} onChange={(e) => setPlugin({ ...plugin, verification: { ...plugin.verification, appReviewSubmitted: e.target.checked } })} />
-                      <span className="microtext">App Submitted for Review</span>
-                    </div>
-                  </div>
-
+            {shopifyEnabled && (
+              <div className="mt-4 p-3 rounded-md bg-foreground/5 border">
+                <div className="text-sm font-semibold mb-1">Status</div>
+                <div className="microtext text-muted-foreground">
+                  Shopify integration is active. Merchants can connect their stores and manage settings from their Integrations dashboard.
                 </div>
               </div>
+            )}
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" className="px-3 py-1.5 border rounded-md text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20" onClick={autoPopulateUrls}>Auto-populate URLs</button>
-                <button type="button" className="px-4 py-2 border border-foreground/[0.05] rounded-lg text-sm bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-all shadow-sm" onClick={saveConfig} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
-                <button className="px-3 py-1.5 border rounded-md text-sm" onClick={generatePackage}>Generate Package</button>
-                <button className="px-3 py-1.5 border rounded-md text-sm" onClick={deploy}>Deploy</button>
-                <button className="px-3 py-1.5 border rounded-md text-sm" onClick={getStatus}>Status</button>
-                <button className="px-3 py-1.5 border rounded-md text-sm" onClick={publish}>Publish</button>
-              </div>
-
-              {(info || error) && (
-                <div className={`rounded-md border p-2 text-sm ${error ? "text-red-600" : "text-emerald-600"}`}>{error || info}</div>
-              )}
-
-              {statusDoc && (
-                <div className="rounded-md border p-3 bg-foreground/5">
-                  <div className="text-sm font-medium mb-2">Deployment Status</div>
-                  <pre className="text-xs whitespace-pre-wrap break-words">{JSON.stringify(statusDoc, null, 2)}</pre>
-                </div>
-              )}
-            </>
-          )}
+            {(info || error) && (
+              <div className={`rounded-md border p-2 text-sm ${error ? "text-red-600" : "text-emerald-600"}`}>{error || info}</div>
+            )}
+          </div>
         </div>
       )}
     </div>

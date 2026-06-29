@@ -26,8 +26,8 @@ function Switch({ id, checked, onChange, disabled, activeColor }: SwitchProps) {
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-250 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
-        checked ? "" : "bg-zinc-250 dark:bg-zinc-700"
+      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-250 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-85 ${
+        checked ? "" : "bg-zinc-300 dark:bg-zinc-600"
       }`}
       style={{
         backgroundColor: checked ? primaryColor : undefined,

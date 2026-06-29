@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Copy, CheckCircle } from "lucide-react";
+import { Copy, CheckCircle, ExternalLink } from "lucide-react";
 import { useActiveAccount } from "thirdweb/react";
 
 type ShopifyTile = {
@@ -15,6 +15,8 @@ type ShopifyTile = {
   tagline: string;
   status: string;
   listingUrl: string;
+  installUrl?: string;
+  enabled?: boolean;
   iconUrl?: string;
   bannerUrl?: string;
 };
@@ -173,12 +175,10 @@ export default function IntegrationsPanel() {
     // Visibility Check: X Shopping only visible if enabled by Partner
     if (isXShopping && !xEnabled) return null;
 
-    const statusLower = String(tile?.status || "").toLowerCase();
-    const enabled = isShopify ? (statusLower === "published") : (isXShopping ? true : false); // If visible (xEnabled=true), it's "enabled" for merchant use
-    const configured = isShopify ? (!!tile?.listingUrl && statusLower !== "draft") : (isXShopping ? true : false); // X Shopping is always "configured" if enabled (simple feed URL)
+    const enabled = isShopify ? (!!tile?.enabled) : (isXShopping ? true : false); // If visible (xEnabled=true), it's "enabled" for merchant use
+    const configured = isShopify ? (!!tile?.listingUrl || !!tile?.installUrl) : (isXShopping ? true : false); // X Shopping is always "configured" if enabled (simple feed URL)
 
     const tagline = isShopify ? (tile?.tagline || p.description) : p.description;
-    const published = isShopify && statusLower === "published";
 
     return (
       <div key={p.key} className={`relative overflow-hidden rounded-xl border border-foreground/[0.05] p-5 bg-foreground/[0.02] hover:bg-foreground/[0.03] transition-all group hover:border-primary/30`}>
@@ -210,16 +210,57 @@ export default function IntegrationsPanel() {
             </div>
             <div className="text-sm text-muted-foreground mt-1 line-clamp-2 pr-4">{tagline}</div>
             <div className="mt-4 flex items-center gap-2">
-              {isShopify && published && tile?.listingUrl ? (
-                <a
-                  href={tile.listingUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm ring-1 ring-primary/50 inline-flex items-center gap-2"
-                  title="Open listing to install"
-                >
-                  Install on Shopify
-                </a>
+              {isShopify ? (
+                tile?.enabled && (tile.installUrl || tile.listingUrl) ? (
+                  <div className="flex flex-col gap-2 w-full">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {tile.installUrl && (
+                        <a
+                          href={tile.installUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-1.5"
+                          title="Begin installation"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          <span>Install App</span>
+                        </a>
+                      )}
+                      {!tile.installUrl && tile.listingUrl && (
+                        <a
+                          href={tile.listingUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm inline-flex items-center gap-1.5"
+                          title="Open listing to install"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          <span>Install on Shopify</span>
+                        </a>
+                      )}
+                      <button
+                        className="px-3 py-2 border rounded-lg bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors inline-flex items-center gap-1.5"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const link = tile.installUrl || tile.listingUrl || "";
+                          navigator.clipboard.writeText(link).then(() => {
+                            setCopied(true);
+                            setTimeout(() => setCopied(false), 2000);
+                          });
+                        }}
+                      >
+                        {copied ? <CheckCircle className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                        <span>{copied ? "Copied!" : "Copy Install Link"}</span>
+                      </button>
+                    </div>
+                    <div className="microtext text-muted-foreground">
+                      Click to install the app or copy the installation link for your Shopify store.
+                    </div>
+                  </div>
+                ) : (
+                  <span className="text-xs text-muted-foreground italic">Shopify integration is disabled for this brand. Contact your account manager to enable it.</span>
+                )
               ) : isXShopping ? (
                 <Dialog open={showXSetup} onOpenChange={setShowXSetup}>
                   <DialogTrigger asChild>

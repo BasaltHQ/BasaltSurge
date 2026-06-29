@@ -53,9 +53,11 @@ type ShopifyPluginConfigDoc = {
   };
   // Shopify identifiers and listing
   listingUrl?: string;
+  installUrl?: string;
   shopifyAppId?: string;
   shopifyAppSecret?: string;
   shopifyAppSlug?: string;
+  enabled?: boolean;
   // Status and bookkeeping
   status?: "draft" | "packaged" | "deploying" | "in_review" | "published" | "error";
   updatedAt?: number;
@@ -152,9 +154,14 @@ function normalizePatch(raw: any, brandKey: string): Partial<ShopifyPluginConfig
     const u = sanitizeUrl(raw.listingUrl);
     if (u) out.listingUrl = u;
   }
+  if (typeof raw?.installUrl === "string") {
+    const u = sanitizeUrl(raw.installUrl);
+    if (u) out.installUrl = u;
+  }
   if (typeof raw?.shopifyAppId === "string") out.shopifyAppId = raw.shopifyAppId.trim();
   if (typeof raw?.shopifyAppSecret === "string") out.shopifyAppSecret = raw.shopifyAppSecret.trim();
   if (typeof raw?.shopifyAppSlug === "string") out.shopifyAppSlug = raw.shopifyAppSlug.trim();
+  if (typeof raw?.enabled === "boolean") out.enabled = raw.enabled;
 
   if (typeof raw?.status === "string") out.status = clampStatus(raw.status);
 
