@@ -1107,11 +1107,13 @@ export async function POST(req: NextRequest) {
     };
 
     // Derive origin from request headers so partner containers get their own domain
-    const xfProto = req.headers.get("x-forwarded-proto");
-    const xfHost = req.headers.get("x-forwarded-host");
+    const rawXfProto = req.headers.get("x-forwarded-proto");
+    const rawXfHost = req.headers.get("x-forwarded-host");
+    const xfProto = rawXfProto ? rawXfProto.split(",")[0].trim() : null;
+    const xfHost = rawXfHost ? rawXfHost.split(",")[0].trim() : null;
     const hostHeader = req.headers.get("host");
     const orderProto = xfProto || (process.env.NODE_ENV === "production" ? "https" : "http");
-    const orderHost = xfHost || hostHeader || "";
+    const orderHost = xfHost || (hostHeader ? hostHeader.split(",")[0].trim() : "");
     const orderOrigin = orderHost ? `${orderProto}://${orderHost}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
 
     try {

@@ -922,6 +922,7 @@ export default function PlatformPluginsPanel() {
     return Boolean((p?.listingUrl || "") && ((p?.shopifyAppId || "") || (p?.shopifyAppSlug || "")));
   }
   function isVerificationComplete(p: any): boolean {
+    if (p?.verification?.optional) return true;
     return Boolean(
       p?.verification?.domainVerified &&
       p?.verification?.businessVerified &&
@@ -2094,15 +2095,33 @@ export default function PlatformPluginsPanel() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-foreground/[0.05] bg-amber-50/50 dark:bg-amber-950/20 p-3">
-              <div className="text-sm font-medium text-amber-900 dark:text-amber-100 mb-1">App Verification Required</div>
-              <div className="microtext text-amber-700 dark:text-amber-300">
-                Before your app can be published to the Shopify App Store, you must complete the verification process.
-                This ensures your app meets Shopify's quality and security standards.
+            {!plugin.verification?.optional && (
+              <div className="rounded-2xl border border-foreground/[0.05] bg-amber-50/50 dark:bg-amber-950/20 p-3">
+                <div className="text-sm font-medium text-amber-900 dark:text-amber-100 mb-1">App Verification Required</div>
+                <div className="microtext text-amber-700 dark:text-amber-300">
+                  Before your app can be published to the Shopify App Store, you must complete the verification process.
+                  This ensures your app meets Shopify's quality and security standards.
+                </div>
               </div>
-            </div>
+            )}
 
             <fieldset disabled={!editVerification} className="space-y-4">
+
+              {/* Bypass Verification Toggle */}
+              <div className="flex items-start gap-3 p-3 rounded-md border border-purple-500/20 bg-purple-50/20 dark:bg-purple-950/10">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4"
+                  checked={!!plugin.verification?.optional}
+                  onChange={(e) => setPlugin({ ...plugin, verification: { ...plugin.verification, optional: e.target.checked } })}
+                />
+                <div>
+                  <div className="text-sm font-medium text-purple-900 dark:text-purple-100">Bypass App Verification</div>
+                  <div className="microtext text-muted-foreground">
+                    Enable this to skip Shopify App Store verification requirements for custom distribution or partner-managed deployments.
+                  </div>
+                </div>
+              </div>
 
               {/* Business & Legal */}
               <div className="space-y-2">
@@ -2679,7 +2698,7 @@ export default function PlatformPluginsPanel() {
             return (
               <div className="mt-2 group">
                 <div className="h-2 group-hover:h-6 transition-all rounded-md overflow-hidden border bg-background/50">
-                  <div className="grid grid-cols-4 h-full">
+                  <div className="grid grid-cols-5 h-full">
                     <div className={`${bgClass(st.config)} relative`}>
                       <div className="absolute inset-0 hidden group-hover:flex items-center justify-center transition microtext text-[10px]">Configuration: {label(st.config)}</div>
                     </div>
@@ -2688,6 +2707,9 @@ export default function PlatformPluginsPanel() {
                     </div>
                     <div className={`${bgClass(st.extension)} relative`}>
                       <div className="absolute inset-0 hidden group-hover:flex items-center justify-center transition microtext text-[10px]">Extension: {label(st.extension)}</div>
+                    </div>
+                    <div className={`${bgClass(st.verification)} relative`}>
+                      <div className="absolute inset-0 hidden group-hover:flex items-center justify-center transition microtext text-[10px]">Verification: {label(st.verification)}</div>
                     </div>
                     <div className={`${bgClass(st.publish)} relative`}>
                       <div className="absolute inset-0 hidden group-hover:flex items-center justify-center transition microtext text-[10px]">Publish: {label(st.publish)}</div>
