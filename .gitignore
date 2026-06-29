@@ -85,3 +85,6 @@ vcrun.py
 
 /scripts
 scratch/check-brands.js
+
+# Shopify CLI temp build directories
+.shopify-deploy-*

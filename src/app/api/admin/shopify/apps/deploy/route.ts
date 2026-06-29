@@ -36,6 +36,7 @@ type DeployDoc = {
   type: "shopify_app_deployment";
   brandKey: string;
   progress: DeployProgressStep[];
+  logs?: string[];
   devStoreUrl?: string;
   appId?: string;
   clientId?: string;
@@ -60,6 +61,21 @@ async function updateDeployDoc(brandKey: string, updates: Partial<DeployDoc>): P
   const next: DeployDoc = { ...base, ...updates, updatedAt: Date.now() };
   await c.items.upsert(next as any);
   return next;
+}
+
+async function appendDeployLogs(brandKey: string, lines: string[]): Promise<void> {
+  if (lines.length === 0) return;
+  try {
+    const c = await getContainer();
+    const { resource } = await c.item(depDocId(brandKey), brandKey).read<DeployDoc>();
+    if (resource) {
+      const logs = Array.isArray(resource.logs) ? resource.logs : [];
+      logs.push(...lines);
+      if (logs.length > 200) logs.splice(0, logs.length - 200);
+      const next: DeployDoc = { ...resource, logs, updatedAt: Date.now() };
+      await c.items.upsert(next as any);
+    }
+  } catch {}
 }
 
 export async function POST(req: NextRequest) {
@@ -124,53 +140,12 @@ export async function POST(req: NextRequest) {
   const cliVersion = await getShopifyCliVersion();
   await appendProgress(brandKey, { step: "cli_check", ok: true, info: { version: cliVersion } });
 
-  // Step 2: Check required environment variables
-  const partnersToken = process.env.SHOPIFY_CLI_PARTNERS_TOKEN;
-  const orgId = process.env.SHOPIFY_ORG_ID;
-
-  if (!partnersToken) {
-    const doc = await appendProgress(brandKey, { 
-      step: "env_check", 
-      ok: false, 
-      info: { 
-        missing: "SHOPIFY_CLI_PARTNERS_TOKEN",
-        hint: "Create a Partner API token at partners.shopify.com and set it in environment variables"
-      } 
-    });
-    return headerJson({ 
-      error: "missing_partners_token", 
-      hint: "Set SHOPIFY_CLI_PARTNERS_TOKEN environment variable",
-      correlationId, 
-      deployment: doc 
-    }, { status: 400 });
-  }
-
-  if (!orgId) {
-    const doc = await appendProgress(brandKey, { 
-      step: "env_check", 
-      ok: false, 
-      info: { 
-        missing: "SHOPIFY_ORG_ID",
-        hint: "Find your organization ID in the Shopify Partners dashboard URL"
-      } 
-    });
-    return headerJson({ 
-      error: "missing_org_id", 
-      hint: "Set SHOPIFY_ORG_ID environment variable",
-      correlationId, 
-      deployment: doc 
-    }, { status: 400 });
-  }
-
-  await appendProgress(brandKey, { step: "env_check", ok: true, info: { orgId } });
-
-  // Step 3: Load plugin config
+  // Step 2: Load plugin config
   let plugin: any = null;
   try {
-    const base = new URL(req.url).origin;
-    const r = await fetch(`${base}/api/admin/shopify/brands/${encodeURIComponent(brandKey)}/plugin-config`, { cache: "no-store" });
-    const j = await r.json().catch(() => ({}));
-    plugin = j?.plugin || null;
+    const c = await getContainer();
+    const { resource } = await c.item(pluginDocId(brandKey), brandKey).read<any>();
+    plugin = resource || null;
   } catch {}
   
   if (!plugin) {
@@ -180,9 +155,49 @@ export async function POST(req: NextRequest) {
 
   await appendProgress(brandKey, { step: "config_load", ok: true, info: { pluginName: plugin?.pluginName || brandKey } });
 
+  const partnersToken = plugin?.cliPartnersToken || "";
+  const orgId = plugin?.partnerOrgId || "";
+
+  if (!partnersToken) {
+    await appendProgress(brandKey, { 
+      step: "env_check", 
+      ok: true, 
+      info: { 
+        warning: "No CLI Token configured. Deploying using active local developer account login session."
+      } 
+    });
+  } else {
+    await appendProgress(brandKey, { 
+      step: "env_check", 
+      ok: true, 
+      info: { 
+        tokenPresent: true
+      } 
+    });
+  }
+
+  if (!orgId) {
+    await appendProgress(brandKey, { 
+      step: "env_check", 
+      ok: true, 
+      info: { 
+        warning: "No Organization ID configured. Omitted from command context (App Automation Token does not require it)."
+      } 
+    });
+  } else {
+    await appendProgress(brandKey, { step: "env_check", ok: true, info: { orgId } });
+  }
+
   // Step 4: Validate required configuration
   const redirectUrls = Array.isArray(plugin?.oauth?.redirectUrls) ? plugin.oauth.redirectUrls.filter(Boolean) : [];
-  const scopes = Array.isArray(plugin?.oauth?.scopes) ? plugin.oauth.scopes.filter(Boolean) : [];
+  const restrictedPaymentScopes = [
+    "read_payment_gateways",
+    "write_payment_gateways",
+    "read_payment_sessions",
+    "write_payment_sessions"
+  ];
+  const scopes = (Array.isArray(plugin?.oauth?.scopes) ? plugin.oauth.scopes.filter(Boolean) : [])
+    .filter((s: string) => !restrictedPaymentScopes.includes(s));
 
   if (redirectUrls.length === 0) {
     const doc = await appendProgress(brandKey, { step: "config_validate", ok: false, info: { missing: "OAuth redirect URLs" } });
@@ -205,7 +220,12 @@ export async function POST(req: NextRequest) {
   });
 
   // Step 5: Build Shopify app config
-  const baseUrl = new URL(req.url).origin;
+  let baseUrl = new URL(req.url).origin;
+  if (process.env.PLESK_MAIN_DOMAIN) {
+    baseUrl = `https://${process.env.PLESK_MAIN_DOMAIN}`;
+  } else if (process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.includes("localhost")) {
+    baseUrl = process.env.NEXT_PUBLIC_APP_URL;
+  }
   const applicationUrl = body?.applicationUrl || plugin?.urls?.appUrl || `${baseUrl}/shopify/settings?brandKey=${brandKey}`;
 
   const appConfig: ShopifyAppConfig = {
@@ -219,6 +239,8 @@ export async function POST(req: NextRequest) {
     supportUrl: plugin?.urls?.supportUrl || undefined,
     privacyUrl: plugin?.urls?.privacyUrl || undefined,
     termsUrl: plugin?.urls?.termsUrl || undefined,
+    partnersToken,
+    orgId,
     extension: plugin?.extension?.enabled ? {
       enabled: true,
       buttonLabel: String(plugin?.extension?.buttonLabel || "Pay with Crypto"),
@@ -245,9 +267,44 @@ export async function POST(req: NextRequest) {
   await appendProgress(brandKey, { step: "deploy_start", ok: true, info: { method: "shopify_cli" } });
 
   let deployResult: DeployResult;
+  let logBuffer: string[] = [];
+  let flushTimer: NodeJS.Timeout | null = null;
+
+  const flushLogs = async () => {
+    if (logBuffer.length === 0) return;
+    const lines = [...logBuffer];
+    logBuffer = [];
+    await appendDeployLogs(brandKey, lines);
+  };
+
+  const onLog = (line: string) => {
+    logBuffer.push(line);
+    if (!flushTimer) {
+      flushTimer = setTimeout(async () => {
+        flushTimer = null;
+        await flushLogs();
+      }, 500);
+    }
+  };
+
   try {
-    deployResult = await deployShopifyApp(appConfig);
+    // Clear any previous logs before starting
+    try {
+      const c = await getContainer();
+      const { resource } = await c.item(depDocId(brandKey), brandKey).read<DeployDoc>();
+      if (resource) {
+        resource.logs = [];
+        await c.items.upsert(resource as any);
+      }
+    } catch {}
+
+    deployResult = await deployShopifyApp(appConfig, onLog);
+    
+    if (flushTimer) clearTimeout(flushTimer);
+    await flushLogs();
   } catch (e: any) {
+    if (flushTimer) clearTimeout(flushTimer);
+    await flushLogs();
     const doc = await appendProgress(brandKey, { 
       step: "deploy_execute", 
       ok: false, 
@@ -381,10 +438,8 @@ export async function GET(req: NextRequest) {
   // Check plugin config if brandKey provided
   if (brandKey) {
     try {
-      const base = new URL(req.url).origin;
-      const r = await fetch(`${base}/api/admin/shopify/brands/${encodeURIComponent(brandKey)}/plugin-config`, { cache: "no-store" });
-      const j = await r.json().catch(() => ({}));
-      const plugin = j?.plugin || null;
+      const c = await getContainer();
+      const { resource: plugin } = await c.item(pluginDocId(brandKey), brandKey).read<any>();
       checks.push({ 
         name: "plugin_config", 
         ok: !!plugin, 

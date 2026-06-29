@@ -57,6 +57,8 @@ type ShopifyPluginConfigDoc = {
   shopifyAppId?: string;
   shopifyAppSecret?: string;
   shopifyAppSlug?: string;
+  partnerOrgId?: string;
+  cliPartnersToken?: string;
   enabled?: boolean;
   // Status and bookkeeping
   status?: "draft" | "packaged" | "deploying" | "in_review" | "published" | "error";
@@ -161,6 +163,8 @@ function normalizePatch(raw: any, brandKey: string): Partial<ShopifyPluginConfig
   if (typeof raw?.shopifyAppId === "string") out.shopifyAppId = raw.shopifyAppId.trim();
   if (typeof raw?.shopifyAppSecret === "string") out.shopifyAppSecret = raw.shopifyAppSecret.trim();
   if (typeof raw?.shopifyAppSlug === "string") out.shopifyAppSlug = raw.shopifyAppSlug.trim();
+  if (typeof raw?.partnerOrgId === "string") out.partnerOrgId = raw.partnerOrgId.trim();
+  if (typeof raw?.cliPartnersToken === "string") out.cliPartnersToken = raw.cliPartnersToken.trim();
   if (typeof raw?.enabled === "boolean") out.enabled = raw.enabled;
 
   if (typeof raw?.status === "string") out.status = clampStatus(raw.status);

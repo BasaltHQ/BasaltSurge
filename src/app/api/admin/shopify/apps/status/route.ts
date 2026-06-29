@@ -32,6 +32,7 @@ type DeployDoc = {
   type: "shopify_app_deployment";
   brandKey: string;
   progress: DeployProgressStep[];
+  logs?: string[];
   devStoreUrl?: string;
   appId?: string;
   clientId?: string;
@@ -76,6 +77,8 @@ export async function GET(req: NextRequest) {
   const hasPartnersToken = !!process.env.SHOPIFY_CLI_PARTNERS_TOKEN;
   const hasOrgId = !!process.env.SHOPIFY_ORG_ID;
 
+  const skipInfo = url.searchParams.get("skipInfo") === "true";
+
   // Compute deployment status
   let status: "not_configured" | "draft" | "ready_to_deploy" | "deploying" | "deployed" | "failed" = "not_configured";
   
@@ -95,14 +98,16 @@ export async function GET(req: NextRequest) {
     status = "draft";
   }
 
-  // Try to get app info from Shopify if we have a client ID
+  // Try to get app info from Shopify if we have a client ID (skip if deploying or requested)
   let shopifyAppInfo: any = null;
-  if (deployment?.clientId || plugin?.shopifyClientId) {
+  if (!skipInfo && status !== "deploying") {
     const clientId = deployment?.clientId || plugin?.shopifyClientId;
-    try {
-      shopifyAppInfo = await getAppInfo(clientId);
-    } catch {
-      // App info fetch failed
+    if (clientId) {
+      try {
+        shopifyAppInfo = await getAppInfo(clientId);
+      } catch {
+        // App info fetch failed
+      }
     }
   }
 
@@ -183,6 +188,7 @@ export async function GET(req: NextRequest) {
       clientId: deployment.clientId,
       appUrl: deployment.appUrl,
       lastError: deployment.lastError,
+      logs: deployment.logs || [],
       updatedAt: deployment.updatedAt ? new Date(deployment.updatedAt).toISOString() : null,
     } : null,
     plugin: plugin ? {

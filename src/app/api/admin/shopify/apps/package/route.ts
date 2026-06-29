@@ -3,6 +3,7 @@ import { requireThirdwebAuth } from "@/lib/auth";
 import { requireCsrf } from "@/lib/security";
 import { auditEvent } from "@/lib/audit";
 import JSZip from "jszip";
+import { getContainer } from "@/lib/cosmos";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -147,10 +148,9 @@ export async function POST(req: NextRequest) {
   // Load plugin config for brand
   let plugin: any = null;
   try {
-    const baseUrl = new URL(req.url).origin;
-    const r = await fetch(`${baseUrl}/api/admin/shopify/brands/${encodeURIComponent(brandKey)}/plugin-config`, { cache: "no-store" });
-    const j = await r.json().catch(() => ({}));
-    plugin = j?.plugin || null;
+    const c = await getContainer();
+    const { resource } = await c.item(`shopify_plugin_config:${brandKey}`, brandKey).read<any>();
+    plugin = resource || null;
   } catch { }
   if (!plugin) {
     return headerJson({ error: "plugin_config_not_found", correlationId }, { status: 404 });
