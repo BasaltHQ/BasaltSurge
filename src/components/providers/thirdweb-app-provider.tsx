@@ -1,3 +1,5 @@
+"use client";
+
 import React, { useState, useEffect } from "react";
 import { ThirdwebProvider } from "thirdweb/react";
 import { getResolvedClientId } from "@/lib/thirdweb/client";
