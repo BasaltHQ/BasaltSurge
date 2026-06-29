@@ -185,19 +185,26 @@ export default function SiteFooter() {
               <ul className="space-y-2">
                 {ecosystemLinks.map((link) => (
                   <li key={link.label}>
-                    <a
-                      href={link.href}
-                      target={link.href.startsWith("http") ? "_blank" : undefined}
-                      rel={link.href.startsWith("http") ? "noopener noreferrer" : undefined}
-                      className="text-gray-400 text-sm hover:text-white transition-colors flex items-center gap-1"
-                    >
-                      {link.label}
-                      {link.href.startsWith("http") && (
+                    {link.href.startsWith("http") ? (
+                      <a
+                        href={link.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-gray-400 text-sm hover:text-white transition-colors flex items-center gap-1"
+                      >
+                        {link.label}
                         <svg className="w-4 h-4 text-theme-secondary/70 group-hover:text-theme-secondary transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                         </svg>
-                      )}
-                    </a>
+                      </a>
+                    ) : (
+                      <Link
+                        href={link.href}
+                        className="text-gray-400 text-sm hover:text-white transition-colors flex items-center gap-1"
+                      >
+                        {link.label}
+                      </Link>
+                    )}
                   </li>
                 ))}
               </ul>

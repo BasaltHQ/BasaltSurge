@@ -77,18 +77,18 @@ export default function DevelopersPage() {
               Trustless, permissionless payment infrastructure for accepting cryptocurrency payments with automatic payment splitting.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <a
+              <Link
                 href="/developers/docs/quickstart"
                 className="px-6 py-3 bg-foreground text-background rounded-md hover:opacity-90 transition-opacity font-medium"
               >
                 Quick Start Guide
-              </a>
-              <a
+              </Link>
+              <Link
                 href="/developers/docs/api"
                 className="px-6 py-3 border rounded-md hover:bg-foreground/5 transition-colors font-medium"
               >
                 API Reference
-              </a>
+              </Link>
             </div>
           </div>
         </div>
@@ -133,7 +133,7 @@ export default function DevelopersPage() {
             Documentation
           </h2>
           <div className="grid md:grid-cols-2 gap-6">
-            <a href="/developers/docs/quickstart" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group">
+            <Link href="/developers/docs/quickstart" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group">
               <div className="flex items-start justify-between mb-4">
                 <Zap className="h-8 w-8 text-[var(--primary)]" />
                 <span className="text-xs px-2 py-1 rounded-md bg-green-500/10 text-green-600 dark:text-green-400">
@@ -152,9 +152,9 @@ export default function DevelopersPage() {
                 <li>• Generate orders</li>
                 <li>• Accept payments</li>
               </ul>
-            </a>
+            </Link>
 
-            <a href="/developers/docs/auth" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group">
+            <Link href="/developers/docs/auth" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group">
               <Shield className="h-8 w-8 text-[var(--primary)] mb-4" />
               <h3 className="text-lg font-semibold mb-2 group-hover:text-[var(--primary)] transition-colors">
                 Authentication & Security
@@ -168,9 +168,9 @@ export default function DevelopersPage() {
                 <li>• Gateway architecture</li>
                 <li>• Incident response</li>
               </ul>
-            </a>
+            </Link>
 
-            <a href="/developers/docs/api" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group">
+            <Link href="/developers/docs/api" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group">
               <BookOpen className="h-8 w-8 text-[var(--primary)] mb-4" />
               <h3 className="text-lg font-semibold mb-2 group-hover:text-[var(--primary)] transition-colors">
                 API Reference
@@ -184,9 +184,9 @@ export default function DevelopersPage() {
                 <li>• Order Generation</li>
                 <li>• Receipt APIs</li>
               </ul>
-            </a>
+            </Link>
 
-            <a href="/developers/docs/examples" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group">
+            <Link href="/developers/docs/examples" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group">
               <Code className="h-8 w-8 text-[var(--primary)] mb-4" />
               <h3 className="text-lg font-semibold mb-2 group-hover:text-[var(--primary)] transition-colors">
                 Code Examples
@@ -200,7 +200,7 @@ export default function DevelopersPage() {
                 <li>• cURL commands</li>
                 <li>• Complete integrations</li>
               </ul>
-            </a>
+            </Link>
           </div>
         </div>
       </section>
@@ -257,41 +257,41 @@ curl -X POST ${app}/api/orders \\
             API Categories
           </h2>
           <div className="grid gap-4">
-            <a href="/developers/docs/api/split" className="glass-pane rounded-xl border p-4 hover:bg-foreground/5 transition-colors flex items-center justify-between group">
+            <Link href="/developers/docs/api/split" className="glass-pane rounded-xl border p-4 hover:bg-foreground/5 transition-colors flex items-center justify-between group">
               <div>
                 <h3 className="font-semibold mb-1 group-hover:text-[var(--primary)] transition-colors">Split Contract APIs</h3>
                 <p className="text-sm text-muted-foreground">Configure payment distribution and view transactions</p>
               </div>
               <span className="text-muted-foreground">→</span>
-            </a>
-            <a href="/developers/docs/api/inventory" className="glass-pane rounded-xl border p-4 hover:bg-foreground/5 transition-colors flex items-center justify-between group">
+            </Link>
+            <Link href="/developers/docs/api/inventory" className="glass-pane rounded-xl border p-4 hover:bg-foreground/5 transition-colors flex items-center justify-between group">
               <div>
                 <h3 className="font-semibold mb-1 group-hover:text-[var(--primary)] transition-colors">Inventory APIs</h3>
                 <p className="text-sm text-muted-foreground">Manage your product catalog with full CRUD operations</p>
               </div>
               <span className="text-muted-foreground">→</span>
-            </a>
-            <a href="/developers/docs/api/orders" className="glass-pane rounded-xl border p-4 hover:bg-foreground/5 transition-colors flex items-center justify-between group">
+            </Link>
+            <Link href="/developers/docs/api/orders" className="glass-pane rounded-xl border p-4 hover:bg-foreground/5 transition-colors flex items-center justify-between group">
               <div>
                 <h3 className="font-semibold mb-1 group-hover:text-[var(--primary)] transition-colors">Order APIs</h3>
                 <p className="text-sm text-muted-foreground">Generate receipts with tax calculation and processing fees</p>
               </div>
               <span className="text-muted-foreground">→</span>
-            </a>
-            <a href="/developers/docs/api/receipts" className="glass-pane rounded-xl border p-4 hover:bg-foreground/5 transition-colors flex items-center justify-between group">
+            </Link>
+            <Link href="/developers/docs/api/receipts" className="glass-pane rounded-xl border p-4 hover:bg-foreground/5 transition-colors flex items-center justify-between group">
               <div>
                 <h3 className="font-semibold mb-1 group-hover:text-[var(--primary)] transition-colors">Receipt APIs</h3>
                 <p className="text-sm text-muted-foreground">View transaction history and payment status</p>
               </div>
               <span className="text-muted-foreground">→</span>
-            </a>
-            <a href="/developers/docs/api/shop" className="glass-pane rounded-xl border p-4 hover:bg-foreground/5 transition-colors flex items-center justify-between group">
+            </Link>
+            <Link href="/developers/docs/api/shop" className="glass-pane rounded-xl border p-4 hover:bg-foreground/5 transition-colors flex items-center justify-between group">
               <div>
                 <h3 className="font-semibold mb-1 group-hover:text-[var(--primary)] transition-colors">Shop Configuration APIs</h3>
                 <p className="text-sm text-muted-foreground">Customize branding, tax jurisdictions, and settings</p>
               </div>
               <span className="text-muted-foreground">→</span>
-            </a>
+            </Link>
           </div>
         </div>
       </section>
@@ -303,24 +303,24 @@ curl -X POST ${app}/api/orders \\
             Integration Guides
           </h2>
           <div className="grid md:grid-cols-3 gap-6">
-            <a href="/developers/docs/guides/ecommerce" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors">
+            <Link href="/developers/docs/guides/ecommerce" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors">
               <h3 className="text-lg font-semibold mb-2">E-commerce Integration</h3>
               <p className="text-sm text-muted-foreground">
                 Complete guide for integrating {displayBrandName} into your online store
               </p>
-            </a>
-            <a href="/developers/docs/guides/payment-gateway" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors">
+            </Link>
+            <Link href="/developers/docs/guides/payment-gateway" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors">
               <h3 className="text-lg font-semibold mb-2">Payment Gateway</h3>
               <p className="text-sm text-muted-foreground">
                 Build a custom payment gateway with {displayBrandName} infrastructure
               </p>
-            </a>
-            <a href="/developers/docs/guides/pos" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors">
+            </Link>
+            <Link href="/developers/docs/guides/pos" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors">
               <h3 className="text-lg font-semibold mb-2">Point of Sale</h3>
               <p className="text-sm text-muted-foreground">
                 Accept in-person crypto payments with terminal integration
               </p>
-            </a>
+            </Link>
           </div>
         </div>
       </section>
@@ -332,18 +332,18 @@ curl -X POST ${app}/api/orders \\
             Additional Resources
           </h2>
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <a href="/developers/docs/errors" className="glass-pane rounded-lg border p-4 hover:bg-foreground/5 transition-colors text-center">
+            <Link href="/developers/docs/errors" className="glass-pane rounded-lg border p-4 hover:bg-foreground/5 transition-colors text-center">
               <h3 className="font-semibold mb-1">Error Handling</h3>
               <p className="text-xs text-muted-foreground">Codes & debugging</p>
-            </a>
-            <a href="/developers/docs/limits" className="glass-pane rounded-lg border p-4 hover:bg-foreground/5 transition-colors text-center">
+            </Link>
+            <Link href="/developers/docs/limits" className="glass-pane rounded-lg border p-4 hover:bg-foreground/5 transition-colors text-center">
               <h3 className="font-semibold mb-1">Rate Limits</h3>
               <p className="text-xs text-muted-foreground">Quotas & limits</p>
-            </a>
-            <a href="/developers/docs/changelog" className="glass-pane rounded-lg border p-4 hover:bg-foreground/5 transition-colors text-center">
+            </Link>
+            <Link href="/developers/docs/changelog" className="glass-pane rounded-lg border p-4 hover:bg-foreground/5 transition-colors text-center">
               <h3 className="font-semibold mb-1">Changelog</h3>
               <p className="text-xs text-muted-foreground">Version history</p>
-            </a>
+            </Link>
             <a href="/public/openapi.yaml" className="glass-pane rounded-lg border p-4 hover:bg-foreground/5 transition-colors text-center">
               <h3 className="font-semibold mb-1">OpenAPI Spec</h3>
               <p className="text-xs text-muted-foreground">Machine-readable</p>
@@ -361,12 +361,12 @@ curl -X POST ${app}/api/orders \\
           <p className="text-muted-foreground mb-8 max-w-2xl mx-auto">
             Follow our Quick Start Guide to make your first API call in 5 minutes.
           </p>
-          <a
+          <Link
             href="/developers/docs/quickstart"
             className="inline-block px-6 py-3 bg-foreground text-background rounded-md hover:opacity-90 transition-opacity font-medium"
           >
             Start Building →
-          </a>
+          </Link>
         </div>
       </section>
     </div>
