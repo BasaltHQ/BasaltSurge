@@ -2,6 +2,15 @@
 
 import React from "react";
 import { useActiveAccount } from "thirdweb/react";
+import { ExternalLink, Copy, CheckCircle } from "lucide-react";
+
+function resolveS3Url(url?: string): string {
+  if (!url) return "";
+  if (url.startsWith("s3://basaltsurge/")) {
+    return url.replace("s3://basaltsurge/", "https://basaltsurge.s3.us-west-or.io.cloud.ovh.us/");
+  }
+  return url;
+}
 
 /**
  * Partner Admin: Plugins Catalog (brand-scoped)
@@ -22,8 +31,10 @@ export default function PartnerPluginsPanel() {
   // Brand selection (partners typically know their brand key)
   const [brandKey, setBrandKey] = React.useState<string>("");
 
-  // Enabled states (today: only Shopify is wired; others default disabled)
+  // Enabled states
   const [shopifyEnabled, setShopifyEnabled] = React.useState<boolean>(false);
+  const [woocommerceEnabled, setWoocommerceEnabled] = React.useState<boolean>(false);
+  const [woocommerceDownloadUrl, setWoocommerceDownloadUrl] = React.useState<string>("s3://basaltsurge/plugins/wordpress/basaltsurge/basaltsurge-woocommerce-0.0.4.zip");
   const [xshoppingEnabled, setXShoppingEnabled] = React.useState<boolean>(false);
   const [jiraEnabled, setJiraEnabled] = React.useState<boolean>(false);
   const [jiraConfig, setJiraConfig] = React.useState<any>({});
@@ -57,7 +68,7 @@ export default function PartnerPluginsPanel() {
     { key: 'xshopping', name: 'X Shopping', icon: '𝕏', description: 'Sync product catalog to X', tags: ['Social', 'Commerce'] },
     { key: 'jira', name: 'Jira Service Desk', icon: '/logos/jira.svg', description: 'Sync support tickets', tags: ['Support', 'Operations'] },
     { key: 'shopify', name: 'Shopify', icon: '/logos/shopify-payments.svg', description: 'Shopify app & checkout extension', tags: ['Commerce'] },
-    { key: 'woocommerce', name: 'WooCommerce', icon: '/logos/woocommerce.svg', description: 'WooCommerce plugin (coming soon)', tags: ['Commerce'] },
+    { key: 'woocommerce', name: 'WooCommerce', icon: '/logos/woocommerce.svg', description: 'WordPress WooCommerce integration', tags: ['Commerce'] },
     { key: 'stripe', name: 'Stripe', icon: '/logos/stripe.svg', description: 'Card payments + wallets', tags: ['Payments'] },
     { key: 'paypal', name: 'PayPal', icon: '/logos/paypal.svg', description: 'PayPal payments', tags: ['Payments'] },
     { key: 'square', name: 'Square', icon: '/logos/square.svg', description: 'Square payments', tags: ['Payments'] },
@@ -85,11 +96,12 @@ export default function PartnerPluginsPanel() {
     features: [] as string[],
     categories: [] as string[],
     assets: { iconUrl: "", squareIconUrl: "", bannerUrl: "", screenshots: [] as string[] },
-    urls: { supportUrl: "", privacyUrl: "", docsUrl: "", termsUrl: "" },
+    urls: { appUrl: "", supportUrl: "", privacyUrl: "", docsUrl: "", termsUrl: "" },
     oauth: { redirectUrls: [] as string[], scopes: [] as string[] },
     extension: { enabled: true, buttonLabel: "Pay with Crypto", eligibility: { minTotal: 0, currency: "USD" }, palette: { primary: "#0ea5e9", accent: "#22c55e" } },
     status: "draft",
     listingUrl: "",
+    installUrl: "",
     shopifyAppId: "",
     shopifyAppSecret: "",
     shopifyAppSlug: "",
@@ -111,6 +123,7 @@ export default function PartnerPluginsPanel() {
   const [error, setError] = React.useState("");
   const [info, setInfo] = React.useState("");
   const [statusDoc, setStatusDoc] = React.useState<any>(null);
+  const [copied, setCopied] = React.useState(false);
 
   // View mode controls (match Platform Plugin Studio)
   type ViewMode = 'grid-full' | 'grid-compact' | 'list';
@@ -138,6 +151,14 @@ export default function PartnerPluginsPanel() {
       const j = await r.json().catch(() => ({}));
       const ok = r.ok && j?.plugin;
       setShopifyEnabled(ok ? j.plugin.enabled !== false : false);
+
+      // Load WooCommerce Config
+      try {
+        const rw = await fetch(`/api/admin/plugins/woocommerce/config/${encodeURIComponent(targetBrand)}`, { cache: "no-store" });
+        const jw = await rw.json().catch(() => ({}));
+        setWoocommerceEnabled(!!jw?.config?.enabled);
+        setWoocommerceDownloadUrl(jw?.config?.downloadUrl || "s3://basaltsurge/plugins/wordpress/basaltsurge/basaltsurge-woocommerce-0.0.4.zip");
+      } catch { }
 
       // Load X Shopping Config
       try {
@@ -172,6 +193,7 @@ export default function PartnerPluginsPanel() {
             screenshots: Array.isArray(conf?.assets?.screenshots) ? conf.assets.screenshots : [],
           },
           urls: {
+            appUrl: conf?.urls?.appUrl || "",
             supportUrl: conf?.urls?.supportUrl || "",
             privacyUrl: conf?.urls?.privacyUrl || "",
             docsUrl: conf?.urls?.docsUrl || "",
@@ -189,6 +211,7 @@ export default function PartnerPluginsPanel() {
           },
           status: conf?.status || "draft",
           listingUrl: conf?.listingUrl || "",
+          installUrl: conf?.installUrl || "",
           shopifyAppId: conf?.shopifyAppId || "",
           shopifyAppSecret: conf?.shopifyAppSecret || "",
           shopifyAppSlug: conf?.shopifyAppSlug || "",
@@ -213,11 +236,12 @@ export default function PartnerPluginsPanel() {
           features: [],
           categories: [],
           assets: { iconUrl: "", squareIconUrl: "", bannerUrl: "", screenshots: [] },
-          urls: { supportUrl: "", privacyUrl: "", docsUrl: "", termsUrl: "" },
+          urls: { appUrl: "", supportUrl: "", privacyUrl: "", docsUrl: "", termsUrl: "" },
           oauth: { redirectUrls: [], scopes: [] },
           extension: { enabled: true, buttonLabel: "Pay with Crypto", eligibility: { minTotal: 0, currency: "USD" }, palette: { primary: "#0ea5e9", accent: "#22c55e" } },
           status: "draft",
           listingUrl: "",
+          installUrl: "",
           shopifyAppId: "",
           shopifyAppSecret: "",
           shopifyAppSlug: "",
@@ -254,6 +278,7 @@ export default function PartnerPluginsPanel() {
       appProxyUrl: `${origin}/api/integrations/shopify/proxy`,
       urls: {
         ...prev.urls,
+        appUrl: `${origin}/shopify/settings?brandKey=${brandKey}`,
         supportUrl: `${origin}/support`,
         docsUrl: `${origin}/docs`,
         privacyUrl: `${origin}/legal/privacy`,
@@ -408,6 +433,30 @@ export default function PartnerPluginsPanel() {
       setInfo("Jira configuration saved.");
     } catch (e: any) {
       setError(e.message || "Failed to save Jira config");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveWoocommerceConfig(enabled: boolean, downloadUrl: string) {
+    setError(""); setInfo(""); setSaving(true);
+    try {
+      if (!brandKey?.trim()) { setError("Enter brandKey"); return; }
+      const targetBrand = getEffectiveBrandKey(brandKey);
+      if (!targetBrand) { setError("Invalid brandKey"); return; }
+
+      const r = await fetch(`/api/admin/plugins/woocommerce/config/${encodeURIComponent(targetBrand)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled, downloadUrl })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { setError(j?.error || "Failed to save WooCommerce config"); return; }
+      setWoocommerceEnabled(enabled);
+      setWoocommerceDownloadUrl(downloadUrl);
+      setInfo(enabled ? "WooCommerce enabled." : "WooCommerce disabled.");
+    } catch (e: any) {
+      setError(e?.message || "Failed to save WooCommerce config");
     } finally {
       setSaving(false);
     }
@@ -594,6 +643,9 @@ export default function PartnerPluginsPanel() {
               if (p.key === 'shopify') {
                 enabled = shopifyEnabled;
                 configured = (!!plugin.pluginName && String(plugin.status || '').toLowerCase() !== 'draft');
+              } else if (p.key === 'woocommerce') {
+                enabled = woocommerceEnabled;
+                configured = woocommerceEnabled;
               } else if (p.key === 'xshopping') {
                 enabled = xshoppingEnabled;
                 configured = xshoppingEnabled;
@@ -802,10 +854,157 @@ export default function PartnerPluginsPanel() {
             </div>
 
             {shopifyEnabled && (
-              <div className="mt-4 p-3 rounded-md bg-foreground/5 border">
-                <div className="text-sm font-semibold mb-1">Status</div>
-                <div className="microtext text-muted-foreground">
-                  Shopify integration is active. Merchants can connect their stores and manage settings from their Integrations dashboard.
+              <div className="mt-4 space-y-4">
+                <div className="p-3 rounded-md bg-foreground/5 border">
+                  <div className="text-sm font-semibold mb-1">Status</div>
+                  <div className="microtext text-muted-foreground">
+                    Shopify integration is active. Merchants can connect their stores and manage settings from their Integrations dashboard.
+                  </div>
+                </div>
+
+                {(plugin.installUrl || plugin.listingUrl) && (
+                  <div className="p-4 rounded-xl border border-foreground/[0.05] bg-foreground/[0.02] space-y-3 text-left">
+                    <div>
+                      <div className="text-sm font-semibold text-foreground">Storefront App Installation</div>
+                      <div className="microtext text-muted-foreground">
+                        Use this direct link or installation button to configure the Shopify app on client stores under your brand.
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      {plugin.installUrl && (
+                        <a
+                          href={plugin.installUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-1.5"
+                          title="Begin installation"
+                        >
+                          <ExternalLink className="w-4.5 h-4.5" />
+                          <span>Install App</span>
+                        </a>
+                      )}
+                      {!plugin.installUrl && plugin.listingUrl && (
+                        <a
+                          href={plugin.listingUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm inline-flex items-center gap-1.5"
+                          title="Open listing to install"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          <span>Install on Shopify</span>
+                        </a>
+                      )}
+                      <button
+                        type="button"
+                        className="px-3 py-2 border rounded-lg bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors inline-flex items-center gap-1.5"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const link = plugin.installUrl || plugin.listingUrl || "";
+                          navigator.clipboard.writeText(link).then(() => {
+                            setCopied(true);
+                            setTimeout(() => setCopied(false), 2000);
+                          });
+                        }}
+                      >
+                        {copied ? <CheckCircle className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                        <span>{copied ? "Copied!" : "Copy Install Link"}</span>
+                      </button>
+                    </div>
+
+                    <div className="bg-slate-950 border border-foreground/10 rounded-lg p-2.5 font-mono text-xs text-foreground/80 break-all select-all">
+                      {plugin.installUrl || plugin.listingUrl}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {(info || error) && (
+              <div className={`rounded-md border p-2 text-sm ${error ? "text-red-600" : "text-emerald-600"}`}>{error || info}</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {selectedPlugin === 'woocommerce' && (
+        <div className="rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent backdrop-blur-md p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logos/woocommerce.svg" alt="WooCommerce" className="h-6 w-6 object-contain rounded-md" />
+              <div className="text-sm font-semibold">WooCommerce Workspace — {brandKey || '—'}</div>
+            </div>
+            <div className="text-xs text-muted-foreground">State: {woocommerceEnabled ? 'Enabled' : 'Disabled'}</div>
+          </div>
+
+          <div className="rounded-xl border border-foreground/[0.05] bg-background p-6 space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-medium">Enable WooCommerce Integration</div>
+                <div className="microtext text-muted-foreground">Allow merchants under this brand to integrate their WooCommerce stores.</div>
+              </div>
+              {/* Simple Toggle */}
+              <button
+                className={`w-12 h-6 rounded-full transition-colors flex items-center px-0.5 ${woocommerceEnabled ? 'bg-green-500' : 'bg-slate-200'}`}
+                onClick={() => saveWoocommerceConfig(!woocommerceEnabled, woocommerceDownloadUrl)}
+                disabled={saving}
+              >
+                <div className={`h-5 w-5 bg-white rounded-full shadow transition-transform ${woocommerceEnabled ? 'translate-x-[22px]' : 'translate-x-0'}`} />
+              </button>
+            </div>
+
+            {woocommerceEnabled && (
+              <div className="mt-4 space-y-4">
+                <div className="p-3 rounded-md bg-foreground/5 border">
+                  <div className="text-sm font-semibold mb-1">Status</div>
+                  <div className="microtext text-muted-foreground">
+                    WooCommerce plugin integration is active.
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl border border-foreground/[0.05] bg-foreground/[0.02] space-y-3 text-left">
+                  <div>
+                    <div className="text-sm font-semibold text-foreground">WooCommerce Plugin Package</div>
+                    <div className="microtext text-muted-foreground">
+                      Download the WordPress plugin zip package or copy the link to share it with your merchants.
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a
+                      href={resolveS3Url(woocommerceDownloadUrl)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm inline-flex items-center gap-1.5"
+                      title="Download plugin package"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      <span>Download Package</span>
+                    </a>
+
+                    <button
+                      type="button"
+                      className="px-3 py-2 border rounded-lg bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors inline-flex items-center gap-1.5"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(resolveS3Url(woocommerceDownloadUrl)).then(() => {
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        });
+                      }}
+                    >
+                      {copied ? <CheckCircle className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
+                      <span>{copied ? "Copied!" : "Copy Download Link"}</span>
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-950 border border-foreground/10 rounded-lg p-2.5 font-mono text-xs text-foreground/80 break-all select-all">
+                    {resolveS3Url(woocommerceDownloadUrl)}
+                  </div>
                 </div>
               </div>
             )}

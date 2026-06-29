@@ -34,6 +34,7 @@ type ShopifyPluginConfigDoc = {
   };
   // External URLs
   urls?: {
+    appUrl?: string;
     supportUrl?: string;
     privacyUrl?: string;
     docsUrl?: string;
@@ -127,12 +128,20 @@ function normalizePatch(raw: any, brandKey: string): Partial<ShopifyPluginConfig
   }
 
   if (raw?.urls && typeof raw.urls === "object") {
+    const appUrl = sanitizeUrl(raw.urls.appUrl);
     const supportUrl = sanitizeUrl(raw.urls.supportUrl);
     const privacyUrl = sanitizeUrl(raw.urls.privacyUrl);
     const docsUrl = sanitizeUrl(raw.urls.docsUrl);
     const termsUrl = sanitizeUrl(raw.urls.termsUrl);
-    out.urls = { ...(supportUrl ? { supportUrl } : {}), ...(privacyUrl ? { privacyUrl } : {}), ...(docsUrl ? { docsUrl } : {}), ...(termsUrl ? { termsUrl } : {}) };
+    out.urls = {
+      ...(appUrl ? { appUrl } : {}),
+      ...(supportUrl ? { supportUrl } : {}),
+      ...(privacyUrl ? { privacyUrl } : {}),
+      ...(docsUrl ? { docsUrl } : {}),
+      ...(termsUrl ? { termsUrl } : {})
+    };
   }
+
 
   if (raw?.oauth && typeof raw.oauth === "object") {
     const redirectUrls = clampArrayStr(raw.oauth.redirectUrls, 10)?.map((s) => sanitizeUrl(s)!).filter(Boolean);
