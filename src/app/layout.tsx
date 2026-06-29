@@ -763,8 +763,8 @@ export default async function RootLayout({
   const brandNormalizedKey = brand.key ? brand.key.toUpperCase().replace(/-/g, "_") : "";
   const brandIsPlatform = !brand.key || brand.key.toLowerCase() === "basaltsurge" || brand.key.toLowerCase() === "portalpay";
   const brandSpecificClientId = (!brandIsPlatform && brandNormalizedKey) ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${brandNormalizedKey}`] : undefined;
-  // Prioritize DB-configured thirdwebClientId for partners, then brandSpecificClientId, then the env default (which is partner client ID in partner containers, and platform client ID in platform containers)
-  const layoutTwClientId = (!brandIsPlatform ? brand.thirdwebClientId : undefined) || brandSpecificClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+  // Prioritize DB-configured thirdwebClientId, then brandSpecificClientId, then the env default (which is partner client ID in partner containers, and platform client ID in platform containers)
+  const layoutTwClientId = brand.thirdwebClientId || brandSpecificClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
 
   return (
     <html

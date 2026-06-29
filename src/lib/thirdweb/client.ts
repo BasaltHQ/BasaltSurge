@@ -10,6 +10,9 @@ if (process.env.NODE_ENV !== "production") {
   globalForThirdweb.clientCache = clientCache;
 }
 
+// Module-level cache to persist resolved client IDs across client-side SPA route transitions
+const resolvedClientIdCache: Record<string, string> = {};
+
 export function getClient() {
   const secret = process.env.THIRDWEB_SECRET_KEY;
   
@@ -100,9 +103,13 @@ export function getClient() {
   if (isPlatform) {
     clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
   } else {
-    // Check localStorage cache first to guarantee synchronous resolution on direct page loads/refreshes
-    // before the client-side ThemeLoader completes its async Cosmos DB fetch.
-    if (typeof window !== "undefined") {
+    // Check module-level cache first to guarantee immunity against Next.js layout DOM resets during SPA transitions
+    if (typeof window !== "undefined" && brandKey && resolvedClientIdCache[brandKey]) {
+      clientId = resolvedClientIdCache[brandKey];
+    }
+
+    // Check localStorage cache second to guarantee synchronous resolution on hard refreshes (F5)
+    if (!clientId && typeof window !== "undefined") {
       try {
         clientId = localStorage.getItem(`pp-thirdweb-client-id:${brandKey}`) || undefined;
       } catch { }
@@ -135,6 +142,14 @@ export function getClient() {
     }
     
     clientId = clientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
+
+    // Cache the resolved client ID in both module memory and localStorage to survive page updates and resets
+    if (clientId && typeof window !== "undefined" && brandKey) {
+      resolvedClientIdCache[brandKey] = clientId;
+      try {
+        localStorage.setItem(`pp-thirdweb-client-id:${brandKey}`, clientId);
+      } catch { }
+    }
   }
 
   const cacheKey = secret ? `secret_${secret}` : `client_${clientId}`;
