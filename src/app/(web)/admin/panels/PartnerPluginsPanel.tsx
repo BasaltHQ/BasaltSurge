@@ -3,6 +3,7 @@
 import React from "react";
 import { useActiveAccount } from "thirdweb/react";
 import { ExternalLink, Copy, CheckCircle } from "lucide-react";
+import { useBrand } from "@/contexts/BrandContext";
 
 function resolveS3Url(url?: string): string {
   if (!url) return "";
@@ -22,14 +23,17 @@ function resolveS3Url(url?: string): string {
  */
 export default function PartnerPluginsPanel() {
   const account = useActiveAccount();
+  const brand = useBrand();
 
   // Helper to resolve effective brand key
   const getEffectiveBrandKey = (key: string) => {
     return key.trim().toLowerCase() || "basaltsurge";
   };
 
-  // Brand selection (partners typically know their brand key)
-  const [brandKey, setBrandKey] = React.useState<string>("");
+  // Brand selection (partners locked to their container brand key)
+  const [brandKey, setBrandKey] = React.useState<string>(() => {
+    return brand?.key?.toLowerCase() || "";
+  });
 
   // Enabled states
   const [shopifyEnabled, setShopifyEnabled] = React.useState<boolean>(false);
@@ -263,6 +267,13 @@ export default function PartnerPluginsPanel() {
       setError(e?.message || "Failed to load");
     } finally { setLoading(false); }
   }
+
+  // Auto-load config on mount or when brandKey is resolved from container brand context
+  React.useEffect(() => {
+    if (brandKey) {
+      loadConfig();
+    }
+  }, [brandKey]);
 
   const autoPopulateUrls = () => {
     if (typeof window === 'undefined') return;
@@ -679,8 +690,10 @@ export default function PartnerPluginsPanel() {
       </div>
 
       <div className="flex items-center gap-2">
-        <input className="h-10 px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none placeholder-muted-foreground w-60" placeholder="brandKey" value={brandKey} onChange={(e) => setBrandKey(e.target.value.toLowerCase())} />
-        <button className="h-10 px-4 rounded-lg border border-foreground/[0.05] bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors shadow-sm" onClick={loadConfig} disabled={loading}>{loading ? "Loading…" : "Load"}</button>
+        <div className="text-xs font-mono px-3 py-1.5 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-muted-foreground select-none">
+          Brand Key: <span className="text-foreground font-semibold">{brandKey || "Loading..."}</span>
+        </div>
+        {loading && <span className="microtext text-muted-foreground animate-pulse ml-2">Loading plugin config...</span>}
       </div>
 
       </div>
