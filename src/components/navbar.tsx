@@ -372,8 +372,45 @@ export function Navbar() {
                         // Do NOT show AuthModal - that asks for signature/login which we don't want yet
                     } else if (!me?.authed) {
                         // Approved User -> PROCEED TO LOGIN/SIGNING
-                        setIsSocialLogin(isEmbeddedWallet);
-                        setShowAuthModal(true);
+                        // Check if they have already accepted the legal documents
+                        fetch(`/api/legal-read-status?wallet=${encodeURIComponent(w)}`)
+                            .then(r => r.ok ? r.json() : null)
+                            .then(async (legal) => {
+                                if (legal?.termsReadAt && legal?.privacyReadAt && legal?.aidpaReadAt) {
+                                    // They have already accepted everything in the past!
+                                    // Auto-login them directly without showing any modal or signing message!
+                                    try {
+                                        const autoLoginResponse = await fetch('/api/auth/auto-login', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ wallet: w })
+                                        });
+                                        if (autoLoginResponse.ok) {
+                                            setAuthed(true);
+                                            // Broadcast login event
+                                            window.dispatchEvent(
+                                                new CustomEvent("pp:auth:logged_in", { detail: { wallet: w } })
+                                            );
+                                            // Register user
+                                            await fetch('/api/users/register', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ wallet: w })
+                                            }).catch(() => {});
+                                            return;
+                                        }
+                                    } catch (e) {
+                                        console.error("[Navbar] Auto-login failed, falling back to modal:", e);
+                                    }
+                                }
+                                // Fallback to showing modal if not accepted or auto-login failed
+                                setIsSocialLogin(isEmbeddedWallet);
+                                setShowAuthModal(true);
+                            })
+                            .catch(() => {
+                                setIsSocialLogin(isEmbeddedWallet);
+                                setShowAuthModal(true);
+                            });
                     }
                     checkingAuth.current = false;
                 }, 800);

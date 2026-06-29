@@ -234,7 +234,11 @@ export async function POST(req: NextRequest) {
     clientId: plugin?.shopifyAppId || undefined, // If existing app, link to it
     applicationUrl,
     embedded: true,
-    redirectUrls,
+    redirectUrls: [
+      ...redirectUrls,
+      `http://localhost:3001/api/integrations/shopify/brands/${brandKey}/auth/callback`,
+      `http://localhost:3000/api/integrations/shopify/brands/${brandKey}/auth/callback`
+    ],
     scopes,
     supportUrl: plugin?.urls?.supportUrl || undefined,
     privacyUrl: plugin?.urls?.privacyUrl || undefined,
