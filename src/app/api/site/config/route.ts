@@ -1212,12 +1212,15 @@ export async function GET(req: NextRequest) {
       // even if site_config is stale or default.
       let shopConfig: any = null;
       try {
-        // Filter by brandKey to pick the correct brand's shop config when multiple exist for same wallet
-        const shopQuery = brandKey
+        // Filter by brandKey to pick the correct brand's shop config when multiple exist for same wallet.
+        // However, if the current container is the platform container ("basaltsurge"), we can search for any
+        // brand's shop config since merchants from any partner brand check out on the platform container.
+        const isPlatform = (brandKey || "").toLowerCase() === "basaltsurge";
+        const shopQuery = (brandKey && !isPlatform)
           ? "SELECT * FROM c WHERE c.wallet = @wallet AND c.type = 'shop_config' AND (c.brandKey = @brandKey OR NOT IS_DEFINED(c.brandKey))"
           : "SELECT * FROM c WHERE c.wallet = @wallet AND c.type = 'shop_config'";
         const shopParams: { name: string; value: any }[] = [{ name: "@wallet", value: wallet }];
-        if (brandKey) shopParams.push({ name: "@brandKey", value: brandKey });
+        if (brandKey && !isPlatform) shopParams.push({ name: "@brandKey", value: brandKey });
         const { resources: shops } = await c.items.query({
           query: shopQuery,
           parameters: shopParams
@@ -1293,9 +1296,12 @@ export async function GET(req: NextRequest) {
 
 
 
-      if (brandKey) {
+      // Resolve the merchant's actual brandKey if their shop config has one
+      const effectiveBrandKey = shopConfig?.brandKey || brandKey;
+
+      if (effectiveBrandKey) {
         try {
-          const docId = getDocIdForBrand(brandKey);
+          const docId = getDocIdForBrand(effectiveBrandKey);
           // Try per-merchant doc first (docId, wallet as partition key)
           let resource: any = null;
           try {
@@ -1601,6 +1607,7 @@ export async function POST(req: NextRequest) {
     const storyHtml = sanitizeStoryHtml(rawHtml).slice(0, 20000);
 
     let prev: any;
+    let effectiveBrandKey: string | undefined = undefined;
     try {
       const c = await getContainer();
       // Prefer brand-scoped doc when brand configured; fallback to legacy
@@ -1611,9 +1618,30 @@ export async function POST(req: NextRequest) {
       } catch {
         brandKey = undefined;
       }
-      if (brandKey) {
+
+      // Pre-fetch shop config to resolve correct brandKey for per-merchant doc loading
+      let shopConfig: any = null;
+      try {
+        const isPlatform = (brandKey || "").toLowerCase() === "basaltsurge";
+        const shopQuery = (brandKey && !isPlatform)
+          ? "SELECT * FROM c WHERE c.wallet = @wallet AND c.type = 'shop_config' AND (c.brandKey = @brandKey OR NOT IS_DEFINED(c.brandKey))"
+          : "SELECT * FROM c WHERE c.wallet = @wallet AND c.type = 'shop_config'";
+        const shopParams: { name: string; value: any }[] = [{ name: "@wallet", value: wallet }];
+        if (brandKey && !isPlatform) shopParams.push({ name: "@brandKey", value: brandKey });
+        const { resources: shops } = await c.items.query({
+          query: shopQuery,
+          parameters: shopParams
+        }).fetchAll();
+        if (shops && shops.length > 0) {
+          shopConfig = shops.find((s: any) => String(s.brandKey || "").toLowerCase() === (brandKey || "").toLowerCase()) || shops[0];
+        }
+      } catch { }
+
+      effectiveBrandKey = shopConfig?.brandKey || brandKey;
+
+      if (effectiveBrandKey) {
         try {
-          const { resource } = await c.item(getDocIdForBrand(brandKey), wallet).read<any>();
+          const { resource } = await c.item(getDocIdForBrand(effectiveBrandKey), wallet).read<any>();
           prev = resource;
         } catch { }
       }
@@ -1831,7 +1859,7 @@ export async function POST(req: NextRequest) {
     } catch {
       brandKey = undefined;
     }
-    const normalizedBrand = String(brandKey || "basaltsurge").toLowerCase();
+    const normalizedBrand = String(effectiveBrandKey || brandKey || "basaltsurge").toLowerCase();
     // Use getDocIdForBrand() for consistent doc ID between save and load
     // This ensures basaltsurge/portalpay uses "site:config:basaltsurge" and partners use "site:config:<brandKey>"
     const docId = getDocIdForBrand(normalizedBrand);

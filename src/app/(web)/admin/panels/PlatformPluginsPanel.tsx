@@ -882,10 +882,12 @@ export default function PlatformPluginsPanel() {
       palette: { primary: "#0ea5e9", accent: "#22c55e" }
     },
     listingUrl: "",
+    installUrl: "",
     shopifyAppId: "",
     shopifyAppSecret: "",
     shopifyAppSlug: "",
     partnerOrgId: "",
+    enabled: true,
     verification: {
       domainVerified: false,
       businessVerified: false,
@@ -919,7 +921,7 @@ export default function PlatformPluginsPanel() {
     return Boolean(p?.extension?.enabled && (p?.extension?.buttonLabel || "").trim());
   }
   function isPublishComplete(p: any): boolean {
-    return Boolean((p?.listingUrl || "") && ((p?.shopifyAppId || "") || (p?.shopifyAppSlug || "")));
+    return Boolean((p?.installUrl || p?.listingUrl || "") && ((p?.shopifyAppId || "") || (p?.shopifyAppSlug || "")));
   }
   function isVerificationComplete(p: any): boolean {
     if (p?.verification?.optional) return true;
@@ -1106,7 +1108,7 @@ export default function PlatformPluginsPanel() {
         const r = await fetch(`/api/admin/shopify/brands/${encodeURIComponent(brandKey)}/plugin-config`, { cache: "no-store" });
         const j = await r.json().catch(() => ({}));
         const ok = r.ok && j?.plugin;
-        setShopifyEnabled(!!ok);
+        setShopifyEnabled(ok ? j.plugin.enabled !== false : false);
         if (ok) {
           const conf = j.plugin || {};
           setPlugin({
@@ -1146,10 +1148,12 @@ export default function PlatformPluginsPanel() {
             },
             status: conf?.status || "draft",
             listingUrl: conf?.listingUrl || "",
+            installUrl: conf?.installUrl || "",
             shopifyAppId: conf?.shopifyAppId || "",
             shopifyAppSecret: conf?.shopifyAppSecret || "",
             shopifyAppSlug: conf?.shopifyAppSlug || "",
             partnerOrgId: conf?.partnerOrgId || "",
+            enabled: conf?.enabled !== false,
             verification: {
               domainVerified: !!conf?.verification?.domainVerified,
               businessVerified: !!conf?.verification?.businessVerified,
@@ -1179,10 +1183,12 @@ export default function PlatformPluginsPanel() {
             oauth: { redirectUrls: [], scopes: [] },
             extension: { enabled: true, buttonLabel: "Pay with Crypto", eligibility: { minTotal: 0, currency: "USD" }, palette: { primary: "#0ea5e9", accent: "#22c55e" } },
             listingUrl: "",
+            installUrl: "",
             shopifyAppId: "",
             shopifyAppSecret: "",
             shopifyAppSlug: "",
             partnerOrgId: "",
+            enabled: true,
             verification: {
               domainVerified: false,
               businessVerified: false,
@@ -1214,7 +1220,7 @@ export default function PlatformPluginsPanel() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) { setError(j?.error || "Failed to save"); return; }
       setInfo("Saved.");
-      setShopifyEnabled(true);
+      setShopifyEnabled(body.enabled !== false);
       // Mark current plugin as saved snapshot for checklist and progress UI
       try {
         setSavedSnapshot(plugin);
@@ -1405,6 +1411,20 @@ export default function PlatformPluginsPanel() {
             </div>
             <fieldset disabled={!editConfiguration} className="contents">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="md:col-span-2 p-3 rounded-md border border-emerald-500/20 bg-emerald-50/20 dark:bg-emerald-950/10 flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4"
+                    checked={plugin.enabled !== false}
+                    onChange={(e) => setPlugin({ ...plugin, enabled: e.target.checked })}
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-emerald-900 dark:text-emerald-100">Enable Plugin</div>
+                    <div className="microtext text-muted-foreground">
+                      Allow partners and merchants under this brand key to see and configure this integration.
+                    </div>
+                  </div>
+                </div>
                 <div>
                   <label className="microtext">Plugin Name</label>
                   <input className="mt-1 h-9 w-full px-3 border rounded-md bg-background" value={plugin.pluginName} onChange={(e) => setPlugin({ ...plugin, pluginName: e.target.value })} />
@@ -2420,6 +2440,11 @@ export default function PlatformPluginsPanel() {
                   <label className="microtext">Shopify App Slug</label>
                   <input className="mt-1 h-9 w-full px-3 border rounded-md bg-background" value={plugin.shopifyAppSlug} onChange={(e) => setPlugin({ ...plugin, shopifyAppSlug: e.target.value })} placeholder="your-app-name" />
                   <div className="microtext text-muted-foreground mt-1">From your app URL in Partners Dashboard</div>
+                </div>
+                 <div>
+                  <label className="microtext">Shopify Install Link</label>
+                  <input className="mt-1 h-9 w-full px-3 border rounded-md bg-background" value={plugin.installUrl || ""} onChange={(e) => setPlugin({ ...plugin, installUrl: e.target.value })} placeholder="https://admin.shopify.com/store-address/oauth/authorize?client_id=..." />
+                  <div className="microtext text-muted-foreground mt-1">Direct app installation URL from Shopify Partner dashboard.</div>
                 </div>
                 <div>
                   <label className="microtext">Listing URL</label>

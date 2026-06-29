@@ -93,6 +93,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
       tagline: resource?.tagline || "Accept crypto with PortalPay on Shopify",
       status: resource?.status || "draft",
       listingUrl: resource?.listingUrl || "",
+      installUrl: resource?.installUrl || "",
+      enabled: resource?.enabled !== false,
       iconUrl: logo,
       bannerUrl: resource?.assets?.bannerUrl || "",
     };
@@ -108,6 +110,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
       tagline: "Accept crypto with PortalPay on Shopify",
       status: "draft",
       listingUrl: "",
+      installUrl: "",
+      enabled: false,
       iconUrl: logo,
       bannerUrl: "",
     };
