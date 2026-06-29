@@ -3,8 +3,10 @@ import { getContainer } from "@/lib/cosmos";
 
 // Helper to reliably construct absolute public URLs
 function getPublicUrl(req: NextRequest) {
-  let hostname = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
-  let protocol = req.headers.get("x-forwarded-proto") || "https";
+  const rawXfHost = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
+  const rawXfProto = req.headers.get("x-forwarded-proto") || "https";
+  let hostname = rawXfHost.split(",")[0].trim();
+  let protocol = rawXfProto.split(",")[0].trim();
   if (hostname.includes("localhost") || hostname.includes("127.0.0.1")) {
     protocol = "http";
   }

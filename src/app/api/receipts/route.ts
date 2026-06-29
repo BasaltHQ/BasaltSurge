@@ -328,11 +328,13 @@ export async function POST(req: NextRequest) {
     }
 
     // Derive origin from request headers so partner containers get their own domain
-    const xfProto = req.headers.get("x-forwarded-proto");
-    const xfHost = req.headers.get("x-forwarded-host");
+    const rawXfProto = req.headers.get("x-forwarded-proto");
+    const rawXfHost = req.headers.get("x-forwarded-host");
+    const xfProto = rawXfProto ? rawXfProto.split(",")[0].trim() : null;
+    const xfHost = rawXfHost ? rawXfHost.split(",")[0].trim() : null;
     const host = req.headers.get("host");
     const proto = xfProto || (process.env.NODE_ENV === "production" ? "https" : "http");
-    const h = xfHost || host || "";
+    const h = xfHost || (host ? host.split(",")[0].trim() : "");
     const origin = h ? `${proto}://${h}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
     const tParams = new URLSearchParams();
     tParams.set("recipient", wallet);
