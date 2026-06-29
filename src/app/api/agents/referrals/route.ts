@@ -28,15 +28,18 @@ export async function GET(req: NextRequest) {
 
         const container = await getContainer();
 
-        // Query client_request docs where this agent wallet appears in splitConfig.agents
+        // Query client_request docs where this agent wallet appears in splitConfig.agents or splitConfigCredit.agents
         const { resources: requests } = await container.items.query({
             query: `SELECT c.id, c.wallet, c.shopName, c.legalBusinessName, c.businessType,
                            c.status, c.createdAt, c.reviewedAt, c.reviewedBy,
-                           c.splitConfig, c.brandKey, c.slug, c.logoUrl, c.primaryColor
+                           c.splitConfig, c.splitConfigCredit, c.brandKey, c.slug, c.logoUrl, c.primaryColor
                     FROM c
                     WHERE c.type = 'client_request'
-                      AND IS_DEFINED(c.splitConfig.agents)
-                      AND ARRAY_CONTAINS(c.splitConfig.agents, {"wallet": @agentWallet}, true)
+                      AND (
+                        (IS_DEFINED(c.splitConfig.agents) AND ARRAY_CONTAINS(c.splitConfig.agents, {"wallet": @agentWallet}, true))
+                        OR
+                        (IS_DEFINED(c.splitConfigCredit.agents) AND ARRAY_CONTAINS(c.splitConfigCredit.agents, {"wallet": @agentWallet}, true))
+                      )
                     ORDER BY c.createdAt DESC`,
             parameters: [{ name: "@agentWallet", value: agentWallet }],
         }).fetchAll();
@@ -49,10 +52,13 @@ export async function GET(req: NextRequest) {
             );
         }
 
-        // Extract this agent's BPS from each request's splitConfig
+        // Extract this agent's BPS from each request's splitConfig or splitConfigCredit
         const referrals = filtered.map((r: any) => {
             const agents: { wallet: string; bps: number }[] = r.splitConfig?.agents || [];
-            const myEntry = agents.find((a) => String(a.wallet || "").toLowerCase() === agentWallet);
+            const agentsCredit: { wallet: string; bps: number }[] = r.splitConfigCredit?.agents || [];
+            
+            const myEntry = agents.find((a) => String(a.wallet || "").toLowerCase() === agentWallet)
+                            || agentsCredit.find((a) => String(a.wallet || "").toLowerCase() === agentWallet);
 
             // Normalize createdAt
             let createdAt = r.createdAt;

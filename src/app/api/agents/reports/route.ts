@@ -43,34 +43,43 @@ export async function GET(req: NextRequest) {
         //   ARRAY_CONTAINS(c.splitConfig.agents, {"wallet": "<address>"}, true)
         // The 3rd arg `true` enables partial matching on the object.
         const { resources: siteConfigs } = await container.items.query({
-            query: `SELECT c.wallet, c.brandKey, c.splitAddress, c.splitConfig,
+            query: `SELECT c.wallet, c.brandKey, c.splitAddress, c.splitConfig, c.splitConfigCredit,
                            c.shopName, c.displayName, c.slug
                     FROM c
                     WHERE c.type = 'site_config'
-                      AND IS_DEFINED(c.splitConfig.agents)
-                      AND ARRAY_CONTAINS(c.splitConfig.agents, {"wallet": @agentWallet}, true)`,
+                      AND (
+                        (IS_DEFINED(c.splitConfig.agents) AND ARRAY_CONTAINS(c.splitConfig.agents, {"wallet": @agentWallet}, true))
+                        OR
+                        (IS_DEFINED(c.splitConfigCredit.agents) AND ARRAY_CONTAINS(c.splitConfigCredit.agents, {"wallet": @agentWallet}, true))
+                      )`,
             parameters: [{ name: "@agentWallet", value: agentWallet }],
         }).fetchAll();
 
         // Also check shop_config (theme-level agents) as a secondary source
         const { resources: shopConfigs } = await container.items.query({
-            query: `SELECT c.wallet, c.name, c.theme, c.splitConfig, c.splitAddress
+            query: `SELECT c.wallet, c.name, c.theme, c.splitConfig, c.splitConfigCredit, c.splitAddress
                     FROM c
                     WHERE c.type = 'shop_config'
-                      AND IS_DEFINED(c.splitConfig.agents)
-                      AND ARRAY_CONTAINS(c.splitConfig.agents, {"wallet": @agentWallet}, true)`,
+                      AND (
+                        (IS_DEFINED(c.splitConfig.agents) AND ARRAY_CONTAINS(c.splitConfig.agents, {"wallet": @agentWallet}, true))
+                        OR
+                        (IS_DEFINED(c.splitConfigCredit.agents) AND ARRAY_CONTAINS(c.splitConfigCredit.agents, {"wallet": @agentWallet}, true))
+                      )`,
             parameters: [{ name: "@agentWallet", value: agentWallet }],
         }).fetchAll();
 
         // Also check client_request docs (agent referral attribution from the application)
         const { resources: clientRequests } = await container.items.query({
-            query: `SELECT c.wallet, c.shopName, c.brandKey, c.splitConfig, c.slug,
+            query: `SELECT c.wallet, c.shopName, c.brandKey, c.splitConfig, c.splitConfigCredit, c.slug,
                            c.deployedSplitAddress, c.status
                     FROM c
                     WHERE c.type = 'client_request'
                       AND c.status = 'approved'
-                      AND IS_DEFINED(c.splitConfig.agents)
-                      AND ARRAY_CONTAINS(c.splitConfig.agents, {"wallet": @agentWallet}, true)`,
+                      AND (
+                        (IS_DEFINED(c.splitConfig.agents) AND ARRAY_CONTAINS(c.splitConfig.agents, {"wallet": @agentWallet}, true))
+                        OR
+                        (IS_DEFINED(c.splitConfigCredit.agents) AND ARRAY_CONTAINS(c.splitConfigCredit.agents, {"wallet": @agentWallet}, true))
+                      )`,
             parameters: [{ name: "@agentWallet", value: agentWallet }],
         }).fetchAll();
 
@@ -92,7 +101,9 @@ export async function GET(req: NextRequest) {
             const mw = String(cr.wallet || "").toLowerCase();
             if (!hex(mw)) continue;
             const agents: { wallet: string; bps: number }[] = cr.splitConfig?.agents || [];
-            const agentEntry = agents.find((a) => String(a.wallet || "").toLowerCase() === agentWallet);
+            const agentsCredit: { wallet: string; bps: number }[] = cr.splitConfigCredit?.agents || [];
+            const agentEntry = agents.find((a) => String(a.wallet || "").toLowerCase() === agentWallet)
+                               || agentsCredit.find((a) => String(a.wallet || "").toLowerCase() === agentWallet);
             if (!agentEntry) continue;
             merchantMap.set(mw, {
                 wallet: mw,
@@ -109,7 +120,9 @@ export async function GET(req: NextRequest) {
             const mw = String(sc.wallet || "").toLowerCase();
             if (!hex(mw)) continue;
             const agents: { wallet: string; bps: number }[] = sc.splitConfig?.agents || [];
-            const agentEntry = agents.find((a) => String(a.wallet || "").toLowerCase() === agentWallet);
+            const agentsCredit: { wallet: string; bps: number }[] = sc.splitConfigCredit?.agents || [];
+            const agentEntry = agents.find((a) => String(a.wallet || "").toLowerCase() === agentWallet)
+                               || agentsCredit.find((a) => String(a.wallet || "").toLowerCase() === agentWallet);
             if (!agentEntry) continue;
             merchantMap.set(mw, {
                 wallet: mw,
@@ -125,7 +138,9 @@ export async function GET(req: NextRequest) {
             const mw = String(sc.wallet || "").toLowerCase();
             if (!hex(mw)) continue;
             const agents: { wallet: string; bps: number }[] = sc.splitConfig?.agents || [];
-            const agentEntry = agents.find((a) => String(a.wallet || "").toLowerCase() === agentWallet);
+            const agentsCredit: { wallet: string; bps: number }[] = sc.splitConfigCredit?.agents || [];
+            const agentEntry = agents.find((a) => String(a.wallet || "").toLowerCase() === agentWallet)
+                               || agentsCredit.find((a) => String(a.wallet || "").toLowerCase() === agentWallet);
             if (!agentEntry) continue;
             const existing = merchantMap.get(mw);
             merchantMap.set(mw, {

@@ -16,13 +16,71 @@ export function getClient() {
   // Resolve brandKey dynamically
   let brandKey = "";
   if (typeof window !== "undefined") {
-    brandKey = document.documentElement?.getAttribute("data-pp-brand-key") || "";
+    const hostLower = window.location.hostname.toLowerCase().split(":")[0];
+    const win = window as any;
+
+    // 1. Check dynamic domains (hydrated via layout / script insertion)
+    if (win.__DYNAMIC_DOMAINS__ && win.__DYNAMIC_DOMAINS__[hostLower]) {
+      brandKey = win.__DYNAMIC_DOMAINS__[hostLower];
+    }
+
+    // 2. Check custom partner domains
     if (!brandKey) {
-      const hostLower = window.location.hostname.toLowerCase();
-      const win = window as any;
-      if (win.__DYNAMIC_DOMAINS__ && win.__DYNAMIC_DOMAINS__[hostLower]) {
-        brandKey = win.__DYNAMIC_DOMAINS__[hostLower];
+      const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
+        "paynex.azurewebsites.net": "paynex",
+        "xoinpay.azurewebsites.net": "xoinpay",
+        "icunow.azurewebsites.net": "icunow-store",
+        "xpaypass.com": "xoinpay",
+        "www.xpaypass.com": "xoinpay",
+        "bt-checkout.aipowerpay.com": "aipowerpay",
+        "www.bt-checkout.aipowerpay.com": "aipowerpay"
+      };
+      if (KNOWN_PARTNER_DOMAINS[hostLower]) {
+        brandKey = KNOWN_PARTNER_DOMAINS[hostLower];
       }
+    }
+
+    // 3. Handle localhost with subdomains for development/testing
+    if (!brandKey && (hostLower.endsWith(".localhost") || hostLower.endsWith(".127.0.0.1"))) {
+      const parts = hostLower.split(".");
+      const candidate = parts[0];
+      if (candidate && candidate.length > 0 && candidate !== "www") {
+        const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
+          paynex: "paynex",
+          xoinpay: "xoinpay",
+          icunow: "icunow-store",
+          aipowerpay: "aipowerpay",
+        };
+        brandKey = KNOWN_PARTNER_PATTERNS[candidate] || candidate;
+      }
+    }
+
+    // 4. Extract partner brand key from azure / payportal / portalpay subdomains
+    if (!brandKey) {
+      const parts = hostLower.split(".");
+      if (parts.length >= 2) {
+        const candidate = parts[0];
+        const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
+          paynex: "paynex",
+          xoinpay: "xoinpay",
+          icunow: "icunow-store",
+          aipowerpay: "aipowerpay",
+        };
+        if (KNOWN_PARTNER_PATTERNS[candidate]) {
+          brandKey = KNOWN_PARTNER_PATTERNS[candidate];
+        } else if (candidate && candidate.length > 2 && !["www", "api", "admin"].includes(candidate)) {
+          const isAzure = hostLower.endsWith(".azurewebsites.net") || hostLower.endsWith(".azurecontainerapps.io");
+          const isPayportal = hostLower.endsWith(".payportal.co") || hostLower.endsWith(".portalpay.app");
+          if (isAzure || isPayportal) {
+            brandKey = candidate;
+          }
+        }
+      }
+    }
+
+    // 5. Fallback to reading DOM attribute
+    if (!brandKey) {
+      brandKey = document.documentElement?.getAttribute("data-pp-brand-key") || "";
     }
   }
 
@@ -42,15 +100,40 @@ export function getClient() {
   if (isPlatform) {
     clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
   } else {
+    // Check localStorage cache first to guarantee synchronous resolution on direct page loads/refreshes
+    // before the client-side ThemeLoader completes its async Cosmos DB fetch.
     if (typeof window !== "undefined") {
+      try {
+        clientId = localStorage.getItem(`pp-thirdweb-client-id:${brandKey}`) || undefined;
+      } catch { }
+    }
+
+    if (!clientId && typeof window !== "undefined") {
       clientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id") || undefined;
       if (clientId === "undefined" || clientId === "null" || clientId === "") {
         clientId = undefined;
       }
     }
+    
+    const isDomClientIdPlatform = clientId === process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
+    if (isDomClientIdPlatform) {
+      clientId = undefined;
+    }
+    
     if (!clientId && normalizedKey) {
       clientId = process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${normalizedKey}`];
     }
+    
+    // Check if we can fallback to the DOM attribute if it wasn't the platform default
+    if (!clientId && typeof window !== "undefined") {
+      try {
+        const domClientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id");
+        if (domClientId && domClientId !== "undefined" && domClientId !== "null" && domClientId !== "") {
+          clientId = domClientId;
+        }
+      } catch { }
+    }
+    
     clientId = clientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
   }
 
