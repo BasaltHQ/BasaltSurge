@@ -887,6 +887,7 @@ export default function PlatformPluginsPanel() {
     shopifyAppSecret: "",
     shopifyAppSlug: "",
     partnerOrgId: "",
+    cliPartnersToken: "",
     enabled: true,
     verification: {
       domainVerified: false,
@@ -902,6 +903,16 @@ export default function PlatformPluginsPanel() {
 
   // Status view
   const [statusDoc, setStatusDoc] = React.useState<any>(null);
+  const [deploying, setDeploying] = React.useState(false);
+  const [deployProgress, setDeployProgress] = React.useState(0);
+  const [deployStep, setDeployStep] = React.useState("");
+  
+  React.useEffect(() => {
+    if (deploying) {
+      const el = document.getElementById("cli-logs-pre");
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+  }, [statusDoc?.deployment?.logs, deploying]);
   // Track last saved snapshot to compute checklist (completed & saved vs pending)
   const [savedSnapshot, setSavedSnapshot] = React.useState<any>(null);
   const [lastSavedAt, setLastSavedAt] = React.useState<number | null>(null);
@@ -1153,6 +1164,7 @@ export default function PlatformPluginsPanel() {
             shopifyAppSecret: conf?.shopifyAppSecret || "",
             shopifyAppSlug: conf?.shopifyAppSlug || "",
             partnerOrgId: conf?.partnerOrgId || "",
+            cliPartnersToken: conf?.cliPartnersToken || "",
             enabled: conf?.enabled !== false,
             verification: {
               domainVerified: !!conf?.verification?.domainVerified,
@@ -1188,6 +1200,7 @@ export default function PlatformPluginsPanel() {
             shopifyAppSecret: "",
             shopifyAppSlug: "",
             partnerOrgId: "",
+            cliPartnersToken: "",
             enabled: true,
             verification: {
               domainVerified: false,
@@ -1259,18 +1272,111 @@ export default function PlatformPluginsPanel() {
 
   async function deploy() {
     setError(""); setInfo("");
+    if (!brandKey) { setError("Select a brandKey"); return; }
+
+    setDeploying(true);
+    setDeployProgress(5);
+    setDeployStep("Initializing deployment...");
+
+    // Start local simulated increment
+    const progressTimer = setInterval(() => {
+      setDeployProgress((prev) => {
+        if (prev < 90) {
+          const inc = prev < 50 ? 5 : (prev < 75 ? 2 : 1);
+          return prev + inc;
+        }
+        return prev;
+      });
+    }, 1500);
+
+    // Start real-time status polling
+    const pollTimer = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/admin/shopify/apps/status?brandKey=${encodeURIComponent(brandKey)}&skipInfo=true`, { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j?.ok) {
+          setStatusDoc(j);
+          const steps = j?.recentProgress || [];
+          if (steps.length > 0) {
+            const latest = steps[steps.length - 1];
+            if (latest) {
+              let msg = "";
+              let pct = 0;
+              switch (latest.step) {
+                case "cli_check":
+                  msg = latest.ok ? "Shopify CLI verified." : "CLI check failed.";
+                  pct = 15;
+                  break;
+                case "config_load":
+                  msg = latest.ok ? "Configuration loaded from database." : "Failed to load config.";
+                  pct = 30;
+                  break;
+                case "env_check":
+                  msg = latest.ok ? "Credentials verified." : "Credential verification failed.";
+                  pct = 45;
+                  break;
+                case "config_validate":
+                  msg = latest.ok ? "Configuration validated." : "Validation failed.";
+                  pct = 60;
+                  break;
+                case "config_build":
+                  msg = latest.ok ? "Extension package created." : "Package creation failed.";
+                  pct = 75;
+                  break;
+                case "deploy_start":
+                  msg = latest.ok ? "Uploading and deploying to Shopify..." : "Deployment failed to start.";
+                  pct = 85;
+                  break;
+                case "config_update":
+                  msg = latest.ok ? "Updating local database config..." : "Failed to update database config.";
+                  pct = 95;
+                  break;
+                case "deploy_complete":
+                  msg = latest.ok ? "Deployment completed successfully!" : "Deployment failed.";
+                  pct = 100;
+                  break;
+              }
+              if (msg) setDeployStep(msg);
+              if (pct > 0) {
+                setDeployProgress((prev) => Math.max(prev, pct));
+              }
+            }
+          }
+        }
+      } catch {}
+    }, 3000);
+
     try {
-      if (!brandKey) { setError("Select a brandKey"); return; }
       const r = await fetch(`/api/admin/shopify/apps/deploy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ brandKey })
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok || !j?.ok) { setError(j?.error || "Deploy failed"); return; }
-      setInfo("Deploy initiated.");
+      
+      clearInterval(progressTimer);
+      clearInterval(pollTimer);
+
+      if (!r.ok || !j?.ok) {
+        setError(j?.error || "Deploy failed");
+        setDeploying(false);
+        return;
+      }
+      
+      setDeployProgress(100);
+      setDeployStep("Deployment completed successfully!");
+      setInfo("Deploy completed.");
       await getStatus();
-    } catch (e: any) { setError(e?.message || "Deploy failed"); }
+      
+      setTimeout(() => {
+        setDeploying(false);
+      }, 3000);
+    } catch (e: any) {
+      clearInterval(progressTimer);
+      clearInterval(pollTimer);
+      setError(e?.message || "Deploy failed");
+      setDeploying(false);
+    }
   }
 
   async function getStatus() {
@@ -2266,52 +2372,51 @@ export default function PlatformPluginsPanel() {
 
             {/* Instructions */}
             <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] p-3">
-              <div className="text-sm font-medium mb-2">Deployment Steps</div>
-              <ol className="microtext text-muted-foreground space-y-1 ml-4 list-decimal">
-                <li>Save your configuration changes</li>
-                <li>Generate the Shopify app package (creates extension code)</li>
-                <li>Download and upload package to your Shopify Partners account</li>
-                <li>Deploy the app to make it available for installation</li>
-              </ol>
+              <div className="text-sm font-medium mb-2">CLI Deployment Flow</div>
+              <p className="microtext text-muted-foreground leading-relaxed">
+                Shopify manages app configuration and extensions (like Checkout UI extensions) exclusively through the Shopify CLI. 
+                Manual ZIP package uploads are no longer supported. Clicking <strong>Deploy App</strong> compiles your configuration and deploys it programmatically to your Shopify Partners account.
+              </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <button className="px-3 py-1.5 border rounded-md text-sm" onClick={saveConfig} disabled={saving}>{saving ? "Saving…" : "Save Configuration"}</button>
-              <button className="px-3 py-1.5 border rounded-md text-sm" onClick={generatePackage}>Generate Package</button>
-              <button className="px-3 py-1.5 border rounded-md text-sm" onClick={deploy}>Deploy App</button>
+              <button className="px-3 py-1.5 border rounded-md text-sm" onClick={saveConfig} disabled={saving || deploying}>{saving ? "Saving…" : "Save Configuration"}</button>
+              <button 
+                className="px-3 py-1.5 border rounded-md text-sm disabled:cursor-not-allowed disabled:opacity-50" 
+                onClick={deploy} 
+                disabled={deploying}
+              >
+                {deploying ? "Deploying..." : "Deploy App"}
+              </button>
             </div>
 
-            {/* Package URL Display */}
-            {packageUrl && (
-              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-950/20 p-3">
-                <div className="text-sm font-medium text-emerald-900 dark:text-emerald-100 mb-2">Package Ready</div>
-                <div className="microtext text-emerald-700 dark:text-emerald-300 mb-2">
-                  Download this package and upload it to your Shopify Partners account under App Extensions.
+            {deploying && (
+              <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] p-4 mt-3 space-y-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-semibold text-foreground">{deployStep}</span>
+                  <span className="font-mono text-muted-foreground">{deployProgress}%</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    readOnly
-                    value={packageUrl}
-                    className="flex-1 h-9 px-3 border rounded-md bg-background font-mono text-xs"
+                <div className="w-full bg-foreground/[0.05] rounded-full h-2 overflow-hidden">
+                  <div 
+                    className="bg-primary h-full rounded-full transition-all duration-500 ease-out" 
+                    style={{ width: `${deployProgress}%` }}
                   />
-                  <button
-                    className="px-3 py-1.5 border rounded-md text-sm hover:bg-foreground/[0.04]"
-                    onClick={() => {
-                      navigator.clipboard.writeText(packageUrl);
-                      setInfo('Package URL copied to clipboard');
-                    }}
-                  >
-                    Copy URL
-                  </button>
-                  <a
-                    href={packageUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-1.5 border rounded-md text-sm hover:bg-foreground/[0.04]"
-                  >
-                    Download
-                  </a>
                 </div>
+                <div className="text-[10px] text-muted-foreground italic">
+                  Do not close or refresh this page. Deployment can take up to 2 minutes.
+                </div>
+              </div>
+            )}
+
+            {statusDoc?.deployment?.logs?.length > 0 && (
+              <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] p-4 mt-3">
+                <div className="text-xs font-semibold mb-2">CLI Output Logs</div>
+                <pre 
+                  id="cli-logs-pre"
+                  className="bg-black text-emerald-400 p-3 rounded-lg text-[10px] font-mono h-48 overflow-y-auto whitespace-pre-wrap text-left"
+                >
+                  {statusDoc.deployment.logs.join("\n")}
+                </pre>
               </div>
             )}
 
@@ -2421,10 +2526,15 @@ export default function PlatformPluginsPanel() {
             </div>
             <fieldset disabled={!editPublish} className="contents">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
+                 <div>
                   <label className="microtext">Partner Organization ID</label>
-                  <input className="mt-1 h-9 w-full px-3 border rounded-md bg-background" value={plugin.partnerOrgId} onChange={(e) => setPlugin({ ...plugin, partnerOrgId: e.target.value })} placeholder="12345678" />
+                  <input className="mt-1 h-9 w-full px-3 border rounded-md bg-background" value={plugin.partnerOrgId || ""} onChange={(e) => setPlugin({ ...plugin, partnerOrgId: e.target.value })} placeholder="12345678" />
                   <div className="microtext text-muted-foreground mt-1">Required for deep links. Found in Partner Dashboard URL.</div>
+                </div>
+                <div>
+                  <label className="microtext">Partners CLI Token</label>
+                  <input className="mt-1 h-9 w-full px-3 border rounded-md bg-background" type="password" value={plugin.cliPartnersToken || ""} onChange={(e) => setPlugin({ ...plugin, cliPartnersToken: e.target.value })} placeholder="shpat_..." />
+                  <div className="microtext text-muted-foreground mt-1">CLI Token from Shopify Partners Settings. Overrides server environment variables.</div>
                 </div>
                 <div>
                   <label className="microtext">Shopify App ID (Client ID)</label>

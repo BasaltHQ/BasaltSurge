@@ -50,6 +50,7 @@
     "@react-pdf/renderer": "^4.3.1",
     "@stripe/crypto": "^1.0.2",
     "@stripe/stripe-js": "^9.6.0",
+    "@shopify/ui-extensions-react": "^2024.4.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/d3": "^7.4.3",
     "@types/react-syntax-highlighter": "^15.5.13",
@@ -111,6 +112,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@shopify/cli": "^3.60.0",
     "@tailwindcss/postcss": "^4",
     "@types/archiver": "^7.0.0",
     "@types/jszip": "^3.4.0",

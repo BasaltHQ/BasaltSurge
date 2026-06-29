@@ -27,6 +27,8 @@ export interface ShopifyAppConfig {
   supportUrl?: string;
   privacyUrl?: string;
   termsUrl?: string;
+  partnersToken?: string;
+  orgId?: string;
   extension?: {
     enabled: boolean;
     buttonLabel: string;
@@ -45,12 +47,33 @@ export interface DeployResult {
   logs: string[];
 }
 
+let _resolvedCmd: string | null = null;
+
+export async function getShopifyCommand(): Promise<string> {
+  if (_resolvedCmd) return _resolvedCmd;
+  try {
+    await execAsync("shopify version");
+    _resolvedCmd = "shopify";
+    return _resolvedCmd;
+  } catch {
+    try {
+      await execAsync("npx -y shopify version");
+      _resolvedCmd = "npx -y shopify";
+      return _resolvedCmd;
+    } catch {
+      _resolvedCmd = "shopify";
+      return _resolvedCmd;
+    }
+  }
+}
+
 /**
  * Check if Shopify CLI is installed
  */
 export async function isShopifyCliInstalled(): Promise<boolean> {
   try {
-    await execAsync("shopify version");
+    const cmd = await getShopifyCommand();
+    await execAsync(`${cmd} version`);
     return true;
   } catch {
     return false;
@@ -62,7 +85,8 @@ export async function isShopifyCliInstalled(): Promise<boolean> {
  */
 export async function getShopifyCliVersion(): Promise<string | null> {
   try {
-    const { stdout } = await execAsync("shopify version");
+    const cmd = await getShopifyCommand();
+    const { stdout } = await execAsync(`${cmd} version`);
     return stdout.trim();
   } catch {
     return null;
@@ -165,11 +189,11 @@ export function generateCheckoutExtensionCode(config: ShopifyAppConfig): string 
   const ext = config.extension;
   if (!ext?.enabled) return "";
 
-  return `import {
+  return `import React from "react";
+import {
   reactExtension,
   Banner,
   Button,
-  useApplyCartLinesChange,
   useCartLines,
   useApi,
   useSettings,
@@ -200,10 +224,14 @@ function CryptoPaymentOption() {
     return null;
   }
 
-  const handleCryptoPayment = () => {
-    // Open crypto payment modal/redirect
-    // This integrates with your backend payment processing
-    const paymentUrl = \`\${apiUrl}/api/payments/crypto?session=\${extension.sessionToken}&apiKey=\${apiKey}\`;
+  const handleCryptoPayment = async () => {
+    let token = "";
+    try {
+      token = await extension.sessionToken.get();
+    } catch (err) {
+      console.error("Failed to get session token:", err);
+    }
+    const paymentUrl = \`\${apiUrl}/api/payments/crypto?session=\${token}&apiKey=\${apiKey}\`;
     window.open(paymentUrl, '_blank');
   };
 
@@ -255,35 +283,51 @@ export function generateExtensionPackageJson(config: ShopifyAppConfig): string {
  * Create a temporary Shopify app project directory
  */
 export async function createAppProject(config: ShopifyAppConfig): Promise<string> {
-  const tmpDir = path.join(os.tmpdir(), `shopify-app-${config.brandKey}-${Date.now()}`);
-  
+  const rootDir = os.tmpdir();
+  const tmpDir = path.join(rootDir, `.shopify-deploy-${config.brandKey}-${Date.now()}`);
+
   await fs.mkdir(tmpDir, { recursive: true });
+
+  // Create junctions to main node_modules to make dependencies immediately available
+  try {
+    const workspaceRoot = process.cwd();
+    const targetNodeModules = path.join(workspaceRoot, "node_modules");
+    await fs.symlink(targetNodeModules, path.join(tmpDir, "node_modules"), "junction");
+
+    // Also link node_modules directly inside the extension folder to satisfy local compiler resolution
+    const extDir = path.join(tmpDir, "extensions", "checkout-ui");
+    await fs.mkdir(extDir, { recursive: true });
+    await fs.symlink(targetNodeModules, path.join(extDir, "node_modules"), "junction");
+  } catch (err: any) {
+    // Ignore symlink errors, fall back to default resolution
+  }
+
   await fs.mkdir(path.join(tmpDir, "extensions", "checkout-ui", "src"), { recursive: true });
-  
+
   // Write app.toml
   await fs.writeFile(
     path.join(tmpDir, "shopify.app.toml"),
     generateAppToml(config)
   );
-  
+
   // Write package.json
   await fs.writeFile(
     path.join(tmpDir, "package.json"),
     generateExtensionPackageJson(config)
   );
-  
+
   // Write extension config if enabled
   if (config.extension?.enabled) {
     await fs.writeFile(
       path.join(tmpDir, "extensions", "checkout-ui", "shopify.extension.toml"),
       generateExtensionToml(config)
     );
-    
+
     await fs.writeFile(
       path.join(tmpDir, "extensions", "checkout-ui", "src", "Checkout.tsx"),
       generateCheckoutExtensionCode(config)
     );
-    
+
     // Extension package.json
     await fs.writeFile(
       path.join(tmpDir, "extensions", "checkout-ui", "package.json"),
@@ -298,7 +342,7 @@ export async function createAppProject(config: ShopifyAppConfig): Promise<string
       }, null, 2)
     );
   }
-  
+
   return tmpDir;
 }
 
@@ -308,14 +352,16 @@ export async function createAppProject(config: ShopifyAppConfig): Promise<string
 export async function runShopifyCommand(
   cwd: string,
   args: string[],
-  env?: Record<string, string>
+  env?: Record<string, string>,
+  onLog?: (line: string) => void
 ): Promise<{ success: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const logs: string[] = [];
     let stdout = "";
     let stderr = "";
-    
-    const proc = spawn("shopify", args, {
+
+    const cmd = _resolvedCmd || "shopify";
+    const proc = spawn(cmd, args, {
       cwd,
       env: {
         ...process.env,
@@ -326,19 +372,31 @@ export async function runShopifyCommand(
       },
       shell: true,
     });
-    
+
+    proc.stdin?.end();
+
     proc.stdout.on("data", (data) => {
       const str = data.toString();
       stdout += str;
       logs.push(str);
+      if (onLog) {
+        str.split("\n").forEach((line: string) => {
+          if (line.trim()) onLog(line.trim());
+        });
+      }
     });
-    
+
     proc.stderr.on("data", (data) => {
       const str = data.toString();
       stderr += str;
       logs.push(`[stderr] ${str}`);
+      if (onLog) {
+        str.split("\n").forEach((line: string) => {
+          if (line.trim()) onLog(`[stderr] ${line.trim()}`);
+        });
+      }
     });
-    
+
     proc.on("close", (code) => {
       resolve({
         success: code === 0,
@@ -346,7 +404,7 @@ export async function runShopifyCommand(
         stderr,
       });
     });
-    
+
     proc.on("error", (err) => {
       resolve({
         success: false,
@@ -360,29 +418,23 @@ export async function runShopifyCommand(
 /**
  * Deploy a Shopify app using the CLI
  */
-export async function deployShopifyApp(config: ShopifyAppConfig): Promise<DeployResult> {
+export async function deployShopifyApp(
+  config: ShopifyAppConfig,
+  onLog?: (line: string) => void
+): Promise<DeployResult> {
   const logs: string[] = [];
-  
-  // Check for required environment variables
-  const partnersToken = process.env.SHOPIFY_CLI_PARTNERS_TOKEN;
-  const orgId = process.env.SHOPIFY_ORG_ID;
-  
+
+  const partnersToken = config.partnersToken || "";
+  const orgId = config.orgId || "";
+
   if (!partnersToken) {
     return {
       success: false,
       error: "SHOPIFY_CLI_PARTNERS_TOKEN not configured",
-      logs: ["Missing SHOPIFY_CLI_PARTNERS_TOKEN environment variable"],
+      logs: ["Missing SHOPIFY_CLI_PARTNERS_TOKEN environment variable or cliPartnersToken in Plugin settings"],
     };
   }
-  
-  if (!orgId) {
-    return {
-      success: false,
-      error: "SHOPIFY_ORG_ID not configured",
-      logs: ["Missing SHOPIFY_ORG_ID environment variable"],
-    };
-  }
-  
+
   // Check if CLI is installed
   const cliInstalled = await isShopifyCliInstalled();
   if (!cliInstalled) {
@@ -392,9 +444,17 @@ export async function deployShopifyApp(config: ShopifyAppConfig): Promise<Deploy
       logs: ["Shopify CLI not found. Install with: npm install -g @shopify/cli"],
     };
   }
-  
+
+  if (!config.clientId) {
+    return {
+      success: false,
+      error: "Client ID not configured",
+      logs: ["Missing Shopify Client ID (API Key). Go to your app settings on the Shopify Partners Dashboard, copy the API key, and configure it under Publish settings first."],
+    };
+  }
+
   logs.push(`Starting deployment for ${config.name}...`);
-  
+
   // Create project directory
   let projectDir: string;
   try {
@@ -407,101 +467,63 @@ export async function deployShopifyApp(config: ShopifyAppConfig): Promise<Deploy
       logs,
     };
   }
-  
-  const env = {
-    SHOPIFY_CLI_PARTNERS_TOKEN: partnersToken,
-    SHOPIFY_CLI_ORGANIZATION_ID: orgId,
-  };
-  
+
+  const env: Record<string, string> = {};
+  if (partnersToken.startsWith("atkn_")) {
+    env.SHOPIFY_APP_AUTOMATION_TOKEN = partnersToken;
+  } else {
+    env.SHOPIFY_CLI_PARTNERS_TOKEN = partnersToken;
+  }
+  if (orgId) {
+    env.SHOPIFY_CLI_ORGANIZATION_ID = orgId;
+  }
+
   try {
-    // Step 1: Install dependencies
-    logs.push("Installing dependencies...");
-    const installResult = await runShopifyCommand(projectDir, ["app", "install"], env);
-    if (!installResult.success) {
-      // Try npm install as fallback
-      try {
-        await execAsync("npm install", { cwd: projectDir });
-        logs.push("Dependencies installed via npm");
-      } catch {
-        logs.push(`Warning: dependency install had issues: ${installResult.stderr}`);
-      }
-    }
-    
-    // Step 2: Create or link app
-    logs.push("Creating/linking app in Shopify Partners...");
-    let appCreateResult;
-    
-    if (config.clientId) {
-      // Link to existing app
-      appCreateResult = await runShopifyCommand(
-        projectDir,
-        ["app", "config", "link", "--client-id", config.clientId],
-        env
-      );
-    } else {
-      // Create new app
-      appCreateResult = await runShopifyCommand(
-        projectDir,
-        ["app", "config", "push", "--force"],
-        env
-      );
-    }
-    
-    logs.push(appCreateResult.stdout || appCreateResult.stderr);
-    
-    // Step 3: Deploy the app
+    // Step 2: Deploy the app
     logs.push("Deploying app...");
+    if (onLog) onLog("Deploying app...");
     const deployResult = await runShopifyCommand(
       projectDir,
-      ["app", "deploy", "--force"],
-      env
+      ["app", "deploy", "--allow-updates"],
+      env,
+      onLog
     );
-    
-    logs.push(deployResult.stdout || deployResult.stderr);
-    
+
+    if (deployResult.stdout) logs.push(deployResult.stdout);
+    if (deployResult.stderr) logs.push(`[stderr] ${deployResult.stderr}`);
+
     if (!deployResult.success) {
-      // Try alternative deployment method
-      logs.push("Trying alternative deployment method...");
-      const pushResult = await runShopifyCommand(
-        projectDir,
-        ["app", "config", "push"],
-        env
-      );
-      logs.push(pushResult.stdout || pushResult.stderr);
-      
-      if (!pushResult.success) {
-        return {
-          success: false,
-          error: "Deployment failed",
-          logs,
-        };
-      }
+      return {
+        success: false,
+        error: "Deployment failed",
+        logs,
+      };
     }
-    
+
     // Try to extract app info from output
     let appId: string | undefined;
     let clientId: string | undefined;
     let appUrl: string | undefined;
-    
+
     const outputText = deployResult.stdout + deployResult.stderr;
-    
+
     // Parse app ID from output
     const appIdMatch = outputText.match(/app[_\s-]?id[:\s]+([a-zA-Z0-9]+)/i);
     if (appIdMatch) appId = appIdMatch[1];
-    
+
     const clientIdMatch = outputText.match(/client[_\s-]?id[:\s]+([a-zA-Z0-9]+)/i);
     if (clientIdMatch) clientId = clientIdMatch[1];
-    
+
     const urlMatch = outputText.match(/https:\/\/partners\.shopify\.com\/[^\s]+/);
     if (urlMatch) appUrl = urlMatch[0];
-    
+
     // Cleanup temp directory
     try {
       await fs.rm(projectDir, { recursive: true, force: true });
     } catch {
       // Ignore cleanup errors
     }
-    
+
     return {
       success: true,
       appId,
@@ -511,14 +533,14 @@ export async function deployShopifyApp(config: ShopifyAppConfig): Promise<Deploy
     };
   } catch (e: any) {
     logs.push(`Error: ${e.message}`);
-    
+
     // Cleanup temp directory
     try {
       await fs.rm(projectDir, { recursive: true, force: true });
     } catch {
       // Ignore cleanup errors
     }
-    
+
     return {
       success: false,
       error: e.message,
@@ -533,21 +555,21 @@ export async function deployShopifyApp(config: ShopifyAppConfig): Promise<Deploy
 export async function getAppInfo(clientId: string): Promise<any> {
   const partnersToken = process.env.SHOPIFY_CLI_PARTNERS_TOKEN;
   const orgId = process.env.SHOPIFY_ORG_ID;
-  
+
   if (!partnersToken || !orgId) {
     return null;
   }
-  
+
   try {
     const tmpDir = path.join(os.tmpdir(), `shopify-info-${Date.now()}`);
     await fs.mkdir(tmpDir, { recursive: true });
-    
+
     // Create minimal config
     await fs.writeFile(
       path.join(tmpDir, "shopify.app.toml"),
       `client_id = "${clientId}"\nname = "temp"`
     );
-    
+
     const result = await runShopifyCommand(
       tmpDir,
       ["app", "info"],
@@ -556,9 +578,9 @@ export async function getAppInfo(clientId: string): Promise<any> {
         SHOPIFY_CLI_ORGANIZATION_ID: orgId,
       }
     );
-    
+
     await fs.rm(tmpDir, { recursive: true, force: true });
-    
+
     return {
       success: result.success,
       output: result.stdout,
