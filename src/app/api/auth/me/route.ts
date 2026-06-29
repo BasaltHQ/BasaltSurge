@@ -51,77 +51,84 @@ export async function GET(req: NextRequest) {
     const isPlatformAdmin = platformAdminWallets.includes(wallet.toLowerCase());
 
     if (isPlatformAdmin) {
-      // Platform Admin Bypass: Always approved, always admin
-      shopStatus = "approved";
       if (!roles.includes("admin")) {
         roles.push("admin");
       }
-    } else {
-      try {
-        const brandKey = getBrandKey(req);
-        const container = await getContainer();
+    }
 
-        // AUTHORITATIVE: Check client_request status FIRST
-        // This is the source of truth for approval/pending/blocked/rejected status
-        const clientRequestQuery = "SELECT top 1 c.status FROM c WHERE c.type = 'client_request' AND c.wallet = @w AND c.brandKey = @b";
-        console.log("[AuthMe] Checking Access:", { wallet, brandKey, isPlatformAdmin });
-        const { resources: clientRequestResources } = await container.items.query({
-          query: clientRequestQuery,
-          parameters: [{ name: "@w", value: wallet.toLowerCase() }, { name: "@b", value: brandKey }]
-        }).fetchAll();
-        console.log("[AuthMe] ClientRequest Result:", clientRequestResources);
+    try {
+      const brandKey = getBrandKey(req);
+      const container = await getContainer();
 
-        if (clientRequestResources.length > 0) {
-          const requestStatus = clientRequestResources[0].status;
-          if (requestStatus === "approved") {
-            shopStatus = "approved";
-          } else if (requestStatus === "pending") {
-            shopStatus = "pending";
-          } else if (requestStatus === "blocked") {
-            blocked = true;
-          } else if (requestStatus === "rejected") {
-            shopStatus = "rejected";
-          }
+      // AUTHORITATIVE: Check client_request status FIRST
+      // This is the source of truth for approval/pending/blocked/rejected status
+      const clientRequestQuery = "SELECT top 1 c.status FROM c WHERE c.type = 'client_request' AND c.wallet = @w AND c.brandKey = @b";
+      console.log("[AuthMe] Checking Access:", { wallet, brandKey, isPlatformAdmin });
+      const { resources: clientRequestResources } = await container.items.query({
+        query: clientRequestQuery,
+        parameters: [{ name: "@w", value: wallet.toLowerCase() }, { name: "@b", value: brandKey }]
+      }).fetchAll();
+      console.log("[AuthMe] ClientRequest Result:", clientRequestResources);
+
+      if (clientRequestResources.length > 0) {
+        const requestStatus = clientRequestResources[0].status;
+        if (requestStatus === "approved") {
+          shopStatus = "approved";
+        } else if (requestStatus === "pending") {
+          shopStatus = "pending";
+        } else if (requestStatus === "blocked") {
+          blocked = true;
+        } else if (requestStatus === "rejected") {
+          shopStatus = "rejected";
         }
-
-        // LEGACY FALLBACK (PLATFORM ONLY): If no client_request exists, check if ANY
-        // shop_config or site_config exists for this wallet. This matches the
-        // ClientRequestsPanel synthesis logic which auto-approves any merchant with a
-        // config document. Only applies to the platform container where merchants existed
-        // before the client_request signup system was introduced.
-        // Partner containers have always required client_request — no fallback needed.
-        if (shopStatus === "none" && !blocked) {
-          const { isPlatformContext } = await import("@/lib/env");
-          if (isPlatformContext()) {
-            const legacyShopQuery = "SELECT top 1 c.id FROM c WHERE (c.type = 'shop_config' OR (c.type = 'site_config' AND IS_DEFINED(c.name))) AND c.wallet = @w AND (c.brandKey = @b OR NOT IS_DEFINED(c.brandKey) OR c.brandKey = '' OR c.brandKey = null)";
-            const { resources: legacyResources } = await container.items.query({
-              query: legacyShopQuery,
-              parameters: [{ name: "@w", value: wallet }, { name: "@b", value: brandKey }]
-            }).fetchAll();
-            console.log("[AuthMe] Legacy Shop Result:", legacyResources);
-
-            if (legacyResources.length > 0) {
-              // Legacy approved merchant - has a config but no client_request
-              shopStatus = "approved";
-            }
-          }
-        }
-
-        // PARTNER ADMIN BYPASS: If they have a valid admin/owner/dev/support role on the
-        // partner container, they are authorized admins and should bypass the merchant sign-up gate.
-        if (shopStatus === "none" && !blocked) {
-          const { resolveAdminRole } = await import("@/lib/authz-server");
-          const role = await resolveAdminRole(wallet, brandKey);
-          if (role && (role.startsWith("partner_") || role.startsWith("platform_"))) {
-            shopStatus = "approved";
-            if (!roles.includes("admin")) {
-              roles.push("admin");
-            }
-          }
-        }
-      } catch (e) {
-        // ignore, default to none
       }
+
+      // LEGACY FALLBACK (PLATFORM ONLY): If no client_request exists, check if ANY
+      // shop_config or site_config exists for this wallet. This matches the
+      // ClientRequestsPanel synthesis logic which auto-approves any merchant with a
+      // config document. Only applies to the platform container where merchants existed
+      // before the client_request signup system was introduced.
+      // Partner containers have always required client_request — no fallback needed.
+      if (shopStatus === "none" && !blocked) {
+        const { isPlatformContext } = await import("@/lib/env");
+        if (isPlatformContext()) {
+          const legacyShopQuery = "SELECT top 1 c.id FROM c WHERE (c.type = 'shop_config' OR (c.type = 'site_config' AND IS_DEFINED(c.name))) AND c.wallet = @w AND (c.brandKey = @b OR NOT IS_DEFINED(c.brandKey) OR c.brandKey = '' OR c.brandKey = null)";
+          const { resources: legacyResources } = await container.items.query({
+            query: legacyShopQuery,
+            parameters: [{ name: "@w", value: wallet }, { name: "@b", value: brandKey }]
+          }).fetchAll();
+          console.log("[AuthMe] Legacy Shop Result:", legacyResources);
+
+          if (legacyResources.length > 0) {
+            // Legacy approved merchant - has a config but no client_request
+            shopStatus = "approved";
+          }
+        }
+      }
+
+      // PARTNER ADMIN BYPASS: If they have a valid admin/owner/dev/support role on the
+      // partner container, they are authorized admins and should bypass the merchant sign-up gate.
+      if (shopStatus === "none" && !blocked) {
+        const { resolveAdminRole } = await import("@/lib/authz-server");
+        const role = await resolveAdminRole(wallet, brandKey);
+        if (role && (role.startsWith("partner_") || role.startsWith("platform_"))) {
+          shopStatus = "approved";
+          if (!roles.includes("admin")) {
+            roles.push("admin");
+          }
+        }
+      }
+    } catch (e) {
+      // ignore, default to none or admin state
+    }
+
+    // Platform Admin Bypass: If they are a platform admin, they should never be blocked
+    // and they should be approved as a fallback if no specific merchant status is found.
+    if (isPlatformAdmin) {
+      if (shopStatus === "none" || shopStatus === "pending" || shopStatus === "rejected") {
+        shopStatus = "approved";
+      }
+      blocked = false;
     }
 
     return NextResponse.json({ authed: sessionAuthed, wallet, roles, shopStatus, isPlatformAdmin, blocked });
