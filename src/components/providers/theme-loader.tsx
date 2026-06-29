@@ -296,6 +296,15 @@ export function ThemeLoader() {
             const bc = (pj?.brand?.colors || {}) as any;
             platformPrimary = typeof bc.primary === "string" ? bc.primary : undefined;
             platformAccent = typeof bc.accent === "string" ? bc.accent : undefined;
+            
+            // Set dynamic database client ID on document element to override any statically pre-rendered layout default client ID
+            if (pj?.overrides?.thirdwebClientId) {
+              try {
+                document.documentElement.setAttribute("data-pp-thirdweb-client-id", pj.overrides.thirdwebClientId);
+                localStorage.setItem(`pp-thirdweb-client-id:${bk}`, pj.overrides.thirdwebClientId);
+              } catch { }
+            }
+            
             // Debug: log resolved brand colors
             console.log("[ThemeLoader] brandKey:", bk, "containerType:", ct, "isPartnerContainer:", isPartnerContainer, "platformPrimary:", platformPrimary, "platformAccent:", platformAccent);
           }

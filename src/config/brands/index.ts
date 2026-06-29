@@ -65,6 +65,9 @@ export type BrandConfig = {
   transakOnrampEnabled?: boolean;
   rampnowOnrampEnabled?: boolean;
   feeMinusEnabled?: boolean;
+
+  // Thirdweb Keys
+  thirdwebClientId?: string;
 };
 
 export const BRANDS: Record<string, BrandConfig> = {

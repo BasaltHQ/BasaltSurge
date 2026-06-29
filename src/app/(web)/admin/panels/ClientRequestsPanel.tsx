@@ -669,6 +669,14 @@ export default function ClientRequestsPanel() {
             }
         }
 
+        // Resolve credit and debit agents lists, fallback/carry-over between them if one is missing/empty
+        const existingCreditAgents = existingSplit?.agents || [];
+        const existingDebitAgents = existingSplitCredit?.agents || [];
+        const resolvedCreditAgents = existingCreditAgents.length > 0 ? existingCreditAgents 
+                                     : (existingDebitAgents.length > 0 ? existingDebitAgents : baseAgents);
+        const resolvedDebitAgents = existingDebitAgents.length > 0 ? existingDebitAgents 
+                                     : (existingCreditAgents.length > 0 ? existingCreditAgents : baseAgents);
+
         // Initialize Credit Split States
         if (existingSplit) {
             setPartnerBps(existingSplit.partnerBps ?? (isPlatformContainer ? 0 : 50));
@@ -678,12 +686,12 @@ export default function ClientRequestsPanel() {
                 const dbVal = (brand as any)?.creditPlatformFeeBps !== undefined ? (brand as any).creditPlatformFeeBps : (serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
                 setPlatformBps(dbVal);
             }
-            setAgents(mergeAgents(existingSplit.agents || [], false));
+            setAgents(mergeAgents(resolvedCreditAgents, false));
         } else {
             setPartnerBps(isPlatformContainer ? 0 : 50); // Reset to default
             const dbVal = (brand as any)?.creditPlatformFeeBps !== undefined ? (brand as any).creditPlatformFeeBps : (serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
             setPlatformBps(dbVal);
-            setAgents(mergeAgents(baseAgents, false));
+            setAgents(mergeAgents(resolvedCreditAgents, false));
             setLastVerifiedConfig(null); // No verified config for new splits
         }
 
@@ -696,12 +704,12 @@ export default function ClientRequestsPanel() {
                 const dbVal = (brand as any)?.platformFeeBps !== undefined ? (brand as any).platformFeeBps : (serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
                 setPlatformBpsDebit(dbVal);
             }
-            setAgentsDebit(mergeAgents(existingSplitCredit.agents || [], true));
+            setAgentsDebit(mergeAgents(resolvedDebitAgents, true));
         } else {
             setPartnerBpsDebit(0);
             const dbVal = (brand as any)?.platformFeeBps !== undefined ? (brand as any).platformFeeBps : (serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
             setPlatformBpsDebit(dbVal);
-            setAgentsDebit(mergeAgents(baseAgents, true));
+            setAgentsDebit(mergeAgents(resolvedDebitAgents, true));
         }
 
         // Fetch approved agents for dropdown

@@ -474,9 +474,13 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                             const agentId = urlParams.get("agent") || urlParams.get("ref");
                             const agentBps = urlParams.get("bps");
                             if (agentId && agentBps && !isNaN(Number(agentBps))) {
+                                const agentsList = [{ wallet: agentId.toLowerCase(), bps: Number(agentBps) }];
                                 return {
                                     splitConfig: {
-                                        agents: [{ wallet: agentId.toLowerCase(), bps: Number(agentBps) }]
+                                        agents: agentsList
+                                    },
+                                    splitConfigCredit: {
+                                        agents: agentsList
                                     }
                                 };
                             }
