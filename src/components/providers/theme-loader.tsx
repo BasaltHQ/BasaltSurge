@@ -58,6 +58,7 @@ export function ThemeLoader() {
       const isMainDomain =
         hostname.endsWith("ledger1.ai") ||
         hostname.endsWith("portalpay.io") ||
+        hostname.endsWith("basalthq.com") ||
         hostname.includes("localhost") ||
         hostname === "127.0.0.1" ||
         hostname === "0.0.0.0" ||
@@ -302,6 +303,7 @@ export function ThemeLoader() {
               try {
                 document.documentElement.setAttribute("data-pp-thirdweb-client-id", pj.overrides.thirdwebClientId);
                 localStorage.setItem(`pp-thirdweb-client-id:${bk}`, pj.overrides.thirdwebClientId);
+                window.dispatchEvent(new CustomEvent("pp:thirdweb-client-id:updated", { detail: pj.overrides.thirdwebClientId }));
               } catch { }
             }
             

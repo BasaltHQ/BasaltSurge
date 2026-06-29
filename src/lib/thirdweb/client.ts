@@ -100,56 +100,40 @@ export function getClient() {
   
   let clientId: string | undefined = undefined;
   
-  if (isPlatform) {
-    clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
-  } else {
-    // Check module-level cache first to guarantee immunity against Next.js layout DOM resets during SPA transitions
-    if (typeof window !== "undefined" && brandKey && resolvedClientIdCache[brandKey]) {
-      clientId = resolvedClientIdCache[brandKey];
-    }
+  // 1. Check module-level cache first to guarantee immunity against Next.js layout DOM resets during SPA transitions
+  if (typeof window !== "undefined" && brandKey && resolvedClientIdCache[brandKey]) {
+    clientId = resolvedClientIdCache[brandKey];
+  }
 
-    // Check localStorage cache second to guarantee synchronous resolution on hard refreshes (F5)
-    if (!clientId && typeof window !== "undefined") {
-      try {
-        clientId = localStorage.getItem(`pp-thirdweb-client-id:${brandKey}`) || undefined;
-      } catch { }
-    }
+  // 2. Check localStorage cache second to guarantee synchronous resolution on hard refreshes (F5)
+  if (!clientId && typeof window !== "undefined" && brandKey) {
+    try {
+      clientId = localStorage.getItem(`pp-thirdweb-client-id:${brandKey}`) || undefined;
+    } catch { }
+  }
 
-    if (!clientId && typeof window !== "undefined") {
-      clientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id") || undefined;
-      if (clientId === "undefined" || clientId === "null" || clientId === "") {
-        clientId = undefined;
-      }
-    }
-    
-    const isDomClientIdPlatform = clientId === process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
-    if (isDomClientIdPlatform) {
+  // 3. Check DOM attribute
+  if (!clientId && typeof window !== "undefined") {
+    clientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id") || undefined;
+    if (clientId === "undefined" || clientId === "null" || clientId === "") {
       clientId = undefined;
     }
-    
-    if (!clientId && normalizedKey) {
-      clientId = process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${normalizedKey}`];
-    }
-    
-    // Check if we can fallback to the DOM attribute if it wasn't the platform default
-    if (!clientId && typeof window !== "undefined") {
-      try {
-        const domClientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id");
-        if (domClientId && domClientId !== "undefined" && domClientId !== "null" && domClientId !== "") {
-          clientId = domClientId;
-        }
-      } catch { }
-    }
-    
-    clientId = clientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
+  }
+  
+  // 4. Check brand-specific env var (partners only)
+  if (!clientId && !isPlatform && normalizedKey) {
+    clientId = process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${normalizedKey}`];
+  }
+  
+  // 5. Fallback to default env var
+  clientId = clientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
 
-    // Cache the resolved client ID in both module memory and localStorage to survive page updates and resets
-    if (clientId && typeof window !== "undefined" && brandKey) {
-      resolvedClientIdCache[brandKey] = clientId;
-      try {
-        localStorage.setItem(`pp-thirdweb-client-id:${brandKey}`, clientId);
-      } catch { }
-    }
+  // 6. Cache the resolved client ID in both module memory and localStorage to survive page updates and resets
+  if (clientId && typeof window !== "undefined" && brandKey) {
+    resolvedClientIdCache[brandKey] = clientId;
+    try {
+      localStorage.setItem(`pp-thirdweb-client-id:${brandKey}`, clientId);
+    } catch { }
   }
 
   const cacheKey = secret ? `secret_${secret}` : `client_${clientId}`;
@@ -227,4 +211,8 @@ export async function getOwnerModeWallets() {
 export function getRecipientAddress(): `0x${string}` {
   const addr = process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || process.env.NEXT_PUBLIC_PLATFORM_WALLET || "";
   return addr as `0x${string}`;
+}
+
+export function getResolvedClientId(): string {
+  return getClient().clientId;
 }
