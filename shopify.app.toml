@@ -1,6 +1,6 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "2a70d43b786807b05670bffd9c29762d"
+client_id = "227048e775a7b549c4670621046f1469"
 name = "BasaltSurge"
 application_url = "https://example.com"
 embedded = true

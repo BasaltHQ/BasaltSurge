@@ -159,20 +159,21 @@ export async function POST(req: NextRequest) {
   const orgId = plugin?.partnerOrgId || "";
 
   if (!partnersToken) {
-    const doc = await appendProgress(brandKey, { 
+    await appendProgress(brandKey, { 
       step: "env_check", 
-      ok: false, 
+      ok: true, 
       info: { 
-        missing: "SHOPIFY_CLI_PARTNERS_TOKEN / cliPartnersToken",
-        hint: "Configure Partners CLI Token in Plugin Studio under Publish, or set SHOPIFY_CLI_PARTNERS_TOKEN environment variable"
+        warning: "No CLI Token configured. Deploying using active local developer account login session."
       } 
     });
-    return headerJson({ 
-      error: "missing_partners_token", 
-      hint: "Set Partners CLI Token in Plugin Studio Publish settings",
-      correlationId, 
-      deployment: doc 
-    }, { status: 400 });
+  } else {
+    await appendProgress(brandKey, { 
+      step: "env_check", 
+      ok: true, 
+      info: { 
+        tokenPresent: true
+      } 
+    });
   }
 
   if (!orgId) {
@@ -189,7 +190,14 @@ export async function POST(req: NextRequest) {
 
   // Step 4: Validate required configuration
   const redirectUrls = Array.isArray(plugin?.oauth?.redirectUrls) ? plugin.oauth.redirectUrls.filter(Boolean) : [];
-  const scopes = Array.isArray(plugin?.oauth?.scopes) ? plugin.oauth.scopes.filter(Boolean) : [];
+  const restrictedPaymentScopes = [
+    "read_payment_gateways",
+    "write_payment_gateways",
+    "read_payment_sessions",
+    "write_payment_sessions"
+  ];
+  const scopes = (Array.isArray(plugin?.oauth?.scopes) ? plugin.oauth.scopes.filter(Boolean) : [])
+    .filter((s: string) => !restrictedPaymentScopes.includes(s));
 
   if (redirectUrls.length === 0) {
     const doc = await appendProgress(brandKey, { step: "config_validate", ok: false, info: { missing: "OAuth redirect URLs" } });
@@ -212,7 +220,12 @@ export async function POST(req: NextRequest) {
   });
 
   // Step 5: Build Shopify app config
-  const baseUrl = new URL(req.url).origin;
+  let baseUrl = new URL(req.url).origin;
+  if (process.env.PLESK_MAIN_DOMAIN) {
+    baseUrl = `https://${process.env.PLESK_MAIN_DOMAIN}`;
+  } else if (process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.includes("localhost")) {
+    baseUrl = process.env.NEXT_PUBLIC_APP_URL;
+  }
   const applicationUrl = body?.applicationUrl || plugin?.urls?.appUrl || `${baseUrl}/shopify/settings?brandKey=${brandKey}`;
 
   const appConfig: ShopifyAppConfig = {

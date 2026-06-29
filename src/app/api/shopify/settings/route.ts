@@ -266,7 +266,10 @@ export async function POST(req: NextRequest) {
         
         // Remove ScriptTag from Shopify if connected
         if (accessToken) {
-          const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
+          let hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
+          if (process.env.PLESK_MAIN_DOMAIN) {
+            hostUrl = `https://${process.env.PLESK_MAIN_DOMAIN}`;
+          }
           const scriptSrc = `${hostUrl.replace(/\/$/, "")}/js/shopify-cart-hijack.js`;
           await deregisterScriptTag(shop, accessToken, scriptSrc);
         }
@@ -388,7 +391,10 @@ export async function POST(req: NextRequest) {
     }
 
     // 6. Register Cart Redirection ScriptTag
-    const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
+    let hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
+    if (process.env.PLESK_MAIN_DOMAIN) {
+      hostUrl = `https://${process.env.PLESK_MAIN_DOMAIN}`;
+    }
     const scriptSrc = `${hostUrl.replace(/\/$/, "")}/js/shopify-cart-hijack.js`;
 
     const scriptOk = await registerScriptTag(shop, accessToken, scriptSrc);
