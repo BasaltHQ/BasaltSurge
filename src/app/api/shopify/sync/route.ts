@@ -114,31 +114,56 @@ export async function POST(req: NextRequest) {
             }
           }
 
+          // Pre-fetch all existing inventory items from local DB for this wallet to check for duplicates
+          const { resources: existingDbItems } = await container.items
+            .query({
+              query: "SELECT * FROM c WHERE c.type = 'inventory_item' AND c.wallet = @w",
+              parameters: [{ name: "@w", value: wallet }]
+            })
+            .fetchAll();
+
+          const dbItemMapByVariantId = new Map<string, any>();
+          const dbItemMapBySku = new Map<string, any>();
+
+          for (const item of existingDbItems) {
+            if (item.shopifyProductVariantId) {
+              dbItemMapByVariantId.set(String(item.shopifyProductVariantId), item);
+            }
+            if (item.sku) {
+              dbItemMapBySku.set(String(item.sku).trim().toLowerCase(), item);
+            }
+          }
+
           const total = itemsToSync.length;
           await writer.write(encoder.encode(JSON.stringify({ type: "start", total }) + "\n"));
 
           let current = 0;
           for (const itemToSync of itemsToSync) {
             const { prod, variant, title, desc, imageUrl, category } = itemToSync;
-            const sku = String(variant.sku || "").trim() || `shopify_${variant.id}`;
+            const sku = String(variant.sku || "").trim();
             const name = variant.title === "Default Title" ? title : `${title} - ${variant.title}`;
             const price = Number(variant.price) || 0;
             const stock = variant.inventory_quantity !== undefined ? Number(variant.inventory_quantity) : -1;
 
-            const itemId = `inventory:${wallet}:${variant.id}`;
+            // Check if item is already in DB by variant ID or by SKU
+            const existingItem = dbItemMapByVariantId.get(String(variant.id)) || 
+                                 (sku ? dbItemMapBySku.get(sku.toLowerCase()) : null);
+
+            const itemId = existingItem ? existingItem.id : `inventory:${wallet}:${variant.id}`;
             const inventoryItem = {
+              ...(existingItem || {}), // Preserve other custom fields if existing
               id: itemId,
               type: "inventory_item",
               wallet,
-              sku,
+              sku: sku || `shopify_${variant.id}`,
               name,
               priceUsd: price,
               currency: "USD" as const,
               stockQty: stock,
               category: category || undefined,
               description: desc || undefined,
-              images: imageUrl ? [imageUrl] : undefined,
-              createdAt: now,
+              images: imageUrl ? [imageUrl] : (existingItem?.images || undefined),
+              createdAt: existingItem ? (existingItem.createdAt || now) : now,
               updatedAt: now,
               brandKey: brandKey.toLowerCase(),
               shopifyProductVariantId: String(variant.id),
@@ -195,11 +220,53 @@ export async function POST(req: NextRequest) {
             items = resources;
           }
 
+          // Fetch all products from Shopify to build a map of SKUs already on Shopify
+          const shopifySkuMap = new Map<string, { productId: string, variantId: string }>();
+          try {
+            const fetchProductsUrl = `https://${shop}/admin/api/2024-10/products.json?limit=250`;
+            const shopifyProductsRes = await fetch(fetchProductsUrl, {
+              headers: {
+                "X-Shopify-Access-Token": accessToken,
+                "Content-Type": "application/json"
+              }
+            });
+            if (shopifyProductsRes.ok) {
+              const prodData = await shopifyProductsRes.json();
+              const prods = Array.isArray(prodData.products) ? prodData.products : [];
+              for (const p of prods) {
+                const variants = Array.isArray(p.variants) ? p.variants : [];
+                for (const v of variants) {
+                  if (v.sku) {
+                    shopifySkuMap.set(String(v.sku).trim().toLowerCase(), {
+                      productId: String(p.id),
+                      variantId: String(v.id)
+                    });
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.warn("[Shopify Sync Pull] Failed to pre-fetch Shopify products for SKU mapping:", err);
+          }
+
           const total = items.length;
           await writer.write(encoder.encode(JSON.stringify({ type: "start", total }) + "\n"));
 
           let current = 0;
           for (const item of items) {
+            // Check if item has a SKU and is not already linked
+            if (!item.shopifyProductId && item.sku) {
+              const existingShopify = shopifySkuMap.get(String(item.sku).trim().toLowerCase());
+              if (existingShopify) {
+                item.shopifyProductId = existingShopify.productId;
+                item.shopifyProductVariantId = existingShopify.variantId;
+                
+                // Link the item in local DB
+                item.updatedAt = Date.now();
+                await container.items.upsert(item);
+                console.log(`[Shopify Sync Pull] SKU Match found: Linked Surge item ${item.sku} to Shopify Product ${existingShopify.productId}`);
+              }
+            }
             const itemImages = Array.isArray(item.images) && item.images.length > 0
               ? item.images.map((img: string) => {
                   const src = img.startsWith("http") ? img : `https://surge.basalthq.com${img.startsWith("/") ? "" : "/"}${img}`;
