@@ -4700,7 +4700,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
         {/* Header (centered card width) */}
         <div
-          className={`relative z-[10] flex items-center gap-3 w-full overflow-hidden ${isEmbedded ? "px-4 py-2 min-h-[56px] rounded-none md:rounded-t-2xl" : (isTwoColumnLayout ? (isInvoiceLayout ? "max-w-none px-4 md:px-6 py-1 md:py-2" : "max-w-none px-4 md:px-6 py-1 md:py-2") : "px-4 md:px-6 py-2")}`}
+          className={`relative z-[10] flex items-center gap-3 w-full overflow-hidden ${isEmbedded ? "px-4 py-1 min-h-[56px] rounded-none md:rounded-t-2xl" : (isTwoColumnLayout ? (isInvoiceLayout ? "max-w-none px-4 md:px-6 py-1 md:py-1" : "max-w-none px-4 md:px-6 py-1 md:py-1") : "px-4 md:px-6 py-1")}`}
           style={{
             background: effectivePrimaryColor,
             color: "var(--pp-text-header)",
@@ -4759,8 +4759,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               ✕
             </button>
           )}
-          {isMobileViewport && !isEmbedded && wallets.length > 0 && (
-            <div className="ml-2">
+          {!isEmbedded && wallets.length > 0 && (
+            <div className="ml-2 mr-[-20px] my-auto flex items-center">
               <ConnectButton
                 client={client}
                 chain={chain}
@@ -4777,6 +4777,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 }}
                 detailsButton={{
                   displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
+                  style: {
+                    background: "transparent",
+                    backgroundColor: "transparent",
+                  }
                 }}
                 connectModal={{
                   showThirdwebBranding: false,
@@ -4794,42 +4798,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             </div>
           )}
         </div>
-
-        {/* Floating login button (top-right, hidden when embedded) */}
-        {wallets.length > 0 && (
-          <div className="hidden sm:block fixed top-2 right-2 z-[20002]" style={{ display: isEmbedded ? "none" : undefined }}>
-            <ConnectButton
-              client={client}
-              chain={chain}
-              wallets={wallets}
-              connectButton={{
-                label: <span className="microtext drop-shadow-[0_1.2px_1.2px_rgba(0,0,0,0.8)]">Login</span>,
-                className: connectButtonClass,
-                style: getConnectButtonStyle(),
-              }}
-              signInButton={{
-                label: "Authenticate",
-                className: connectButtonClass,
-                style: getConnectButtonStyle(),
-              }}
-              detailsButton={{
-                displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
-              }}
-              connectModal={{
-                showThirdwebBranding: false,
-                title: "Login",
-                titleIcon: (() => {
-                  const c = (theme.brandLogoUrl || "").trim();
-                  const a = (theme.symbolLogoUrl || "").trim();
-                  const b = (theme.brandFaviconUrl || "").trim();
-                  return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
-                })(),
-                size: "compact",
-              }}
-              theme={twTheme}
-            />
-          </div>
-        )}
 
         <div
           ref={contentRef}
