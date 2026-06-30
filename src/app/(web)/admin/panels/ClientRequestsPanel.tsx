@@ -131,7 +131,7 @@ function InlineTablesEditor({ merchantWallet, adminWallet, brandKey, initialTabl
             const fetchHeaders: any = { "x-wallet": merchantWallet };
             if (brandKey) fetchHeaders["x-brand-key"] = brandKey;
 
-            const fetchRes = await fetch(`/api/site/config?wallet=${merchantWallet}`, { headers: fetchHeaders });
+            const fetchRes = await fetch(`/api/site/config?wallet=${merchantWallet}`, { headers: fetchHeaders, cache: "no-store" });
             const fetchData = await fetchRes.json();
             const currentConfig = fetchData.config || {};
 
@@ -3149,7 +3149,7 @@ function MerchantSettingsTab({
             try {
                 const headers: any = {};
                 if (brandKey) headers["x-brand-key"] = brandKey;
-                const r = await fetch(`/api/site/config?wallet=${merchantWallet}`, { headers });
+                const r = await fetch(`/api/site/config?wallet=${merchantWallet}`, { headers, cache: "no-store" });
                 const j = await r.json();
                 const cfg = j.config || {};
                 setConfig({
@@ -3371,7 +3371,7 @@ function TouchpointThemesTab({
             try {
                 const headers: any = {};
                 if (brandKey) headers["x-brand-key"] = brandKey;
-                const r = await fetch(`/api/site/config?wallet=${merchantWallet}`, { headers });
+                const r = await fetch(`/api/site/config?wallet=${merchantWallet}`, { headers, cache: "no-store" });
                 const j = await r.json();
                 const cfg = j.config || {};
                 if (cfg.touchpointThemes && typeof cfg.touchpointThemes === "object") {
