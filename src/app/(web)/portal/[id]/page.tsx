@@ -2579,6 +2579,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [transakOnrampEnabled, setTransakOnrampEnabled] = useState<boolean>(false);
   const [rampnowOnrampEnabled, setRampnowOnrampEnabled] = useState<boolean>(false);
   const [userOptedOutOfStripeBypass, setUserOptedOutOfStripeBypass] = useState<boolean>(false);
+  const [configLoaded, setConfigLoaded] = useState<boolean>(false);
 
   // Consolidated site-config fetch (single call) to set fee, default token, and seller/split address
   useEffect(() => {
@@ -2735,12 +2736,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             setPendingDefaultTip(tc.defaultTip);
           }
         }
+        if (!cancelled) setConfigLoaded(true);
       })
       .catch(() => {
         if (!cancelled) {
           // fallback to merchant wallet if split lookup fails
           setSellerAddress(merchantWallet as `0x${string}`);
           setSellerAddressCredit(merchantWallet as `0x${string}`);
+          setConfigLoaded(true);
         }
       });
     return () => {
@@ -3561,6 +3564,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const paymentReady = !shippingRequired || shippingComplete;
 
     if (
+      configLoaded &&
       stripeHeadless &&
       isStripeOnly &&
       paymentReady &&
@@ -3578,6 +3582,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       }
     }
   }, [
+    configLoaded,
     stripeHeadless,
     stripeOnrampEnabled,
     coinbaseOnrampEnabled,
