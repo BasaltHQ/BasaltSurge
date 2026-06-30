@@ -270,6 +270,7 @@ export function useStripeEmbeddedOnramp({
 
   const onrampRef = useRef<OnrampCoordinator | null>(null);
   const mountedRef = useRef(true);
+  const stepRef = useRef<OnrampStep>("idle");
   const oauthTokenRef = useRef<string | null>(null);
   const paymentTokenRef = useRef<string | null>(null);
   const verificationTokenRef = useRef<string | null>(null);
@@ -285,6 +286,7 @@ export function useStripeEmbeddedOnramp({
 
   const updateStep = useCallback((newStep: OnrampStep) => {
     if (!mountedRef.current) return;
+    stepRef.current = newStep;
     setStep(newStep);
     onStepChange?.(newStep);
   }, [onStepChange]);
@@ -315,12 +317,54 @@ export function useStripeEmbeddedOnramp({
                             dataStr.includes("code");
 
         if (isOtpTrigger) {
+          const currentStep = stepRef.current;
           console.warn("[STRIPE SDK MONITOR] Security/OTP trigger detected inside iframe:", {
             origin: e.origin,
             event: msgData?.event || msgData?.type || "unknown",
             action: msgData?.action || "unknown",
-            status: msgData?.status || "unknown"
+            status: msgData?.status || "unknown",
+            step: currentStep
           });
+
+          // Check if this is the second OTP (user is already logged in/has a customerId, and is in payment/checkout steps)
+          const isSecondOtp = !!customerIdRef.current && (
+            currentStep === "collecting_payment" ||
+            currentStep === "checking_out" ||
+            currentStep === "awaiting_funds"
+          );
+
+          if (isSecondOtp) {
+            console.warn("[STRIPE SDK MONITOR] Second OTP / 3DS challenge identified. Logging to MongoDB...");
+
+            const logPayload = {
+              level: "error",
+              message: `[STRIPE SECURE OTP] Double OTP or 3DS security challenge triggered. Step: ${currentStep}. Event: ${msgData?.event || msgData?.type || "unknown"}. Action: ${msgData?.action || "unknown"}. Status: ${msgData?.status || "unknown"}`,
+              stack: JSON.stringify({
+                eventPayload: msgData,
+                origin: e.origin,
+                currentStep,
+                customerId: customerIdRef.current,
+                sessionId: sessionIdRef.current,
+                buyerWallet: buyerWalletRef.current,
+                receiptId,
+                brandKey
+              }, null, 2),
+              receiptId,
+              wallet: buyerWalletRef.current || "anonymous",
+              sessionId: sessionIdRef.current,
+              host: window.location.host,
+              userAgent: window.navigator.userAgent,
+              ts: Date.now()
+            };
+
+            fetch("/api/portal/log", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(logPayload)
+            }).catch(err => {
+              console.error("[STRIPE SDK MONITOR] Failed to POST log to database:", err);
+            });
+          }
         }
       } catch {}
     };
@@ -384,6 +428,7 @@ export function useStripeEmbeddedOnramp({
 
   const reset = useCallback(() => {
     isRunningRef.current = false;
+    stepRef.current = "idle";
     setStep("idle");
     setError(null);
     setAuthElement(null);
