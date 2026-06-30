@@ -18,22 +18,24 @@ import { deriveContainerIdentityFromHostname } from "@/lib/brand-config";
 export async function GET(req: NextRequest) {
   try {
     // Detect from runtime env first (preferred)
-    let containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || process.env.CONTAINER_TYPE || "").toLowerCase();
-    let brandKey = String(process.env.NEXT_PUBLIC_BRAND_KEY || process.env.BRAND_KEY || "").toLowerCase();
+    let containerType = "";
+    let brandKey = "";
 
-    // If brandKey is empty, try to derive from hostname
+    // 1. Try to derive from hostname first
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+    const derived = await deriveContainerIdentityFromHostname(host);
+
+    if (derived) {
+      brandKey = derived.brandKey;
+      containerType = derived.containerType;
+      console.log(`[container] Derived brandKey="${brandKey}" containerType="${containerType}" from host="${host}"`);
+    }
+
+    // 2. Fall back to env variables if not derived
     if (!brandKey) {
-      const host = req.headers.get("host") || req.headers.get("x-forwarded-host") || "";
-      const derived = await deriveContainerIdentityFromHostname(host);
-
-      if (derived) {
-        brandKey = derived.brandKey;
-        // Only override containerType if it wasn't explicitly set in env
-        if (!containerType) {
-          containerType = derived.containerType;
-        }
-        console.log(`[container] Derived brandKey="${brandKey}" containerType="${containerType}" from host="${host}"`);
-      }
+      containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || process.env.CONTAINER_TYPE || "").toLowerCase();
+      brandKey = String(process.env.NEXT_PUBLIC_BRAND_KEY || process.env.BRAND_KEY || "").toLowerCase();
+      console.log(`[container] Using env vars: brandKey="${brandKey}" containerType="${containerType}"`);
     }
 
     // Default containerType to "platform" if still empty

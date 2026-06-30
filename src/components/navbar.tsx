@@ -7,7 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useActiveAccount, useActiveWallet, useDisconnect, darkTheme, AutoConnect } from "thirdweb/react";
 import { signLoginPayload } from "thirdweb/auth";
-import { client, chain, getWallets, getPrivateWallets, getPrivateLoginWallets } from "@/lib/thirdweb/client";
+import { chain, getWallets, getPrivateWallets, getPrivateLoginWallets } from "@/lib/thirdweb/client";
 import { usePortalThirdwebTheme, getConnectButtonStyle, connectButtonClass } from "@/lib/thirdweb/theme";
 import { ChevronDown, Dot, Ellipsis } from "lucide-react";
 import { AuthModal } from "./auth-modal";
@@ -21,6 +21,7 @@ import { getDefaultBrandSymbol, getDefaultBrandName, getEffectiveBrandKey, resol
 import { getAllIndustries } from "@/lib/landing-pages/industries";
 import { getAllComparisons } from "@/lib/landing-pages/comparisons";
 import { getAllLocations } from "@/lib/landing-pages/locations";
+import { useThirdwebClient } from "@/hooks/useThirdwebClient";
 
 type SeoPageCategory = 'industries' | 'comparisons' | 'locations';
 
@@ -32,6 +33,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 type NavItem = { href: string; label: string; ownerOnly?: boolean; authOnly?: boolean };
 
 export function Navbar() {
+    const client = useThirdwebClient();
     const twTheme = usePortalThirdwebTheme();
     const account = useActiveAccount();
     const activeWallet = useActiveWallet();
@@ -812,7 +814,7 @@ export function Navbar() {
 
     return (
         <>
-            <AutoConnect client={client} wallets={wallets} />
+            <AutoConnect client={client} wallets={wallets} accountAbstraction={{ chain, sponsorGas: true }} />
             <style>{`
                 .nav-item-custom-border {
                     border: 1px solid transparent;
@@ -1084,6 +1086,7 @@ export function Navbar() {
                                     client={client}
                                     chain={chain}
                                     wallets={wallets}
+                                    accountAbstraction={{ chain, sponsorGas: true }}
                                     connectButton={{
                                         label: "LOGIN",
                                         className: "!text-white !rounded-[10px] !px-5 !py-2.5 !h-auto !min-w-[100px] !font-mono !text-xs !tracking-wider !font-bold !border-none !ring-0 !shadow-none transition-all hover:opacity-80 hover:scale-[1.02] active:scale-95",
@@ -1300,6 +1303,7 @@ export function Navbar() {
                                             client={client}
                                             chain={chain}
                                             wallets={wallets}
+                                            accountAbstraction={{ chain, sponsorGas: true }}
                                             connectButton={{
                                                 label: "LOGIN",
                                                 className: "!text-white !w-full !justify-center !rounded-lg !py-3 !font-mono !text-xs !tracking-wider !font-bold !border-none !ring-0 !shadow-none transition-all hover:opacity-80",
