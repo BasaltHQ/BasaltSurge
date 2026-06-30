@@ -7,7 +7,8 @@ import { usePathname, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useActiveAccount, useActiveWallet, useDisconnect, darkTheme, AutoConnect } from "thirdweb/react";
 import { signLoginPayload } from "thirdweb/auth";
-import { chain, getWallets, getPrivateWallets, getPrivateLoginWallets } from "@/lib/thirdweb/client";
+import { chain } from "@/lib/thirdweb/client";
+import { getWallets, getPrivateLoginWallets } from "@/lib/thirdweb/wallets";
 import { usePortalThirdwebTheme, getConnectButtonStyle, connectButtonClass } from "@/lib/thirdweb/theme";
 import { ChevronDown, Dot, Ellipsis } from "lucide-react";
 import { AuthModal } from "./auth-modal";
@@ -79,7 +80,14 @@ export function Navbar() {
         const typeGuess = isPlatformBrand ? 'platform' : 'partner';
         return { containerType: typeGuess, brandKey: key };
     });
-    const [wallets, setWallets] = useState<any[]>([]);
+    const wallets = useMemo(() => {
+        const accessMode = (brand as any)?.accessMode || "open";
+        const isPrivate = accessMode === "request";
+        const isPlatformContainer = container.containerType === "platform";
+        const shouldUsePrivateWallets = isPrivate && !isPlatformContainer;
+        return shouldUsePrivateWallets ? getPrivateLoginWallets(chain) : getWallets(chain);
+    }, [brand, container.containerType]);
+
     const [scrolled, setScrolled] = useState(false);
     const [time, setTime] = useState('');
 
@@ -115,21 +123,6 @@ export function Navbar() {
             clearInterval(interval);
         };
     }, []);
-    useEffect(() => {
-        let mounted = true;
-        // Determine if this is a private partner container
-        // Private mode requires approval - use getPrivateLoginWallets for LOGIN (email + phone + external wallets)
-        const accessMode = (brand as any)?.accessMode || "open";
-        const isPrivate = accessMode === "request";
-        const isPlatformContainer = container.containerType === "platform";
-        const shouldUsePrivateWallets = isPrivate && !isPlatformContainer;
-
-        const loadWallets = shouldUsePrivateWallets ? getPrivateLoginWallets : getWallets;
-        loadWallets()
-            .then((w) => { if (mounted) setWallets(w as any[]); })
-            .catch(() => setWallets([]));
-        return () => { mounted = false; };
-    }, [brand, container.containerType]);
 
     // Detect thirdweb modal and lock body scroll to prevent content jump
     useEffect(() => {
@@ -814,7 +807,7 @@ export function Navbar() {
 
     return (
         <>
-            <AutoConnect client={client} wallets={wallets} accountAbstraction={{ chain, sponsorGas: true }} />
+            <AutoConnect client={client} wallets={wallets} />
             <style>{`
                 .nav-item-custom-border {
                     border: 1px solid transparent;
@@ -1086,7 +1079,6 @@ export function Navbar() {
                                     client={client}
                                     chain={chain}
                                     wallets={wallets}
-                                    accountAbstraction={{ chain, sponsorGas: true }}
                                     connectButton={{
                                         label: "LOGIN",
                                         className: "!text-white !rounded-[10px] !px-5 !py-2.5 !h-auto !min-w-[100px] !font-mono !text-xs !tracking-wider !font-bold !border-none !ring-0 !shadow-none transition-all hover:opacity-80 hover:scale-[1.02] active:scale-95",
@@ -1303,7 +1295,6 @@ export function Navbar() {
                                             client={client}
                                             chain={chain}
                                             wallets={wallets}
-                                            accountAbstraction={{ chain, sponsorGas: true }}
                                             connectButton={{
                                                 label: "LOGIN",
                                                 className: "!text-white !w-full !justify-center !rounded-lg !py-3 !font-mono !text-xs !tracking-wider !font-bold !border-none !ring-0 !shadow-none transition-all hover:opacity-80",
