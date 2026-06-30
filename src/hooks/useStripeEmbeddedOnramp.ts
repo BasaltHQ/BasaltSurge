@@ -686,16 +686,24 @@ export function useStripeEmbeddedOnramp({
       if (!mountedRef.current) return;
 
       try {
+        const statusHeaders: any = {
+          "x-stripe-oauth-token": oauthTokenRef.current || "",
+        };
+        if (customerIdRef.current) {
+          statusHeaders["x-crypto-customer-id"] = customerIdRef.current;
+        }
         const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(sessionId)}`, {
-          headers: {
-            "x-stripe-oauth-token": oauthTokenRef.current || "",
-          }
+          headers: statusHeaders
         });
         if (!statusRes.ok) {
           console.warn(`[EMBEDDED ONRAMP] Status endpoint returned error status: ${statusRes.status}`);
           continue;
         }
         const statusData = await statusRes.json();
+        if (statusData.refreshedToken) {
+          console.log("[EMBEDDED ONRAMP] Status poll returned refreshed OAuth token, updating ref...");
+          oauthTokenRef.current = statusData.refreshedToken;
+        }
         console.log(`[EMBEDDED ONRAMP] Polled status (attempt ${poll + 1}):`, statusData?.status, statusData);
 
         if (statusData && statusData.status === "fulfillment_complete") {
