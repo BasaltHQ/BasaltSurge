@@ -580,9 +580,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Compute effective logos: Merchant theme takes precedence over partner container if a merchant is active
   // This ensures the PFP/Shop Logo (which resides in theme) wins over any container defaults.
-  const effectiveLogoApp = (hasMerchantForTheme && theme.brandLogoUrl) || partnerLogoApp || theme.brandLogoUrl || "";
+  const isGenericLogo = (url: string) => !url || (!url.startsWith('http') && (url.includes("ppsymbol") || url.includes("BasaltSurge") || url.includes("cblogod") || url.includes("placeholder")));
+
+  // Compute effective logos: Merchant theme takes precedence over partner container if a merchant is active
+  // This ensures the PFP/Shop Logo (which resides in theme) wins over any container defaults.
+  const merchantAppLogo = hasMerchantForTheme && theme.brandLogoUrl && !isGenericLogo(theme.brandLogoUrl) ? theme.brandLogoUrl : null;
+  const merchantSymbolLogo = hasMerchantForTheme && theme.symbolLogoUrl && !isGenericLogo(theme.symbolLogoUrl) ? theme.symbolLogoUrl : null;
+  const merchantFallbackLogo = hasMerchantForTheme && theme.brandLogoUrl && !isGenericLogo(theme.brandLogoUrl) ? theme.brandLogoUrl : null;
+
+  const effectiveLogoApp = merchantAppLogo || partnerLogoApp || theme.brandLogoUrl || "";
   // Fallback to brandLogoUrl (PFP) if symbolLogoUrl is missing to prevents dropping through to partner defaults
-  const effectiveLogoSymbol = (hasMerchantForTheme && (theme.symbolLogoUrl || theme.brandLogoUrl)) || partnerLogoSymbol || theme.symbolLogoUrl || "";
+  const effectiveLogoSymbol = merchantSymbolLogo || merchantFallbackLogo || partnerLogoSymbol || theme.symbolLogoUrl || "";
   const effectiveLogoFavicon = (hasMerchantForTheme && theme.brandFaviconUrl) || partnerLogoFavicon || theme.brandFaviconUrl || "";
   const effectiveBrandName = (hasMerchantForTheme && theme.brandName) || partnerBrandName || theme.brandName || "BasaltSurge";
 
@@ -2225,13 +2233,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [shipEmail, setShipEmail] = useState(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
-      return sp.get("stripeEmail") || sp.get("email") || "";
+      return sp.get("email") || "";
     }
     return "";
   });
 
   // ── Stripe Headless Onramp State ──
   const [headlessEmailPrompt, setHeadlessEmailPrompt] = useState(false);
+  const [displayError, setDisplayError] = useState<string | null>(null);
   const [copiedWallet, setCopiedWallet] = useState(false);
   const [headlessEmailInput, setHeadlessEmailInput] = useState(() => {
     if (typeof window !== "undefined") {
@@ -3388,6 +3397,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     isActive: headlessActive,
     buyerWalletAddress: headlessBuyerWallet,
     sessionId: headlessSessionId,
+    reset: resetHeadlessOnramp,
   } = useStripeEmbeddedOnramp({
     email: shipEmail || headlessEmailInput || undefined,
     fullName: shipName || undefined,
@@ -3435,6 +3445,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     },
     onError: (error) => {
       console.error("[STRIPE HEADLESS] Error:", error);
+      postStatus("failed", { error: error.message });
+      setDisplayError(error.message || "An error occurred during payment.");
+      resetHeadlessOnramp();
+      setHeadlessEmailPrompt(true);
+      setHeadlessInitiated(false);
     },
   });
 
@@ -6190,6 +6205,41 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 style={{ backgroundColor: theme.primaryColor || '#10b981' }}
               >
                 {emailSending ? "Sending..." : "Send"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Pristine Error Modal */}
+      {displayError && typeof window !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm grid place-items-center p-4 animate-in fade-in text-left">
+          <div className={`rounded-2xl max-w-sm w-full p-6 relative shadow-2xl border transition-all duration-300 ${
+            isLightText 
+              ? 'bg-neutral-900 border-white/10 text-white' 
+              : 'bg-white border-black/10 text-black'
+          }`}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-500/10 rounded-full flex items-center justify-center text-red-500 border border-red-500/20">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></svg>
+              </div>
+              <h2 className={`text-lg font-bold ${isLightText ? 'text-white' : 'text-neutral-900'}`}>Payment Error</h2>
+            </div>
+            
+            <p className={`text-sm mb-6 leading-relaxed ${isLightText ? 'text-neutral-300' : 'text-neutral-600'}`}>
+              {displayError}
+            </p>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDisplayError(null)}
+                className={`flex-1 px-4 py-3 font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all shadow-md text-center text-sm ${
+                  isColorLight(theme.primaryColor || '#635BFF') ? 'text-neutral-900' : 'text-white'
+                }`}
+                style={{ backgroundColor: theme.primaryColor || '#635BFF' }}
+              >
+                Close & Try Again
               </button>
             </div>
           </div>
