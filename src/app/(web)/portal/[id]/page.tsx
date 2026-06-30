@@ -505,7 +505,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // URL params and layout/embedding detection
   const [isIframe, setIsIframe] = useState(false);
-  const isEmbedded = propEmbedded !== undefined ? propEmbedded : (isEmbeddedParam || isIframe);
+  const standaloneParam = searchParams?.get("standalone") === "1" || searchParams?.get("force_standalone") === "1" || searchParams?.get("ignore_iframe") === "1";
+  const isEmbedded = standaloneParam ? false : (propEmbedded !== undefined ? propEmbedded : (isEmbeddedParam || isIframe));
 
   // Touchpoint ID from URL (0=kiosk, 1=terminal, 2=handheld, 3=kds)
   const tidParam = searchParams?.get("tid");
@@ -527,8 +528,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     // Fallback to viewport: wide on tablets/desktop, compact on phones
     return !isMobileViewport;
   }, [layoutParam, isMobileViewport]);
-  // For embedded mode, always use compact (single column) layout on mobile
-  const isTwoColumnLayout = isEmbedded ? (!isMobileViewport && (isInvoiceLayout || isResponsiveWide)) : (isInvoiceLayout || isResponsiveWide);
+  // Responsive layout: always use two-column layout on mobile if invoice/wide layout is preferred (e.g. embedded checkouts)
+  const isTwoColumnLayout = isInvoiceLayout || isResponsiveWide;
   const EMBEDDED_WIDGET_HEIGHT = Number(searchParams?.get("e_h") || 320);
   const mobileTextColor = isMobileViewport ? "#ffffff" : undefined;
   const forceEmbedTextColor = isEmbedded ? "#ffffff" : undefined;

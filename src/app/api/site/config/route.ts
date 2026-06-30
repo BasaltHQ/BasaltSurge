@@ -1206,10 +1206,14 @@ export async function GET(req: NextRequest) {
       // Resolve brandKey early so it's available for shop_config query filtering
       let brandKey: string | undefined = undefined;
       try {
-        const containerIdentity = await getContainerIdentity(host);
-        brandKey = containerIdentity.brandKey;
+        brandKey = getBrandKey(req);
       } catch {
-        brandKey = undefined;
+        try {
+          const containerIdentity = await getContainerIdentity(host);
+          brandKey = containerIdentity.brandKey;
+        } catch {
+          brandKey = undefined;
+        }
       }
 
       // 0. PRE-FETCH: Try to find a shop_config for this wallet to merge into site_config
@@ -1859,10 +1863,14 @@ export async function POST(req: NextRequest) {
     // Write brand-scoped doc in partner containers; use getDocIdForBrand() for consistency with GET.
     let brandKey: string | undefined = undefined;
     try {
-      const containerIdentity = await getContainerIdentity(host);
-      brandKey = containerIdentity.brandKey;
+      brandKey = getBrandKey(req);
     } catch {
-      brandKey = undefined;
+      try {
+        const containerIdentity = await getContainerIdentity(host);
+        brandKey = containerIdentity.brandKey;
+      } catch {
+        brandKey = undefined;
+      }
     }
     const normalizedBrand = String(effectiveBrandKey || brandKey || "basaltsurge").toLowerCase();
     // Use getDocIdForBrand() for consistent doc ID between save and load
