@@ -46,6 +46,7 @@ export const SiteThemeSchema = z.object({
   bodyTextColor: z.string().min(1).optional(),
   fontFamily: z.string().min(1).optional(),
   receiptBackgroundUrl: UrlOrSiteRelativeSchema.or(z.literal("")).optional(),
+  discretePayWithCrypto: z.boolean().optional(),
   // Allow compact logos object (app, favicon, symbol)
   logos: z.object({
     app: UrlOrSiteRelativeSchema.optional(),

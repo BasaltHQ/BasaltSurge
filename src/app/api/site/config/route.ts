@@ -560,6 +560,7 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
       fontFamily:
         "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
       receiptBackgroundUrl: "/watermark.png",
+      discretePayWithCrypto: false,
     },
     processingFeePct: undefined as number | undefined,
     reserveRatios: undefined as Record<string, number> | undefined,
@@ -744,6 +745,10 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
         : (isValidUrl(t.receiptBackgroundUrl)
           ? t.receiptBackgroundUrl
           : defaults.theme.receiptBackgroundUrl),
+    discretePayWithCrypto:
+      typeof t.discretePayWithCrypto === "boolean"
+        ? t.discretePayWithCrypto
+        : defaults.theme.discretePayWithCrypto,
     meta: (() => {
       try {
         const m = (t as any).meta || {};
@@ -1708,7 +1713,7 @@ export async function POST(req: NextRequest) {
 
     // Optional theme update
     if (body && typeof body.theme === "object" && body.theme) {
-      candidate.theme = body.theme;
+      candidate.theme = { ...(prevConfig.theme || {}), ...body.theme };
     }
 
     // Optional processing fee update (percent)

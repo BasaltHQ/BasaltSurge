@@ -17,6 +17,7 @@ type ShopConfigEditorProps = {
         portalGradientEnabled?: boolean;
         portalGradientStart?: string;
         portalGradientEnd?: string;
+        discretePayWithCrypto?: boolean;
     };
     onSave: (data: any) => Promise<void>;
 };
@@ -46,6 +47,7 @@ export default function ShopConfigEditor({ wallet, brandKey, initialData, onSave
             portalGradientEnabled: initialData.portalGradientEnabled ?? false,
             portalGradientStart: initialData.portalGradientStart || "",
             portalGradientEnd: initialData.portalGradientEnd || "",
+            discretePayWithCrypto: initialData.discretePayWithCrypto ?? false,
         }
     });
 
@@ -76,6 +78,7 @@ export default function ShopConfigEditor({ wallet, brandKey, initialData, onSave
                                 portalGradientEnabled: prev.theme.portalGradientEnabled !== false ? prev.theme.portalGradientEnabled : (c.theme?.portalGradientEnabled ?? false),
                                 portalGradientStart: prev.theme.portalGradientStart || c.theme?.portalGradientStart || "",
                                 portalGradientEnd: prev.theme.portalGradientEnd || c.theme?.portalGradientEnd || "",
+                                discretePayWithCrypto: prev.theme.discretePayWithCrypto !== false ? prev.theme.discretePayWithCrypto : (c.theme?.discretePayWithCrypto ?? false),
                             }
                         };
                     });
@@ -242,8 +245,8 @@ export default function ShopConfigEditor({ wallet, brandKey, initialData, onSave
                         />
                     </button>
                 </div>
-
-                {config.theme.portalGradientEnabled && (
+ 
+                 {config.theme.portalGradientEnabled && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
                         <div className="space-y-1">
                             <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Gradient Start Color</label>
@@ -295,9 +298,7 @@ export default function ShopConfigEditor({ wallet, brandKey, initialData, onSave
                         </div>
                     </div>
                 )}
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-white/5 pt-4">
                 <div className="space-y-1">
                     <ImageUploadField
                         label="Logo"
