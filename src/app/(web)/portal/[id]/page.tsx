@@ -47,6 +47,7 @@ type SiteTheme = {
   portalGradientEnabled?: boolean;
   portalGradientStart?: string;
   portalGradientEnd?: string;
+  discretePayWithCrypto?: boolean;
 };
 
 type SiteConfigResponse = {
@@ -372,6 +373,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       receiptBackgroundUrl: "/watermark.png",
       brandLogoShape: "square",
       portalGradientEnabled: true,
+      discretePayWithCrypto: false,
       navbarMode: isBS ? "logo" : undefined,
       textColor: "#ffffff",
       headerTextColor: "#ffffff",
@@ -580,7 +582,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Compute effective logos: Merchant theme takes precedence over partner container if a merchant is active
   // This ensures the PFP/Shop Logo (which resides in theme) wins over any container defaults.
-  const isGenericLogo = (url: string) => !url || (!url.startsWith('http') && (url.includes("ppsymbol") || url.includes("BasaltSurge") || url.includes("cblogod") || url.includes("placeholder")));
+  const isGenericLogo = (url: string) => {
+    if (!url) return true;
+    const lower = url.toLowerCase();
+    const partnerLogoLower = String(partnerLogoApp || "").toLowerCase();
+    const partnerSymLower = String(partnerLogoSymbol || "").toLowerCase();
+    if (partnerLogoLower && lower === partnerLogoLower) return true;
+    if (partnerSymLower && lower === partnerSymLower) return true;
+    return !url.startsWith('http') && (lower.includes("ppsymbol") || lower.includes("basaltsurge") || lower.includes("cblogod") || lower.includes("placeholder"));
+  };
 
   // Compute effective logos: Merchant theme takes precedence over partner container if a merchant is active
   // This ensures the PFP/Shop Logo (which resides in theme) wins over any container defaults.
@@ -999,6 +1009,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           portalGradientEnabled: typeof t.portalGradientEnabled === "boolean" ? t.portalGradientEnabled : prev.portalGradientEnabled,
           portalGradientStart: typeof t.portalGradientStart === "string" ? t.portalGradientStart : prev.portalGradientStart,
           portalGradientEnd: typeof t.portalGradientEnd === "string" ? t.portalGradientEnd : prev.portalGradientEnd,
+          discretePayWithCrypto: typeof t.discretePayWithCrypto === "boolean" ? t.discretePayWithCrypto : prev.discretePayWithCrypto,
         }));
 
         // Apply widget overrides from the playground sidebar
@@ -1095,6 +1106,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             headerTextColor: "#ffffff",
             bodyTextColor: "#e5e7eb",
             portalGradientEnabled: true,
+            discretePayWithCrypto: siteRes?.config?.theme?.discretePayWithCrypto,
             ...(shopTheme || {}) // Spread shop theme over defaults
           };
 
@@ -1107,7 +1119,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           // If the shop logo is missing OR matches a platform default/placeholder,
           // and we have a valid PFP, use the PFP instead.
           // Note: Since we ignored siteRes, 'effectiveLogo' is solely from Shop Config now.
-          const isGenericLogo = !effectiveLogo || (!effectiveLogo.startsWith('http') && (effectiveLogo.includes("ppsymbol") || effectiveLogo.includes("BasaltSurge") || effectiveLogo.includes("placeholder")));
+          const isGenericLogo = !effectiveLogo || 
+            (() => {
+              const lower = effectiveLogo.toLowerCase();
+              const partnerLogoLower = String(partnerLogoApp || "").toLowerCase();
+              const partnerSymLower = String(partnerLogoSymbol || "").toLowerCase();
+              if (partnerLogoLower && lower === partnerLogoLower) return true;
+              if (partnerSymLower && lower === partnerSymLower) return true;
+              return !effectiveLogo.startsWith('http') && (lower.includes("ppsymbol") || lower.includes("basaltsurge") || lower.includes("placeholder"));
+            })();
 
           if (isClientSide) {
             console.log("[PortalTheme] Smart Logo Debug (Shop Config Only):", {
@@ -1405,7 +1425,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const isCachedGeneric = cachedTheme && (cachedTheme.brandName === "BasaltSurge" || cachedTheme.brandName === "PortalPay");
     const ignoreCache = isCachedGeneric && canUpgradeToPartner;
 
-    if (cachedTheme && hasMerchantForTheme && !ignoreCache) {
+    const isCachedStale = cachedTheme && !("discretePayWithCrypto" in cachedTheme);
+    if (cachedTheme && hasMerchantForTheme && !ignoreCache && !isCachedStale) {
       console.log('[PORTAL THEME DEBUG] Applying cached theme immediately');
       setTheme(cachedTheme);
       try {
@@ -1433,7 +1454,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         window.dispatchEvent(new CustomEvent("pp:theme:merchant_ready", { detail: cachedTheme }));
         window.dispatchEvent(new CustomEvent("pp:theme:ready", { detail: cachedTheme }));
       } catch { }
-      return;
+      // Allow background sync to update toggled settings
     }
 
     // Reset theme and flags when merchant changes and no cache available
@@ -1567,7 +1588,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         if (!cancelled && t) {
           // Check if API returned generic platform defaults that should be overridden by partner branding
           const isGenericName = (name: string) => !name || /^(ledger\d*|partner\d*|default|portalpay|basaltsurge)$/i.test(name.trim());
-          const isGenericLogo = (url: string) => !url || (!url.startsWith('http') && (url.includes("ppsymbol") || url.includes("BasaltSurge") || url.includes("cblogod") || url.includes("placeholder")));
+          const isGenericLogo = (url: string) => {
+            if (!url) return true;
+            const lower = url.toLowerCase();
+            const partnerLogoLower = String(partnerLogoApp || "").toLowerCase();
+            const partnerSymLower = String(partnerLogoSymbol || "").toLowerCase();
+            if (partnerLogoLower && lower === partnerLogoLower) return true;
+            if (partnerSymLower && lower === partnerSymLower) return true;
+            return !url.startsWith('http') && (lower.includes("ppsymbol") || lower.includes("basaltsurge") || lower.includes("cblogod") || lower.includes("placeholder"));
+          };
 
           const apiBrandName = typeof t.brandName === "string" ? t.brandName : "";
           const apiBrandLogo = typeof t.brandLogoUrl === "string" ? t.brandLogoUrl : "";
@@ -1595,6 +1624,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             portalGradientEnabled: typeof t.portalGradientEnabled === "boolean" ? t.portalGradientEnabled : (typeof (j.config as any)?.portalGradientEnabled === "boolean" ? (j.config as any).portalGradientEnabled : true),
             portalGradientStart: typeof t.portalGradientStart === "string" ? t.portalGradientStart : ((j.config as any)?.portalGradientStart || undefined),
             portalGradientEnd: typeof t.portalGradientEnd === "string" ? t.portalGradientEnd : ((j.config as any)?.portalGradientEnd || undefined),
+            discretePayWithCrypto: typeof t.discretePayWithCrypto === "boolean" ? t.discretePayWithCrypto : (typeof (j.config as any)?.discretePayWithCrypto === "boolean" ? (j.config as any).discretePayWithCrypto : false),
           };
 
           // ── Portal Theme Playground overrides ──
@@ -4035,39 +4065,73 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             onChange={(e) => setHeadlessEmailInput(e.target.value)}
             autoFocus
           />
-          <div className="flex gap-3">
-            <button
-              className={`flex-1 py-2.5 rounded-xl font-semibold border transition-all text-xs ${isLightText
-                  ? 'bg-white/[0.03] text-white/80 border-white/5 hover:bg-white/[0.07] hover:text-white'
-                  : 'bg-black/[0.03] text-black/80 border-black/5 hover:bg-black/[0.07] hover:text-black'
-                }`}
-              onClick={() => {
-                setUserOptedOutOfStripeBypass(true);
-                setHeadlessEmailPrompt(false);
-                setHeadlessInitiated(false);
-              }}
-            >
-              {stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled
-                ? "Pay with Crypto Wallet"
-                : "Cancel"}
-            </button>
-            <button
-              className={`flex-1 py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
-                }`}
-              style={{
-                backgroundColor: theme.primaryColor || "#635BFF",
-              }}
-              disabled={!headlessEmailInput.includes('@')}
-              onClick={() => {
-                setShipEmail(headlessEmailInput);
-                setHeadlessInitiated(true);
-                setHeadlessEmailPrompt(false);
-                startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
-              }}
-            >
-              Continue
-            </button>
-          </div>
+          {theme.discretePayWithCrypto ? (
+            <div className="flex flex-col items-stretch">
+              <button
+                className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                  }`}
+                style={{
+                  backgroundColor: theme.primaryColor || "#635BFF",
+                }}
+                disabled={!headlessEmailInput.includes('@')}
+                onClick={() => {
+                  setShipEmail(headlessEmailInput);
+                  setHeadlessInitiated(true);
+                  setHeadlessEmailPrompt(false);
+                  startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
+                }}
+              >
+                Continue
+              </button>
+              <button
+                type="button"
+                className={`text-[11px] underline hover:opacity-85 transition-opacity block mx-auto mt-3.5 font-medium ${isLightText ? 'text-white/50 hover:text-white' : 'text-black/50 hover:text-black'}`}
+                onClick={() => {
+                  setUserOptedOutOfStripeBypass(true);
+                  setHeadlessEmailPrompt(false);
+                  setHeadlessInitiated(false);
+                }}
+              >
+                {stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled
+                  ? "Pay with Crypto Wallet"
+                  : "Cancel"}
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <button
+                className={`flex-1 py-2.5 rounded-xl font-semibold border transition-all text-xs ${isLightText
+                    ? 'bg-white/[0.03] text-white/80 border-white/5 hover:bg-white/[0.07] hover:text-white'
+                    : 'bg-black/[0.03] text-black/80 border-black/5 hover:bg-black/[0.07] hover:text-black'
+                  }`}
+                onClick={() => {
+                  setUserOptedOutOfStripeBypass(true);
+                  setHeadlessEmailPrompt(false);
+                  setHeadlessInitiated(false);
+                }}
+              >
+                {stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled
+                  ? "Pay with Crypto Wallet"
+                  : "Cancel"}
+              </button>
+              <button
+                className={`flex-1 py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                  }`}
+                style={{
+                  backgroundColor: theme.primaryColor || "#635BFF",
+                }}
+                disabled={!headlessEmailInput.includes('@')}
+                onClick={() => {
+                  setShipEmail(headlessEmailInput);
+                  setHeadlessInitiated(true);
+                  setHeadlessEmailPrompt(false);
+                  startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
+                }}
+              >
+                Continue
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className={`w-full flex flex-col relative transition-all duration-300 ${(headlessAuthElement || headlessPaymentElement)

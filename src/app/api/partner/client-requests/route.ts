@@ -271,14 +271,15 @@ export async function GET(req: NextRequest) {
                     splitConfigCredit: conf?.splitConfigCredit || req.splitConfigCredit || null,
                     shopName: shopConf?.name || conf?.shopName || conf?.name || req.shopName, // shop_config name > site_config name > request name
                     // Merge Shop Config Theme Data (Live Source of Truth)
-                    shopLogoUrl: conf?.theme?.brandLogoUrl || req.shopLogoUrl || req.logoUrl,
-                    logoUrl: conf?.theme?.brandLogoUrl || req.logoUrl, // Ensure compatibility
-                    faviconUrl: conf?.theme?.brandFaviconUrl || req.faviconUrl,
-                    primaryColor: conf?.theme?.primaryColor || req.primaryColor,
-                    secondaryColor: conf?.theme?.secondaryColor || req.secondaryColor,
-                    portalGradientEnabled: typeof conf?.theme?.portalGradientEnabled === "boolean" ? conf.theme.portalGradientEnabled : (typeof req.portalGradientEnabled === "boolean" ? req.portalGradientEnabled : undefined),
-                    portalGradientStart: conf?.theme?.portalGradientStart || req.portalGradientStart,
-                    portalGradientEnd: conf?.theme?.portalGradientEnd || req.portalGradientEnd,
+                    shopLogoUrl: shopConf?.theme?.brandLogoUrl || conf?.theme?.brandLogoUrl || req.shopLogoUrl || req.logoUrl,
+                    logoUrl: shopConf?.theme?.brandLogoUrl || conf?.theme?.brandLogoUrl || req.logoUrl, // Ensure compatibility
+                    faviconUrl: shopConf?.theme?.brandFaviconUrl || conf?.theme?.brandFaviconUrl || req.faviconUrl,
+                    primaryColor: shopConf?.theme?.primaryColor || conf?.theme?.primaryColor || req.primaryColor,
+                    secondaryColor: shopConf?.theme?.secondaryColor || conf?.theme?.secondaryColor || req.secondaryColor,
+                    portalGradientEnabled: typeof shopConf?.theme?.portalGradientEnabled === "boolean" ? shopConf.theme.portalGradientEnabled : (typeof conf?.theme?.portalGradientEnabled === "boolean" ? conf.theme.portalGradientEnabled : (typeof req.portalGradientEnabled === "boolean" ? req.portalGradientEnabled : undefined)),
+                    discretePayWithCrypto: typeof shopConf?.theme?.discretePayWithCrypto === "boolean" ? shopConf.theme.discretePayWithCrypto : (typeof conf?.theme?.discretePayWithCrypto === "boolean" ? conf.theme.discretePayWithCrypto : (typeof req.discretePayWithCrypto === "boolean" ? req.discretePayWithCrypto : undefined)),
+                    portalGradientStart: shopConf?.theme?.portalGradientStart || conf?.theme?.portalGradientStart || req.portalGradientStart,
+                    portalGradientEnd: shopConf?.theme?.portalGradientEnd || conf?.theme?.portalGradientEnd || req.portalGradientEnd,
                     slug: conf?.slug || req.slug,
                     // Industry pack data (for restaurant tables, hotel PMS, etc.)
                     industryPack: shopConf?.config?.industryPack || conf?.config?.industryPack || shopConf?.industryPack || conf?.industryPack || null,
@@ -374,6 +375,7 @@ export async function GET(req: NextRequest) {
                 primaryColor: shopTheme.primaryColor || (!isDefaultColor(theme.primaryColor) ? theme.primaryColor : "") || conf.primaryColor || "",
                 secondaryColor: shopTheme.secondaryColor || (!isDefaultColor(theme.secondaryColor) ? theme.secondaryColor : "") || conf.secondaryColor || "",
                 portalGradientEnabled: typeof shopTheme.portalGradientEnabled === "boolean" ? shopTheme.portalGradientEnabled : (typeof theme.portalGradientEnabled === "boolean" ? theme.portalGradientEnabled : undefined),
+                discretePayWithCrypto: typeof shopTheme.discretePayWithCrypto === "boolean" ? shopTheme.discretePayWithCrypto : (typeof theme.discretePayWithCrypto === "boolean" ? theme.discretePayWithCrypto : undefined),
                 portalGradientStart: shopTheme.portalGradientStart || theme.portalGradientStart || "",
                 portalGradientEnd: shopTheme.portalGradientEnd || theme.portalGradientEnd || "",
                 // Status: treat as approved since they are already operating
@@ -734,6 +736,9 @@ export async function PATCH(req: NextRequest) {
             if (shopConfigUpdate.theme?.portalGradientEnabled !== undefined) {
                 updatedDoc.portalGradientEnabled = shopConfigUpdate.theme.portalGradientEnabled;
             }
+            if (shopConfigUpdate.theme?.discretePayWithCrypto !== undefined) {
+                updatedDoc.discretePayWithCrypto = shopConfigUpdate.theme.discretePayWithCrypto;
+            }
             if (shopConfigUpdate.theme?.portalGradientStart !== undefined) {
                 updatedDoc.portalGradientStart = shopConfigUpdate.theme.portalGradientStart;
             }
@@ -876,7 +881,12 @@ export async function PATCH(req: NextRequest) {
 
                         // Deep merge theme to avoid preserving stale data or wiping valid data inadvertently
                         // Though here we likely WANT to overwrite with the admin's selection.
-                        newConfig.theme = { ...(newConfig.theme || {}), ...shopConfigUpdate.theme };
+                        if (existingDoc.type === "site_config") {
+                            if (!newConfig.config) newConfig.config = {};
+                            newConfig.config.theme = { ...(newConfig.config.theme || {}), ...shopConfigUpdate.theme };
+                        } else {
+                            newConfig.theme = { ...(newConfig.theme || {}), ...shopConfigUpdate.theme };
+                        }
 
                         if (shopConfigUpdate.slug) newConfig.slug = shopConfigUpdate.slug;
 

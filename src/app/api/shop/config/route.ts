@@ -61,6 +61,7 @@ type ShopTheme = {
   portalGradientEnabled?: boolean;
   portalGradientStart?: string;
   portalGradientEnd?: string;
+  discretePayWithCrypto?: boolean;
 };
 
 
@@ -156,6 +157,7 @@ function defaults(brandKey?: string): Required<Omit<ShopConfig, "wallet" | "id" 
       portalGradientEnabled: true,
       portalGradientStart: "",
       portalGradientEnd: "",
+      discretePayWithCrypto: false,
     },
     arrangement: "grid",
     xpPerDollar: 1,
@@ -255,6 +257,7 @@ function normalize(raw?: any, brandKey?: string): Omit<ShopConfig, "wallet" | "i
       portalGradientEnabled: typeof t.portalGradientEnabled === "boolean" ? t.portalGradientEnabled : d.theme.portalGradientEnabled,
       portalGradientStart: typeof t.portalGradientStart === "string" ? t.portalGradientStart : d.theme.portalGradientStart,
       portalGradientEnd: typeof t.portalGradientEnd === "string" ? t.portalGradientEnd : d.theme.portalGradientEnd,
+      discretePayWithCrypto: typeof t.discretePayWithCrypto === "boolean" ? t.discretePayWithCrypto : d.theme.discretePayWithCrypto,
     };
 
     const arr = String(raw.arrangement || "").toLowerCase();
@@ -375,7 +378,7 @@ function normalize(raw?: any, brandKey?: string): Omit<ShopConfig, "wallet" | "i
   // Clamp colors to strings
   try {
     for (const k of Object.keys(out.theme || {})) {
-      if (k === "galleryImages" || k === "portalGradientEnabled") continue; // Preserve array and boolean
+      if (k === "galleryImages" || k === "portalGradientEnabled" || k === "discretePayWithCrypto") continue; // Preserve array and boolean
       const v = (out.theme as any)[k];
       (out.theme as any)[k] = typeof v === "string" ? v : (d.theme as any)[k];
     }

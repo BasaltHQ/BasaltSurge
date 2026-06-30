@@ -129,6 +129,7 @@ export async function POST(req: NextRequest) {
             portalGradientEnabled: true,
             portalGradientStart: "",
             portalGradientEnd: "",
+            discretePayWithCrypto: false,
         };
 
         const prevTheme = prev?.theme || {};
@@ -153,6 +154,7 @@ export async function POST(req: NextRequest) {
             portalGradientEnabled: typeof bodyTheme.portalGradientEnabled === "boolean" ? bodyTheme.portalGradientEnabled : (prevTheme.portalGradientEnabled ?? defaultTheme.portalGradientEnabled),
             portalGradientStart: typeof bodyTheme.portalGradientStart === "string" ? bodyTheme.portalGradientStart : (prevTheme.portalGradientStart || defaultTheme.portalGradientStart),
             portalGradientEnd: typeof bodyTheme.portalGradientEnd === "string" ? bodyTheme.portalGradientEnd : (prevTheme.portalGradientEnd || defaultTheme.portalGradientEnd),
+            discretePayWithCrypto: typeof bodyTheme.discretePayWithCrypto === "boolean" ? bodyTheme.discretePayWithCrypto : (prevTheme.discretePayWithCrypto ?? defaultTheme.discretePayWithCrypto),
         };
 
         const doc = {
