@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useActiveAccount } from "thirdweb/react";
 import dynamic from "next/dynamic";
 const ConnectButton = dynamic(() => import("thirdweb/react").then((m) => m.ConnectButton), { ssr: false });
 import { signLoginPayload } from "thirdweb/auth";
-import { chain, getWallets } from "@/lib/thirdweb/client";
+import { chain } from "@/lib/thirdweb/client";
+import { getWallets } from "@/lib/thirdweb/wallets";
 import { usePortalThirdwebTheme, getConnectButtonStyle, connectButtonClass } from "@/lib/thirdweb/theme";
 import { useThirdwebClient } from "@/hooks/useThirdwebClient";
 
@@ -33,7 +34,7 @@ export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin =
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState<string>("");
   const hasAccount = !!account;
-  const [wallets, setWallets] = useState<any[]>([]);
+  const wallets = useMemo(() => getWallets(chain), [chain]);
   const twTheme = usePortalThirdwebTheme();
 
   // Legal read tracking state
@@ -42,14 +43,6 @@ export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin =
   const [legalPersisted, setLegalPersisted] = useState<LegalReadStatus>({ terms: false, privacy: false, aidpa: false });
 
   const allLegalRead = legalStatus.terms && legalStatus.privacy && legalStatus.aidpa;
-
-  useEffect(() => {
-    let mounted = true;
-    getWallets()
-      .then((w) => { if (mounted) setWallets(w as any[]); })
-      .catch(() => setWallets([]));
-    return () => { mounted = false; };
-  }, []);
 
   // Fetch persisted legal read status when modal opens and account is connected
   useEffect(() => {
