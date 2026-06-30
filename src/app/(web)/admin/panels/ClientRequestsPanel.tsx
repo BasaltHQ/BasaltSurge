@@ -3155,7 +3155,7 @@ function MerchantSettingsTab({
                 setConfig({
                     feeMinusEnabled: !!cfg.feeMinusEnabled,
                     currencySelectionEnabled: cfg.currencySelectionEnabled !== false,
-                    discretePayWithCrypto: !!cfg.theme?.discretePayWithCrypto,
+                    discretePayWithCrypto: cfg.discretePayWithCrypto !== undefined ? !!cfg.discretePayWithCrypto : !!cfg.theme?.discretePayWithCrypto,
                     tipConfig: cfg.tipConfig || { enabled: false, allowCustom: true, presets: [15, 18, 20], defaultTip: null }
                 });
             } catch (e) {
@@ -3184,6 +3184,7 @@ function MerchantSettingsTab({
                     feeMinusEnabled: nextConfig.feeMinusEnabled,
                     currencySelectionEnabled: nextConfig.currencySelectionEnabled,
                     tipConfig: nextConfig.tipConfig,
+                    discretePayWithCrypto: nextConfig.discretePayWithCrypto,
                     theme: {
                         discretePayWithCrypto: nextConfig.discretePayWithCrypto
                     }

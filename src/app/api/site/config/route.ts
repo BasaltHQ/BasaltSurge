@@ -562,6 +562,7 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
       receiptBackgroundUrl: "/watermark.png",
       discretePayWithCrypto: false,
     },
+    discretePayWithCrypto: false,
     processingFeePct: undefined as number | undefined,
     reserveRatios: undefined as Record<string, number> | undefined,
     defaultPaymentToken: undefined as "ETH" | "USDC" | "USDT" | "cbBTC" | "cbXRP" | "SOL" | undefined,
@@ -1032,6 +1033,7 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
 
   config.feeMinusEnabled = typeof config.feeMinusEnabled === "boolean" ? config.feeMinusEnabled : false;
   config.currencySelectionEnabled = typeof config.currencySelectionEnabled === "boolean" ? config.currencySelectionEnabled : true;
+  config.discretePayWithCrypto = typeof config.discretePayWithCrypto === "boolean" ? config.discretePayWithCrypto : (typeof config.theme?.discretePayWithCrypto === "boolean" ? config.theme.discretePayWithCrypto : false);
 
   // Do not apply environment defaults; rely solely on live brand config or persisted config
   try { /* no-op */ } catch { }

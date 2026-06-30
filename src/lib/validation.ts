@@ -165,6 +165,7 @@ export const SiteConfigUpdateSchema = z.object({
   ).optional(),
   feeMinusEnabled: z.boolean().optional(),
   currencySelectionEnabled: z.boolean().optional(),
+  discretePayWithCrypto: z.boolean().optional(),
 });
 
 /**

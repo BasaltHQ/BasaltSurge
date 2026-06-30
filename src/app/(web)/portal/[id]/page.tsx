@@ -1107,8 +1107,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             headerTextColor: "#ffffff",
             bodyTextColor: "#e5e7eb",
             portalGradientEnabled: true,
-            discretePayWithCrypto: siteRes?.config?.theme?.discretePayWithCrypto,
-            ...(shopTheme || {}) // Spread shop theme over defaults
+            ...(shopTheme || {}), // Spread shop theme over defaults
+            discretePayWithCrypto: typeof siteRes?.config?.discretePayWithCrypto === "boolean"
+              ? siteRes.config.discretePayWithCrypto
+              : (typeof siteRes?.config?.theme?.discretePayWithCrypto === "boolean"
+                ? siteRes.config.theme.discretePayWithCrypto
+                : (typeof shopTheme?.discretePayWithCrypto === "boolean" ? shopTheme.discretePayWithCrypto : false)),
           };
 
           const t = cleanTheme as any;
@@ -3751,7 +3755,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         htmlEl.style.height = originalHtmlHeight;
         try {
           (bodyEl.style as any).overscrollBehavior = originalBodyOverscroll || "";
-          (htmlEl.style as any).overscrollBehavior = originalHtmlOverscroll || "";
+          (bodyEl.style as any).overscrollBehavior = originalHtmlOverscroll || "";
         } catch { }
       };
     } catch { }
