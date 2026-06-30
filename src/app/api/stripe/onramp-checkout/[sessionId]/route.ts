@@ -34,13 +34,24 @@ export async function POST(
 
     // Parse body for optional fields
     const body = await req.json().catch(() => ({}));
-    const oauthToken = String(body.oauthToken || "").trim();
+    let oauthToken = String(body.oauthToken || "").trim();
+    const cryptoCustomerId = String(body.cryptoCustomerId || "").trim();
 
     if (!oauthToken) {
       return NextResponse.json(
         { ok: false, error: "missing_oauth_token" },
         { status: 401 }
       );
+    }
+
+    // Resolve potentially updated/refreshed token from memory store first
+    if (cryptoCustomerId) {
+      const { getOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+      const storedToken = getOAuthToken(cryptoCustomerId);
+      if (storedToken && storedToken !== oauthToken) {
+        console.log("[ONRAMP CHECKOUT] Using newer cached OAuth token from store");
+        oauthToken = storedToken;
+      }
     }
 
     // Build mandate_data for ACH support
@@ -64,7 +75,7 @@ export async function POST(
 
     console.log("[ONRAMP CHECKOUT] Checking out session:", sessionId);
 
-    const response = await fetch(
+    let response = await fetch(
       `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}/checkout`,
       {
         method: "POST",
@@ -78,7 +89,34 @@ export async function POST(
       }
     );
 
-    const data = await response.json();
+    let data = await response.json();
+    let tokenRefreshed = false;
+
+    // Auto-refresh token if Stripe returns 401/unauthorized due to expired oauth token
+    if ((response.status === 401 || (data.error && String(data.error.message || "").toLowerCase().includes("oauth"))) && cryptoCustomerId) {
+      console.log("[ONRAMP CHECKOUT] OAuth token expired or rejected. Attempting background token refresh...");
+      const { refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+      const refreshedToken = await refreshOAuthToken(cryptoCustomerId);
+      if (refreshedToken) {
+        oauthToken = refreshedToken;
+        tokenRefreshed = true;
+        console.log("[ONRAMP CHECKOUT] Retrying checkout with refreshed OAuth token...");
+        response = await fetch(
+          `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}/checkout`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              "Authorization": `Bearer ${stripeKey}`,
+              "Stripe-OAuth-Token": oauthToken,
+              "Stripe-Version": STRIPE_API_VERSION,
+            },
+            body: formParams.toString(),
+          }
+        );
+        data = await response.json();
+      }
+    }
 
     // 200 or 202 are both valid responses — check for last_error
     if (response.status === 200 || response.status === 202) {
@@ -91,6 +129,7 @@ export async function POST(
           client_secret: data.client_secret,
           lastError,
           status: data.status,
+          ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
         });
       }
 
@@ -103,6 +142,7 @@ export async function POST(
           lastError,
           status: data.status,
           transactionDetails: data.transaction_details || null,
+          ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
         });
       }
     }
@@ -119,6 +159,7 @@ export async function POST(
       ok: true,
       client_secret: data.client_secret,
       status: data.status,
+      ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
     });
   } catch (e: any) {
     console.error("[ONRAMP CHECKOUT] Error:", e);

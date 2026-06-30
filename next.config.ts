@@ -170,6 +170,10 @@ const nextConfig = {
         source: "/opengraph-image.png",
         destination: "/opengraph-image",
       },
+      {
+        source: "/crypto-onramp/:path*",
+        destination: "https://crypto-js.stripe.com/crypto-onramp/:path*",
+      },
     ];
   },
 };

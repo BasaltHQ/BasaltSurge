@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { level, message, stack, receiptId, wallet, sessionId, host, userAgent, ts } = body;
+    const { level, message, stack, receiptId, wallet, sessionId, host, userAgent, ts, type, errorId } = body;
 
     // Validate minimum required fields
     if (!level || !message) {
@@ -32,7 +32,8 @@ export async function POST(req: NextRequest) {
     const logEntry = {
       id: logId,
       wallet: wallet || "anonymous", // Partition key
-      type: "portal_client_log",
+      type: type || "portal_client_log",
+      errorId: errorId || null,
       level,
       message,
       stack: stack || null,

@@ -33,7 +33,17 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const oauthToken = req.headers.get("x-stripe-oauth-token") || "";
+    let oauthToken = req.headers.get("x-stripe-oauth-token") || "";
+    const cryptoCustomerId = req.headers.get("x-crypto-customer-id") || req.nextUrl.searchParams.get("cryptoCustomerId") || "";
+
+    if (cryptoCustomerId) {
+      const { getOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+      const storedToken = getOAuthToken(cryptoCustomerId);
+      if (storedToken && storedToken !== oauthToken) {
+        console.log("[STRIPE ONRAMP STATUS] Using newer cached OAuth token from store");
+        oauthToken = storedToken;
+      }
+    }
 
     const headers: Record<string, string> = {
       "Authorization": `Bearer ${stripeKey}`,
@@ -43,7 +53,7 @@ export async function GET(req: NextRequest) {
       headers["Stripe-OAuth-Token"] = oauthToken;
     }
 
-    const response = await fetch(
+    let response = await fetch(
       `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
       {
         method: "GET",
@@ -51,7 +61,28 @@ export async function GET(req: NextRequest) {
       }
     );
 
-    const data = await response.json();
+    let data = await response.json();
+    let tokenRefreshed = false;
+
+    if ((response.status === 401 || (data.error && String(data.error.message || "").toLowerCase().includes("oauth"))) && cryptoCustomerId) {
+      console.log("[STRIPE ONRAMP STATUS] OAuth token expired/invalid. Refreshing...");
+      const { refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+      const refreshedToken = await refreshOAuthToken(cryptoCustomerId);
+      if (refreshedToken) {
+        oauthToken = refreshedToken;
+        tokenRefreshed = true;
+        headers["Stripe-OAuth-Token"] = oauthToken;
+        console.log("[STRIPE ONRAMP STATUS] Retrying status fetch with refreshed token...");
+        response = await fetch(
+          `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
+          {
+            method: "GET",
+            headers,
+          }
+        );
+        data = await response.json();
+      }
+    }
 
     if (!response.ok) {
       console.error("[STRIPE ONRAMP STATUS] Fetch failed:", data);
@@ -69,6 +100,7 @@ export async function GET(req: NextRequest) {
       paymentDetails: data.payment_details || null,
       paymentMethod: data.payment_method || null,
       metadata: data.metadata || null,
+      ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
     });
   } catch (e: any) {
     console.error("[STRIPE ONRAMP STATUS] Error:", e);

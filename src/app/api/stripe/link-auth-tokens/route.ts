@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       accessToken,
       expiresIn,
-      tokenType: data.token_type || "Bearer",
+      tokenType: data.tokenType || "Bearer",
     });
   } catch (e: any) {
     console.error("[LINK TOKENS] Error:", e);
@@ -118,5 +118,55 @@ export async function POST(req: NextRequest) {
       { ok: false, error: e?.message || "internal_error" },
       { status: 500 }
     );
+  }
+}
+
+/**
+ * Refresh OAuth access token using stored refresh token.
+ */
+export async function refreshOAuthToken(customerId: string): Promise<string | null> {
+  const entry = tokenStore.get(customerId);
+  if (!entry || !entry.refreshToken) {
+    console.log("[LINK TOKENS] No refresh token found for customer:", customerId);
+    return null;
+  }
+
+  try {
+    const stripeKey = process.env.STRIPE_API_KEY;
+    const oauthClientId = process.env.LINK_OAUTH_CLIENT_ID;
+
+    console.log("[LINK TOKENS] Refreshing OAuth token for customer:", customerId);
+
+    const res = await fetch("https://login.link.com/auth/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": `Bearer ${stripeKey}`,
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: entry.refreshToken,
+        client_id: oauthClientId || "",
+      }).toString(),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.access_token) {
+      console.error("[LINK TOKENS] Token refresh failed:", data);
+      return null;
+    }
+
+    const accessToken = data.access_token;
+    const refreshToken = data.refresh?.refresh_token || entry.refreshToken;
+    const expiresIn = data.expires_in || 3600;
+
+    storeOAuthToken(customerId, accessToken, refreshToken, expiresIn);
+    console.log("[LINK TOKENS] Token refreshed and stored for customer:", customerId);
+
+    return accessToken;
+  } catch (e) {
+    console.error("[LINK TOKENS] Error refreshing token:", e);
+    return null;
   }
 }

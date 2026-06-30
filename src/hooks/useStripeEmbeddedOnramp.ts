@@ -270,6 +270,7 @@ export function useStripeEmbeddedOnramp({
 
   const onrampRef = useRef<OnrampCoordinator | null>(null);
   const mountedRef = useRef(true);
+  const stepRef = useRef<OnrampStep>("idle");
   const oauthTokenRef = useRef<string | null>(null);
   const paymentTokenRef = useRef<string | null>(null);
   const verificationTokenRef = useRef<string | null>(null);
@@ -285,12 +286,92 @@ export function useStripeEmbeddedOnramp({
 
   const updateStep = useCallback((newStep: OnrampStep) => {
     if (!mountedRef.current) return;
+    stepRef.current = newStep;
     setStep(newStep);
     onStepChange?.(newStep);
   }, [onStepChange]);
 
   useEffect(() => {
     mountedRef.current = true;
+
+    // Window message monitor to log security/OTP/3DS triggers inside the Stripe/Link iframes
+    const handleWindowMessage = (e: MessageEvent) => {
+      try {
+        const isStripe = e.origin.includes("stripe.com") || e.origin.includes("link.com") || e.origin.includes("stripe.network");
+        if (!isStripe) return;
+
+        let msgData = e.data;
+        if (typeof msgData === "string" && msgData.startsWith("{")) {
+          msgData = JSON.parse(msgData);
+        }
+
+        const dataStr = JSON.stringify(msgData).toLowerCase();
+        
+        // Search for verification-related trigger keywords in data/event payloads
+        const isOtpTrigger = dataStr.includes("otp") || 
+                            dataStr.includes("verification") || 
+                            dataStr.includes("auth") || 
+                            dataStr.includes("challenge") || 
+                            dataStr.includes("3ds") || 
+                            dataStr.includes("sms") || 
+                            dataStr.includes("code");
+
+        if (isOtpTrigger) {
+          const currentStep = stepRef.current;
+          console.warn("[STRIPE SDK MONITOR] Security/OTP trigger detected inside iframe:", {
+            origin: e.origin,
+            event: msgData?.event || msgData?.type || "unknown",
+            action: msgData?.action || "unknown",
+            status: msgData?.status || "unknown",
+            step: currentStep
+          });
+
+          // Check if this is the second OTP (user is already logged in/has a customerId, and is in payment/checkout steps)
+          const isSecondOtp = !!customerIdRef.current && (
+            currentStep === "collecting_payment" ||
+            currentStep === "checking_out" ||
+            currentStep === "awaiting_funds"
+          );
+
+          if (isSecondOtp) {
+            console.warn("[STRIPE SDK MONITOR] Second OTP / 3DS challenge identified. Logging to MongoDB...");
+
+            const logPayload = {
+              level: "error",
+              type: "stripe_double_otp",
+              errorId: "STRIPE_DOUBLE_OTP",
+              message: `[STRIPE SECURE OTP] Double OTP or 3DS security challenge triggered. Step: ${currentStep}. Event: ${msgData?.event || msgData?.type || "unknown"}. Action: ${msgData?.action || "unknown"}. Status: ${msgData?.status || "unknown"}`,
+              stack: JSON.stringify({
+                eventPayload: msgData,
+                origin: e.origin,
+                currentStep,
+                customerId: customerIdRef.current,
+                sessionId: sessionIdRef.current,
+                buyerWallet: buyerWalletRef.current,
+                receiptId,
+                brandKey
+              }, null, 2),
+              receiptId,
+              wallet: buyerWalletRef.current || "anonymous",
+              sessionId: sessionIdRef.current,
+              host: window.location.host,
+              userAgent: window.navigator.userAgent,
+              ts: Date.now()
+            };
+
+            fetch("/api/portal/log", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(logPayload)
+            }).catch(err => {
+              console.error("[STRIPE SDK MONITOR] Failed to POST log to database:", err);
+            });
+          }
+        }
+      } catch {}
+    };
+
+    window.addEventListener("message", handleWindowMessage);
 
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
       const err = event.reason;
@@ -331,6 +412,7 @@ export function useStripeEmbeddedOnramp({
     return () => {
       mountedRef.current = false;
       window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+      window.removeEventListener("message", handleWindowMessage);
       try { onrampRef.current?.destroy(); } catch {}
     };
   }, [updateStep]);
@@ -348,6 +430,7 @@ export function useStripeEmbeddedOnramp({
 
   const reset = useCallback(() => {
     isRunningRef.current = false;
+    stepRef.current = "idle";
     setStep("idle");
     setError(null);
     setAuthElement(null);
@@ -686,16 +769,24 @@ export function useStripeEmbeddedOnramp({
       if (!mountedRef.current) return;
 
       try {
+        const statusHeaders: any = {
+          "x-stripe-oauth-token": oauthTokenRef.current || "",
+        };
+        if (customerIdRef.current) {
+          statusHeaders["x-crypto-customer-id"] = customerIdRef.current;
+        }
         const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(sessionId)}`, {
-          headers: {
-            "x-stripe-oauth-token": oauthTokenRef.current || "",
-          }
+          headers: statusHeaders
         });
         if (!statusRes.ok) {
           console.warn(`[EMBEDDED ONRAMP] Status endpoint returned error status: ${statusRes.status}`);
           continue;
         }
         const statusData = await statusRes.json();
+        if (statusData.refreshedToken) {
+          console.log("[EMBEDDED ONRAMP] Status poll returned refreshed OAuth token, updating ref...");
+          oauthTokenRef.current = statusData.refreshedToken;
+        }
         console.log(`[EMBEDDED ONRAMP] Polled status (attempt ${poll + 1}):`, statusData?.status, statusData);
 
         if (statusData && statusData.status === "fulfillment_complete") {
@@ -818,10 +909,16 @@ export function useStripeEmbeddedOnramp({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               oauthToken: oauthTokenRef.current,
+              cryptoCustomerId: customerId,
             }),
           });
 
           const checkoutData = await checkoutRes.json();
+
+          if (checkoutData.refreshedToken) {
+            console.log("[EMBEDDED ONRAMP] Checkout returned refreshed OAuth token, updating ref...");
+            oauthTokenRef.current = checkoutData.refreshedToken;
+          }
 
           if (!checkoutData.client_secret) {
             throw new Error(checkoutData.error || "No client_secret returned");
@@ -838,12 +935,21 @@ export function useStripeEmbeddedOnramp({
         console.warn(`[EMBEDDED ONRAMP] Checkout attempt ${attempt + 1} failed, checking error state...`, checkoutErr);
         
         try {
+          const statusHeaders: any = {
+            "x-stripe-oauth-token": oauthTokenRef.current || "",
+          };
+          if (customerId) {
+            statusHeaders["x-crypto-customer-id"] = customerId;
+          }
           const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId)}`, {
-            headers: {
-              "x-stripe-oauth-token": oauthTokenRef.current || "",
-            }
+            headers: statusHeaders
           });
           const statusData = await statusRes.json();
+
+          if (statusData.refreshedToken) {
+            console.log("[EMBEDDED ONRAMP] Status check returned refreshed OAuth token, updating ref...");
+            oauthTokenRef.current = statusData.refreshedToken;
+          }
           const lastError = statusData.transactionDetails?.last_error;
 
           console.log(`[EMBEDDED ONRAMP] Inspecting lastError from session status:`, lastError);
@@ -1272,6 +1378,20 @@ export function useStripeEmbeddedOnramp({
           },
           (result: any) => {
             console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
+            if (result) {
+              const newToken = result.oauthToken || 
+                               result.accessToken || 
+                               result.oauth_token || 
+                               result.access_token ||
+                               result.paymentDetails?.oauthToken ||
+                               result.paymentDetails?.accessToken ||
+                               result.paymentMethod?.oauthToken ||
+                               result.payment_details?.oauthToken;
+              if (newToken) {
+                console.log("[EMBEDDED ONRAMP] Updated OAuth token detected in collectPaymentMethod result:", newToken.slice(0, 10) + "...");
+                oauthTokenRef.current = newToken;
+              }
+            }
             if (result.cryptoPaymentToken) {
               let fundingType: "credit" | "debit" | null = null;
               let brandStr = "";
