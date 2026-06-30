@@ -1,5 +1,6 @@
 import { inAppWallet, createWallet } from "thirdweb/wallets";
 import type { Chain } from "thirdweb/chains";
+import { getResolvedClientId } from "./client";
 
 /**
  * Gas Sponsorship via EIP-4337 Smart Accounts.
@@ -21,19 +22,21 @@ type WalletCache = {
   getOwnerModeWallets?: any[];
   getPrivateLoginWallets?: any[];
   chainId?: number;
+  clientId?: string;
 };
 
 let walletCache: WalletCache = {};
 
-function clearCacheIfChainChanged(chain: Chain) {
-  if (walletCache.chainId !== chain.id) {
-    walletCache = { chainId: chain.id };
+function clearCacheIfConfigChanged(chain: Chain) {
+  const currentClientId = typeof window !== "undefined" ? getResolvedClientId() : "";
+  if (walletCache.chainId !== chain.id || walletCache.clientId !== currentClientId) {
+    walletCache = { chainId: chain.id, clientId: currentClientId };
   }
 }
 
 // Produce wallets lazily with a provided chain to avoid module-eval side effects on the server
 export function getWallets(chain: Chain) {
-  clearCacheIfChainChanged(chain);
+  clearCacheIfConfigChanged(chain);
   if (!walletCache.getWallets) {
     walletCache.getWallets = [
       inAppWallet({
@@ -71,7 +74,7 @@ export function getWallets(chain: Chain) {
  * Used for SIGNUP flow on private partner containers.
  */
 export function getPrivateWallets(chain: Chain) {
-  clearCacheIfChainChanged(chain);
+  clearCacheIfConfigChanged(chain);
   if (!walletCache.getPrivateWallets) {
     walletCache.getPrivateWallets = [
       inAppWallet({
@@ -96,7 +99,7 @@ export function getPrivateWallets(chain: Chain) {
 
 // Owner Mode restricted wallets - only email and phone for GeckoView compatibility
 export function getOwnerModeWallets(chain: Chain) {
-  clearCacheIfChainChanged(chain);
+  clearCacheIfConfigChanged(chain);
   if (!walletCache.getOwnerModeWallets) {
     walletCache.getOwnerModeWallets = [
       inAppWallet({
@@ -122,7 +125,7 @@ export function getOwnerModeWallets(chain: Chain) {
  * No social logins (Google, Apple, X, etc.)
  */
 export function getPrivateLoginWallets(chain: Chain) {
-  clearCacheIfChainChanged(chain);
+  clearCacheIfConfigChanged(chain);
   if (!walletCache.getPrivateLoginWallets) {
     walletCache.getPrivateLoginWallets = [
       inAppWallet({

@@ -6,8 +6,9 @@ import { useActiveAccount } from "thirdweb/react";
 import dynamic from "next/dynamic";
 const ConnectButton = dynamic(() => import("thirdweb/react").then((m) => m.ConnectButton), { ssr: false });
 import { signLoginPayload } from "thirdweb/auth";
-import { client, chain, getWallets } from "@/lib/thirdweb/client";
+import { chain, getWallets } from "@/lib/thirdweb/client";
 import { usePortalThirdwebTheme, getConnectButtonStyle, connectButtonClass } from "@/lib/thirdweb/theme";
+import { useThirdwebClient } from "@/hooks/useThirdwebClient";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ const LEGAL_DOCS: { key: LegalDoc; label: string; path: string }[] = [
 ];
 
 export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin = false }: AuthModalProps) {
+  const client = useThirdwebClient();
   const account = useActiveAccount();
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState<string>("");
