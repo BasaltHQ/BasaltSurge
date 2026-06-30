@@ -2233,7 +2233,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [shipEmail, setShipEmail] = useState(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
-      return sp.get("email") || "";
+      return sp.get("stripeEmail") || sp.get("email") || "";
     }
     return "";
   });
@@ -3577,6 +3577,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   useEffect(() => {
     const isStripeOnly = stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled;
     const paymentReady = !shippingRequired || shippingComplete;
+    const hasStripeEmailParam = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("stripeEmail");
 
     if (
       configLoaded &&
@@ -3588,12 +3589,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       !headlessActive &&
       !headlessInitiated
     ) {
-      console.log("[PORTAL PAGE] Stripe is the only active onramp. Autostarting direct flow.");
-      if (!shipEmail) {
+      if (hasStripeEmailParam) {
+        console.log("[PORTAL PAGE] stripeEmail parameter present. Prepopulating field and waiting for user confirmation.");
         setHeadlessEmailPrompt(true);
       } else {
-        setHeadlessInitiated(true);
-        startHeadlessOnramp(shipEmail, undefined, shipName || undefined);
+        console.log("[PORTAL PAGE] Stripe is the only active onramp. Autostarting direct flow.");
+        if (!shipEmail) {
+          setHeadlessEmailPrompt(true);
+        } else {
+          setHeadlessInitiated(true);
+          startHeadlessOnramp(shipEmail, undefined, shipName || undefined);
+        }
       }
     }
   }, [
