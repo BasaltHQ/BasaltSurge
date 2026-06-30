@@ -303,6 +303,7 @@ export function ThemeLoader() {
               try {
                 document.documentElement.setAttribute("data-pp-thirdweb-client-id", pj.overrides.thirdwebClientId);
                 localStorage.setItem(`pp-thirdweb-client-id:${bk}`, pj.overrides.thirdwebClientId);
+                document.cookie = `pp_tw_client_id_${bk}=${pj.overrides.thirdwebClientId}; path=/; max-age=31536000; SameSite=Lax`;
                 window.dispatchEvent(new CustomEvent("pp:thirdweb-client-id:updated", { detail: pj.overrides.thirdwebClientId }));
               } catch { }
             }

@@ -105,10 +105,14 @@ export function getClient() {
     clientId = resolvedClientIdCache[brandKey];
   }
 
-  // 2. Check localStorage cache second to guarantee synchronous resolution on hard refreshes (F5)
+  // 2. Check cookie and localStorage cache to guarantee synchronous resolution on hard refreshes (F5) even in sandboxed mobile WebViews
   if (!clientId && typeof window !== "undefined" && brandKey) {
     try {
-      clientId = localStorage.getItem(`pp-thirdweb-client-id:${brandKey}`) || undefined;
+      const match = document.cookie.match(new RegExp('(^| )pp_tw_client_id_' + brandKey + '=([^;]+)'));
+      clientId = match ? match[2] : undefined;
+      if (!clientId) {
+        clientId = localStorage.getItem(`pp-thirdweb-client-id:${brandKey}`) || undefined;
+      }
     } catch { }
   }
 
@@ -128,12 +132,17 @@ export function getClient() {
   // 5. Fallback to default env var
   clientId = clientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
 
-  // 6. Cache the resolved client ID in both module memory and localStorage to survive page updates and resets
+  // 6. Cache the resolved client ID in module memory, localStorage, and cookie to survive page updates and private-mode browser restarts
   if (clientId && typeof window !== "undefined" && brandKey) {
     resolvedClientIdCache[brandKey] = clientId;
     try {
       localStorage.setItem(`pp-thirdweb-client-id:${brandKey}`, clientId);
+      document.cookie = `pp_tw_client_id_${brandKey}=${clientId}; path=/; max-age=31536000; SameSite=Lax`;
     } catch { }
+  }
+
+  if (typeof window !== "undefined") {
+    console.log("[Thirdweb Client] getClient() resolved brandKey:", brandKey, "clientId:", clientId);
   }
 
   const cacheKey = secret ? `secret_${secret}` : `client_${clientId}`;

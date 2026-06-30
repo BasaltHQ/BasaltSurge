@@ -792,7 +792,11 @@ export default async function RootLayout({
           (function() {
             try {
               var bk = document.documentElement.getAttribute('data-pp-brand-key') || 'basaltsurge';
-              var cached = localStorage.getItem('pp-thirdweb-client-id:' + bk);
+              var match = document.cookie.match(new RegExp('(^| )pp_tw_client_id_' + bk + '=([^;]+)'));
+              var cached = match ? match[2] : null;
+              if (!cached) {
+                cached = localStorage.getItem('pp-thirdweb-client-id:' + bk);
+              }
               if (cached) {
                 document.documentElement.setAttribute('data-pp-thirdweb-client-id', cached);
               }
