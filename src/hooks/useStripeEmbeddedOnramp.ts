@@ -292,6 +292,41 @@ export function useStripeEmbeddedOnramp({
   useEffect(() => {
     mountedRef.current = true;
 
+    // Window message monitor to log security/OTP/3DS triggers inside the Stripe/Link iframes
+    const handleWindowMessage = (e: MessageEvent) => {
+      try {
+        const isStripe = e.origin.includes("stripe.com") || e.origin.includes("link.com") || e.origin.includes("stripe.network");
+        if (!isStripe) return;
+
+        let msgData = e.data;
+        if (typeof msgData === "string" && msgData.startsWith("{")) {
+          msgData = JSON.parse(msgData);
+        }
+
+        const dataStr = JSON.stringify(msgData).toLowerCase();
+        
+        // Search for verification-related trigger keywords in data/event payloads
+        const isOtpTrigger = dataStr.includes("otp") || 
+                            dataStr.includes("verification") || 
+                            dataStr.includes("auth") || 
+                            dataStr.includes("challenge") || 
+                            dataStr.includes("3ds") || 
+                            dataStr.includes("sms") || 
+                            dataStr.includes("code");
+
+        if (isOtpTrigger) {
+          console.warn("[STRIPE SDK MONITOR] Security/OTP trigger detected inside iframe:", {
+            origin: e.origin,
+            event: msgData?.event || msgData?.type || "unknown",
+            action: msgData?.action || "unknown",
+            status: msgData?.status || "unknown"
+          });
+        }
+      } catch {}
+    };
+
+    window.addEventListener("message", handleWindowMessage);
+
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
       const err = event.reason;
       const errMessage = String(err?.message || err || "").toLowerCase();
@@ -331,6 +366,7 @@ export function useStripeEmbeddedOnramp({
     return () => {
       mountedRef.current = false;
       window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+      window.removeEventListener("message", handleWindowMessage);
       try { onrampRef.current?.destroy(); } catch {}
     };
   }, [updateStep]);
