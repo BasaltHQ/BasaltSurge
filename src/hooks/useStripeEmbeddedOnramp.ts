@@ -279,6 +279,7 @@ export function useStripeEmbeddedOnramp({
   const activeEmailRef = useRef<string | null>(null);
   const customerIdRef = useRef<string | null>(null);
   const buyerWalletRef = useRef<string | null>(null);
+  const isVerifyingRef = useRef(false);
 
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
 
@@ -296,21 +297,30 @@ export function useStripeEmbeddedOnramp({
       const errMessage = String(err?.message || err || "").toLowerCase();
       if (errMessage.includes("identity verification") || errMessage.includes("verification_required")) {
         event.preventDefault(); // Stop default browser console logging
-        console.log("[EMBEDDED ONRAMP] Intercepted identity verification requirement. Launching verifyDocuments...");
         
+        if (isVerifyingRef.current) {
+          console.log("[EMBEDDED ONRAMP] Identity verification already in progress. Ignoring duplicate global event.");
+          return;
+        }
+        
+        console.log("[EMBEDDED ONRAMP] Intercepted identity verification requirement globally. Launching verifyDocuments...");
+        isVerifyingRef.current = true;
         updateStep("verifying_identity");
         
         if (onrampRef.current) {
           onrampRef.current.verifyDocuments()
             .then((res) => {
-              console.log("[EMBEDDED ONRAMP] verifyDocuments completed:", res);
+              console.log("[EMBEDDED ONRAMP] Global verifyDocuments completed:", res);
+              isVerifyingRef.current = false;
               updateStep("collecting_payment");
             })
             .catch((verifyErr) => {
-              console.error("[EMBEDDED ONRAMP] verifyDocuments error:", verifyErr);
+              console.error("[EMBEDDED ONRAMP] Global verifyDocuments error:", verifyErr);
+              isVerifyingRef.current = false;
               updateStep("collecting_payment");
             });
         } else {
+          isVerifyingRef.current = false;
           updateStep("collecting_payment");
         }
       }
@@ -592,10 +602,13 @@ export function useStripeEmbeddedOnramp({
             if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
             
             try {
+              isVerifyingRef.current = true;
               await onrampRef.current.verifyDocuments();
+              isVerifyingRef.current = false;
               console.log("[EMBEDDED ONRAMP] Document verification completed. Retrying session creation...");
               return await execute(amt);
             } catch (verifyErr: any) {
+              isVerifyingRef.current = false;
               throw new Error(verifyErr?.message || "Identity verification failed or was cancelled");
             }
           } else {
@@ -835,28 +848,42 @@ export function useStripeEmbeddedOnramp({
 
           console.log(`[EMBEDDED ONRAMP] Inspecting lastError from session status:`, lastError);
 
-          if (lastError === "missing_kyc") {
-            console.log("[EMBEDDED ONRAMP] KYC info required. Transitioning to collecting_kyc and pausing loop.");
-            updateStep("collecting_kyc");
-            isRunningRef.current = false;
-            return;
-          } else if (lastError === "missing_document_verification") {
-            console.log("[EMBEDDED ONRAMP] Identity document verification required. Launching verifyDocuments...");
-            updateStep("verifying_identity");
-            if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
-            
-            try {
-              const verifyResult = await onrampRef.current.verifyDocuments();
-              if (verifyResult.result === "abandoned") {
-                handleError("Identity verification was abandoned");
-                return;
+          const errMessage = String(checkoutErr?.message || "").toLowerCase();
+          const isKycError = errMessage.includes("identity verification") || 
+                             errMessage.includes("verification_required") || 
+                             errMessage.includes("kyc");
+
+          if (isKycError || lastError === "missing_kyc" || lastError === "missing_document_verification") {
+            if (isVerifyingRef.current) {
+              console.log("[EMBEDDED ONRAMP] Verification already in progress. Awaiting completion...");
+              while (isVerifyingRef.current) {
+                await new Promise(r => setTimeout(r, 500));
               }
-              console.log("[EMBEDDED ONRAMP] Document verification successful, retrying checkout...");
+              console.log("[EMBEDDED ONRAMP] Verification completed/closed. Retrying checkout...");
               updateStep("checking_out");
               continue;
-            } catch (verifyErr: any) {
-              handleError(verifyErr?.message || "Identity verification failed");
-              return;
+            } else {
+              console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Launching verifyDocuments...");
+              isVerifyingRef.current = true;
+              updateStep("verifying_identity");
+              
+              if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
+              
+              try {
+                const verifyResult = await onrampRef.current.verifyDocuments();
+                isVerifyingRef.current = false;
+                if (verifyResult.result === "abandoned") {
+                  handleError("Identity verification was abandoned");
+                  return;
+                }
+                console.log("[EMBEDDED ONRAMP] Document verification successful, retrying checkout...");
+                updateStep("checking_out");
+                continue;
+              } catch (verifyErr: any) {
+                isVerifyingRef.current = false;
+                handleError(verifyErr?.message || "Identity verification failed");
+                return;
+              }
             }
           } else if (lastError === "missing_consumer_wallet") {
             console.log("[EMBEDDED ONRAMP] Wallet not registered. Attempting wallet registration...");
