@@ -338,6 +338,8 @@ export function useStripeEmbeddedOnramp({
 
             const logPayload = {
               level: "error",
+              type: "stripe_double_otp",
+              errorId: "STRIPE_DOUBLE_OTP",
               message: `[STRIPE SECURE OTP] Double OTP or 3DS security challenge triggered. Step: ${currentStep}. Event: ${msgData?.event || msgData?.type || "unknown"}. Action: ${msgData?.action || "unknown"}. Status: ${msgData?.status || "unknown"}`,
               stack: JSON.stringify({
                 eventPayload: msgData,
