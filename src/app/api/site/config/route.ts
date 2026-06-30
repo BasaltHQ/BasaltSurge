@@ -1811,6 +1811,11 @@ export async function POST(req: NextRequest) {
       candidate.currencySelectionEnabled = body.currencySelectionEnabled;
     }
 
+    // Optional discretePayWithCrypto update
+    if (typeof body.discretePayWithCrypto === "boolean") {
+      candidate.discretePayWithCrypto = body.discretePayWithCrypto;
+    }
+
     // Optional split config update
     if (typeof body.splitAddress === "string") {
       candidate.splitAddress = body.splitAddress;
