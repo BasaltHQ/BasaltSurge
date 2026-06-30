@@ -4760,7 +4760,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             </button>
           )}
           {!isEmbedded && wallets.length > 0 && (
-            <div className="ml-2 mr-[-20px] my-auto flex items-center">
+            <div className="ml-2 mr-[-11px] sm:mr-[-20px] my-auto flex items-center">
               <ConnectButton
                 client={client}
                 chain={chain}
