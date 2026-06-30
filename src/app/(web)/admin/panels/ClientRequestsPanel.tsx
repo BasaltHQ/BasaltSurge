@@ -809,20 +809,43 @@ export default function ClientRequestsPanel() {
                 });
 
                 const mergedAgents = mergeAgents(foundAgents, false);
-                setPartnerBps(foundPartnerBps);
-                setAgents(mergedAgents);
+
+                // Compare on-chain with local state
+                const currentSorted = [...agents].sort((a, b) => a.wallet.localeCompare(b.wallet));
+                const onChainSorted = [...mergedAgents].sort((a, b) => a.wallet.localeCompare(b.wallet));
+                let matches = partnerBps === foundPartnerBps && currentSorted.length === onChainSorted.length;
+                if (matches) {
+                    for (let i = 0; i < currentSorted.length; i++) {
+                        if (currentSorted[i].wallet.toLowerCase() !== onChainSorted[i].wallet.toLowerCase() || currentSorted[i].bps !== onChainSorted[i].bps) {
+                            matches = false;
+                            break;
+                        }
+                    }
+                }
+
                 setLastVerifiedConfig({ partnerBps: foundPartnerBps, agents: mergedAgents });
 
-                const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
-                const verifiedMerchantBps = 10000 - platformBps - foundPartnerBps - verifiedAgentsBps;
-
-                nextConfig = {
-                    ...nextConfig,
-                    partnerBps: foundPartnerBps,
-                    merchantBps: verifiedMerchantBps,
-                    platformBps: platformBps,
-                    agents: mergedAgents
-                };
+                if (matches) {
+                    setPartnerBps(foundPartnerBps);
+                    setAgents(mergedAgents);
+                    const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
+                    const verifiedMerchantBps = 10000 - platformBps - foundPartnerBps - verifiedAgentsBps;
+                    nextConfig = {
+                        ...nextConfig,
+                        partnerBps: foundPartnerBps,
+                        merchantBps: verifiedMerchantBps,
+                        platformBps: platformBps,
+                        agents: mergedAgents
+                    };
+                } else {
+                    nextConfig = {
+                        ...nextConfig,
+                        partnerBps: partnerBps,
+                        merchantBps: 10000 - platformBps - partnerBps - agents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0),
+                        platformBps: platformBps,
+                        agents: agents
+                    };
+                }
             } else {
                 nextConfig = {
                     ...nextConfig,
@@ -851,19 +874,41 @@ export default function ClientRequestsPanel() {
                 });
 
                 const mergedAgents = mergeAgents(foundAgents, true);
-                setPartnerBpsDebit(foundPartnerBps);
-                setAgentsDebit(mergedAgents);
+
+                // Compare on-chain with local state
+                const currentSorted = [...agentsDebit].sort((a, b) => a.wallet.localeCompare(b.wallet));
+                const onChainSorted = [...mergedAgents].sort((a, b) => a.wallet.localeCompare(b.wallet));
+                let matches = partnerBpsDebit === foundPartnerBps && currentSorted.length === onChainSorted.length;
+                if (matches) {
+                    for (let i = 0; i < currentSorted.length; i++) {
+                        if (currentSorted[i].wallet.toLowerCase() !== onChainSorted[i].wallet.toLowerCase() || currentSorted[i].bps !== onChainSorted[i].bps) {
+                            matches = false;
+                            break;
+                        }
+                    }
+                }
+
                 setLastVerifiedConfigDebit({ partnerBps: foundPartnerBps, agents: mergedAgents });
 
-                const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
-                const verifiedMerchantBps = 10000 - platformBpsDebit - foundPartnerBps - verifiedAgentsBps;
-
-                nextConfig.splitConfigCredit = {
-                    partnerBps: foundPartnerBps,
-                    merchantBps: verifiedMerchantBps,
-                    platformBps: platformBpsDebit,
-                    agents: mergedAgents
-                };
+                if (matches) {
+                    setPartnerBpsDebit(foundPartnerBps);
+                    setAgentsDebit(mergedAgents);
+                    const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
+                    const verifiedMerchantBps = 10000 - platformBpsDebit - foundPartnerBps - verifiedAgentsBps;
+                    nextConfig.splitConfigCredit = {
+                        partnerBps: foundPartnerBps,
+                        merchantBps: verifiedMerchantBps,
+                        platformBps: platformBpsDebit,
+                        agents: mergedAgents
+                    };
+                } else {
+                    nextConfig.splitConfigCredit = {
+                        partnerBps: partnerBpsDebit,
+                        merchantBps: 10000 - platformBpsDebit - partnerBpsDebit - agentsDebit.reduce((sum, a) => sum + (Number(a.bps) || 0), 0),
+                        platformBps: platformBpsDebit,
+                        agents: agentsDebit
+                    };
+                }
             } else {
                 nextConfig.splitConfigCredit = {
                     partnerBps: partnerBpsDebit,
@@ -2607,7 +2652,6 @@ export default function ClientRequestsPanel() {
                                                                     {deployResult}
                                                                 </div>
                                                             )}
-
                                                             {deployResultDebit && (
                                                                 <div className={`p-3 rounded border text-xs font-mono break-all text-white mb-3 ${deployResultDebit.startsWith("Error")
                                                                         ? "bg-red-500/10 border-red-500/20 text-red-400"
@@ -2626,6 +2670,45 @@ export default function ClientRequestsPanel() {
                                                                         className="flex-1 py-2 bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-600/40 rounded-lg text-xs font-mono transition-colors flex items-center justify-center gap-2"
                                                                     >
                                                                         {deploying && !deployResult ? "Loading..." : "Verify On-Chain"}
+                                                                    </button>
+
+                                                                    {/* Save Config Button */}
+                                                                    <button
+                                                                        onClick={async () => {
+                                                                            const req = items.find(i => i.wallet === approvingId);
+                                                                            if (!req) return;
+                                                                            const creditConfig = {
+                                                                                partnerBps,
+                                                                                merchantBps: 10000 - platformBps - partnerBps - agents.reduce((s, a) => s + (Number(a.bps) || 0), 0),
+                                                                                platformBps,
+                                                                                agents
+                                                                            };
+                                                                            const debitConfig = {
+                                                                                partnerBps: partnerBpsDebit,
+                                                                                merchantBps: 10000 - platformBpsDebit - partnerBpsDebit - agentsDebit.reduce((s, a) => s + (Number(a.bps) || 0), 0),
+                                                                                platformBps: platformBpsDebit,
+                                                                                agents: agentsDebit
+                                                                            };
+                                                                            setDeploying(true);
+                                                                            setDeployStatus("Applying configuration...");
+                                                                            const success = await updateStatus(req.id, req.status as any, { ...creditConfig, splitConfigCredit: debitConfig }, false);
+                                                                            setDeploying(false);
+                                                                            setDeployStatus("");
+                                                                            if (success) {
+                                                                                if (isDebitTab) {
+                                                                                    setDeployResultDebit("Configuration applied successfully.");
+                                                                                    setDeployResult("");
+                                                                                } else {
+                                                                                    setDeployResult("Configuration applied successfully.");
+                                                                                    setDeployResultDebit("");
+                                                                                }
+                                                                            }
+                                                                        }}
+                                                                        disabled={deploying}
+                                                                        className="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 rounded-lg text-xs font-mono transition-colors flex items-center justify-center gap-2"
+                                                                        title="Apply the current local configuration to the database without deploying"
+                                                                    >
+                                                                        Apply
                                                                     </button>
 
                                                                     {/* Deploy Active Split Button */}
@@ -3064,7 +3147,9 @@ function MerchantSettingsTab({
         setLoading(true);
         (async () => {
             try {
-                const r = await fetch(`/api/site/config?wallet=${merchantWallet}`);
+                const headers: any = {};
+                if (brandKey) headers["x-brand-key"] = brandKey;
+                const r = await fetch(`/api/site/config?wallet=${merchantWallet}`, { headers });
                 const j = await r.json();
                 const cfg = j.config || {};
                 setConfig({
@@ -3079,7 +3164,7 @@ function MerchantSettingsTab({
                 setLoading(false);
             }
         })();
-    }, [merchantWallet]);
+    }, [merchantWallet, brandKey]);
 
     const saveSettings = async (updates: any) => {
         if (!merchantWallet || !adminWallet) return;
@@ -3090,9 +3175,11 @@ function MerchantSettingsTab({
         setConfig(nextConfig);
 
         try {
+            const headers: any = { "Content-Type": "application/json" };
+            if (brandKey) headers["x-brand-key"] = brandKey;
             const r = await fetch(`/api/site/config?wallet=${merchantWallet}`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers,
                 body: JSON.stringify({
                     feeMinusEnabled: nextConfig.feeMinusEnabled,
                     currencySelectionEnabled: nextConfig.currencySelectionEnabled,
@@ -3282,7 +3369,9 @@ function TouchpointThemesTab({
         setLoading(true);
         (async () => {
             try {
-                const r = await fetch(`/api/site/config?wallet=${merchantWallet}`);
+                const headers: any = {};
+                if (brandKey) headers["x-brand-key"] = brandKey;
+                const r = await fetch(`/api/site/config?wallet=${merchantWallet}`, { headers });
                 const j = await r.json();
                 const cfg = j.config || {};
                 if (cfg.touchpointThemes && typeof cfg.touchpointThemes === "object") {
@@ -3306,7 +3395,7 @@ function TouchpointThemesTab({
                 setLoading(false);
             }
         })();
-    }, [merchantWallet]);
+    }, [merchantWallet, brandKey]);
 
     // Track dirty state for kiosk settings
     useEffect(() => {
@@ -3333,9 +3422,11 @@ function TouchpointThemesTab({
         setTouchpointThemes(updated);
 
         try {
+            const headers: any = { "Content-Type": "application/json" };
+            if (brandKey) headers["x-brand-key"] = brandKey;
             const r = await fetch(`/api/site/config?wallet=${merchantWallet}`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers,
                 body: JSON.stringify({ touchpointThemes: updated }),
             });
             const j = await r.json();
@@ -3351,7 +3442,7 @@ function TouchpointThemesTab({
             setSaving(false);
             setTimeout(() => setSaveStatus(""), 3000);
         }
-    }, [merchantWallet, adminWallet]);
+    }, [merchantWallet, adminWallet, brandKey]);
 
     // Save theme selection — deep-merges kiosk config for kiosk touchpoint
     const saveThemeSelection = useCallback(async (touchpoint: string, themeId: string) => {
