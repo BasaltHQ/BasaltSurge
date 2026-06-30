@@ -818,10 +818,16 @@ export function useStripeEmbeddedOnramp({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               oauthToken: oauthTokenRef.current,
+              cryptoCustomerId: customerId,
             }),
           });
 
           const checkoutData = await checkoutRes.json();
+
+          if (checkoutData.refreshedToken) {
+            console.log("[EMBEDDED ONRAMP] Checkout returned refreshed OAuth token, updating ref...");
+            oauthTokenRef.current = checkoutData.refreshedToken;
+          }
 
           if (!checkoutData.client_secret) {
             throw new Error(checkoutData.error || "No client_secret returned");
@@ -838,12 +844,21 @@ export function useStripeEmbeddedOnramp({
         console.warn(`[EMBEDDED ONRAMP] Checkout attempt ${attempt + 1} failed, checking error state...`, checkoutErr);
         
         try {
+          const statusHeaders: any = {
+            "x-stripe-oauth-token": oauthTokenRef.current || "",
+          };
+          if (customerId) {
+            statusHeaders["x-crypto-customer-id"] = customerId;
+          }
           const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId)}`, {
-            headers: {
-              "x-stripe-oauth-token": oauthTokenRef.current || "",
-            }
+            headers: statusHeaders
           });
           const statusData = await statusRes.json();
+
+          if (statusData.refreshedToken) {
+            console.log("[EMBEDDED ONRAMP] Status check returned refreshed OAuth token, updating ref...");
+            oauthTokenRef.current = statusData.refreshedToken;
+          }
           const lastError = statusData.transactionDetails?.last_error;
 
           console.log(`[EMBEDDED ONRAMP] Inspecting lastError from session status:`, lastError);
@@ -1272,6 +1287,20 @@ export function useStripeEmbeddedOnramp({
           },
           (result: any) => {
             console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
+            if (result) {
+              const newToken = result.oauthToken || 
+                               result.accessToken || 
+                               result.oauth_token || 
+                               result.access_token ||
+                               result.paymentDetails?.oauthToken ||
+                               result.paymentDetails?.accessToken ||
+                               result.paymentMethod?.oauthToken ||
+                               result.payment_details?.oauthToken;
+              if (newToken) {
+                console.log("[EMBEDDED ONRAMP] Updated OAuth token detected in collectPaymentMethod result:", newToken.slice(0, 10) + "...");
+                oauthTokenRef.current = newToken;
+              }
+            }
             if (result.cryptoPaymentToken) {
               let fundingType: "credit" | "debit" | null = null;
               let brandStr = "";
