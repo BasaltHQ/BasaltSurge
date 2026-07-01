@@ -1131,6 +1131,13 @@ export function useStripeEmbeddedOnramp({
           }
 
           if (!checkoutData.client_secret) {
+            // If the checkout is already in a final successful state, we don't need a client_secret.
+            // Return empty string to let Stripe SDK performCheckout know the flow is complete.
+            const isFinalStatus = ["awaiting_funds", "fulfillment_processing", "fulfillment_complete"].includes(checkoutData.status);
+            if (checkoutData.ok !== false && isFinalStatus) {
+              console.log("[EMBEDDED ONRAMP] Checkout completed with status:", checkoutData.status);
+              return "";
+            }
             throw new Error(checkoutData.error || "No client_secret returned");
           }
 
@@ -1157,6 +1164,14 @@ export function useStripeEmbeddedOnramp({
             headers: statusHeaders
           });
           const statusData = await statusRes.json();
+
+          // Short-circuit: If the transaction is already successful, do not retry checkout
+          const isFinalStatus = ["awaiting_funds", "fulfillment_processing", "fulfillment_complete"].includes(statusData.status);
+          if (statusData.ok !== false && isFinalStatus) {
+            console.log("[EMBEDDED ONRAMP] Transaction was already authorized/succeeded. Completing checkout flow.");
+            checkoutSucceeded = true;
+            break;
+          }
 
           if (statusData.refreshedToken) {
             console.log("[EMBEDDED ONRAMP] Status check returned refreshed OAuth token, updating ref...");
