@@ -65,6 +65,20 @@ export function usePortalLogger({
           })
           .join(" ");
 
+        // Filter out harmless/transient network errors or third-party telemetry failures
+        const lowerMsg = message.toLowerCase();
+        const isTransient = lowerMsg.includes("failed to fetch") || 
+                            lowerMsg.includes("load failed") ||
+                            lowerMsg.includes("networkerror") ||
+                            lowerMsg.includes("reportsserver") ||
+                            lowerMsg.includes("stripe.com/crypto-onramp") ||
+                            lowerMsg.includes("stripe.js");
+
+        if (isTransient) {
+          isSending = false;
+          return;
+        }
+
         // Extract error stack if available
         let stack: string | undefined = undefined;
         const errObj = args.find((a) => a instanceof Error);
