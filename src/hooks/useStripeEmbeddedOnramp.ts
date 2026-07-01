@@ -281,6 +281,7 @@ export function useStripeEmbeddedOnramp({
   const customerIdRef = useRef<string | null>(null);
   const buyerWalletRef = useRef<string | null>(null);
   const isVerifyingRef = useRef(false);
+  const startOnrampRef = useRef<any>(null);
 
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
 
@@ -316,7 +317,12 @@ export function useStripeEmbeddedOnramp({
                             dataStr.includes("sms") || 
                             dataStr.includes("code");
 
-        if (isOtpTrigger) {
+        const isErrorPayload = dataStr.includes("error") || 
+                              dataStr.includes("onramperror") || 
+                              msgData?.$__rpc === "call-error" ||
+                              msgData?.$__data?.name === "OnrampError";
+
+        if (isOtpTrigger && !isErrorPayload) {
           const currentStep = stepRef.current;
           console.warn("[STRIPE SDK MONITOR] Security/OTP trigger detected inside iframe:", {
             origin: e.origin,
@@ -955,11 +961,20 @@ export function useStripeEmbeddedOnramp({
           console.log(`[EMBEDDED ONRAMP] Inspecting lastError from session status:`, lastError);
 
           const errMessage = String(checkoutErr?.message || "").toLowerCase();
+          const errCode = String(checkoutErr?.code || "").toLowerCase();
           const isKycError = errMessage.includes("identity verification") || 
                              errMessage.includes("verification_required") || 
-                             errMessage.includes("kyc");
+                             errMessage.includes("kyc") ||
+                             errCode.includes("identity_verification") ||
+                             errCode.includes("kyc") ||
+                             errCode === "crypto_onramp_missing_minimum_identity_verification";
 
-          if (isKycError || lastError === "missing_kyc" || lastError === "missing_document_verification") {
+          if (
+            isKycError || 
+            lastError === "missing_kyc" || 
+            lastError === "missing_document_verification" ||
+            lastError === "crypto_onramp_missing_minimum_identity_verification"
+          ) {
             if (isVerifyingRef.current) {
               console.log("[EMBEDDED ONRAMP] Verification already in progress. Awaiting completion...");
               while (isVerifyingRef.current) {
@@ -1353,6 +1368,27 @@ export function useStripeEmbeddedOnramp({
         if (kycData.idDocStatus === "not_started") {
           console.log("[EMBEDDED ONRAMP] Identity doc not started — will handle during checkout");
         }
+
+        const needsDocumentVerify = kycData.kycStatus === "requires_action" ||
+                                   kycData.kycStatus === "failed" ||
+                                   kycData.idDocStatus === "requires_action" ||
+                                   kycData.idDocStatus === "failed";
+
+        if (needsDocumentVerify && onramp) {
+          console.log("[EMBEDDED ONRAMP] Proactive KYC document verification required. Launching verifyDocuments...");
+          updateStep("verifying_identity");
+          try {
+            const verifyResult = await onramp.verifyDocuments();
+            if (verifyResult.result === "abandoned") {
+              handleError("Identity verification was abandoned");
+              return;
+            }
+            console.log("[EMBEDDED ONRAMP] Proactive document verification complete.");
+          } catch (verifyErr: any) {
+            handleError(verifyErr?.message || "Identity verification failed");
+            return;
+          }
+        }
       }
 
       // ─── Step 7: Register buyer's wallet with Stripe ───
@@ -1444,6 +1480,37 @@ export function useStripeEmbeddedOnramp({
       await runCheckoutLoop(activeEmail, customerId, pmToken, buyerWallet, collectedFunding);
 
     } catch (err: any) {
+      const errMessage = String(err?.message || "").toLowerCase();
+      const errCode = String(err?.code || "").toLowerCase();
+      const isKycError = errMessage.includes("identity verification") || 
+                         errMessage.includes("verification_required") || 
+                         errMessage.includes("kyc") ||
+                         errCode.includes("identity_verification") ||
+                         errCode.includes("kyc") ||
+                         errCode === "crypto_onramp_missing_minimum_identity_verification";
+
+      if (isKycError && onrampRef.current) {
+        console.log("[EMBEDDED ONRAMP] KYC error caught during payment collection. Triggering verifyDocuments...");
+        try {
+          updateStep("verifying_identity");
+          const verifyResult = await onrampRef.current.verifyDocuments();
+          if (verifyResult.result === "abandoned") {
+            handleError("Identity verification was abandoned");
+            return;
+          }
+          console.log("[EMBEDDED ONRAMP] KYC/Document verification completed. Retrying payment collection...");
+          setPaymentElement(null);
+          isRunningRef.current = false;
+          if (startOnrampRef.current) {
+            await startOnrampRef.current(activeEmail, activePhone, activeName);
+          }
+          return;
+        } catch (verifyErr: any) {
+          handleError(verifyErr?.message || "Identity verification failed");
+          return;
+        }
+      }
+
       handleError(err?.message || "Onramp flow failed");
     }
   }, [
@@ -1452,6 +1519,10 @@ export function useStripeEmbeddedOnramp({
     publishableKey, connectedWalletAddress, connectedWallet, onSuccess, handleError,
     updateStep, createBuyerWallet, runCheckoutLoop,
   ]);
+
+  useEffect(() => {
+    startOnrampRef.current = startOnramp;
+  }, [startOnramp]);
 
   const submitPhone = useCallback((phoneNumber: string) => {
     const formatted = formatToE164(phoneNumber);

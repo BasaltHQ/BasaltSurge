@@ -83,7 +83,8 @@ Visa_Global_Registry_of_Service_Providers_February_27_2026.xls
 visa_iso_merchant_contacts.csv
 vcrun.py
 
-/scripts
+/scripts/*
+!/scripts/start-scheduler.js
 scratch/check-brands.js
 
 # Shopify CLI temp build directories
