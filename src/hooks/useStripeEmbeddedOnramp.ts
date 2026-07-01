@@ -260,13 +260,22 @@ export function useStripeEmbeddedOnramp({
   const [error, setError] = useState<string | null>(null);
   const [authElement, setAuthElement] = useState<HTMLElement | null>(null);
   const [paymentElement, setPaymentElement] = useState<HTMLElement | null>(null);
-  const [cryptoCustomerId, setCryptoCustomerId] = useState<string | null>(null);
-  const [buyerWalletAddress, setBuyerWalletAddress] = useState<string | null>(null);
+  const [cryptoCustomerId, setCryptoCustomerId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") return sessionStorage.getItem("stripe_onramp_customer_id");
+    return null;
+  });
+  const [buyerWalletAddress, setBuyerWalletAddress] = useState<string | null>(() => {
+    if (typeof window !== "undefined") return sessionStorage.getItem("stripe_onramp_buyer_wallet");
+    return null;
+  });
   const [localPhone, setLocalPhone] = useState<string>("");
   const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | null>(null);
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") return sessionStorage.getItem("stripe_onramp_session_id");
+    return null;
+  });
 
   const onrampRef = useRef<OnrampCoordinator | null>(null);
   const mountedRef = useRef(true);
@@ -282,6 +291,7 @@ export function useStripeEmbeddedOnramp({
   const buyerWalletRef = useRef<string | null>(null);
   const isVerifyingRef = useRef(false);
   const startOnrampRef = useRef<any>(null);
+  const paymentRejectRef = useRef<any>(null);
 
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
 
@@ -295,6 +305,19 @@ export function useStripeEmbeddedOnramp({
   useEffect(() => {
     mountedRef.current = true;
 
+    // Restore refs from sessionStorage to survive page reloads/hot reloads
+    if (typeof window !== "undefined") {
+      const storedCustId = sessionStorage.getItem("stripe_onramp_customer_id");
+      const storedToken = sessionStorage.getItem("stripe_onramp_oauth_token");
+      const storedWallet = sessionStorage.getItem("stripe_onramp_buyer_wallet");
+      const storedSessionId = sessionStorage.getItem("stripe_onramp_session_id");
+
+      if (storedCustId) customerIdRef.current = storedCustId;
+      if (storedToken) oauthTokenRef.current = storedToken;
+      if (storedWallet) buyerWalletRef.current = storedWallet;
+      if (storedSessionId) sessionIdRef.current = storedSessionId;
+    }
+
     // Window message monitor to log security/OTP/3DS triggers inside the Stripe/Link iframes
     const handleWindowMessage = (e: MessageEvent) => {
       try {
@@ -306,21 +329,65 @@ export function useStripeEmbeddedOnramp({
           msgData = JSON.parse(msgData);
         }
 
+        const eventName = String(msgData?.event || msgData?.type || "").toLowerCase();
+        const actionName = String(msgData?.action || "").toLowerCase();
+
+        // Skip common layout/interaction/lifecycle events to avoid false-positive OTP logging
+        if (
+          eventName === "resize" || 
+          eventName === "focus" || 
+          eventName === "blur" || 
+          eventName === "load" || 
+          eventName === "ready" ||
+          eventName === "change" ||
+          eventName === "click" ||
+          eventName === "parent" ||
+          actionName === "resize"
+        ) {
+          return;
+        }
+
+        // Search for verification-related trigger keywords in action and event fields
+        const isOtpTrigger = eventName.includes("otp") || 
+                            eventName.includes("challenge") || 
+                            eventName.includes("3ds") || 
+                            eventName.includes("sms") || 
+                            eventName.includes("code") ||
+                            actionName.includes("otp") || 
+                            actionName.includes("challenge") || 
+                            actionName.includes("3ds") || 
+                            actionName.includes("sms") || 
+                            actionName.includes("code") ||
+                            actionName.includes("verification") ||
+                            actionName.includes("auth");
+
         const dataStr = JSON.stringify(msgData).toLowerCase();
-        
-        // Search for verification-related trigger keywords in data/event payloads
-        const isOtpTrigger = dataStr.includes("otp") || 
-                            dataStr.includes("verification") || 
-                            dataStr.includes("auth") || 
-                            dataStr.includes("challenge") || 
-                            dataStr.includes("3ds") || 
-                            dataStr.includes("sms") || 
-                            dataStr.includes("code");
 
         const isErrorPayload = dataStr.includes("error") || 
                               dataStr.includes("onramperror") || 
                               msgData?.$__rpc === "call-error" ||
                               msgData?.$__data?.name === "OnrampError";
+
+        if (isErrorPayload && paymentRejectRef.current) {
+          let errorMsg = "";
+          let errorCode = "";
+          if (msgData?.error) {
+            errorMsg = msgData.error.message || msgData.error.code || "";
+            errorCode = msgData.error.code || "";
+          } else if (msgData?.$__data) {
+            errorMsg = msgData.$__data.message || msgData.$__data.code || "";
+            errorCode = msgData.$__data.code || "";
+          } else if (typeof msgData === "object") {
+            errorMsg = msgData.message || "";
+            errorCode = msgData.code || "";
+          }
+          console.warn("[EMBEDDED ONRAMP] Iframe error payload identified. Rejecting active payment method collection promise:", errorMsg || errorCode);
+          const err = new Error(errorMsg || "crypto_onramp_missing_minimum_identity_verification");
+          (err as any).code = errorCode || "crypto_onramp_missing_minimum_identity_verification";
+          const rejectFn = paymentRejectRef.current;
+          paymentRejectRef.current = null;
+          rejectFn(err);
+        }
 
         if (isOtpTrigger && !isErrorPayload) {
           const currentStep = stepRef.current;
@@ -380,9 +447,13 @@ export function useStripeEmbeddedOnramp({
     window.addEventListener("message", handleWindowMessage);
 
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      // Only intercept global KYC errors during active payment collection step
+      if (stepRef.current !== "collecting_payment") {
+        return;
+      }
       const err = event.reason;
       const errMessage = String(err?.message || err || "").toLowerCase();
-      if (errMessage.includes("identity verification") || errMessage.includes("verification_required")) {
+      if (errMessage.includes("identity verification") || errMessage.includes("verification_required") || errMessage.includes("kyc")) {
         event.preventDefault(); // Stop default browser console logging
         
         if (isVerifyingRef.current) {
@@ -395,16 +466,76 @@ export function useStripeEmbeddedOnramp({
         updateStep("verifying_identity");
         
         if (onrampRef.current) {
-          onrampRef.current.verifyDocuments()
-            .then((res) => {
+          const runVerify = async () => {
+            try {
+              const isTestMode = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_") || 
+                                 (typeof window !== "undefined" && window.location.hostname === "localhost");
+              
+              if (isTestMode) {
+                console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics globally...");
+                await onrampRef.current!.submitKycInfo({
+                  firstName: "John",
+                  lastName: "Verified",
+                  dateOfBirth: { day: 1, month: 1, year: 1901 },
+                  address: {
+                    line1: "address_full_match",
+                    city: "Seattle",
+                    state: "WA",
+                    postalCode: "12345",
+                    country: "US"
+                  },
+                  idNumber: "000000000",
+                  idType: "ssn"
+                });
+              } else {
+                console.log("[EMBEDDED ONRAMP] Live mode detected. Skipping mock demographics submission.");
+              }
+            } catch (kycSubmitErr: any) {
+              console.warn("[EMBEDDED ONRAMP] Global submitKycInfo failed:", kycSubmitErr?.message);
+              fetch("/api/portal/log", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  level: "warn",
+                  message: `[EMBEDDED ONRAMP] Global submitKycInfo failed: ${kycSubmitErr?.message || kycSubmitErr}`,
+                  meta: { error: String(kycSubmitErr?.stack || kycSubmitErr) }
+                })
+              }).catch(() => {});
+            }
+            return await onrampRef.current!.verifyDocuments();
+          };
+
+          runVerify()
+            .then(async (res) => {
               console.log("[EMBEDDED ONRAMP] Global verifyDocuments completed:", res);
               isVerifyingRef.current = false;
-              updateStep("collecting_payment");
+              if (res.result === "abandoned") {
+                handleError("Identity verification was abandoned");
+                return;
+              }
+
+              console.log("[EMBEDDED ONRAMP] Document verification successful. Polling status...");
+              updateStep("checking_kyc");
+              let success = false;
+              if (customerIdRef.current) {
+                success = await pollKycStatus(customerIdRef.current);
+              }
+              
+              if (!success) {
+                handleError("Identity verification was not approved. Please try again.");
+                return;
+              }
+
+              setPaymentElement(null);
+              isRunningRef.current = false;
+              if (startOnrampRef.current && activeEmailRef.current) {
+                await startOnrampRef.current(activeEmailRef.current, undefined, undefined);
+              }
             })
             .catch((verifyErr) => {
               console.error("[EMBEDDED ONRAMP] Global verifyDocuments error:", verifyErr);
               isVerifyingRef.current = false;
-              updateStep("collecting_payment");
+              handleError(verifyErr?.message || "Identity verification failed");
             });
         } else {
           isVerifyingRef.current = false;
@@ -430,11 +561,72 @@ export function useStripeEmbeddedOnramp({
     setError(message);
     setAuthElement(null);
     setPaymentElement(null);
+    if (onrampRef.current) {
+      try {
+        console.log("[EMBEDDED ONRAMP] Destroying onramp coordinator on error to remove lingering modals...");
+        onrampRef.current.destroy();
+      } catch (e) {
+        console.warn("[EMBEDDED ONRAMP] Error destroying onramp on error:", e);
+      }
+      onrampRef.current = null;
+    }
     updateStep("error");
     onError?.(new Error(message));
   }, [onError, updateStep]);
 
+  const pollKycStatus = useCallback(async (custId: string): Promise<boolean> => {
+    console.log("[EMBEDDED ONRAMP] Polling KYC status for completion...");
+    for (let i = 0; i < 15; i++) {
+      if (!mountedRef.current) return false;
+      if (!isRunningRef.current) {
+        console.log("[EMBEDDED ONRAMP] Polling aborted because run was stopped/reset.");
+        return false;
+      }
+      try {
+        const res = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(custId)}`, {
+          headers: {
+            "x-stripe-oauth-token": oauthTokenRef.current || "",
+          },
+        });
+        if (res.ok) {
+          const kycData = await res.json();
+          console.log(`[EMBEDDED ONRAMP] Polled KYC status (attempt ${i + 1}/15): kycStatus=${kycData.kycStatus}, idDocStatus=${kycData.idDocStatus}`);
+          
+          const isKycApproved = kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed";
+          const isDocApproved = kycData.idDocStatus === "approved" || kycData.idDocStatus === "verified" || kycData.idDocStatus === "completed";
+          
+          if (isKycApproved || isDocApproved) {
+            console.log("[EMBEDDED ONRAMP] KYC status is approved on Stripe's end!");
+            return true;
+          }
+
+
+        }
+      } catch (err) {
+        console.warn("[EMBEDDED ONRAMP] Error polling KYC status:", err);
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    console.warn("[EMBEDDED ONRAMP] Polling KYC status timed out after 30 seconds.");
+    return false;
+  }, []);
+
   const reset = useCallback(() => {
+    if (onrampRef.current) {
+      try {
+        console.log("[EMBEDDED ONRAMP] Destroying onramp coordinator on reset...");
+        onrampRef.current.destroy();
+      } catch (e) {
+        console.warn("[EMBEDDED ONRAMP] Error destroying onramp on reset:", e);
+      }
+      onrampRef.current = null;
+    }
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("stripe_onramp_customer_id");
+      sessionStorage.removeItem("stripe_onramp_oauth_token");
+      sessionStorage.removeItem("stripe_onramp_buyer_wallet");
+      sessionStorage.removeItem("stripe_onramp_session_id");
+    }
     isRunningRef.current = false;
     stepRef.current = "idle";
     setStep("idle");
@@ -792,6 +984,9 @@ export function useStripeEmbeddedOnramp({
         if (statusData.refreshedToken) {
           console.log("[EMBEDDED ONRAMP] Status poll returned refreshed OAuth token, updating ref...");
           oauthTokenRef.current = statusData.refreshedToken;
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem("stripe_onramp_oauth_token", statusData.refreshedToken);
+          }
         }
         console.log(`[EMBEDDED ONRAMP] Polled status (attempt ${poll + 1}):`, statusData?.status, statusData);
 
@@ -871,6 +1066,9 @@ export function useStripeEmbeddedOnramp({
       currentSessionId = sessionResult.sessionId;
       sessionIdRef.current = currentSessionId;
       setSessionId(currentSessionId);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+      }
 
       const hasCardInfo = !!(sessionResult.paymentDetails?.card || sessionResult.paymentMethod);
       if (hasCardInfo) {
@@ -897,6 +1095,9 @@ export function useStripeEmbeddedOnramp({
           currentSessionId = newSessionResult.sessionId;
           sessionIdRef.current = currentSessionId;
           setSessionId(currentSessionId);
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+          }
         }
         
         updateStep("confirming_fees");
@@ -924,6 +1125,9 @@ export function useStripeEmbeddedOnramp({
           if (checkoutData.refreshedToken) {
             console.log("[EMBEDDED ONRAMP] Checkout returned refreshed OAuth token, updating ref...");
             oauthTokenRef.current = checkoutData.refreshedToken;
+            if (typeof window !== "undefined") {
+              sessionStorage.setItem("stripe_onramp_oauth_token", checkoutData.refreshedToken);
+            }
           }
 
           if (!checkoutData.client_secret) {
@@ -936,6 +1140,8 @@ export function useStripeEmbeddedOnramp({
         if (result.successful) {
           checkoutSucceeded = true;
           break;
+        } else {
+          throw new Error("checkout_unsuccessful");
         }
       } catch (checkoutErr: any) {
         console.warn(`[EMBEDDED ONRAMP] Checkout attempt ${attempt + 1} failed, checking error state...`, checkoutErr);
@@ -997,6 +1203,9 @@ export function useStripeEmbeddedOnramp({
                   handleError("Identity verification was abandoned");
                   return;
                 }
+                console.log("[EMBEDDED ONRAMP] Document verification successful. Polling status...");
+                updateStep("checking_kyc");
+                await pollKycStatus(customerId);
                 console.log("[EMBEDDED ONRAMP] Document verification successful, retrying checkout...");
                 updateStep("checking_out");
                 continue;
@@ -1131,7 +1340,10 @@ export function useStripeEmbeddedOnramp({
     console.log("[EMBEDDED ONRAMP] startOnramp triggered. isEcommerceMode prop:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
 
     const activeEmail = overrideEmail || email;
-    const activePhone = overridePhone || phone || localPhone;
+    let activePhone = overridePhone || phone || localPhone;
+    if (activePhone && activePhone.includes("*")) {
+      activePhone = "";
+    }
     const activeName = overrideName || fullName;
     const formattedPhone = activePhone ? formatToE164(activePhone) : "";
 
@@ -1146,36 +1358,60 @@ export function useStripeEmbeddedOnramp({
     }
 
     try {
-      // ─── Step 1: Initialize Stripe SDK with native Dark theme ───
-      // @ts-ignore - beta SDK method missing from types
-      const stripeCryptoModule = (await import("@stripe/crypto")) as any;
-      const loadCryptoOnrampAndInitialize = stripeCryptoModule.loadCryptoOnrampAndInitialize || stripeCryptoModule.loadStripeOnramp;
+      let onramp = onrampRef.current;
+      let customerId = customerIdRef.current;
+      let buyerWallet = buyerWalletRef.current;
 
-      const onramp = await loadCryptoOnrampAndInitialize(publishableKey, {
-        theme: "dark",
-        wallets: {
-          applePay: "auto",
-          googlePay: "auto",
-        },
-      });
+      if (onramp && customerId && oauthTokenRef.current && buyerWallet) {
+        console.log("[EMBEDDED ONRAMP] Reusing active authenticated onramp coordinator and customer session:", customerId);
+      } else {
+        if (onrampRef.current) {
+          try {
+            console.log("[EMBEDDED ONRAMP] Destroying previous stale onramp coordinator instance...");
+            onrampRef.current.destroy();
+          } catch (e) {
+            console.warn("[EMBEDDED ONRAMP] Error destroying previous onramp instance:", e);
+          }
+          onrampRef.current = null;
+        }
 
-      if (!mountedRef.current) return;
-      onrampRef.current = onramp as unknown as OnrampCoordinator;
+        // ─── Step 1: Initialize Stripe SDK with native Dark theme ───
+        // @ts-ignore - beta SDK method missing from types
+        const stripeCryptoModule = (await import("@stripe/crypto")) as any;
+        const loadCryptoOnrampAndInitialize = stripeCryptoModule.loadCryptoOnrampAndInitialize || stripeCryptoModule.loadStripeOnramp;
 
-      // ─── Step 2: Check for Link account ───
-      updateStep("checking_link");
+        onramp = await loadCryptoOnrampAndInitialize(publishableKey, {
+          theme: "dark",
+          wallets: {
+            applePay: "auto",
+            googlePay: "auto",
+          },
+        });
 
-      const linkRes = await fetch("/api/stripe/link-auth-intent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: activeEmail }),
-      });
+        if (!mountedRef.current) return;
+        onrampRef.current = onramp as unknown as OnrampCoordinator;
+      }
 
-      if (!mountedRef.current) return;
+      if (!onramp) {
+        handleError("Stripe Onramp not initialized");
+        return;
+      }
 
-      let authIntentId: string;
+      let authIntentId = "";
 
-      if (linkRes.status === 404) {
+      if (!customerId || !oauthTokenRef.current || !buyerWallet) {
+        // ─── Step 2: Check for Link account ───
+        updateStep("checking_link");
+
+        const linkRes = await fetch("/api/stripe/link-auth-intent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: activeEmail }),
+        });
+
+        if (!mountedRef.current) return;
+
+        if (linkRes.status === 404) {
         // No Link account — register
         if (!formattedPhone) {
           console.log("[EMBEDDED ONRAMP] Fresh Link account detected, but no phone number provided. Transitioning to collecting_phone.");
@@ -1251,11 +1487,14 @@ export function useStripeEmbeddedOnramp({
         });
       });
 
-      const customerId = await authPromise;
+      customerId = await authPromise;
       if (!mountedRef.current) return;
 
       setCryptoCustomerId(customerId);
       customerIdRef.current = customerId;
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("stripe_onramp_customer_id", customerId);
+      }
       setAuthElement(null);
 
       // ─── Step 4: Exchange tokens ───
@@ -1278,6 +1517,9 @@ export function useStripeEmbeddedOnramp({
 
       const tokenData = await tokenRes.json();
       oauthTokenRef.current = tokenData.accessToken;
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("stripe_onramp_oauth_token", tokenData.accessToken);
+      }
 
       if (!mountedRef.current) return;
 
@@ -1305,8 +1547,6 @@ export function useStripeEmbeddedOnramp({
 
       // ─── Step 6: Create/resolve Thirdweb Guest Wallet safely ───
       updateStep("creating_wallet");
-
-      let buyerWallet: string;
 
       // Always create/use the guest EOA wallet for Stripe Onramp to ensure gasless execution and server-side recovery
       const createdWallet = await createBuyerWallet(activeEmail);
@@ -1346,6 +1586,10 @@ export function useStripeEmbeddedOnramp({
 
       setBuyerWalletAddress(buyerWallet);
       buyerWalletRef.current = buyerWallet;
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("stripe_onramp_buyer_wallet", buyerWallet);
+      }
+      }
 
       // ─── Step 6b: Check KYC ───
       updateStep("checking_kyc");
@@ -1407,6 +1651,8 @@ export function useStripeEmbeddedOnramp({
       updateStep("collecting_payment");
 
       const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | null; brand: string; last4: string }>((resolve, reject) => {
+        paymentRejectRef.current = reject;
+
         onramp.collectPaymentMethod(
           {
             payment_method_types: ["card"],
@@ -1426,6 +1672,9 @@ export function useStripeEmbeddedOnramp({
               if (newToken) {
                 console.log("[EMBEDDED ONRAMP] Updated OAuth token detected in collectPaymentMethod result:", newToken.slice(0, 10) + "...");
                 oauthTokenRef.current = newToken;
+                if (typeof window !== "undefined") {
+                  sessionStorage.setItem("stripe_onramp_oauth_token", newToken);
+                }
               }
             }
             if (result.cryptoPaymentToken) {
@@ -1445,8 +1694,10 @@ export function useStripeEmbeddedOnramp({
               } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
                 fundingType = "credit";
               }
+              paymentRejectRef.current = null;
               resolve({ token: result.cryptoPaymentToken, funding: fundingType, brand: brandStr, last4: last4Str });
             } else {
+              paymentRejectRef.current = null;
               reject(new Error("Payment method collection failed"));
             }
           }
@@ -1454,10 +1705,14 @@ export function useStripeEmbeddedOnramp({
           if (mountedRef.current) {
             setPaymentElement(element);
           }
-        }).catch(reject);
+        }).catch((err) => {
+          paymentRejectRef.current = null;
+          reject(err);
+        });
       });
 
       const { token: pmToken, funding: collectedFunding, brand: collectedBrand, last4: collectedLast4 } = await paymentPromise;
+      paymentRejectRef.current = null;
       if (!mountedRef.current) return;
 
       paymentTokenRef.current = pmToken;
@@ -1493,12 +1748,54 @@ export function useStripeEmbeddedOnramp({
         console.log("[EMBEDDED ONRAMP] KYC error caught during payment collection. Triggering verifyDocuments...");
         try {
           updateStep("verifying_identity");
+          try {
+            const isTestMode = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_") || 
+                               (typeof window !== "undefined" && window.location.hostname === "localhost");
+            
+            if (isTestMode) {
+              console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics on payment collection catch...");
+              await onrampRef.current.submitKycInfo({
+                firstName: "John",
+                lastName: "Verified",
+                dateOfBirth: { day: 1, month: 1, year: 1901 },
+                address: {
+                  line1: "address_full_match",
+                  city: "Seattle",
+                  state: "WA",
+                  postalCode: "12345",
+                  country: "US"
+                },
+                idNumber: "000000000",
+                idType: "ssn"
+              });
+            } else {
+              console.log("[EMBEDDED ONRAMP] Live mode detected. Skipping mock demographics submission.");
+            }
+          } catch (kycSubmitErr: any) {
+            console.warn("[EMBEDDED ONRAMP] submitKycInfo failed:", kycSubmitErr?.message);
+            fetch("/api/portal/log", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                level: "warn",
+                message: `[EMBEDDED ONRAMP] submitKycInfo failed: ${kycSubmitErr?.message || kycSubmitErr}`,
+                meta: { error: String(kycSubmitErr?.stack || kycSubmitErr) }
+              })
+            }).catch(() => {});
+          }
           const verifyResult = await onrampRef.current.verifyDocuments();
           if (verifyResult.result === "abandoned") {
             handleError("Identity verification was abandoned");
             return;
           }
-          console.log("[EMBEDDED ONRAMP] KYC/Document verification completed. Retrying payment collection...");
+          console.log("[EMBEDDED ONRAMP] KYC/Document verification completed. Polling status...");
+          updateStep("checking_kyc");
+          const success = await pollKycStatus(customerIdRef.current || "");
+          if (!success) {
+            handleError("Identity verification was not approved. Please try again.");
+            return;
+          }
+
           setPaymentElement(null);
           isRunningRef.current = false;
           if (startOnrampRef.current) {
@@ -1517,7 +1814,7 @@ export function useStripeEmbeddedOnramp({
     enabled, email, phone, localPhone, splitAddress, splitAddressCredit, amount, network,
     destinationCurrency, receiptId, merchantWallet, brandKey,
     publishableKey, connectedWalletAddress, connectedWallet, onSuccess, handleError,
-    updateStep, createBuyerWallet, runCheckoutLoop,
+    updateStep, createBuyerWallet, runCheckoutLoop, pollKycStatus,
   ]);
 
   useEffect(() => {
@@ -1525,6 +1822,10 @@ export function useStripeEmbeddedOnramp({
   }, [startOnramp]);
 
   const submitPhone = useCallback((phoneNumber: string) => {
+    if (!phoneNumber || phoneNumber.includes("*")) {
+      console.warn("[EMBEDDED ONRAMP] Rejected invalid/masked phone input:", phoneNumber);
+      return;
+    }
     const formatted = formatToE164(phoneNumber);
     setLocalPhone(formatted);
     console.log("[EMBEDDED ONRAMP] Phone number submitted, resuming flow (original/formatted):", phoneNumber, "->", formatted);

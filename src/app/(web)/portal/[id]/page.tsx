@@ -3516,24 +3516,41 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       }
       
       // Manually find and remove/hide any leftover iframe components or global Stripe overlays
-      try {
-        const activeContainer = document.querySelector('.stripe-embedded-container');
-        const stripeIframes = document.querySelectorAll('iframe[src*="stripe.com"], iframe[src*="link.com"]');
-        stripeIframes.forEach(iframe => {
-          if (!activeContainer || !activeContainer.contains(iframe)) {
-            (iframe as HTMLElement).style.display = "none";
-            if (iframe.parentNode && iframe.parentNode !== document.body) {
-              try {
-                iframe.parentNode.removeChild(iframe);
-              } catch {}
+      // Only clean up external overlays/iframes if we are in a terminal state (idle, error, completed)
+      const isTerminalState = headlessStep === "idle" || headlessStep === "error" || headlessStep === "completed";
+      if (isTerminalState) {
+        try {
+          const activeContainer = document.querySelector('.stripe-embedded-container');
+          const stripeIframes = document.querySelectorAll('iframe[src*="stripe.com"], iframe[src*="link.com"]');
+          stripeIframes.forEach(iframe => {
+            const src = iframe.getAttribute("src") || "";
+            const iframeName = iframe.getAttribute("name") || "";
+            const iframeId = iframe.getAttribute("id") || "";
+            const isTestWidget = src.includes("controller-onramp") || 
+                                 src.includes("test-mode-options") || 
+                                 src.includes("m-outer") ||
+                                 iframeName.includes("controller-onramp") ||
+                                 iframeId.includes("controller-onramp");
+
+            if (isTestWidget) {
+              return; // Skip hiding the test mode widget/controller helper
             }
-          }
-        });
-      } catch (err) {
-        console.warn("[PORTAL] Failed to clean global Stripe elements:", err);
+
+            if (!activeContainer || !activeContainer.contains(iframe)) {
+              (iframe as HTMLElement).style.display = "none";
+              if (iframe.parentNode && iframe.parentNode !== document.body) {
+                try {
+                  iframe.parentNode.removeChild(iframe);
+                } catch {}
+              }
+            }
+          });
+        } catch (err) {
+          console.warn("[PORTAL] Failed to clean global Stripe elements:", err);
+        }
       }
     };
-  }, [headlessAuthElement, headlessPaymentElement]);
+  }, [headlessAuthElement, headlessPaymentElement, headlessStep]);
 
   // Client-side logging pipeline for portal errors & console logs
   usePortalLogger({
@@ -4145,24 +4162,31 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             }`
           }`}>
           {/* Header */}
-          {!(headlessAuthElement || headlessPaymentElement) && (
-            <div className={`p-4 border-b flex items-center justify-between ${isLightText ? 'border-white/5' : 'border-black/5'}`}>
-              <span className={`font-semibold flex items-center gap-1.5 select-none ${isLightText ? 'text-white' : 'text-black'}`}>
-                <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#635BFF] fill-current">
-                  <path d="M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .979-.714 1.481-1.993 1.481-2.274 0-4.662-.835-6.353-1.638l-.898 5.568c2.81 1.748 5.51 1.748 8.028 1.748 2.541 0 4.606-.654 6.095-1.872 1.583-1.282 2.39-3.136 2.39-5.381 0-4.088-2.52-5.77-6.476-7.228z" />
-                </svg>
-                <span className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>stripe</span>
-              </span>
-              {headlessStep === "error" && (
-                <button
-                  onClick={() => window.location.reload()}
-                  className={`transition-colors p-1 ${isLightText ? 'text-white/50 hover:text-white' : 'text-black/50 hover:text-black'}`}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-                </button>
-              )}
-            </div>
-          )}
+          {/* Header */}
+          <div className={`p-4 border-b flex items-center justify-between ${isLightText ? 'border-white/5' : 'border-black/5'}`}>
+            <span className={`font-semibold flex items-center gap-1.5 select-none ${isLightText ? 'text-white' : 'text-black'}`}>
+              <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#635BFF] fill-current">
+                <path d="M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .979-.714 1.481-1.993 1.481-2.274 0-4.662-.835-6.353-1.638l-.898 5.568c2.81 1.748 5.51 1.748 8.028 1.748 2.541 0 4.606-.654 6.095-1.872 1.583-1.282 2.39-3.136 2.39-5.381 0-4.088-2.52-5.77-6.476-7.228z" />
+              </svg>
+              <span className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>stripe</span>
+            </span>
+            {headlessStep !== "completed" && (
+              <button
+                onClick={() => {
+                  resetHeadlessOnramp();
+                  setHeadlessEmailPrompt(true);
+                  setHeadlessInitiated(false);
+                }}
+                className={`transition-all text-xs font-semibold px-2.5 py-1 rounded-lg border active:scale-95 duration-100 ${
+                  isLightText 
+                    ? 'text-white/60 hover:text-white border-white/10 hover:bg-white/5' 
+                    : 'text-black/60 hover:text-black border-black/10 hover:bg-black/5'
+                }`}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
 
           {/* Content Body */}
           <div className={`flex-1 flex flex-col items-center justify-center relative ${(headlessAuthElement || headlessPaymentElement) ? "p-0 w-full" : "p-5"}`}>
@@ -4225,6 +4249,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 <p className={`text-xs mb-4 ${isLightText ? 'text-white/60' : 'text-black/60'}`}>Enter your phone number to register your Link account securely.</p>
                 <input
                   type="tel"
+                  autoComplete="off"
                   placeholder="Phone number (+1 555-555-5555)"
                   className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${isLightText
                       ? 'bg-white/5 border border-white/10 text-white placeholder-white/75 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
@@ -6276,7 +6301,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             
             <div className="flex gap-3">
               <button
-                onClick={() => setDisplayError(null)}
+                onClick={() => {
+                  setDisplayError(null);
+                  resetHeadlessOnramp();
+                }}
                 className={`flex-1 px-4 py-3 font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all shadow-md text-center text-sm ${
                   isColorLight(theme.primaryColor || '#635BFF') ? 'text-neutral-900' : 'text-white'
                 }`}

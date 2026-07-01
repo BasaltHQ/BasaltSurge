@@ -19,6 +19,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    // Always log to server terminal/console for easy development debugging
+    console.log(`[PORTAL CLIENT ${level.toUpperCase()}] ${message}`, body.meta ? JSON.stringify(body.meta) : "");
+
     // Only allow error logs to be saved to DB
     if (level !== "error") {
       return NextResponse.json({ ok: true, ignored: true });
