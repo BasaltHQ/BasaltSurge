@@ -65,6 +65,7 @@ export async function GET(
     }
 
     const verifications = customer.verifications ?? [];
+    console.log("[CRYPTO CUSTOMER] Full Customer payload:", JSON.stringify(customer, null, 2));
     const kycVerified = verifications.find((v: any) => v.name === "kyc_verified");
     const idDocVerified = verifications.find((v: any) => v.name === "id_document_verified");
 
