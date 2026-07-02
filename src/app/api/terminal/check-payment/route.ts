@@ -30,7 +30,19 @@ export async function POST(req: NextRequest) {
 
         const normalizedWallet = String(wallet).toLowerCase();
 
-        // 1. Get Split Address
+        // 1. Fast path: Check DB Status first (avoid slow blockchain scans if already paid)
+        const container = await getContainer();
+        const { resource: receiptDoc } = await container.item(`receipt:${receiptId}`, normalizedWallet).read<any>();
+
+        if (receiptDoc) {
+            const isPaid = receiptDoc.status === "paid" || receiptDoc.status === "checkout_success";
+            if (isPaid) {
+                const hasTx = receiptDoc.txHash || receiptDoc.transactionHash || receiptDoc.stripeSessionId;
+                return NextResponse.json({ ok: true, paid: true, txHash: hasTx, receipt: receiptDoc });
+            }
+        }
+
+        // 2. Get Split Address
         const cfg = await getSiteConfigForWallet(normalizedWallet).catch(() => null);
         let splitAddress = (cfg as any)?.splitAddress || (cfg as any)?.split?.address;
 
@@ -38,7 +50,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: false, error: "no_split_config" });
         }
 
-        // 2. Determine Tokens to watch
+        // 3. Determine Tokens to watch
         const isNative = currency === "ETH";
         const tokens = (cfg as any)?.tokens || [];
         let tokenConfig = tokens.find((t: any) => t.symbol === currency);
@@ -208,16 +220,11 @@ export async function POST(req: NextRequest) {
         }
 
         // Check DB Status regardless of chain scan (to catch widget success)
-        const container = await getContainer();
-        const { resource: receiptDoc } = await container.item(`receipt:${receiptId}`, wallet).read();
-
         if (receiptDoc) {
             const isPaid = receiptDoc.status === "paid" || receiptDoc.status === "checkout_success";
             const hasTx = receiptDoc.txHash || receiptDoc.transactionHash || foundTx;
 
             // If already paid/success, return immediately
-            // (Unless we want to upgrade checkout_success to paid via chain verification? 
-            //  optional, but returning paid: true fixes the UI first)
             if (isPaid) {
                 // Optimization: If foundTx matches and status is only checkout_success, we could upgrade to "paid".
                 if (foundTx && receiptDoc.status !== "paid") {
@@ -226,7 +233,7 @@ export async function POST(req: NextRequest) {
                     receiptDoc.paidAt = Date.now();
                     receiptDoc.lastUpdatedAt = Date.now();
                     receiptDoc.paymentMethod = "crypto_verified_poll";
-                    await container.item(`receipt:${receiptId}`, wallet).replace(receiptDoc);
+                    await container.item(`receipt:${receiptId}`, normalizedWallet).replace(receiptDoc);
                     return NextResponse.json({ ok: true, paid: true, txHash: foundTx, receipt: receiptDoc });
                 }
                 return NextResponse.json({ ok: true, paid: true, txHash: hasTx, receipt: receiptDoc });
@@ -240,7 +247,7 @@ export async function POST(req: NextRequest) {
                 receiptDoc.lastUpdatedAt = Date.now();
                 receiptDoc.paymentMethod = "crypto_fallback_poll";
 
-                await container.item(`receipt:${receiptId}`, wallet).replace(receiptDoc);
+                await container.item(`receipt:${receiptId}`, normalizedWallet).replace(receiptDoc);
                 return NextResponse.json({ ok: true, paid: true, txHash: foundTx, receipt: receiptDoc });
             }
         }

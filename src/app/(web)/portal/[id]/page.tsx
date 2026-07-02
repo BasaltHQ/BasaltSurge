@@ -3184,6 +3184,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             currency: token
           })
         });
+        if (!res.ok) {
+          throw new Error(`Server returned status ${res.status}`);
+        }
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error(`Server returned non-JSON content-type: ${contentType}`);
+        }
         const data = await res.json();
         if (data.ok && data.paid && active) {
           setPaymentConfirmed({
