@@ -1086,9 +1086,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         const pfpUrl = profileRes?.profile?.pfpUrl;
 
         // Merge shop theme if present - SHOP takes priority for branding colors/logos
-        // Merge shop theme if present - SHOP takes priority for branding colors/logos
         // USER REQUEST: Site config is deprecated, strictly use Shop Config + Profile
-        if (shopTheme || pfpUrl || shopName) {
+        if (shopConfig?.config || pfpUrl || shopName) {
           if (!j.config) j.config = {};
 
           // Start with a clean slate or safe defaults, IGNORING siteRes theme
@@ -3184,6 +3183,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             currency: token
           })
         });
+        if (!res.ok) {
+          throw new Error(`Server returned status ${res.status}`);
+        }
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error(`Server returned non-JSON content-type: ${contentType}`);
+        }
         const data = await res.json();
         if (data.ok && data.paid && active) {
           setPaymentConfirmed({
@@ -4520,12 +4526,25 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       >
         <style dangerouslySetInnerHTML={{
           __html: `
+            ${theme.fontFamily ? (() => {
+              if (theme.fontFamily.includes("Space Grotesk")) return `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');`;
+              if (theme.fontFamily.includes("Poppins")) return `@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap');`;
+              if (theme.fontFamily.includes("Roboto")) return `@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&display=swap');`;
+              if (theme.fontFamily.includes("Merriweather")) return `@import url('https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,300;0,400;0,700;0,900;1,300&display=swap');`;
+              return "";
+            })() : ""}
+
             :root {
-              --background: ${isLightBackground ? '#ffffff' : '#0a0a0a'} !important;
-              --foreground: ${isLightBackground ? '#111827' : '#ededed'} !important;
+              --background: ${isLightBackground ? (theme.pageBg || '#ffffff') : (theme.pageBg || '#0a0a0a')} !important;
+              --foreground: ${isLightBackground ? (theme.headerTextColor || '#111827') : (theme.headerTextColor || '#ededed')} !important;
+              --pp-primary: ${theme.primaryColor || '#10b981'} !important;
+              --pp-secondary: ${theme.secondaryColor || '#2dd4bf'} !important;
+              --primary: ${theme.primaryColor || '#10b981'} !important;
+              --radius: ${(theme as any).borderRadius || '12px'} !important;
               --pp-text: ${bodyColor} !important;
               --pp-text-header: ${headerColor} !important;
               --pp-text-body: ${bodyColor} !important;
+              ${theme.fontFamily ? `--pp-font: ${theme.fontFamily} !important;` : ''}
             }
 
             .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -4646,16 +4665,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             .pp-portal-container [class*="glass"],
             .pp-portal-container [class*="backdrop"] {
               background: ${isLightBackground
-              ? ((theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") || (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") || (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") || "rgba(255,255,255,0.85)")
-              : (theme.pageBg || theme.surfaceBg || theme.primaryBg || "rgba(10,11,16,0.6)")} !important;
+              ? ((theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") || (theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") || (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") || "rgba(255,255,255,0.85)")
+              : (theme.surfaceBg || theme.pageBg || theme.primaryBg || "rgba(10,11,16,0.6)")} !important;
               border-color: ${borderColor} !important;
               ${(theme as any).borderRadius ? `border-radius: ${(theme as any).borderRadius} !important;` : ''}
             }
 
             .pp-portal-container .pp-currency-menu {
               background: ${isLightBackground
-              ? ((theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") || (theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") || (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") || '#ffffff')
-              : (theme.pageBg || theme.surfaceBg || theme.primaryBg || '#0c0d14')} !important;
+              ? ((theme.surfaceBg && isColorLight(theme.surfaceBg) ? theme.surfaceBg : "") || (theme.pageBg && isColorLight(theme.pageBg) ? theme.pageBg : "") || (theme.primaryBg && isColorLight(theme.primaryBg) ? theme.primaryBg : "") || '#ffffff')
+              : (theme.surfaceBg || theme.pageBg || theme.primaryBg || '#0c0d14')} !important;
               border-color: ${borderColor} !important;
               border-radius: ${(theme as any).borderRadius || '12px'} !important;
               box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4) !important;
@@ -4848,7 +4867,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           {isTwoColumnLayout ? (
             <>
 
-              <div className={`${isTwoColumnLayout ? (isEmbedded ? "mt-4 mb-2 w-full" : (isInvoiceLayout ? "w-full flex-1 min-h-[calc(var(--pp-vh)-56px)] m-0 md:m-0" : "mt-8 md:my-auto md:py-4 mb-4 w-full")) : "my-auto"} grid ${isTwoColumnLayout ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"} ${isTwoColumnLayout && isInvoiceLayout ? "gap-0 md:gap-0" : "gap-3 md:gap-6"} items-stretch`}>
+              <div className={`${isTwoColumnLayout ? (isInvoiceLayout ? "w-full flex-1 min-h-[calc(var(--pp-vh)-56px)] m-0 md:m-0" : (isEmbedded ? "mt-4 mb-2 w-full" : "mt-8 md:my-auto md:py-4 mb-4 w-full")) : "my-auto"} grid ${isTwoColumnLayout ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"} ${isTwoColumnLayout && isInvoiceLayout ? "gap-0 md:gap-0" : "gap-3 md:gap-6"} items-stretch`}>
                 <div 
                   className={`relative overflow-visible p-3 h-full flex flex-col justify-center ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : "md:p-4"} ${isTwoColumnLayout && isInvoiceLayout && isVibrantLayout ? "vibrant-left-pane" : ""}`}
                   style={{
