@@ -712,15 +712,32 @@ export async function GET(req: NextRequest) {
               "Expires": "0",
             },
           });
-        } else if (authUsed && !found) {
-          // Authenticated path requested a specific wallet but no config exists
-          return jsonResponse({ error: "not_found" }, { status: 404 });
         }
-      } catch {
-        // fall through
-        if (authUsed && !found) {
-          return jsonResponse({ error: "not_found" }, { status: 404 });
-        }
+      } catch { }
+
+      // Try database query fallback to find shop config for this wallet across all brands
+      if (!found) {
+        try {
+          const spec = {
+            query: "SELECT * FROM c WHERE c.type = 'shop_config' AND LOWER(c.wallet) = @w",
+            parameters: [{ name: "@w", value: targetWallet }]
+          };
+          const { resources } = await c.items.query(spec).fetchAll();
+          if (Array.isArray(resources) && resources.length > 0) {
+            found = true;
+            return jsonResponse({ config: normalize(resources[0], brandKey) }, {
+              headers: {
+                "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+              },
+            });
+          }
+        } catch { }
+      }
+
+      if (authUsed && !found) {
+        return jsonResponse({ error: "not_found" }, { status: 404 });
       }
     }
 

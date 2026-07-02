@@ -2,9 +2,9 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useActiveAccount } from "thirdweb/react";
+import { ConnectButton, useActiveAccount } from "thirdweb/react";
 import { client, chain, getWallets } from "@/lib/thirdweb/client";
-import { usePortalThirdwebTheme } from "@/lib/thirdweb/theme";
+import { usePortalThirdwebTheme, getConnectButtonStyle, connectButtonClass } from "@/lib/thirdweb/theme";
 import { ShopThemeAuditor } from "@/components/providers/shop-theme-auditor";
 import { getAllIndustryPacks, IndustryPack, IndustryPackType } from "@/lib/industry-packs";
 import { Utensils, ShoppingBag, Hotel, Briefcase, BookOpen, Leaf } from "lucide-react";
@@ -139,6 +139,7 @@ export function ShopPanel() {
   }, []);
 
   const [loading, setLoading] = useState(true);
+  const [authMismatch, setAuthMismatch] = useState(false);
   // Ensure we show skeleton only for connected merchants; if not connected, don't block on loading
   useEffect(() => {
     if (!isConnected) setLoading(false);
@@ -461,6 +462,18 @@ export function ShopPanel() {
         });
         const me = await meRes.json().catch(() => ({}));
         const status = String(me?.shopStatus || "none").toLowerCase();
+
+        // Mismatch check: Connected wallet must match Next.js session wallet if authenticated
+        const sessionWallet = me?.wallet ? String(me.wallet).toLowerCase() : "";
+        const activeWallet = account?.address ? String(account.address).toLowerCase() : "";
+        if (me?.authed && activeWallet && sessionWallet && sessionWallet !== activeWallet) {
+          setAuthMismatch(true);
+          setLoading(false);
+          return;
+        } else {
+          setAuthMismatch(false);
+        }
+
         const domContainerType = typeof document !== 'undefined' ? (document.documentElement.getAttribute('data-pp-container-type') || '').toLowerCase() : '';
         const containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").toLowerCase();
         const isPartner = domContainerType === "partner" || containerType === "partner";
@@ -835,6 +848,42 @@ export function ShopPanel() {
               }}
               theme={twTheme}
             />
+            ) : (
+              <div className="w-[140px] h-[40px] bg-white/5 animate-pulse rounded-[10px]" />
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (authMismatch && !loading) {
+    return (
+      <div className="w-full h-full p-6 md:p-8 pb-24 flex items-center justify-center">
+        <div className="glass-pane rounded-xl border border-red-500/20 bg-red-950/10 p-8 max-w-md text-center space-y-4">
+          <div className="w-12 h-12 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center mx-auto text-xl">
+            ⚠️
+          </div>
+          <h2 className="text-xl font-semibold text-white">Wallet Authentication Required</h2>
+          <p className="text-sm text-gray-400">
+            The active wallet connected in your browser (<strong>{account?.address ? `${account.address.substring(0, 6)}...${account.address.substring(38)}` : ""}</strong>) does not match your authenticated session wallet.
+          </p>
+          <p className="text-xs text-gray-500">
+            Please authenticate your wallet to access and save your shop configuration.
+          </p>
+          <div className="flex justify-center pt-2">
+            {wallets.length > 0 ? (
+              <ConnectButton
+                client={client}
+                chain={chain}
+                wallets={wallets}
+                signInButton={{
+                  label: "Authenticate Wallet",
+                  className: connectButtonClass,
+                  style: getConnectButtonStyle(),
+                }}
+                theme={twTheme}
+              />
             ) : (
               <div className="w-[140px] h-[40px] bg-white/5 animate-pulse rounded-[10px]" />
             )}
