@@ -539,6 +539,16 @@ export function ShopPanel() {
   }, [account?.address]);
 
   useEffect(() => {
+    const handleLoggedIn = () => {
+      loadExisting();
+    };
+    window.addEventListener("pp:auth:logged_in", handleLoggedIn);
+    return () => {
+      window.removeEventListener("pp:auth:logged_in", handleLoggedIn);
+    };
+  }, []);
+
+  useEffect(() => {
     try {
       const w = (account?.address || "").toLowerCase();
       if (!w) return;

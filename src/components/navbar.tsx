@@ -328,7 +328,7 @@ export function Navbar() {
                 const isApproved = (!isPartner && !isRegistrationRegime) || String(me?.shopStatus || "").toLowerCase() === "approved" || isPlatformAdmin;
                 const blocked = !isApproved;
 
-                if (me?.authed && !blocked) {
+                if (me?.authed && !blocked && me?.wallet && String(me.wallet).toLowerCase() === w) {
                     setAuthed(true);
                     setShowAccessPending(false); // Clear any stale blocked state
                     // Already authenticated, just register user
@@ -365,7 +365,7 @@ export function Navbar() {
                             setShowAccessPending(true);
                         }
                         // Do NOT show AuthModal - that asks for signature/login which we don't want yet
-                    } else if (!me?.authed) {
+                    } else if (!me?.authed || (me?.wallet && String(me.wallet).toLowerCase() !== w)) {
                         // Approved User -> PROCEED TO LOGIN/SIGNING
                         // Check if they have already accepted the legal documents
                         fetch(`/api/legal-read-status?wallet=${encodeURIComponent(w)}`)
