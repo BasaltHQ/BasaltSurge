@@ -1220,7 +1220,10 @@ export function useStripeEmbeddedOnramp({
                 }
                 console.log("[EMBEDDED ONRAMP] Document verification successful. Polling status...");
                 updateStep("checking_kyc");
-                await pollKycStatus(customerId);
+                const kycApproved = await pollKycStatus(customerId);
+                if (!kycApproved) {
+                  throw new Error("Identity verification was not approved. Please try again.");
+                }
                 console.log("[EMBEDDED ONRAMP] Document verification successful, retrying checkout...");
                 updateStep("checking_out");
                 continue;
