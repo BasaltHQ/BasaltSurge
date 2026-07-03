@@ -3168,7 +3168,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     let active = true;
     let timer: NodeJS.Timeout;
 
-    if (!receipt || paymentConfirmed || isSettled(receipt.status) || loadingReceipt) return;
+    const activeAmount = Number(stripeWidgetAmount) > 0 ? Number(stripeWidgetAmount) : Number(widgetAmount);
+    if (!receipt || paymentConfirmed || isSettled(receipt.status) || loadingReceipt || !merchantWallet || !receiptId || !token || isNaN(activeAmount) || activeAmount <= 0) return;
 
     const checkPayment = async () => {
       try {
@@ -3179,7 +3180,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             wallet: merchantWallet,
             receiptId: receiptId,
             since: receipt.createdAt,
-            amount: Number(stripeWidgetAmount),
+            amount: activeAmount,
             currency: token
           })
         });
@@ -3190,7 +3191,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         if (!contentType.includes("application/json")) {
           throw new Error(`Server returned non-JSON content-type: ${contentType}`);
         }
-        const data = await res.json();
+        const text = await res.text();
+        if (!text || !text.trim()) {
+          throw new Error("Server returned an empty response");
+        }
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (jsonErr: any) {
+          throw new Error(`Invalid JSON format: ${jsonErr.message}`);
+        }
         if (data.ok && data.paid && active) {
           setPaymentConfirmed({
             txHash: data.txHash || "",
@@ -3213,7 +3223,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
 
     return () => { active = false; clearInterval(timer); };
-  }, [receipt, paymentConfirmed, loadingReceipt, merchantWallet, receiptId, totalUsd, stripeWidgetAmount, token]);
+  }, [receipt, paymentConfirmed, loadingReceipt, merchantWallet, receiptId, totalUsd, stripeWidgetAmount, widgetAmount, token]);
 
   const amountReady = useMemo(() => {
     if (isFiatFlow && widgetFiatAmount) {

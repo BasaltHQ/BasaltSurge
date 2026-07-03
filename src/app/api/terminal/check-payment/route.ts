@@ -24,8 +24,16 @@ export async function POST(req: NextRequest) {
         const body = await req.json().catch(() => ({}));
         const { wallet, receiptId, since, amount, currency } = body;
 
-        if (!wallet || !receiptId || !since || !amount || !currency) {
-            return NextResponse.json({ error: "Missing required params" }, { status: 400 });
+        if (!wallet || !receiptId || !since) {
+            return NextResponse.json({ error: "Missing required params (wallet, receiptId, since)" }, { status: 400 });
+        }
+
+        const sinceTime = typeof since === "number"
+            ? (since > 1000000000000 ? since : since * 1000)
+            : new Date(since).getTime();
+
+        if (isNaN(sinceTime)) {
+            return NextResponse.json({ error: "Invalid since parameter" }, { status: 400 });
         }
 
         const normalizedWallet = String(wallet).toLowerCase();
@@ -40,6 +48,11 @@ export async function POST(req: NextRequest) {
                 const hasTx = receiptDoc.txHash || receiptDoc.transactionHash || receiptDoc.stripeSessionId;
                 return NextResponse.json({ ok: true, paid: true, txHash: hasTx, receipt: receiptDoc });
             }
+        }
+
+        // If we don't have amount or currency, we cannot perform the blockchain check, but we can return paid: false safely
+        if (!amount || !currency || Number(amount) <= 0) {
+            return NextResponse.json({ ok: true, paid: false, warning: "Missing amount/currency/rates for chain check" });
         }
 
         // 2. Get Split Address
@@ -209,7 +222,7 @@ export async function POST(req: NextRequest) {
 
                 // If typescript check failed (ts=0), but we know fromBlock was recent, accept it.
                 // If ts > 0, verify.
-                if (ts === 0 || ts >= since) {
+                if (ts === 0 || ts >= sinceTime) {
                     foundTx = c.transactionHash;
                     break;
                 }
