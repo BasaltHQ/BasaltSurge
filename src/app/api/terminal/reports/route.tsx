@@ -149,8 +149,42 @@ export async function GET(req: NextRequest) {
                 if (requestWallet === ownerEnv || requestWallet === platformEnv || adminList.includes(requestWallet)) {
                     authorized = true;
                     staffName = "Platform Admin";
-                    console.log("[ReportsAPI] Platform/Partner Admin Access Granted");
+                    console.log("[ReportsAPI] Platform Admin Access Granted via Env");
                 } else {
+                    // Check resolveAdminRole for partner admins or platform admins in DB
+                    try {
+                        const [{ resources: siteConfigs }, { resources: shopConfigs }, { resources: splitConfigs }] = await Promise.all([
+                            container.items.query({
+                                query: "SELECT c.brandKey FROM c WHERE c.type = 'site_config' AND c.wallet = @w",
+                                parameters: [{ name: "@w", value: w }]
+                            }).fetchAll(),
+                            container.items.query({
+                                query: "SELECT c.theme.brandKey AS brandKey FROM c WHERE c.type = 'shop_config' AND c.wallet = @w",
+                                parameters: [{ name: "@w", value: w }]
+                            }).fetchAll(),
+                            container.items.query({
+                                query: "SELECT c.brandKey FROM c WHERE c.type = 'split_index' AND c.merchantWallet = @w",
+                                parameters: [{ name: "@w", value: w }]
+                            }).fetchAll(),
+                        ]);
+
+                        const merchantBrand = String(
+                            siteConfigs?.[0]?.brandKey || splitConfigs?.[0]?.brandKey || shopConfigs?.[0]?.brandKey || ""
+                        ).toLowerCase();
+
+                        const { resolveAdminRole } = await import("@/lib/authz-server");
+                        const role = await resolveAdminRole(requestWallet, merchantBrand || undefined);
+                        if (role && (role.startsWith("partner_") || role.startsWith("platform_"))) {
+                            authorized = true;
+                            staffName = role.includes("partner") ? "Partner Admin" : "Platform Admin";
+                            console.log(`[ReportsAPI] DB Admin Access Granted: ${role} on brand: ${merchantBrand}`);
+                        }
+                    } catch (err) {
+                        console.error("[ReportsAPI] DB Admin check failed:", err);
+                    }
+                }
+
+                if (!authorized) {
                     // C. Manager Delegated Access
                     const memberQuery = {
                         query: "SELECT * FROM c WHERE c.merchantWallet = @mw AND c.type = 'merchant_team_member' AND c.linkedWallet = @lw AND (c.role = 'manager' OR c.role = 'owner')",
