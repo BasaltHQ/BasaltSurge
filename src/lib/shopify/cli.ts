@@ -281,7 +281,7 @@ export function generateExtensionPackageJson(config: ShopifyAppConfig): string {
       "react": "^18.2.0"
     },
     devDependencies: {
-      "@shopify/cli": "^3.0.0",
+      "@shopify/cli": "^4.0.0",
       "typescript": "^5.0.0"
     }
   }, null, 2);
@@ -574,7 +574,7 @@ export async function deployShopifyApp(
     if (onLog) onLog("Deploying app...");
     const deployResult = await runShopifyCommand(
       workspaceRoot,
-      ["app", "deploy", "--allow-updates"],
+      ["app", "deploy", "--allow-updates", "--allow-deletes"],
       env,
       onLog
     );

@@ -114,7 +114,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
-    "@shopify/cli": "^3.60.0",
+    "@shopify/cli": "^4.3.0",
     "@tailwindcss/postcss": "^4",
     "@types/archiver": "^7.0.0",
     "@types/jszip": "^3.4.0",
