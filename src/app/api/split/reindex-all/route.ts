@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
     // Query ALL site_config documents with split addresses — also fetch splitHistory for versioning
     const spec = {
       query: `
-        SELECT c.wallet, c.splitAddress, c.split, c.splitHistory
+        SELECT c.wallet, c.splitAddress, c.split, c.splitHistory, c.partnerWallet, c.splitConfig
         FROM c
         WHERE c.type='site_config' AND (IS_DEFINED(c.splitAddress) OR IS_DEFINED(c.split.address))
       `,
@@ -116,6 +116,8 @@ export async function POST(req: NextRequest) {
       allAddresses: Map<string, { version: string; deployedAt?: number }>;
       splitHistory: Array<{ address: string; deployedAt?: number; archivedAt?: number }>;
       currentSplitAddress: string;
+      partnerWallet: string;
+      agentWallets: string[];
     }>();
 
     for (const config of configs) {
@@ -127,6 +129,8 @@ export async function POST(req: NextRequest) {
           allAddresses: new Map(),
           splitHistory: [],
           currentSplitAddress: "",
+          partnerWallet: "",
+          agentWallets: [],
         });
       }
       const entry = merchantSplitMap.get(merchantWallet)!;
@@ -164,6 +168,26 @@ export async function POST(req: NextRequest) {
               });
             }
           }
+        }
+      }
+
+      // Extract partner wallet (most recent config wins)
+      const pw = String(config?.partnerWallet || "").toLowerCase();
+      if (/^0x[a-f0-9]{40}$/i.test(pw)) {
+        entry.partnerWallet = pw;
+      }
+
+      // Extract agent wallets from splitConfig.agents
+      if (Array.isArray(config?.splitConfig?.agents)) {
+        const agentsList: string[] = [];
+        for (const a of config.splitConfig.agents) {
+          const aw = String(a?.wallet || "").toLowerCase();
+          if (/^0x[a-f0-9]{40}$/i.test(aw)) {
+            agentsList.push(aw);
+          }
+        }
+        if (agentsList.length > 0) {
+          entry.agentWallets = agentsList;
         }
       }
     }
@@ -241,15 +265,28 @@ export async function POST(req: NextRequest) {
 
         // ── FETCH & MERGE TRANSACTIONS FROM ALL SPLITS ──
         const allTransactions: any[] = [];
-        const mergedCumulative = { payments: {} as Record<string, number>, merchantReleases: {} as Record<string, number>, platformReleases: {} as Record<string, number> };
+        const mergedCumulative = {
+          payments: {} as Record<string, number>,
+          merchantReleases: {} as Record<string, number>,
+          partnerReleases: {} as Record<string, number>,
+          agentReleases: {} as Record<string, number>,
+          platformReleases: {} as Record<string, number>
+        };
         const seenHashes = new Set<string>();
 
+        const { fetchSplitTransactionsThirdweb } = await import("@/lib/thirdweb/split-transactions");
+
         for (const split of allSplitAddresses) {
-          const txResult = await fetchSplitTransactionsDirect(split.address, merchantWallet, 1000);
-          if (!txResult.ok) {
-            debug("BATCH REINDEX", `  ⚠ Failed to fetch txns for split ${split.address.slice(0, 10)}: ${txResult.error}`);
-            continue;
-          }
+          const txResult = await fetchSplitTransactionsThirdweb({
+            splitAddress: split.address,
+            merchantWallet,
+            partnerWallet: merchantData.partnerWallet,
+            agentWallets: merchantData.agentWallets,
+            limit: 1000,
+          }).catch(err => {
+            console.error(`[ReindexAll] Helper error for split ${split.address}:`, err);
+            return { transactions: [], cumulative: { payments: {}, merchantReleases: {}, partnerReleases: {}, agentReleases: {}, platformReleases: {} } };
+          });
 
           for (const tx of (txResult.transactions || [])) {
             const hash = String(tx.hash || "").toLowerCase();
@@ -261,12 +298,18 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          const cum = txResult.cumulative || { payments: {}, merchantReleases: {}, platformReleases: {} };
+          const cum = txResult.cumulative || { payments: {}, merchantReleases: {}, partnerReleases: {}, agentReleases: {}, platformReleases: {} };
           for (const [token, amount] of Object.entries(cum.payments || {})) {
             mergedCumulative.payments[token] = (mergedCumulative.payments[token] || 0) + Number(amount || 0);
           }
           for (const [token, amount] of Object.entries(cum.merchantReleases || {})) {
             mergedCumulative.merchantReleases[token] = (mergedCumulative.merchantReleases[token] || 0) + Number(amount || 0);
+          }
+          for (const [token, amount] of Object.entries(cum.partnerReleases || {})) {
+            mergedCumulative.partnerReleases[token] = (mergedCumulative.partnerReleases[token] || 0) + Number(amount || 0);
+          }
+          for (const [token, amount] of Object.entries(cum.agentReleases || {})) {
+            mergedCumulative.agentReleases[token] = (mergedCumulative.agentReleases[token] || 0) + Number(amount || 0);
           }
           for (const [token, amount] of Object.entries(cum.platformReleases || {})) {
             mergedCumulative.platformReleases[token] = (mergedCumulative.platformReleases[token] || 0) + Number(amount || 0);
@@ -296,6 +339,26 @@ export async function POST(req: NextRequest) {
           if (amountNum > 0 && tokenPrice > 0) {
             merchantEarnedUsd -= amountNum * tokenPrice;
             platformFeeUsd += amountNum * tokenPrice;
+          }
+        }
+
+        const sanitizedPartnerReleases: Record<string, number> = {};
+        for (const [token, amount] of Object.entries(mergedCumulative.partnerReleases)) {
+          const amountNum = sanitizeAmount(token, amount);
+          sanitizedPartnerReleases[token] = amountNum;
+          const tokenPrice = tokenPrices[token] || 0;
+          if (amountNum > 0 && tokenPrice > 0) {
+            merchantEarnedUsd -= amountNum * tokenPrice;
+          }
+        }
+
+        const sanitizedAgentReleases: Record<string, number> = {};
+        for (const [token, amount] of Object.entries(mergedCumulative.agentReleases)) {
+          const amountNum = sanitizeAmount(token, amount);
+          sanitizedAgentReleases[token] = amountNum;
+          const tokenPrice = tokenPrices[token] || 0;
+          if (amountNum > 0 && tokenPrice > 0) {
+            merchantEarnedUsd -= amountNum * tokenPrice;
           }
         }
 
@@ -414,6 +477,8 @@ export async function POST(req: NextRequest) {
           transactionCount: allTransactions.length,
           cumulativePayments: sanitizedPayments,
           cumulativeMerchantReleases: sanitizedMerchantReleases,
+          cumulativePartnerReleases: sanitizedPartnerReleases,
+          cumulativeAgentReleases: sanitizedAgentReleases,
           cumulativePlatformReleases: sanitizedPlatformReleases,
           tokenPricesAtIndex: tokenPrices,
           transactions: transactionDetails,
@@ -499,212 +564,4 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   return POST(req);
-}
-
-/**
- * Fetch split transactions directly from Blockscout (no HTTP self-call)
- */
-async function fetchSplitTransactionsDirect(
-  splitAddress: string,
-  merchantWallet: string,
-  limit: number
-): Promise<{ ok: boolean; transactions?: any[]; cumulative?: any; error?: string }> {
-  try {
-    const transactionsUrl = `https://base.blockscout.com/api/v2/addresses/${splitAddress}/transactions`;
-    const tokenTransfersBaseUrl = `https://base.blockscout.com/api/v2/addresses/${splitAddress}/token-transfers`;
-    const logsUrl = `https://base.blockscout.com/api/v2/addresses/${splitAddress}/logs`;
-
-    const [txResponse, logsResponse] = await Promise.all([
-      fetch(transactionsUrl, { headers: { "Accept": "application/json" } }),
-      fetch(logsUrl, { headers: { "Accept": "application/json" } }).catch(() => null)
-    ]);
-
-    if (!txResponse.ok) {
-      return { ok: false, error: `Blockscout transactions API returned ${txResponse.status}` };
-    }
-
-    // Paginate token transfers to capture ALL tokens (cbBTC, etc. may be on later pages)
-    let allTokenItems: any[] = [];
-    let tokenUrl: string | null = tokenTransfersBaseUrl;
-    for (let page = 0; page < 5 && tokenUrl; page++) {
-      try {
-        const tokenResponse = await fetch(tokenUrl, { headers: { "Accept": "application/json" } });
-        if (!tokenResponse.ok) break;
-        const tokenData = await tokenResponse.json();
-        const items = Array.isArray(tokenData?.items) ? tokenData.items : [];
-        allTokenItems = allTokenItems.concat(items);
-        // Follow next_page_params if available
-        if (tokenData?.next_page_params) {
-          const params = new URLSearchParams();
-          for (const [k, v] of Object.entries(tokenData.next_page_params)) {
-            params.set(k, String(v));
-          }
-          tokenUrl = `${tokenTransfersBaseUrl}?${params.toString()}`;
-        } else {
-          tokenUrl = null;
-        }
-      } catch { break; }
-    }
-
-    const txData = await txResponse.json();
-
-    let logsData: any = null;
-    if (logsResponse && logsResponse.ok) {
-      try { logsData = await logsResponse.json(); } catch { }
-    }
-
-    const ethItems = Array.isArray(txData?.items) ? txData.items : [];
-    const tokenItems = allTokenItems;
-    const logItems = Array.isArray(logsData?.items) ? logsData.items : [];
-
-    const splitAddrLower = splitAddress.toLowerCase();
-    const merchantAddrLower = merchantWallet?.toLowerCase();
-    const platformAddrLower = (process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "").toLowerCase();
-
-    const tokenAddresses: Record<string, string> = {
-      ETH: "native",
-      USDC: (process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "").toLowerCase(),
-      USDT: (process.env.NEXT_PUBLIC_BASE_USDT_ADDRESS || "").toLowerCase(),
-      cbBTC: (process.env.NEXT_PUBLIC_BASE_CBBTC_ADDRESS || "").toLowerCase(),
-      cbXRP: (process.env.NEXT_PUBLIC_BASE_CBXRP_ADDRESS || "").toLowerCase(),
-      SOL: (process.env.NEXT_PUBLIC_BASE_SOL_ADDRESS || "").toLowerCase(),
-    };
-
-    const addressToToken = new Map<string, string>();
-    for (const [symbol, addr] of Object.entries(tokenAddresses)) {
-      if (addr && addr !== "native") addressToToken.set(addr, symbol);
-    }
-
-    const cumulativePayments: Record<string, number> = {};
-    const cumulativeMerchantReleases: Record<string, number> = {};
-    const cumulativePlatformReleases: Record<string, number> = {};
-
-    // ── ETH flow via contract event logs ──
-    const PAYMENT_RECEIVED_TOPIC = "0x6ef95f06320e7a25a04a175ca677b7052bdd97131872c2192525a629f51be770";
-    const PAYMENT_RELEASED_TOPIC = "0xdf20fd1e76bc69d672e4814fafb2c449bba3a5369d8359adf9e05e6fde87b056";
-
-    const ethTransactions: any[] = [];
-    for (const log of logItems) {
-      try {
-        const topics = Array.isArray(log?.topics) ? log.topics : [];
-        const topic0 = String(topics[0] || "").toLowerCase();
-        const dataHex = String(log?.data || "0x");
-        const txHash = String(log?.tx_hash || log?.transaction_hash || "").toLowerCase();
-        const timestamp = log?.timestamp ? new Date(log.timestamp).getTime() : Date.now();
-
-        if (!dataHex.startsWith("0x") || dataHex.length < 130) continue;
-
-        const dataWithoutPrefix = dataHex.slice(2);
-        const addressSegment = dataWithoutPrefix.slice(0, 64);
-        const addr = `0x${addressSegment.slice(-40)}`.toLowerCase();
-        const amountHex = `0x${dataWithoutPrefix.slice(64, 128)}`;
-        const amountWei = BigInt(amountHex);
-        const amountEth = Number(amountWei) / 1e18;
-
-        if (amountEth <= 0) continue;
-
-        if (topic0 === PAYMENT_RECEIVED_TOPIC.toLowerCase()) {
-          cumulativePayments['ETH'] = (cumulativePayments['ETH'] || 0) + amountEth;
-          ethTransactions.push({
-            hash: txHash, from: addr, to: splitAddrLower,
-            value: amountEth, timestamp, blockNumber: 0, status: "success",
-            type: 'payment', token: 'ETH',
-          });
-        } else if (topic0 === PAYMENT_RELEASED_TOPIC.toLowerCase()) {
-          // Any non-merchant release from a split = platform/partner release
-          if (addr === merchantAddrLower) {
-            cumulativeMerchantReleases['ETH'] = (cumulativeMerchantReleases['ETH'] || 0) + amountEth;
-            ethTransactions.push({
-              hash: txHash, from: splitAddrLower, to: addr,
-              value: amountEth, timestamp, blockNumber: 0, status: "success",
-              type: 'release', releaseType: 'merchant', releaseTo: addr, token: 'ETH',
-            });
-          } else {
-            cumulativePlatformReleases['ETH'] = (cumulativePlatformReleases['ETH'] || 0) + amountEth;
-            ethTransactions.push({
-              hash: txHash, from: splitAddrLower, to: addr,
-              value: amountEth, timestamp, blockNumber: 0, status: "success",
-              type: 'release', releaseType: 'platform', releaseTo: addr, token: 'ETH',
-            });
-          }
-        }
-      } catch { /* skip malformed log */ }
-    }
-
-    // ── Token transfers ──
-    const supportedTokens = ["USDC", "USDT", "cbBTC", "cbXRP", "SOL"];
-    const tokenTransactions = tokenItems.map((transfer: any) => {
-      const tokenAddr = String(transfer?.token?.address || "").toLowerCase();
-      let tokenSymbol = addressToToken.get(tokenAddr);
-
-      if (!tokenSymbol) {
-        const blockscoutSymbol = String(transfer?.token?.symbol || "").toUpperCase();
-        if (blockscoutSymbol === "USDC" || blockscoutSymbol.includes("USDC")) tokenSymbol = "USDC";
-        else if (blockscoutSymbol === "USDT" || blockscoutSymbol.includes("USDT")) tokenSymbol = "USDT";
-        else if (blockscoutSymbol === "CBBTC" || blockscoutSymbol.includes("BTC")) tokenSymbol = "cbBTC";
-        else if (blockscoutSymbol === "CBXRP" || blockscoutSymbol.includes("XRP")) tokenSymbol = "cbXRP";
-        else if (blockscoutSymbol === "SOL" || blockscoutSymbol.includes("SOL")) tokenSymbol = "SOL";
-        else return null;
-      }
-
-      if (!supportedTokens.includes(tokenSymbol)) return null;
-
-      // CRITICAL: Use KNOWN_DECIMALS as safety net — Blockscout may return 0/missing decimals
-      const blockscoutDecimals = Number(transfer?.token?.decimals);
-      const decimals = (blockscoutDecimals > 0) ? blockscoutDecimals : (KNOWN_DECIMALS[tokenSymbol] || 18);
-      const valueRaw = String(transfer?.total?.value || "0");
-      const valueInToken = Number(valueRaw) / Math.pow(10, decimals);
-
-      const timestamp = transfer?.timestamp ? new Date(transfer.timestamp).getTime() : Date.now();
-      const hash = transfer?.tx_hash || "";
-      const from = String(transfer?.from?.hash || "").toLowerCase();
-      const to = String(transfer?.to?.hash || "").toLowerCase();
-
-      let txType: 'payment' | 'release' | 'unknown' = 'unknown';
-      let releaseType: 'merchant' | 'platform' | undefined;
-      let releaseTo: string | undefined;
-
-      const isPayment = to === splitAddrLower && from !== merchantAddrLower;
-      const isRelease = from === splitAddrLower;
-
-      if (isPayment) {
-        txType = 'payment';
-        cumulativePayments[tokenSymbol] = (cumulativePayments[tokenSymbol] || 0) + valueInToken;
-      } else if (isRelease) {
-        txType = 'release';
-        releaseTo = to;
-        // Any non-merchant release from a split = platform/partner release
-        if (to === merchantAddrLower) {
-          releaseType = 'merchant';
-          cumulativeMerchantReleases[tokenSymbol] = (cumulativeMerchantReleases[tokenSymbol] || 0) + valueInToken;
-        } else {
-          releaseType = 'platform';
-          cumulativePlatformReleases[tokenSymbol] = (cumulativePlatformReleases[tokenSymbol] || 0) + valueInToken;
-        }
-      }
-
-      return {
-        hash, from: transfer?.from?.hash || "", to: transfer?.to?.hash || "",
-        value: valueInToken, timestamp, blockNumber: transfer?.block || 0,
-        status: "success", type: txType, releaseType, releaseTo, token: tokenSymbol,
-      };
-    }).filter(Boolean);
-
-    const transactions = [...ethTransactions, ...tokenTransactions]
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, limit);
-
-    return {
-      ok: true,
-      transactions,
-      cumulative: {
-        payments: cumulativePayments,
-        merchantReleases: cumulativeMerchantReleases,
-        platformReleases: cumulativePlatformReleases,
-      }
-    };
-  } catch (e: any) {
-    console.error("Error fetching split transactions directly:", e);
-    return { ok: false, error: e?.message || "failed_to_fetch_transactions" };
-  }
 }
