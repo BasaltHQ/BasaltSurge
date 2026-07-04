@@ -90,7 +90,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
   const nativeReceivedPromise = getContractEvents({
     contract: splitContract,
     events: [paymentReceivedEvent],
-    fromBlock: BigInt(0),
+    fromBlock: BigInt(1),
   }).catch((err) => {
     console.error(`[SplitTransactions] Error getting PaymentReceived for ${splitAddrLower}:`, err);
     return [];
@@ -99,7 +99,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
   const nativeReleasedPromise = getContractEvents({
     contract: splitContract,
     events: [paymentReleasedEvent],
-    fromBlock: BigInt(0),
+    fromBlock: BigInt(1),
   }).catch((err) => {
     console.error(`[SplitTransactions] Error getting PaymentReleased for ${splitAddrLower}:`, err);
     return [];
@@ -127,7 +127,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
           filters: { to: splitAddrLower }
         })
       ],
-      fromBlock: BigInt(0),
+      fromBlock: BigInt(1),
     }).then(events => events.map(e => ({ ...e, token, flowType: "payment" }))).catch(() => []);
 
     // Payouts/Releases out (Transfer from split contract)
@@ -139,7 +139,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
           filters: { from: splitAddrLower }
         })
       ],
-      fromBlock: BigInt(0),
+      fromBlock: BigInt(1),
     }).then(events => events.map(e => ({ ...e, token, flowType: "release" }))).catch(() => []);
 
     tokenPromises.push(p1, p2);
