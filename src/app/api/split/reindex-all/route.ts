@@ -80,9 +80,9 @@ export async function POST(req: NextRequest) {
     // Query ALL site_config documents with split addresses — also fetch splitHistory for versioning
     const spec = {
       query: `
-        SELECT c.wallet, c.splitAddress, c.split, c.splitHistory, c.partnerWallet, c.splitConfig
+        SELECT c.wallet, c.splitAddress, c.split, c.splitAddressCredit, c.splitCredit, c.splitHistory, c.partnerWallet, c.splitConfig, c.splitConfigCredit, c.createdAt, c.updatedAt
         FROM c
-        WHERE c.type='site_config' AND (IS_DEFINED(c.splitAddress) OR IS_DEFINED(c.split.address))
+        WHERE c.type='site_config' AND (IS_DEFINED(c.splitAddress) OR IS_DEFINED(c.split.address) OR IS_DEFINED(c.splitAddressCredit) OR IS_DEFINED(c.splitCredit.address))
       `,
     };
 
@@ -116,6 +116,7 @@ export async function POST(req: NextRequest) {
       allAddresses: Map<string, { version: string; deployedAt?: number }>;
       splitHistory: Array<{ address: string; deployedAt?: number; archivedAt?: number }>;
       currentSplitAddress: string;
+      currentSplitAddressCredit: string;
       partnerWallet: string;
       agentWallets: string[];
     }>();
@@ -129,29 +130,44 @@ export async function POST(req: NextRequest) {
           allAddresses: new Map(),
           splitHistory: [],
           currentSplitAddress: "",
+          currentSplitAddressCredit: "",
           partnerWallet: "",
           agentWallets: [],
         });
       }
       const entry = merchantSplitMap.get(merchantWallet)!;
 
-      // Collect splitAddress (top-level)
-      const topLevelAddr = String(config?.splitAddress || "").toLowerCase();
-      if (topLevelAddr && /^0x[a-f0-9]{40}$/i.test(topLevelAddr) && !entry.allAddresses.has(topLevelAddr)) {
-        // If this is from the newer doc (has splitVersion or later updatedAt), treat as current
-        if (!entry.currentSplitAddress) entry.currentSplitAddress = topLevelAddr;
-        entry.allAddresses.set(topLevelAddr, { version: "current" });
+      const docDeployedAt = Number(config?.createdAt || config?.updatedAt || 0) || undefined;
+
+      // Collect debit/crypto candidates
+      const debitCandidates = [
+        String(config?.splitAddress || "").toLowerCase(),
+        String(config?.split?.address || "").toLowerCase(),
+      ].filter(addr => addr && /^0x[a-f0-9]{40}$/i.test(addr));
+
+      for (const addr of debitCandidates) {
+        if (!entry.currentSplitAddress) entry.currentSplitAddress = addr;
+        if (!entry.allAddresses.has(addr)) {
+          entry.allAddresses.set(addr, {
+            version: addr === entry.currentSplitAddress ? "current" : `v${entry.allAddresses.size}`,
+            deployedAt: docDeployedAt,
+          });
+        }
       }
 
-      // Collect split.address (nested, often from older docs)
-      const nestedAddr = String(config?.split?.address || "").toLowerCase();
-      if (nestedAddr && /^0x[a-f0-9]{40}$/i.test(nestedAddr) && !entry.allAddresses.has(nestedAddr)) {
-        // If it's different from the current, it's historical
-        if (entry.currentSplitAddress && nestedAddr !== entry.currentSplitAddress) {
-          entry.allAddresses.set(nestedAddr, { version: `v${entry.allAddresses.size}` });
-        } else if (!entry.currentSplitAddress) {
-          entry.currentSplitAddress = nestedAddr;
-          entry.allAddresses.set(nestedAddr, { version: "current" });
+      // Collect credit candidates
+      const creditCandidates = [
+        String(config?.splitAddressCredit || "").toLowerCase(),
+        String(config?.splitCredit?.address || "").toLowerCase(),
+      ].filter(addr => addr && /^0x[a-f0-9]{40}$/i.test(addr));
+
+      for (const addr of creditCandidates) {
+        if (!entry.currentSplitAddressCredit) entry.currentSplitAddressCredit = addr;
+        if (!entry.allAddresses.has(addr)) {
+          entry.allAddresses.set(addr, {
+            version: addr === entry.currentSplitAddressCredit ? "current_credit" : `v${entry.allAddresses.size}`,
+            deployedAt: docDeployedAt,
+          });
         }
       }
 
@@ -177,19 +193,23 @@ export async function POST(req: NextRequest) {
         entry.partnerWallet = pw;
       }
 
-      // Extract agent wallets from splitConfig.agents
-      if (Array.isArray(config?.splitConfig?.agents)) {
-        const agentsList: string[] = [];
-        for (const a of config.splitConfig.agents) {
-          const aw = String(a?.wallet || "").toLowerCase();
-          if (/^0x[a-f0-9]{40}$/i.test(aw)) {
-            agentsList.push(aw);
+      // Extract agent wallets from BOTH splitConfig and splitConfigCredit
+      const resolvedAgents = new Set<string>(entry.agentWallets);
+      const agentConfigs = [
+        config?.splitConfig?.agents,
+        config?.splitConfigCredit?.agents,
+      ];
+      for (const agentsList of agentConfigs) {
+        if (Array.isArray(agentsList)) {
+          for (const a of agentsList) {
+            const aw = String(a?.wallet || "").toLowerCase();
+            if (/^0x[a-f0-9]{40}$/i.test(aw)) {
+              resolvedAgents.add(aw);
+            }
           }
         }
-        if (agentsList.length > 0) {
-          entry.agentWallets = agentsList;
-        }
       }
+      entry.agentWallets = Array.from(resolvedAgents);
     }
 
     debug("BATCH REINDEX", `Pre-aggregated split addresses for ${merchantSplitMap.size} unique merchants from ${configs.length} site_config docs`);
@@ -283,6 +303,7 @@ export async function POST(req: NextRequest) {
             partnerWallet: merchantData.partnerWallet,
             agentWallets: merchantData.agentWallets,
             limit: 1000,
+            deployedAt: split.deployedAt,
           }).catch(err => {
             console.error(`[ReindexAll] Helper error for split ${split.address}:`, err);
             return { transactions: [], cumulative: { payments: {}, merchantReleases: {}, partnerReleases: {}, agentReleases: {}, platformReleases: {} } };
@@ -414,19 +435,24 @@ export async function POST(req: NextRequest) {
 
         // ── RELEASABLE PLATFORM FEES (query current split contract) ──
         try {
-          if (merchantData.currentSplitAddress && /^0x[a-f0-9]{40}$/i.test(merchantData.currentSplitAddress)) {
-            const platformAddr = (process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "").toLowerCase();
-            if (platformAddr && /^0x[a-f0-9]{40}$/i.test(platformAddr)) {
-              const client = getClient();
-              const contract = getContract({ client, chain, address: merchantData.currentSplitAddress as `0x${string}` });
+          const platformAddr = (process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "").toLowerCase();
+          if (platformAddr && /^0x[a-f0-9]{40}$/i.test(platformAddr)) {
+            const client = getClient();
+            const tokenAddresses: Record<string, string> = {
+              USDC: (process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "").toLowerCase(),
+              USDT: (process.env.NEXT_PUBLIC_BASE_USDT_ADDRESS || "").toLowerCase(),
+              cbBTC: (process.env.NEXT_PUBLIC_BASE_CBBTC_ADDRESS || "").toLowerCase(),
+              cbXRP: (process.env.NEXT_PUBLIC_BASE_CBXRP_ADDRESS || "").toLowerCase(),
+              SOL: (process.env.NEXT_PUBLIC_BASE_SOL_ADDRESS || "").toLowerCase(),
+            };
 
-              const tokenAddresses: Record<string, string> = {
-                USDC: (process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "").toLowerCase(),
-                USDT: (process.env.NEXT_PUBLIC_BASE_USDT_ADDRESS || "").toLowerCase(),
-                cbBTC: (process.env.NEXT_PUBLIC_BASE_CBBTC_ADDRESS || "").toLowerCase(),
-                cbXRP: (process.env.NEXT_PUBLIC_BASE_CBXRP_ADDRESS || "").toLowerCase(),
-                SOL: (process.env.NEXT_PUBLIC_BASE_SOL_ADDRESS || "").toLowerCase(),
-              };
+            const splitContractsToQuery = [
+              merchantData.currentSplitAddress,
+              merchantData.currentSplitAddressCredit
+            ].filter(addr => addr && /^0x[a-f0-9]{40}$/i.test(addr));
+
+            for (const activeSplitAddr of splitContractsToQuery) {
+              const contract = getContract({ client, chain, address: activeSplitAddr as `0x${string}` });
 
               for (const sym of ["ETH", ...Object.keys(tokenAddresses)]) {
                 try {
@@ -468,6 +494,7 @@ export async function POST(req: NextRequest) {
           type: "split_index",
           merchantWallet,
           splitAddress: merchantData.currentSplitAddress || allSplitAddresses[0]?.address || "",
+          splitAddressCredit: merchantData.currentSplitAddressCredit || "",
           splitAddresses: allSplitAddresses,
           totalVolumeUsd: Math.round(totalVolumeUsd * 100) / 100,
           merchantEarnedUsd: Math.round(merchantEarnedUsd * 100) / 100,

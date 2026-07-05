@@ -88,11 +88,17 @@ export async function GET(req: NextRequest) {
           // Extract partner wallet from site_config (most recent doc wins)
           const pw = String(doc?.partnerWallet || "").toLowerCase();
           if (/^0x[a-f0-9]{40}$/i.test(pw)) resolvedPartnerWallet = pw;
-          // Extract agent wallets from splitConfig.agents
-          if (Array.isArray(doc?.splitConfig?.agents)) {
-            for (const a of doc.splitConfig.agents) {
-              const aw = String(a?.wallet || "").toLowerCase();
-              if (/^0x[a-f0-9]{40}$/i.test(aw)) resolvedAgentWallets.add(aw);
+          // Extract agent wallets from BOTH splitConfig and splitConfigCredit
+          const agentConfigs = [
+            doc?.splitConfig?.agents,
+            doc?.splitConfigCredit?.agents,
+          ];
+          for (const agentsList of agentConfigs) {
+            if (Array.isArray(agentsList)) {
+              for (const a of agentsList) {
+                const aw = String(a?.wallet || "").toLowerCase();
+                if (/^0x[a-f0-9]{40}$/i.test(aw)) resolvedAgentWallets.add(aw);
+              }
             }
           }
         }
@@ -252,7 +258,7 @@ export async function GET(req: NextRequest) {
         const container = await getContainer();
         const indexId = `split_index_${merchantAddrLower}`;
         const { resource } = await container.item(indexId, indexId).read();
-        if (resource && Array.isArray(resource.transactions) && resource.transactions.length > 0) {
+        if (resource && Array.isArray(resource.transactions)) {
           // Filter transactions for this specific split address if needed
           const txs = resource.transactions
             .filter((tx: any) => {
@@ -282,8 +288,32 @@ export async function GET(req: NextRequest) {
           );
         }
       } catch {
-        // split_index not found or read error — fall through to Blockscout
+        // split_index not found or read error — fall through to Thirdweb
       }
+    }
+
+    // Try to resolve the creation/deployment timestamp of the split contract from site_config
+    let resolvedDeployedAt: number | undefined;
+    if (merchantAddrLower && /^0x[a-f0-9]{40}$/i.test(merchantAddrLower)) {
+      try {
+        const container = await getContainer();
+        const { resources } = await container.items.query({
+          query: `SELECT c.createdAt, c.updatedAt, c.splitHistory FROM c WHERE c.type = 'site_config' AND c.wallet = @w`,
+          parameters: [{ name: "@w", value: merchantAddrLower }],
+        }).fetchAll();
+
+        for (const doc of (resources || [])) {
+          if (Array.isArray(doc?.splitHistory)) {
+            const hist = doc.splitHistory.find((h: any) => String(h?.address || "").toLowerCase() === splitAddrLower);
+            if (hist && hist.deployedAt) {
+              resolvedDeployedAt = Number(hist.deployedAt);
+              break;
+            }
+          }
+          if (doc?.createdAt) resolvedDeployedAt = Number(doc.createdAt);
+          else if (doc?.updatedAt) resolvedDeployedAt = Number(doc.updatedAt);
+        }
+      } catch { /* best effort */ }
     }
 
     // ── STEP 2: Fetch live from Thirdweb ──
@@ -294,6 +324,7 @@ export async function GET(req: NextRequest) {
       partnerWallet: qPartnerWallet,
       agentWallets: qAgentWallets,
       limit,
+      deployedAt: resolvedDeployedAt,
     });
 
     // ── STEP 3: PERSIST to split_index ──

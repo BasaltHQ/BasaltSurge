@@ -1,5 +1,5 @@
 import { getContract, prepareEvent, getContractEvents } from "thirdweb";
-import { getRpcClient, eth_getBlockByNumber } from "thirdweb/rpc";
+import { getRpcClient, eth_getBlockByNumber, eth_blockNumber } from "thirdweb/rpc";
 import { client, chain } from "@/lib/thirdweb/client";
 
 // Global in-memory cache to store block timestamps and prevent redundant RPC requests
@@ -28,12 +28,48 @@ async function getBlockTimestamp(rpcRequest: any, blockNumber: bigint): Promise<
   }
 }
 
+async function getStartBlock(rpcRequest: any, deployedAtMs?: number): Promise<bigint> {
+  const DEFAULT_START_TIMESTAMP = 1770000000000; // approx Jan 2026
+  const targetTimestamp = deployedAtMs || DEFAULT_START_TIMESTAMP;
+
+  try {
+    const latestBlockNumber = await eth_blockNumber(rpcRequest);
+    const latestBlock = await eth_getBlockByNumber(rpcRequest, {
+      blockNumber: latestBlockNumber,
+      includeTransactions: false,
+    });
+    const latestTimestamp = Number(latestBlock.timestamp) * 1000;
+
+    if (targetTimestamp >= latestTimestamp) {
+      return latestBlockNumber > BigInt(1000) ? latestBlockNumber - BigInt(1000) : BigInt(1);
+    }
+
+    const diffSeconds = Math.floor((latestTimestamp - targetTimestamp) / 1000);
+    // Base mainnet block time is 2 seconds
+    const estBlocks = BigInt(Math.floor(diffSeconds / 2));
+    
+    let startBlock = latestBlockNumber - estBlocks;
+    
+    // Safety margin of 20,000 blocks (approx 11 hours)
+    startBlock = startBlock - BigInt(20000);
+
+    if (startBlock < BigInt(1)) {
+      return BigInt(1);
+    }
+    return startBlock;
+  } catch (e) {
+    console.error("[SplitTransactions] Failed to estimate start block, falling back to 1:", e);
+    return BigInt(1);
+  }
+}
+
 export interface FetchSplitTransactionsParams {
   splitAddress: string;
   merchantWallet: string;
   partnerWallet?: string;
   agentWallets?: string[];
   limit?: number;
+  deployedAt?: number;
 }
 
 /**
@@ -41,7 +77,7 @@ export interface FetchSplitTransactionsParams {
  * associated with a Split contract using Thirdweb's pre-indexed event logs.
  */
 export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransactionsParams) {
-  const { splitAddress, merchantWallet, partnerWallet = "", agentWallets = [], limit = 50 } = params;
+  const { splitAddress, merchantWallet, partnerWallet = "", agentWallets = [], limit = 50, deployedAt } = params;
 
   const splitAddrLower = splitAddress.toLowerCase();
   const merchantAddrLower = merchantWallet.toLowerCase();
@@ -78,6 +114,9 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
     address: splitAddrLower,
   });
 
+  const rpcRequest = getRpcClient({ client, chain });
+  const startBlock = await getStartBlock(rpcRequest, deployedAt);
+
   // Prepare events for native ETH tracking
   const paymentReceivedEvent = prepareEvent({
     signature: "event PaymentReceived(address from, uint256 amount)",
@@ -90,7 +129,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
   const nativeReceivedPromise = getContractEvents({
     contract: splitContract,
     events: [paymentReceivedEvent],
-    fromBlock: BigInt(1),
+    fromBlock: startBlock,
   }).catch((err) => {
     console.error(`[SplitTransactions] Error getting PaymentReceived for ${splitAddrLower}:`, err);
     return [];
@@ -99,7 +138,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
   const nativeReleasedPromise = getContractEvents({
     contract: splitContract,
     events: [paymentReleasedEvent],
-    fromBlock: BigInt(1),
+    fromBlock: startBlock,
   }).catch((err) => {
     console.error(`[SplitTransactions] Error getting PaymentReleased for ${splitAddrLower}:`, err);
     return [];
@@ -127,7 +166,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
           filters: { to: splitAddrLower }
         })
       ],
-      fromBlock: BigInt(1),
+      fromBlock: startBlock,
     }).then(events => events.map(e => ({ ...e, token, flowType: "payment" }))).catch(() => []);
 
     // Payouts/Releases out (Transfer from split contract)
@@ -139,7 +178,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
           filters: { from: splitAddrLower }
         })
       ],
-      fromBlock: BigInt(1),
+      fromBlock: startBlock,
     }).then(events => events.map(e => ({ ...e, token, flowType: "release" }))).catch(() => []);
 
     tokenPromises.push(p1, p2);
@@ -163,7 +202,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
   nativeReleased.forEach(e => uniqueBlocks.add(e.blockNumber));
   allTokenEvents.forEach(e => uniqueBlocks.add(e.blockNumber));
 
-  const rpcRequest = getRpcClient({ client, chain });
+  // Reuses rpcRequest declared at the top of the function
 
   // Prefetch timestamps in parallel so they get cached
   await Promise.all(
