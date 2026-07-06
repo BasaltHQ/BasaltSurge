@@ -178,7 +178,7 @@ export type BrandConfigDoc = {
  * Derive container identity (brandKey and containerType) from hostname.
  * This is an async function because it queries Cosmos DB for dynamic partner domains.
  */
-export async function deriveContainerIdentityFromHostname(host: string): Promise<ContainerIdentity | null> {
+export async function deriveContainerIdentityFromHostname(host: string, cookieHeader?: string): Promise<ContainerIdentity | null> {
   if (!host) return null;
 
   // Remove port number if present (e.g., localhost:3001 -> localhost)
@@ -187,18 +187,23 @@ export async function deriveContainerIdentityFromHostname(host: string): Promise
   // Sandbox cookie override check
   if (hostLower.includes("surge-sand.basalthq.com") || hostLower.includes("localhost") || hostLower.includes("127.0.0.1")) {
     let cookieVal = "";
-    if (typeof window !== "undefined") {
+    if (cookieHeader) {
+      const match = cookieHeader.match(/pp_sandbox_brand_key=([^;]+)/);
+      if (match && match[1]) cookieVal = match[1].toLowerCase().trim();
+    } else if (typeof window !== "undefined") {
       const match = window.document.cookie.match(/pp_sandbox_brand_key=([^;]+)/);
       if (match && match[1]) cookieVal = match[1].toLowerCase().trim();
     } else {
       try {
         const { cookies } = require("next/headers");
-        cookieVal = String(cookies().get("pp_sandbox_brand_key")?.value || "").toLowerCase().trim();
+        const cookieStore = await cookies();
+        cookieVal = String(cookieStore.get("pp_sandbox_brand_key")?.value || "").toLowerCase().trim();
       } catch {}
     }
 
     if (cookieVal) {
       const isPlatform = cookieVal === "basaltsurge" || cookieVal === "portalpay";
+      console.log(`[brand-config] Sandbox override cookie found: ${cookieVal} for host: ${hostLower}`);
       return { brandKey: cookieVal, containerType: isPlatform ? "platform" : "partner" };
     }
   }

@@ -41,6 +41,33 @@ export function SandboxWidget() {
 
   const hideExtraSandboxControls = isLandingPage && !account?.address;
 
+  const [hasChanges, setHasChanges] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const cookies = window.document.cookie || "";
+
+    const fMatch = cookies.match(/pp_sandbox_fee_mode=([^;]+)/);
+    const initialFee = fMatch ? fMatch[1] : "fee_plus";
+
+    const sMatch = cookies.match(/pp_sandbox_split_mode=([^;]+)/);
+    const initialSplit = sMatch ? sMatch[1] : "single";
+
+    const bMatch = cookies.match(/pp_sandbox_brand_key=([^;]+)/);
+    const initialBrand = bMatch ? bMatch[1].toLowerCase().trim() : "basaltsurge";
+
+    const mMatch = cookies.match(/pp_sandbox_merchant_wallet=([^;]+)/);
+    const initialMerchant = mMatch ? mMatch[1].toLowerCase().trim() : "";
+
+    const changed =
+      feeMode !== initialFee ||
+      splitMode !== initialSplit ||
+      selectedBrand !== initialBrand ||
+      selectedMerchant !== initialMerchant;
+
+    setHasChanges(changed);
+  }, [feeMode, splitMode, selectedBrand, selectedMerchant]);
+
   const updateCookie = (name: string, value: string) => {
     if (typeof window !== "undefined") {
       document.cookie = `${name}=${value}; path=/; max-age=31536000; SameSite=Lax`;
@@ -404,7 +431,7 @@ export function SandboxWidget() {
           {/* Action buttons */}
           <div className="mt-5 pt-3 border-t border-white/5 flex items-center justify-between">
             <span className="text-[9px] text-zinc-500 font-medium italic">
-              {statusMessage || (isConfigLoading ? "Loading config..." : "Unsaved changes")}
+              {statusMessage || (isConfigLoading ? "Loading config..." : (hasChanges ? "Unsaved changes" : "Config active"))}
             </span>
             <button
               onClick={handleApply}
