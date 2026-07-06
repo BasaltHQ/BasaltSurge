@@ -1134,7 +1134,7 @@ export async function GET(req: NextRequest) {
 
     // Sandbox merchant wallet override check
     const cookieHeader = req.headers.get("cookie") || "";
-    if (host.toLowerCase().includes("surge-sand.basalthq.com") || host.toLowerCase().includes("localhost")) {
+    if (host.toLowerCase().includes("surge-sand.basalthq.com") || host.toLowerCase().includes("localhost") || host.toLowerCase().includes("127.0.0.1")) {
       const match = cookieHeader.match(/pp_sandbox_merchant_wallet=([^;]+)/);
       if (match && match[1]) {
         wallet = match[1].toLowerCase().trim();

@@ -11,7 +11,9 @@ import {
   User,
   Eye,
   EyeOff,
-  Lock
+  Lock,
+  AlertTriangle,
+  XCircle
 } from "lucide-react";
 
 export default function SandboxPanel() {
@@ -19,8 +21,9 @@ export default function SandboxPanel() {
   const [splitMode, setSplitMode] = useState<"single" | "dual">("single");
   const [brandsList, setBrandsList] = useState<string[]>([]);
   const [selectedBrand, setSelectedBrand] = useState("basaltsurge");
-  const [merchantsList, setMerchantsList] = useState<Array<{ merchant: string; displayName?: string }>>([]);
+  const [merchantsList, setMerchantsList] = useState<Array<{ merchant: string; displayName?: string; splitAddress?: string; splitAddressCredit?: string }>>([]);
   const [selectedMerchant, setSelectedMerchant] = useState("");
+  const [brandConfig, setBrandConfig] = useState<any>(null);
   const [isConfigLoading, setIsConfigLoading] = useState(false);
   const [widgetDisabled, setWidgetDisabled] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -87,6 +90,7 @@ export default function SandboxPanel() {
         if (!active) return;
 
         const brandData = j?.brand || {};
+        setBrandConfig(brandData);
         
         // Fee Mode configuration resolution
         const targetFeeMode = brandData.feeMinusEnabled ? "fee_minus" : "fee_plus";
@@ -108,7 +112,9 @@ export default function SandboxPanel() {
         const items = Array.isArray(jm?.items) ? jm.items : [];
         const mappedMerchants = items.map((it: any) => ({
           merchant: String(it.merchant || "").toLowerCase(),
-          displayName: it.displayName || ""
+          displayName: it.displayName || "",
+          splitAddress: it.splitAddress,
+          splitAddressCredit: it.splitAddressCredit,
         }));
         setMerchantsList(mappedMerchants);
 
@@ -158,6 +164,51 @@ export default function SandboxPanel() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const getDiagnostics = () => {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    if (!selectedMerchant) {
+      warnings.push("No merchant wallet overridden. Checkout portals will fall back to default routing.");
+      return { errors, warnings };
+    }
+
+    const merchantInfo = merchantsList.find(m => m.merchant === selectedMerchant);
+
+    // 1. Split contract checks
+    if (!merchantInfo) {
+      errors.push(`Merchant details for ${selectedMerchant.slice(0, 10)}... not found in current brand list.`);
+    } else {
+      if (!merchantInfo.splitAddress) {
+        errors.push("Active split contract is not deployed for this merchant.");
+      }
+      if (splitMode === "dual" && !merchantInfo.splitAddressCredit) {
+        errors.push("Dual split mode is active but Debit/Card split address (splitAddressCredit) is not configured.");
+      }
+    }
+
+    // 2. Brand config checks
+    if (brandConfig) {
+      if (!brandConfig.thirdwebClientId) {
+        errors.push("Thirdweb Client ID is missing. Web3 wallet connections will fail.");
+      }
+      if (splitMode === "dual" && !brandConfig.primaryAgentWallet) {
+        warnings.push("Primary agent wallet address is not configured for card split routing.");
+      }
+      const pBps = brandConfig.platformFeeBps || 0;
+      const ptBps = brandConfig.partnerFeeBps || 0;
+      if (pBps + ptBps > 10000) {
+        errors.push(`Basis points sum (${pBps + ptBps}) exceeds 10000 (100%) BPS limit.`);
+      }
+    } else if (!isConfigLoading) {
+      warnings.push("Could not load container brand configuration document.");
+    }
+
+    return { errors, warnings };
+  };
+
+  const diag = getDiagnostics();
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -263,6 +314,55 @@ export default function SandboxPanel() {
           <p className="text-[10px] text-zinc-500 italic">No merchants registered under this brand.</p>
         )}
       </div>
+
+      {/* Diagnostics Card */}
+      {selectedMerchant && (
+        <div className="p-6 rounded-xl border border-white/5 bg-black/45 glass-pane space-y-4">
+          <div className="flex items-center justify-between border-b border-white/5 pb-3">
+            <div className="flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-amber-500 animate-pulse" />
+              <h3 className="text-sm font-semibold text-white">Diagnostics & Health Check</h3>
+            </div>
+            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+              diag.errors.length > 0 
+                ? "bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse" 
+                : diag.warnings.length > 0 
+                  ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" 
+                  : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+            }`}>
+              {diag.errors.length > 0 ? "Errors Detected" : diag.warnings.length > 0 ? "Warnings Detected" : "Healthy"}
+            </span>
+          </div>
+
+          {diag.errors.length === 0 && diag.warnings.length === 0 ? (
+            <div className="flex items-center gap-2.5 text-xs text-emerald-400 bg-emerald-500/5 border border-emerald-500/10 p-3 rounded-lg">
+              <Check className="w-4 h-4 shrink-0" />
+              <span>All configurations verified successfully for this merchant. Sandbox is ready for end-to-end checkout runs.</span>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {diag.errors.map((err, i) => (
+                <div key={`err-${i}`} className="flex items-start gap-2.5 text-xs text-rose-400 bg-rose-500/5 border border-rose-500/10 p-3 rounded-lg">
+                  <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold uppercase tracking-wider text-[9px] bg-rose-500/20 text-rose-300 px-1 py-0.25 rounded mr-1.5">Error</span>
+                    {err}
+                  </div>
+                </div>
+              ))}
+              {diag.warnings.map((warn, i) => (
+                <div key={`warn-${i}`} className="flex items-start gap-2.5 text-xs text-amber-400 bg-amber-500/5 border border-amber-500/10 p-3 rounded-lg">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold uppercase tracking-wider text-[9px] bg-amber-500/20 text-amber-300 px-1 py-0.25 rounded mr-1.5">Warning</span>
+                    {warn}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Preset combos section */}
       <div className="relative">

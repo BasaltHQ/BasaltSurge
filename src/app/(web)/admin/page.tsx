@@ -4837,7 +4837,16 @@ function UsersPanel() {
   const [releaseLoading, setReleaseLoading] = useState<Record<string, boolean>>({});
   const [releaseError, setReleaseError] = useState<Record<string, string>>({});
   const [releaseResults, setReleaseResults] = useState<Map<string, any[]>>(new Map());
-  const [brandKeyFilter, setBrandKeyFilter] = useState<string>("__none__");
+  const [brandKeyFilter, setBrandKeyFilter] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const cookies = window.document.cookie || "";
+      const match = cookies.match(/pp_sandbox_brand_key=([^;]+)/);
+      if (match && match[1]) {
+        return match[1].toLowerCase().trim();
+      }
+    }
+    return brand?.key && brand.key !== "basaltsurge" && brand.key !== "portalpay" ? brand.key : "__none__";
+  });
   const [brandsList, setBrandsList] = useState<string[]>([]);
   // Friendly formatter for platform release messages
   function formatPlatformMessage(rr: { symbol?: string; status?: string; transactionHash?: string; reason?: string }): string {
@@ -5132,7 +5141,7 @@ function UsersPanel() {
     }
   }
 
-  useEffect(() => { fetchUsersData(); }, [account?.address]);
+  useEffect(() => { fetchUsersData(); }, [account?.address, brandKeyFilter]);
 
   // Load brand list for filter
   useEffect(() => {
@@ -5145,11 +5154,6 @@ function UsersPanel() {
       } catch { }
     })();
   }, []);
-
-  // Brand filter is fixed by container; no auto reindex
-  useEffect(() => {
-    // no-op to avoid auto reindexing
-  }, [brandKeyFilter]);
 
   async function toggleMerchantFeature(merchant: string, feature: 'kioskEnabled' | 'terminalEnabled', value: boolean) {
     // Optimistic update
@@ -5625,7 +5629,7 @@ function UsersPanel() {
       </div>
 
       {/* Controls: search/filter/sort/pagination */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className={`grid grid-cols-1 md:grid-cols-2 ${containerTypeEnv === "platform" ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-4`}>
         <div className="space-y-1.5">
           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Search</label>
           <input
@@ -5635,6 +5639,22 @@ function UsersPanel() {
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+
+        {containerTypeEnv === "platform" && (
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Brand Filter</label>
+            <select
+              className="w-full h-10 px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none font-mono text-xs"
+              value={brandKeyFilter}
+              onChange={(e) => setBrandKeyFilter(e.target.value)}
+            >
+              <option value="__none__">All Brands</option>
+              {brandsList.map((bk) => (
+                <option key={bk} value={bk}>{bk}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="space-y-1.5">
           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Tag Filter</label>

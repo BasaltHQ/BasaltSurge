@@ -523,7 +523,7 @@ export async function GET(req: NextRequest) {
       allSplitAddressesMap.set(w, existing);
     }
 
-    const allowedWallets =
+    const allowedWallets = (
       containerType === "partner"
         ? Array.from(new Set<string>([...walletsFromIndex, ...fallbackWalletsFromSiteConfig]))
         : (qBrand
@@ -533,7 +533,8 @@ export async function GET(req: NextRequest) {
               .map(([w]) => w),
             ...fallbackWalletsFromSiteConfig,
           ]))
-          : allWallets);
+          : allWallets)
+    ).filter(w => !disallowedWallets.has(w));
 
     const items: UsersAggRow[] = allowedWallets
       .map((m) => {

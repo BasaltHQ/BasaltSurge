@@ -559,14 +559,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
 
   // Sandbox merchant override check
-  let sandboxMerchantOverride = "";
-  if (typeof window !== "undefined") {
+  const [sandboxMerchantOverride, setSandboxMerchantOverride] = useState("");
+  useEffect(() => {
     const cookies = window.document.cookie || "";
     const match = cookies.match(/pp_sandbox_merchant_wallet=([^;]+)/);
     if (match && match[1]) {
-      sandboxMerchantOverride = match[1].toLowerCase().trim();
+      setSandboxMerchantOverride(match[1].toLowerCase().trim());
     }
-  }
+  }, []);
 
   // Resolve recipient from QR/link param or ?wallet if present; fallback to default
   const recipientParam = sandboxMerchantOverride || (propRecipient || String(searchParams?.get("recipient") || "")).toLowerCase();

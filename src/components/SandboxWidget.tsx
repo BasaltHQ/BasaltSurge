@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useActiveAccount } from "thirdweb/react";
 import { 
   Sliders, 
   X, 
@@ -11,7 +12,9 @@ import {
   GitMerge, 
   Sparkles,
   User,
-  Lock
+  Lock,
+  AlertTriangle,
+  XCircle
 } from "lucide-react";
 
 export function SandboxWidget() {
@@ -21,10 +24,22 @@ export function SandboxWidget() {
   const [splitMode, setSplitMode] = useState<"single" | "dual">("single");
   const [brandsList, setBrandsList] = useState<string[]>([]);
   const [selectedBrand, setSelectedBrand] = useState("basaltsurge");
-  const [merchantsList, setMerchantsList] = useState<Array<{ merchant: string; displayName?: string }>>([]);
+  const [merchantsList, setMerchantsList] = useState<Array<{ merchant: string; displayName?: string; splitAddress?: string; splitAddressCredit?: string }>>([]);
   const [selectedMerchant, setSelectedMerchant] = useState("");
+  const [brandConfig, setBrandConfig] = useState<any>(null);
   const [isConfigLoading, setIsConfigLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
+
+  const account = useActiveAccount();
+  const [isLandingPage, setIsLandingPage] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsLandingPage(window.location.pathname === "/");
+    }
+  }, []);
+
+  const hideExtraSandboxControls = isLandingPage && !account?.address;
 
   const updateCookie = (name: string, value: string) => {
     if (typeof window !== "undefined") {
@@ -88,6 +103,7 @@ export function SandboxWidget() {
         if (!active) return;
 
         const brandData = j?.brand || {};
+        setBrandConfig(brandData);
         
         // Fee Mode configuration resolution
         const targetFeeMode = brandData.feeMinusEnabled ? "fee_minus" : "fee_plus";
@@ -107,7 +123,9 @@ export function SandboxWidget() {
         const items = Array.isArray(jm?.items) ? jm.items : [];
         const mappedMerchants = items.map((it: any) => ({
           merchant: String(it.merchant || "").toLowerCase(),
-          displayName: it.displayName || ""
+          displayName: it.displayName || "",
+          splitAddress: it.splitAddress,
+          splitAddressCredit: it.splitAddressCredit
         }));
         setMerchantsList(mappedMerchants);
 
@@ -157,6 +175,42 @@ export function SandboxWidget() {
     }, 800);
   };
 
+  const getDiagnostics = () => {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    if (!selectedMerchant) {
+      warnings.push("No merchant override set.");
+      return { errors, warnings };
+    }
+
+    const merchantInfo = merchantsList.find(m => m.merchant === selectedMerchant);
+
+    if (!merchantInfo) {
+      errors.push("Merchant details not found in current brand.");
+    } else {
+      if (!merchantInfo.splitAddress) {
+        errors.push("Active split contract not deployed.");
+      }
+      if (splitMode === "dual" && !merchantInfo.splitAddressCredit) {
+        errors.push("Dual split active but splitAddressCredit missing.");
+      }
+    }
+
+    if (brandConfig) {
+      if (!brandConfig.thirdwebClientId) {
+        errors.push("Thirdweb Client ID is missing.");
+      }
+      if (splitMode === "dual" && !brandConfig.primaryAgentWallet) {
+        warnings.push("Primary agent wallet missing.");
+      }
+    }
+
+    return { errors, warnings };
+  };
+
+  const diag = getDiagnostics();
+
   return (
     <div className="fixed bottom-6 right-6 z-[9999] font-sans antialiased">
       {/* Floating Gear/Slider Trigger Button */}
@@ -192,73 +246,84 @@ export function SandboxWidget() {
 
           {/* Controls list */}
           <div className="space-y-4">
+            {hideExtraSandboxControls && (
+              <div className="p-3 rounded-xl border border-amber-500/25 bg-amber-500/5 text-amber-400 text-[10px] flex items-start gap-2 leading-relaxed">
+                <Lock className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>To simulate custom merchant themes, test split strategies, or view system diagnostics, please connect your wallet first.</span>
+              </div>
+            )}
+
             {/* Fee Mode */}
-            <div className="space-y-1.5 relative opacity-60 select-none">
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
-                <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
-                  <Lock className="w-2.5 h-2.5 text-amber-400" />
-                  Locked: Brand Config
-                </span>
-              </div>
-              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                <DollarSign className="w-3 h-3 text-emerald-400" />
-                Fee Mode
-              </label>
-              <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
-                <div
-                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                    feeMode === "fee_plus"
-                      ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-600"
-                  }`}
-                >
-                  Fee on Top (Fee+)
+            {!hideExtraSandboxControls && (
+              <div className="space-y-1.5 relative opacity-60 select-none">
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
+                  <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
+                    <Lock className="w-2.5 h-2.5 text-amber-400" />
+                    Locked: Brand Config
+                  </span>
                 </div>
-                <div
-                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                    feeMode === "fee_minus"
-                      ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-600"
-                  }`}
-                >
-                  Deducted (Fee-)
+                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                  <DollarSign className="w-3 h-3 text-emerald-400" />
+                  Fee Mode
+                </label>
+                <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
+                  <div
+                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
+                      feeMode === "fee_plus"
+                        ? "bg-amber-500 text-black shadow-md"
+                        : "text-zinc-600"
+                    }`}
+                  >
+                    Fee on Top (Fee+)
+                  </div>
+                  <div
+                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
+                      feeMode === "fee_minus"
+                        ? "bg-amber-500 text-black shadow-md"
+                        : "text-zinc-600"
+                    }`}
+                  >
+                    Deducted (Fee-)
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Split Mode */}
-            <div className="space-y-1.5 relative opacity-60 select-none">
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
-                <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
-                  <Lock className="w-2.5 h-2.5 text-amber-400" />
-                  Locked: Brand Config
-                </span>
-              </div>
-              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                <GitMerge className="w-3 h-3 text-purple-400" />
-                Split Strategy
-              </label>
-              <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
-                <div
-                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                    splitMode === "single"
-                      ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-600"
-                  }`}
-                >
-                  Single Split
+            {!hideExtraSandboxControls && (
+              <div className="space-y-1.5 relative opacity-60 select-none">
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
+                  <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
+                    <Lock className="w-2.5 h-2.5 text-amber-400" />
+                    Locked: Brand Config
+                  </span>
                 </div>
-                <div
-                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                    splitMode === "dual"
-                      ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-600"
-                  }`}
-                >
-                  Dual Split
+                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                  <GitMerge className="w-3 h-3 text-purple-400" />
+                  Split Strategy
+                </label>
+                <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
+                  <div
+                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
+                      splitMode === "single"
+                        ? "bg-amber-500 text-black shadow-md"
+                        : "text-zinc-600"
+                    }`}
+                  >
+                    Single Split
+                  </div>
+                  <div
+                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
+                      splitMode === "dual"
+                        ? "bg-amber-500 text-black shadow-md"
+                        : "text-zinc-600"
+                    }`}
+                  >
+                    Dual Split
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Brand Key Selector */}
             <div className="space-y-1.5">
@@ -287,32 +352,53 @@ export function SandboxWidget() {
             </div>
 
             {/* Merchant Wallet Selector */}
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                <User className="w-3 h-3 text-emerald-400" />
-                Merchant Wallet Override
-              </label>
-              <div className="relative">
-                <select
-                  value={selectedMerchant}
-                  onChange={(e) => setSelectedMerchant(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-[10px] rounded-lg border border-white/10 bg-zinc-950 text-white focus:outline-none focus:border-amber-500/50 appearance-none font-mono"
-                  disabled={merchantsList.length === 0}
-                >
-                  <option value="" className="bg-zinc-950">None (Clear Override)</option>
-                  {merchantsList.map((m) => (
-                    <option key={m.merchant} value={m.merchant} className="bg-zinc-950">
-                      {m.displayName ? `${m.displayName} (${m.merchant.slice(0, 8)}...)` : m.merchant}
-                    </option>
-                  ))}
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-zinc-400">
-                  <svg className="fill-current h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                    <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
-                  </svg>
+            {!hideExtraSandboxControls && (
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                  <User className="w-3 h-3 text-emerald-400" />
+                  Merchant Wallet Override
+                </label>
+                <div className="relative">
+                  <select
+                    value={selectedMerchant}
+                    onChange={(e) => setSelectedMerchant(e.target.value)}
+                    className="w-full px-2.5 py-1.5 text-[10px] rounded-lg border border-white/10 bg-zinc-950 text-white focus:outline-none focus:border-amber-500/50 appearance-none font-mono"
+                    disabled={merchantsList.length === 0}
+                  >
+                    <option value="" className="bg-zinc-950">None (Clear Override)</option>
+                    {merchantsList.map((m) => (
+                      <option key={m.merchant} value={m.merchant} className="bg-zinc-950">
+                        {m.displayName ? `${m.displayName} (${m.merchant.slice(0, 8)}...)` : m.merchant}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-zinc-400">
+                    <svg className="fill-current h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                      <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+                    </svg>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
+
+            {/* Diagnostics List */}
+            {!hideExtraSandboxControls && selectedMerchant && (diag.errors.length > 0 || diag.warnings.length > 0) && (
+              <div className="p-2.5 rounded-lg border border-white/5 bg-zinc-950 space-y-1.5 max-h-28 overflow-y-auto font-mono text-[9px]">
+                <span className="text-[8px] font-bold uppercase tracking-wider text-amber-500 block font-sans">Diagnostics Checklist</span>
+                {diag.errors.map((err, i) => (
+                  <div key={`we-${i}`} className="flex items-start gap-1.5 text-rose-400">
+                    <XCircle className="w-2.5 h-2.5 shrink-0 mt-0.5" />
+                    <span>{err}</span>
+                  </div>
+                ))}
+                {diag.warnings.map((warn, i) => (
+                  <div key={`ww-${i}`} className="flex items-start gap-1.5 text-amber-400">
+                    <AlertTriangle className="w-2.5 h-2.5 shrink-0 mt-0.5" />
+                    <span>{warn}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Action buttons */}
