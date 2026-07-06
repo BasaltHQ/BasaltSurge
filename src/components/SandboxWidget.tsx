@@ -245,6 +245,8 @@ export function SandboxWidget() {
 
   const diag = getDiagnostics();
 
+  if (!visible) return null;
+
   return (
     <div className="fixed bottom-6 right-6 z-[9999] font-sans antialiased">
       {/* Floating Gear/Slider Trigger Button */}
