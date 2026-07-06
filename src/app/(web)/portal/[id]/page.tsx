@@ -2118,11 +2118,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [items]);
 
   const unscaleFactor = useMemo(() => {
-    if (!feeMinusEnabled) return 1;
-    const baseSum = itemsSubtotalUsd + taxUsd;
+    if (!feeMinusEnabled || !receipt) return 1;
+    const shipItem = items.find((it) => /^shipping/i.test(it.label || ""));
+    const dbShippingCostUsd = shipItem ? Number(shipItem.priceUsd || 0) : 0;
+    const baseSum = itemsSubtotalUsd + taxUsd + dbShippingCostUsd;
     if (baseSum <= 0) return 1;
-    return (baseSum + storedProcessingFeeUsd) / baseSum;
-  }, [feeMinusEnabled, itemsSubtotalUsd, taxUsd, storedProcessingFeeUsd]);
+    const dbTotal = Number(receipt.totalUsd || 0);
+    if (dbTotal <= 0) return 1;
+    return dbTotal / baseSum;
+  }, [feeMinusEnabled, itemsSubtotalUsd, taxUsd, items, receipt]);
 
   const displayItemsSubtotalUsd = useMemo(() => {
     return feeMinusEnabled ? +(itemsSubtotalUsd * unscaleFactor).toFixed(2) : itemsSubtotalUsd;
