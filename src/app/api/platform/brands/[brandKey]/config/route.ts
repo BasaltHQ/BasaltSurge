@@ -158,6 +158,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     transakOnrampEnabled: typeof overrides.transakOnrampEnabled === "boolean" ? overrides.transakOnrampEnabled : withDefaults.transakOnrampEnabled,
     rampnowOnrampEnabled: typeof overrides.rampnowOnrampEnabled === "boolean" ? overrides.rampnowOnrampEnabled : withDefaults.rampnowOnrampEnabled,
     feeMinusEnabled: typeof overrides.feeMinusEnabled === "boolean" ? overrides.feeMinusEnabled : withDefaults.feeMinusEnabled,
+    thirdwebClientId: typeof overrides.thirdwebClientId === "string" ? overrides.thirdwebClientId.trim() : undefined,
   });
 
   return merged;

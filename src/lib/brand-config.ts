@@ -185,7 +185,7 @@ export async function deriveContainerIdentityFromHostname(host: string): Promise
   const hostLower = host.toLowerCase().split(":")[0];
 
   // Sandbox cookie override check
-  if (hostLower.includes("surge-sand.basalthq.com") || hostLower.includes("localhost")) {
+  if (hostLower.includes("surge-sand.basalthq.com") || hostLower.includes("localhost") || hostLower.includes("127.0.0.1")) {
     let cookieVal = "";
     if (typeof window !== "undefined") {
       const match = window.document.cookie.match(/pp_sandbox_brand_key=([^;]+)/);
