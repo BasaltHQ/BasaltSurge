@@ -14,40 +14,53 @@ const _isDebug = isDebug();
 // ── Connection pool ─────────────────────────────────────────────────────
 
 let _client: MongoClient | null = null;
+let _clientPromise: Promise<MongoClient> | null = null;
+let _registeredShutdown = false;
 
 async function getMongoClient(uri: string): Promise<MongoClient> {
-    // Simplified check: since the driver handles reconnection, we just check if the client is initialized.
-    const isConnected = !!_client;
+    if (_clientPromise) {
+        return _clientPromise;
+    }
 
-    if (!_client || !isConnected) {
-        if (_client) {
-            // Attempt to cleanly close the broken client before replacing
-            _client.close().catch(() => { });
-        }
+    const extraOptions: any = {
+        retryWrites: true,
+        retryReads: true,
+    };
 
-        _client = new MongoClient(uri, {
-            maxPoolSize: 20,
-            minPoolSize: 2,
-            retryWrites: true,
-            retryReads: true,
+    const urlLower = uri.toLowerCase();
+    if (!urlLower.includes("maxpoolsize=")) {
+        extraOptions.maxPoolSize = parseInt(process.env.MONGO_MAX_POOL_SIZE || "20", 10);
+    }
+    if (!urlLower.includes("minpoolsize=")) {
+        extraOptions.minPoolSize = parseInt(process.env.MONGO_MIN_POOL_SIZE || "2", 10);
+    }
+
+    _client = new MongoClient(uri, extraOptions);
+
+    _clientPromise = _client.connect()
+        .then((client) => client)
+        .catch((err) => {
+            _clientPromise = null;
+            _client = null;
+            throw err;
         });
-        await _client.connect();
 
-        // Graceful shutdown
+    if (!_registeredShutdown) {
+        _registeredShutdown = true;
         const cleanup = async () => {
             if (_client) {
-                await _client.close();
+                console.log("[MongoDB] Gracefully closing client connection pool on process termination...");
+                const clientToClose = _client;
                 _client = null;
+                _clientPromise = null;
+                await clientToClose.close().catch(() => {});
             }
         };
-        // Remove existing listeners to prevent leaks when replacing clients
-        const events = ["SIGINT", "SIGTERM"];
-        events.forEach(eventName => {
-            process.removeAllListeners(eventName);
-            process.on(eventName, cleanup);
-        });
+        process.on("SIGINT", cleanup);
+        process.on("SIGTERM", cleanup);
     }
-    return _client;
+
+    return _clientPromise;
 }
 
 // ── Types matching Cosmos SDK shapes ────────────────────────────────────
