@@ -61,7 +61,6 @@ export async function POST(req: NextRequest) {
     if (merchantWallet) params.append("metadata[merchantWallet]", merchantWallet);
     if (redirectUrl) params.append("metadata[redirectUrl]", redirectUrl);
 
-    const body = await req.clone().json().catch(() => ({}));
     const splitMode = String(body.splitMode || "").trim().toLowerCase();
     if (splitMode) {
       params.append("metadata[splitMode]", splitMode);
