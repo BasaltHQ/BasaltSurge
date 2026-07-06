@@ -1036,7 +1036,9 @@ export default async function RootLayout({
                       <div id="mobile-navbar-spacer" className="sm:hidden h-2" />
                       <SplitGuardMount />
                       {children}
-                      <SandboxWidget />
+                      {(process.env.CONTAINER_TYPE !== "partner" && process.env.NEXT_PUBLIC_CONTAINER_TYPE !== "partner") && (
+                        <SandboxWidget />
+                      )}
                     </AutoTranslateProvider>
                   </I18nProvider>
                 </FarcasterProvider>

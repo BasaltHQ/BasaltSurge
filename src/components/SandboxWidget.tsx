@@ -77,6 +77,13 @@ export function SandboxWidget() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
+    // Never show the sandbox widget on partner containers
+    const isPartnerContainer = process.env.NEXT_PUBLIC_CONTAINER_TYPE === "partner";
+    if (isPartnerContainer) {
+      setVisible(false);
+      return;
+    }
+
     // Only show on sandbox hostname or localhost
     const hostname = window.location.hostname;
     const isSandboxHost = hostname === "surge-sand.basalthq.com" || hostname === "localhost" || hostname === "127.0.0.1";
