@@ -61,7 +61,8 @@ import {
   Code,
   GraduationCap,
   Clock,
-  Mail
+  Mail,
+  Sliders
 } from 'lucide-react';
 import { useBrand } from '@/contexts/BrandContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -136,6 +137,7 @@ export type AdminTabKey =
   | 'leaderboard'
   | 'autoclose'
   | 'emailConfig'
+  | 'sandbox'
   | 'agentUniversity';
 
 interface AdminSidebarProps {
@@ -524,6 +526,9 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Autoclose', key: 'autoclose' as AdminTabKey, icon: <Clock className="w-4 h-4" /> },
         { title: 'Notifications', key: 'notificationsPlatform' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
         ...(process.env.NEXT_PUBLIC_DECENTRALIZATION?.toUpperCase() === 'TRUE' ? [{ title: 'Node Operators', key: 'nodeOperators' as AdminTabKey, icon: <Server className="w-4 h-4" /> }] : []),
+        ...(typeof window !== 'undefined' && window.location.hostname === 'surge-sand.basalthq.com'
+          ? [{ title: 'Sandbox', key: 'sandbox' as AdminTabKey, icon: <Sliders className="w-4 h-4" /> }]
+          : []),
       ].filter((item) => canAccessPanel(item.key as any, wallet)),
     },
     {

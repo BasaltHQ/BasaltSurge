@@ -88,11 +88,17 @@ export async function GET(req: NextRequest) {
           // Extract partner wallet from site_config (most recent doc wins)
           const pw = String(doc?.partnerWallet || "").toLowerCase();
           if (/^0x[a-f0-9]{40}$/i.test(pw)) resolvedPartnerWallet = pw;
-          // Extract agent wallets from splitConfig.agents
-          if (Array.isArray(doc?.splitConfig?.agents)) {
-            for (const a of doc.splitConfig.agents) {
-              const aw = String(a?.wallet || "").toLowerCase();
-              if (/^0x[a-f0-9]{40}$/i.test(aw)) resolvedAgentWallets.add(aw);
+          // Extract agent wallets from BOTH splitConfig and splitConfigCredit
+          const agentConfigs = [
+            doc?.splitConfig?.agents,
+            doc?.splitConfigCredit?.agents,
+          ];
+          for (const agentsList of agentConfigs) {
+            if (Array.isArray(agentsList)) {
+              for (const a of agentsList) {
+                const aw = String(a?.wallet || "").toLowerCase();
+                if (/^0x[a-f0-9]{40}$/i.test(aw)) resolvedAgentWallets.add(aw);
+              }
             }
           }
         }
@@ -252,7 +258,7 @@ export async function GET(req: NextRequest) {
         const container = await getContainer();
         const indexId = `split_index_${merchantAddrLower}`;
         const { resource } = await container.item(indexId, indexId).read();
-        if (resource && Array.isArray(resource.transactions) && resource.transactions.length > 0) {
+        if (resource && Array.isArray(resource.transactions)) {
           // Filter transactions for this specific split address if needed
           const txs = resource.transactions
             .filter((tx: any) => {
@@ -282,256 +288,44 @@ export async function GET(req: NextRequest) {
           );
         }
       } catch {
-        // split_index not found or read error — fall through to Blockscout
+        // split_index not found or read error — fall through to Thirdweb
       }
     }
 
-    // ── STEP 2: Fetch live from Blockscout ──
-    const transactionsUrl = `https://base.blockscout.com/api/v2/addresses/${splitAddress}/transactions`;
-    const tokenTransfersBaseUrl = `https://base.blockscout.com/api/v2/addresses/${splitAddress}/token-transfers`;
-    const logsUrl = `https://base.blockscout.com/api/v2/addresses/${splitAddress}/logs`;
-
-    const [txResponse, logsResponse] = await Promise.all([
-      fetch(transactionsUrl, { headers: { "Accept": "application/json" } }),
-      fetch(logsUrl, { headers: { "Accept": "application/json" } }).catch(() => null)
-    ]);
-
-    if (!txResponse.ok) throw new Error(`Blockscout transactions API returned ${txResponse.status}`);
-
-    // Paginate token transfers to capture ALL tokens (cbBTC, etc. may be on later pages)
-    let allTokenItems: any[] = [];
-    let tokenPageUrl: string | null = tokenTransfersBaseUrl;
-    for (let page = 0; page < 5 && tokenPageUrl; page++) {
+    // Try to resolve the creation/deployment timestamp of the split contract from site_config
+    let resolvedDeployedAt: number | undefined;
+    if (merchantAddrLower && /^0x[a-f0-9]{40}$/i.test(merchantAddrLower)) {
       try {
-        const tokenResponse = await fetch(tokenPageUrl, { headers: { "Accept": "application/json" } });
-        if (!tokenResponse.ok) break;
-        const tokenData = await tokenResponse.json();
-        const items = Array.isArray(tokenData?.items) ? tokenData.items : [];
-        allTokenItems = allTokenItems.concat(items);
-        if (tokenData?.next_page_params) {
-          const params = new URLSearchParams();
-          for (const [k, v] of Object.entries(tokenData.next_page_params)) {
-            params.set(k, String(v));
-          }
-          tokenPageUrl = `${tokenTransfersBaseUrl}?${params.toString()}`;
-        } else {
-          tokenPageUrl = null;
-        }
-      } catch { break; }
-    }
+        const container = await getContainer();
+        const { resources } = await container.items.query({
+          query: `SELECT c.createdAt, c.updatedAt, c.splitHistory FROM c WHERE c.type = 'site_config' AND c.wallet = @w`,
+          parameters: [{ name: "@w", value: merchantAddrLower }],
+        }).fetchAll();
 
-    const txData = await txResponse.json();
-
-    let logsData: any = null;
-    if (logsResponse && logsResponse.ok) {
-      try { logsData = await logsResponse.json(); } catch { }
-    }
-
-    const tokenItems = allTokenItems;
-    const logItems = Array.isArray(logsData?.items) ? logsData.items : [];
-
-    // Token addresses for identification
-    const tokenAddresses: Record<string, string> = {
-      ETH: "native",
-      USDC: (process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "").toLowerCase(),
-      USDT: (process.env.NEXT_PUBLIC_BASE_USDT_ADDRESS || "").toLowerCase(),
-      cbBTC: (process.env.NEXT_PUBLIC_BASE_CBBTC_ADDRESS || "").toLowerCase(),
-      cbXRP: (process.env.NEXT_PUBLIC_BASE_CBXRP_ADDRESS || "").toLowerCase(),
-      SOL: (process.env.NEXT_PUBLIC_BASE_SOL_ADDRESS || "").toLowerCase(),
-    };
-
-    const addressToToken = new Map<string, string>();
-    for (const [symbol, addr] of Object.entries(tokenAddresses)) {
-      if (addr && addr !== "native") addressToToken.set(addr, symbol);
-    }
-
-    // Platform wallet: current + old hardcoded + any historical ones from PLATFORM_WALLET_HISTORY env
-    const OLD_PLATFORM_WALLET = "0x00fe4f0104a989ca65df6b825a6c1682413bca56";
-    const currentPlatformAddr = (process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "").toLowerCase();
-    const platformWalletHistory = String(process.env.PLATFORM_WALLET_HISTORY || "").toLowerCase()
-      .split(",").map(s => s.trim()).filter(s => /^0x[a-f0-9]{40}$/i.test(s));
-    const allPlatformWallets = new Set<string>(
-      [currentPlatformAddr, OLD_PLATFORM_WALLET, ...platformWalletHistory].filter(s => /^0x[a-f0-9]{40}$/i.test(s))
-    );
-
-    // Build tx_hash → timestamp map from the transactions endpoint
-    // (Blockscout logs don't include timestamps, but transactions do)
-    const txTimestampMap = new Map<string, number>();
-    const txItems = Array.isArray(txData?.items) ? txData.items : [];
-    for (const tx of txItems) {
-      const hash = String(tx?.hash || "").toLowerCase();
-      const ts = tx?.timestamp ? new Date(tx.timestamp).getTime() : 0;
-      if (hash && ts > 0) txTimestampMap.set(hash, ts);
-    }
-
-    const cumulativePayments: Record<string, number> = {};
-    const cumulativeMerchantReleases: Record<string, number> = {};
-    const cumulativePartnerReleases: Record<string, number> = {};
-    const cumulativeAgentReleases: Record<string, number> = {};
-    const cumulativePlatformReleases: Record<string, number> = {};
-
-    // ── ETH FLOW DETECTION VIA CONTRACT EVENT LOGS ──
-    const PAYMENT_RECEIVED_TOPIC = "0x6ef95f06320e7a25a04a175ca677b7052bdd97131872c2192525a629f51be770";
-    const PAYMENT_RELEASED_TOPIC = "0xdf20fd1e76bc69d672e4814fafb2c449bba3a5369d8359adf9e05e6fde87b056";
-
-    const ethTransactions: any[] = [];
-
-    for (const log of logItems) {
-      try {
-        const topics = Array.isArray(log?.topics) ? log.topics : [];
-        const topic0 = String(topics[0] || "").toLowerCase();
-        const dataHex = String(log?.data || "0x");
-        const txHash = String(log?.tx_hash || log?.transaction_hash || "").toLowerCase();
-        // Resolve timestamp: log.timestamp > txHash lookup > 0
-        const timestamp = log?.timestamp ? new Date(log.timestamp).getTime()
-          : (txTimestampMap.get(txHash) || 0);
-        const blockNumber = log?.block_number || 0;
-
-        if (!dataHex.startsWith("0x") || dataHex.length < 130) continue;
-
-        const dataWithoutPrefix = dataHex.slice(2);
-        const addressSegment = dataWithoutPrefix.slice(0, 64);
-        const addr = `0x${addressSegment.slice(-40)}`.toLowerCase();
-        const amountHex = `0x${dataWithoutPrefix.slice(64, 128)}`;
-        const amountWei = BigInt(amountHex);
-        const amountEth = Number(amountWei) / 1e18;
-
-        if (amountEth <= 0) continue;
-
-        if (topic0 === PAYMENT_RECEIVED_TOPIC.toLowerCase()) {
-          cumulativePayments['ETH'] = (cumulativePayments['ETH'] || 0) + amountEth;
-          ethTransactions.push({
-            hash: txHash, from: addr, to: splitAddrLower,
-            value: amountEth, timestamp, blockNumber,
-            status: "success", type: 'payment', token: 'ETH',
-            splitAddress: splitAddrLower,
-          });
-        } else if (topic0 === PAYMENT_RELEASED_TOPIC.toLowerCase()) {
-          // RELEASE DETECTION — 4-way reconciliation:
-          // merchant → partner (qPartnerWallet) → agent (qAgentWallets) → platform (remainder)
-          let releaseType: 'merchant' | 'partner' | 'agent' | 'platform' = 'platform';
-          if (addr === merchantAddrLower) {
-            releaseType = 'merchant';
-            cumulativeMerchantReleases['ETH'] = (cumulativeMerchantReleases['ETH'] || 0) + amountEth;
-          } else if (qPartnerWallet && addr === qPartnerWallet && !allPlatformWallets.has(addr)) {
-            releaseType = 'partner';
-            cumulativePartnerReleases['ETH'] = (cumulativePartnerReleases['ETH'] || 0) + amountEth;
-          } else if (qAgentWallets.includes(addr)) {
-            releaseType = 'agent';
-            cumulativeAgentReleases['ETH'] = (cumulativeAgentReleases['ETH'] || 0) + amountEth;
-          } else {
-            releaseType = 'platform';
-            cumulativePlatformReleases['ETH'] = (cumulativePlatformReleases['ETH'] || 0) + amountEth;
-          }
-
-          ethTransactions.push({
-            hash: txHash, from: splitAddrLower, to: addr,
-            value: amountEth, timestamp, blockNumber,
-            status: "success", type: 'release',
-            releaseType, releaseTo: addr, token: 'ETH',
-            splitAddress: splitAddrLower,
-          });
-        }
-      } catch { /* skip malformed log */ }
-    }
-
-    // Resolve timestamps for any ETH transactions that have timestamp 0
-    // (release tx hashes may not be in the first page of the transactions endpoint)
-    const unresolvedHashes = new Set<string>();
-    for (const tx of ethTransactions) {
-      if (tx.timestamp === 0 && tx.hash) unresolvedHashes.add(tx.hash);
-    }
-    if (unresolvedHashes.size > 0) {
-      const fetchPromises = Array.from(unresolvedHashes).slice(0, 10).map(async (hash) => {
-        try {
-          const r = await fetch(`https://base.blockscout.com/api/v2/transactions/${hash}`, {
-            headers: { "Accept": "application/json" }
-          });
-          if (r.ok) {
-            const txDetail = await r.json();
-            if (txDetail?.timestamp) {
-              txTimestampMap.set(hash, new Date(txDetail.timestamp).getTime());
+        for (const doc of (resources || [])) {
+          if (Array.isArray(doc?.splitHistory)) {
+            const hist = doc.splitHistory.find((h: any) => String(h?.address || "").toLowerCase() === splitAddrLower);
+            if (hist && hist.deployedAt) {
+              resolvedDeployedAt = Number(hist.deployedAt);
+              break;
             }
           }
-        } catch { /* skip */ }
-      });
-      await Promise.all(fetchPromises);
-      // Update timestamps on the already-collected ethTransactions
-      for (const tx of ethTransactions) {
-        if (tx.timestamp === 0 && tx.hash && txTimestampMap.has(tx.hash)) {
-          tx.timestamp = txTimestampMap.get(tx.hash)!;
+          if (doc?.createdAt) resolvedDeployedAt = Number(doc.createdAt);
+          else if (doc?.updatedAt) resolvedDeployedAt = Number(doc.updatedAt);
         }
-      }
+      } catch { /* best effort */ }
     }
 
-    // ── TOKEN TRANSFERS ──
-    const supportedTokens = ["USDC", "USDT", "cbBTC", "cbXRP", "SOL"];
-    const tokenTransactions = tokenItems.map((transfer: any) => {
-      const tokenAddr = String(transfer?.token?.address || "").toLowerCase();
-      let tokenSymbol = addressToToken.get(tokenAddr);
-      if (!tokenSymbol) {
-        const blockscoutSymbol = String(transfer?.token?.symbol || "").toUpperCase();
-        if (blockscoutSymbol === "USDC" || blockscoutSymbol.includes("USDC")) tokenSymbol = "USDC";
-        else if (blockscoutSymbol === "USDT" || blockscoutSymbol.includes("USDT")) tokenSymbol = "USDT";
-        else if (blockscoutSymbol === "CBBTC" || blockscoutSymbol.includes("BTC")) tokenSymbol = "cbBTC";
-        else if (blockscoutSymbol === "CBXRP" || blockscoutSymbol.includes("XRP")) tokenSymbol = "cbXRP";
-        else if (blockscoutSymbol === "SOL" || blockscoutSymbol.includes("SOL")) tokenSymbol = "SOL";
-        else return null;
-      }
-      if (!supportedTokens.includes(tokenSymbol)) return null;
-
-      const blockscoutDecimals = Number(transfer?.token?.decimals || 0);
-      const decimals = blockscoutDecimals > 0 ? blockscoutDecimals : (KNOWN_DECIMALS[tokenSymbol] ?? 18);
-      const valueRaw = String(transfer?.total?.value || "0");
-      let valueInToken = Number(valueRaw) / Math.pow(10, decimals);
-      valueInToken = sanitizeAmount(tokenSymbol, valueInToken);
-      if (!(valueInToken > 0)) return null;
-
-      const timestamp = transfer?.timestamp ? new Date(transfer.timestamp).getTime() : 0;
-      const hash = String(transfer?.tx_hash || transfer?.hash || transfer?.transaction_hash || transfer?.tx?.hash || "").toLowerCase();
-      const from = String(transfer?.from?.hash || "").toLowerCase();
-      const to = String(transfer?.to?.hash || "").toLowerCase();
-
-      let txType: 'payment' | 'release' | 'unknown' = 'unknown';
-      let releaseType: 'merchant' | 'partner' | 'agent' | 'platform' | undefined;
-      let releaseTo: string | undefined;
-
-      const isPayment = to === splitAddrLower && from !== merchantAddrLower && !allPlatformWallets.has(from);
-      const isRelease = from === splitAddrLower;
-
-      if (isPayment) {
-        txType = 'payment';
-        cumulativePayments[tokenSymbol] = (cumulativePayments[tokenSymbol] || 0) + valueInToken;
-      } else if (isRelease) {
-        txType = 'release';
-        releaseTo = to;
-        // 4-way reconciliation: merchant → partner → agent → platform (remainder)
-        if (to === merchantAddrLower) {
-          releaseType = 'merchant';
-          cumulativeMerchantReleases[tokenSymbol] = (cumulativeMerchantReleases[tokenSymbol] || 0) + valueInToken;
-        } else if (qPartnerWallet && to === qPartnerWallet && !allPlatformWallets.has(to)) {
-          releaseType = 'partner';
-          cumulativePartnerReleases[tokenSymbol] = (cumulativePartnerReleases[tokenSymbol] || 0) + valueInToken;
-        } else if (qAgentWallets.includes(to)) {
-          releaseType = 'agent';
-          cumulativeAgentReleases[tokenSymbol] = (cumulativeAgentReleases[tokenSymbol] || 0) + valueInToken;
-        } else {
-          releaseType = 'platform';
-          cumulativePlatformReleases[tokenSymbol] = (cumulativePlatformReleases[tokenSymbol] || 0) + valueInToken;
-        }
-      }
-
-      return {
-        hash, from: transfer?.from?.hash || "", to: transfer?.to?.hash || "",
-        value: valueInToken, timestamp, blockNumber: transfer?.block || 0,
-        status: "success", type: txType, releaseType, releaseTo, token: tokenSymbol,
-        splitAddress: splitAddrLower,
-      };
-    }).filter(Boolean);
-
-    const transactions = [...ethTransactions, ...tokenTransactions]
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, limit);
+    // ── STEP 2: Fetch live from Thirdweb ──
+    const { fetchSplitTransactionsThirdweb } = await import("@/lib/thirdweb/split-transactions");
+    const { transactions, cumulative } = await fetchSplitTransactionsThirdweb({
+      splitAddress: splitAddrLower,
+      merchantWallet: merchantAddrLower,
+      partnerWallet: qPartnerWallet,
+      agentWallets: qAgentWallets,
+      limit,
+      deployedAt: resolvedDeployedAt,
+    });
 
     // ── STEP 3: PERSIST to split_index ──
     if (merchantAddrLower && /^0x[a-f0-9]{40}$/i.test(merchantAddrLower)) {
@@ -592,6 +386,90 @@ export async function GET(req: NextRequest) {
           if (ts > lastTransactionAt) lastTransactionAt = ts;
         }
 
+        const splitAddrLower = splitAddress.toLowerCase();
+        let cumulativePerSplit = existingDoc?.cumulativePerSplit || {};
+
+        // On-the-fly migration: if existingDoc exists but doesn't have cumulativePerSplit,
+        // seed it using existingDoc's top-level cumulative fields and its stored splitAddress
+        if (existingDoc && !existingDoc.cumulativePerSplit && existingDoc.splitAddress) {
+          const oldSplit = String(existingDoc.splitAddress).toLowerCase();
+          cumulativePerSplit[oldSplit] = {
+            payments: existingDoc.cumulativePayments || {},
+            merchantReleases: existingDoc.cumulativeMerchantReleases || {},
+            partnerReleases: existingDoc.cumulativePartnerReleases || {},
+            agentReleases: existingDoc.cumulativeAgentReleases || {},
+            platformReleases: existingDoc.cumulativePlatformReleases || {},
+          };
+        }
+
+        // Store the newly fetched cumulative metrics for this split
+        cumulativePerSplit[splitAddrLower] = {
+          payments: cumulative.payments || {},
+          merchantReleases: cumulative.merchantReleases || {},
+          partnerReleases: (cumulative as any).partnerReleases || {},
+          agentReleases: (cumulative as any).agentReleases || {},
+          platformReleases: cumulative.platformReleases || {},
+        };
+
+        // Aggregate cumulative amounts across all splits
+        const aggCumulative = {
+          payments: {} as Record<string, number>,
+          merchantReleases: {} as Record<string, number>,
+          partnerReleases: {} as Record<string, number>,
+          agentReleases: {} as Record<string, number>,
+          platformReleases: {} as Record<string, number>,
+        };
+
+        for (const splitData of Object.values(cumulativePerSplit) as any[]) {
+          for (const [token, amount] of Object.entries(splitData.payments || {})) {
+            aggCumulative.payments[token] = (aggCumulative.payments[token] || 0) + Number(amount || 0);
+          }
+          for (const [token, amount] of Object.entries(splitData.merchantReleases || {})) {
+            aggCumulative.merchantReleases[token] = (aggCumulative.merchantReleases[token] || 0) + Number(amount || 0);
+          }
+          for (const [token, amount] of Object.entries(splitData.partnerReleases || {})) {
+            aggCumulative.partnerReleases[token] = (aggCumulative.partnerReleases[token] || 0) + Number(amount || 0);
+          }
+          for (const [token, amount] of Object.entries(splitData.agentReleases || {})) {
+            aggCumulative.agentReleases[token] = (aggCumulative.agentReleases[token] || 0) + Number(amount || 0);
+          }
+          for (const [token, amount] of Object.entries(splitData.platformReleases || {})) {
+            aggCumulative.platformReleases[token] = (aggCumulative.platformReleases[token] || 0) + Number(amount || 0);
+          }
+        }
+
+        // Get ETH rate for USD conversion
+        let ethUsdRate = 0;
+        try {
+          const { fetchEthRates } = await import("@/lib/eth");
+          const rates = await fetchEthRates();
+          ethUsdRate = Number(rates?.USD || 0);
+        } catch { }
+
+        const tokenPrices: Record<string, number> = {
+          ETH: ethUsdRate || 2500,
+          USDC: 1.0,
+          USDT: 1.0,
+          cbBTC: 65000,
+          cbXRP: 0.50,
+        };
+
+        let totalVolumeUsd = 0;
+        let platformFeeUsd = 0;
+        for (const [token, amount] of Object.entries(aggCumulative.payments)) {
+          const price = tokenPrices[token] || 0;
+          totalVolumeUsd += Number(amount || 0) * price;
+        }
+        for (const [token, amount] of Object.entries(aggCumulative.platformReleases)) {
+          const price = tokenPrices[token] || 0;
+          platformFeeUsd += Number(amount || 0) * price;
+        }
+        const merchantEarnedUsd = totalVolumeUsd - platformFeeUsd;
+
+        const totalVolumeUsdRounded = Math.round(totalVolumeUsd * 100) / 100;
+        const merchantEarnedUsdRounded = Math.round(merchantEarnedUsd * 100) / 100;
+        const platformFeeUsdRounded = Math.round(platformFeeUsd * 100) / 100;
+
         const indexDoc = {
           ...(existingDoc || {}),
           id: indexId,
@@ -599,11 +477,15 @@ export async function GET(req: NextRequest) {
           merchantWallet: merchantAddrLower,
           splitAddress: existingDoc?.splitAddress || splitAddrLower,
           splitAddresses: existingDoc?.splitAddresses || [{ address: splitAddrLower, version: "current" }],
-          cumulativePayments: cumulativePayments,
-          cumulativeMerchantReleases: cumulativeMerchantReleases,
-          cumulativePartnerReleases: cumulativePartnerReleases,
-          cumulativeAgentReleases: cumulativeAgentReleases,
-          cumulativePlatformReleases: cumulativePlatformReleases,
+          cumulativePerSplit,
+          cumulativePayments: aggCumulative.payments,
+          cumulativeMerchantReleases: aggCumulative.merchantReleases,
+          cumulativePartnerReleases: aggCumulative.partnerReleases,
+          cumulativeAgentReleases: aggCumulative.agentReleases,
+          cumulativePlatformReleases: aggCumulative.platformReleases,
+          totalVolumeUsd: totalVolumeUsdRounded,
+          merchantEarnedUsd: merchantEarnedUsdRounded,
+          platformFeeUsd: platformFeeUsdRounded,
           transactions: mergedTransactions,
           transactionCount: mergedTransactions.length,
           customers: uniqueCustomers.size,
@@ -625,14 +507,8 @@ export async function GET(req: NextRequest) {
       {
         ok: true,
         transactions,
-        cumulative: {
-          payments: cumulativePayments,
-          merchantReleases: cumulativeMerchantReleases,
-          partnerReleases: cumulativePartnerReleases,
-          agentReleases: cumulativeAgentReleases,
-          platformReleases: cumulativePlatformReleases,
-        },
-        source: "blockscout",
+        cumulative,
+        source: "thirdweb",
       },
       { headers: { "x-correlation-id": correlationId } }
     );

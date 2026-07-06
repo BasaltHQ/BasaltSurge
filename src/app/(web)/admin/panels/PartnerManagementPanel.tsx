@@ -237,6 +237,7 @@ export default function PartnerManagementPanel() {
   const [platformReleasableCache, setPlatformReleasableCache] = useState<Map<string, Record<string, { units: number }>>>(new Map());
   const [partnerReleasableCache, setPartnerReleasableCache] = useState<Map<string, Record<string, { units: number }>>>(new Map());
   const [selectedMerchantSplitVersion, setSelectedMerchantSplitVersion] = useState<Record<string, string>>({});
+  const [selectedMerchantSplitVersionCredit, setSelectedMerchantSplitVersionCredit] = useState<Record<string, string>>({});
 
   // Split versions (platform view) and inferred merchant mapping
   type SplitVersion = {
@@ -1010,9 +1011,10 @@ export default function PartnerManagementPanel() {
 
   // Fetch balances for a merchant (brand-scoped by wallet)
   // knownSplitAddress: pass the split address from the row data to bypass lookup and use the correct partner-brand split
-  async function fetchMerchantBalances(wallet: string, knownSplitAddress?: string) {
+  async function fetchMerchantBalances(wallet: string, knownSplitAddress?: string, knownSplitAddressCredit?: string) {
     const w = String(wallet || "").toLowerCase();
     const splitAddr = String(knownSplitAddress || "").toLowerCase();
+    const splitAddrCredit = String(knownSplitAddressCredit || "").toLowerCase();
     try {
       setResLoading(prev => ({ ...prev, [w]: true }));
       setResError(prev => ({ ...prev, [w]: "" }));
@@ -1020,6 +1022,9 @@ export default function PartnerManagementPanel() {
       let url = `/api/reserve/balances?wallet=${encodeURIComponent(w)}`;
       if (splitAddr && /^0x[a-f0-9]{40}$/i.test(splitAddr)) {
         url += `&splitAddress=${encodeURIComponent(splitAddr)}&brandKey=${encodeURIComponent(brandKey || "")}`;
+      }
+      if (splitAddrCredit && /^0x[a-f0-9]{40}$/i.test(splitAddrCredit)) {
+        url += `&splitAddressCredit=${encodeURIComponent(splitAddrCredit)}&brandKey=${encodeURIComponent(brandKey || "")}`;
       }
       const r = await fetch(url, { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
@@ -1204,7 +1209,7 @@ export default function PartnerManagementPanel() {
   }
 
   // Toggle accordion - pass knownSplitAddress from the row data to ensure the correct partner-brand split is loaded
-  async function toggleAccordion(wallet: string, knownSplitAddress?: string) {
+  async function toggleAccordion(wallet: string, knownSplitAddress?: string, knownSplitAddressCredit?: string) {
     const w = String(wallet || "").toLowerCase();
     const wasExpanded = !!expanded[w];
     setExpanded(prev => ({ ...prev, [w]: !prev[w] }));
@@ -1215,6 +1220,9 @@ export default function PartnerManagementPanel() {
         let url = `/api/reserve/balances?wallet=${encodeURIComponent(w)}`;
         if (knownSplitAddress && /^0x[a-f0-9]{40}$/i.test(knownSplitAddress)) {
           url += `&splitAddress=${encodeURIComponent(knownSplitAddress)}&brandKey=${encodeURIComponent(brandKey || "")}`;
+        }
+        if (knownSplitAddressCredit && /^0x[a-f0-9]{40}$/i.test(knownSplitAddressCredit)) {
+          url += `&splitAddressCredit=${encodeURIComponent(knownSplitAddressCredit)}&brandKey=${encodeURIComponent(brandKey || "")}`;
         }
         const r = await fetch(url, { cache: "no-store" });
         const j = await r.json().catch(() => ({}));
@@ -2911,7 +2919,7 @@ export default function PartnerManagementPanel() {
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <button
                                 className="text-xs px-2 py-0.5 rounded border border-foreground/20 hover:border-foreground/40 hover:bg-foreground/5 transition-colors text-muted-foreground hover:text-foreground"
-                                onClick={() => toggleAccordion(w, u.splitAddress)}
+                                onClick={() => toggleAccordion(w, u.splitAddress, u.splitAddressCredit)}
                                 title={isExpanded ? "Hide Reserve" : "Show Reserve"}
                               >
                                 {isExpanded ? "▲ Hide" : "▼ Reserve"}
@@ -3043,7 +3051,7 @@ export default function PartnerManagementPanel() {
                                                         onChange={(e) => {
                                                           const val = e.target.value;
                                                           setSelectedMerchantSplitVersion(prev => ({ ...prev, [w]: val }));
-                                                          fetchMerchantBalances(w, val);
+                                                          fetchMerchantBalances(w, val, selectedMerchantSplitVersionCredit[w]);
                                                         }}
                                                         onClick={(e) => e.stopPropagation()}
                                                       >
@@ -3135,9 +3143,32 @@ export default function PartnerManagementPanel() {
                                             <div className="text-xs text-muted-foreground/70 flex items-center gap-2">
                                               <span>Address:</span>
                                               {b.splitAddressCreditUsed ? (
-                                                <a className="underline font-mono" href={`https://base.blockscout.com/address/${b.splitAddressCreditUsed}`} target="_blank" rel="noopener noreferrer">
-                                                  <TruncatedAddress address={b.splitAddressCreditUsed} />
-                                                </a>
+                                                <div className="flex items-center gap-2 inline-flex">
+                                                  <a className="underline font-mono" href={`https://base.blockscout.com/address/${b.splitAddressCreditUsed}`} target="_blank" rel="noopener noreferrer">
+                                                    <TruncatedAddress address={b.splitAddressCreditUsed} />
+                                                  </a>
+                                                  {(() => {
+                                                    const creditHistory = (b.splitHistory || []).filter((h: any) => h.isCredit);
+                                                    return creditHistory.length > 0 && (
+                                                      <select
+                                                        className="ml-2 h-6 text-xs border border-foreground/10 rounded bg-foreground/[0.03] text-foreground focus:outline-none focus:ring-1 focus:ring-foreground/20 px-1"
+                                                        value={selectedMerchantSplitVersionCredit[w] || b.splitAddressCreditUsed || undefined}
+                                                        onChange={(e) => {
+                                                          const val = e.target.value;
+                                                          setSelectedMerchantSplitVersionCredit(prev => ({ ...prev, [w]: val }));
+                                                          fetchMerchantBalances(w, selectedMerchantSplitVersion[w], val);
+                                                        }}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                      >
+                                                        {creditHistory.map((h: any, i: number) => (
+                                                          <option className="bg-background text-foreground" key={h.address} value={h.address}>
+                                                            {i === 0 ? "Latest" : `v${creditHistory.length - i}`} ({h.address.slice(0, 6)}...)
+                                                          </option>
+                                                        ))}
+                                                      </select>
+                                                    );
+                                                  })()}
+                                                </div>
                                               ) : "Not configured"}
                                             </div>
                                           </div>
@@ -3277,6 +3308,67 @@ export default function PartnerManagementPanel() {
                                       </>
                                     )}
 
+
+                                    {b && b.splitHistory && b.splitHistory.length > 0 && (
+                                      <div className="mt-3 rounded-md border p-3">
+                                        <details className="group">
+                                          <summary className="flex items-center justify-between cursor-pointer list-none select-none">
+                                            <div className="text-sm font-medium flex items-center gap-2">
+                                              <span>Show Split History</span>
+                                              <span className="text-xs bg-foreground/10 text-muted-foreground px-2 py-0.5 rounded-full font-mono">
+                                                {b.splitHistory.length} versions
+                                              </span>
+                                            </div>
+                                            <span className="transition-transform group-open:rotate-180">
+                                              <svg className="w-4 h-4 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                              </svg>
+                                            </span>
+                                          </summary>
+                                          <div className="mt-3 overflow-x-auto">
+                                            <table className="w-full text-left text-xs">
+                                              <thead className="bg-foreground/5 text-muted-foreground uppercase text-[10px]">
+                                                <tr>
+                                                  <th className="px-3 py-2 font-medium">Version</th>
+                                                  <th className="px-3 py-2 font-medium">Type</th>
+                                                  <th className="px-3 py-2 font-medium">Deployed Address</th>
+                                                  <th className="px-3 py-2 font-medium">Deployed At</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody className="divide-y divide-foreground/5">
+                                                {b.splitHistory.map((h, i) => (
+                                                  <tr key={h.address} className="hover:bg-foreground/[0.02]">
+                                                    <td className="px-3 py-2 font-semibold">
+                                                      v{b.splitHistory!.length - i}
+                                                    </td>
+                                                    <td className="px-3 py-2">
+                                                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide ${
+                                                        h.isCredit ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                                      }`}>
+                                                        {h.isCredit ? "Debit" : "Credit"}
+                                                      </span>
+                                                    </td>
+                                                    <td className="px-3 py-2 font-mono">
+                                                      <a
+                                                        className="underline hover:text-primary transition-colors inline-flex items-center gap-1"
+                                                        href={`https://base.blockscout.com/address/${h.address}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                      >
+                                                        {h.address.slice(0, 6)}...{h.address.slice(-4)}
+                                                      </a>
+                                                    </td>
+                                                    <td className="px-3 py-2 text-muted-foreground">
+                                                      {h.deployedAt ? new Date(h.deployedAt).toLocaleDateString() : "—"}
+                                                    </td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        </details>
+                                      </div>
+                                    )}
 
                                     {b && b.splitAddressUsed && (
                                       <div className="mt-3 rounded-md border p-3">

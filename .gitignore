@@ -85,7 +85,7 @@ vcrun.py
 
 /scripts/*
 !/scripts/start-scheduler.js
-scratch/check-brands.js
+/scratch/
 
 # Shopify CLI temp build directories
 .shopify-deploy-*

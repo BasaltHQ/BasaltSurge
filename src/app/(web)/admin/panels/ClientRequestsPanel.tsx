@@ -1382,69 +1382,94 @@ export default function ClientRequestsPanel() {
                                                         <span className="uppercase text-xs font-mono bg-foreground/5 px-1.5 py-0.5 rounded">{req.businessType || "?"}</span>
                                                     </div>
                                                     {(req.deployedSplitAddress || req.deployedSplitAddressCredit || (req.splitHistory && req.splitHistory.length > 0)) && (
-                                                        <div className="text-xs flex items-center justify-between gap-2">
-                                                            <div className="flex flex-col gap-1 justify-center">
+                                                        <div className="text-xs flex flex-col gap-2">
+                                                            <div className="flex flex-wrap gap-2 items-center">
                                                                 {req.deployedSplitAddress && (
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="text-muted-foreground">Credit/Crypto: </span>
+                                                                    <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-md text-emerald-400">
+                                                                        <span className="font-bold text-[10px]">Credit/Crypto Split: </span>
                                                                         <a
                                                                             href={`https://basescan.org/address/${req.deployedSplitAddress}`}
                                                                             target="_blank"
                                                                             rel="noopener noreferrer"
-                                                                            className="font-mono text-emerald-400 hover:text-emerald-300 hover:underline inline-flex items-center gap-1"
+                                                                            className="font-mono hover:underline inline-flex items-center gap-1 text-[11px]"
                                                                             title="View Credit/Crypto Split Contract on Basescan"
                                                                         >
                                                                             {req.deployedSplitAddress.slice(0, 6)}...{req.deployedSplitAddress.slice(-4)}
-                                                                            <svg className="w-3 h-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                            <svg className="w-3 h-3 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                                                                             </svg>
                                                                         </a>
                                                                     </div>
                                                                 )}
                                                                 {req.deployedSplitAddressCredit && (
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="text-muted-foreground">Debit: </span>
+                                                                    <div className="flex items-center gap-1.5 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-md text-purple-400">
+                                                                        <span className="font-bold text-[10px]">Debit Split: </span>
                                                                         <a
                                                                             href={`https://basescan.org/address/${req.deployedSplitAddressCredit}`}
                                                                             target="_blank"
                                                                             rel="noopener noreferrer"
-                                                                            className="font-mono text-purple-400 hover:text-purple-300 hover:underline inline-flex items-center gap-1"
+                                                                            className="font-mono hover:underline inline-flex items-center gap-1 text-[11px]"
                                                                             title="View Debit Split Contract on Basescan"
                                                                         >
                                                                             {req.deployedSplitAddressCredit.slice(0, 6)}...{req.deployedSplitAddressCredit.slice(-4)}
-                                                                            <svg className="w-3 h-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                            <svg className="w-3 h-3 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                                                                             </svg>
                                                                         </a>
                                                                     </div>
                                                                 )}
                                                                 {!req.deployedSplitAddress && !req.deployedSplitAddressCredit && req.splitHistory && req.splitHistory.length > 0 && (
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="text-muted-foreground">Split: </span>
+                                                                    <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-md text-emerald-400">
+                                                                        <span className="font-bold text-[10px]">Split: </span>
                                                                         <a
                                                                             href={`https://basescan.org/address/${req.splitHistory[0].address}`}
                                                                             target="_blank"
                                                                             rel="noopener noreferrer"
-                                                                            className="font-mono text-emerald-400 hover:text-emerald-300 hover:underline inline-flex items-center gap-1"
+                                                                            className="font-mono hover:underline inline-flex items-center gap-1 text-[11px]"
                                                                             title="View Contract on Basescan"
                                                                         >
                                                                             {req.splitHistory[0].address.slice(0, 6)}...{req.splitHistory[0].address.slice(-4)}
-                                                                            <svg className="w-3.5 h-3.5 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                            <svg className="w-3.5 h-3.5 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                                                                             </svg>
                                                                         </a>
                                                                     </div>
                                                                 )}
                                                             </div>
-                                                            <button
-                                                                onClick={() => setHistoryViewerId(req.wallet)}
-                                                                className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-white transition-colors"
-                                                                title="View Version History"
-                                                            >
-                                                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                                                </svg>
-                                                            </button>
+                                                            {req.splitHistory && req.splitHistory.length > 0 && (
+                                                                <div className="text-[10px] text-zinc-500 flex items-center gap-1.5 flex-wrap">
+                                                                    <span>History:</span>
+                                                                    {req.splitHistory.slice(0, 3).map((h, i) => (
+                                                                        <a
+                                                                            key={h.address}
+                                                                            href={`https://basescan.org/address/${h.address}`}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
+                                                                            className="font-mono hover:underline hover:text-zinc-300"
+                                                                            title={`View version ${req.splitHistory!.length - i} on Basescan`}
+                                                                        >
+                                                                            v{req.splitHistory!.length - i} ({h.address.slice(0, 4)}...{h.address.slice(-4)})
+                                                                        </a>
+                                                                    ))}
+                                                                    {req.splitHistory.length > 3 && (
+                                                                        <button
+                                                                            onClick={() => setHistoryViewerId(req.wallet)}
+                                                                            className="hover:underline text-emerald-400 hover:text-emerald-300 font-bold"
+                                                                        >
+                                                                            +{req.splitHistory.length - 3} more
+                                                                        </button>
+                                                                    )}
+                                                                    <button
+                                                                        onClick={() => setHistoryViewerId(req.wallet)}
+                                                                        className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-white transition-colors"
+                                                                        title="View Complete Version History Modal"
+                                                                    >
+                                                                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                                        </svg>
+                                                                    </button>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>

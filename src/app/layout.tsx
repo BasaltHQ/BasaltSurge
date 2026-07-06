@@ -18,6 +18,7 @@ import { I18nProvider } from "@/components/providers/i18n-provider";
 import { AutoTranslateProvider } from "@/components/providers/auto-translate-provider";
 import FarcasterProvider from "@/components/providers/FarcasterProvider";
 import SplitGuardMount from "@/components/split-guard-mount";
+import { SandboxWidget } from "@/components/SandboxWidget";
 import { getBaseUrl, isLocalhostUrl } from "@/lib/base-url";
 import messages from "../../messages/en.json";
 import { getBrandConfig, getBrandKey } from "@/config/brands";
@@ -154,7 +155,8 @@ async function getContainerIdentityDirect(): Promise<{ brandKey: string; contain
     const { headers } = require("next/headers");
     const headersList = await headers();
     const host = headersList.get("x-forwarded-host") || headersList.get("host") || "";
-    const derived = await deriveContainerIdentityFromHostname(host);
+    const cookieHeader = headersList.get("cookie") || "";
+    const derived = await deriveContainerIdentityFromHostname(host, cookieHeader);
 
     if (derived) {
       return derived;
@@ -585,13 +587,16 @@ export default async function RootLayout({
 
   // Derive brand key from hostname (e.g., paynex.azurewebsites.net -> paynex)
   let brandKeyFromHost: string | undefined;
+  let serverDualSplit = false;
   try {
     let host = "";
+    let cookieHeader = "";
     try {
       const { headers } = require('next/headers');
       const headersList = await headers();
       host = headersList.get('x-forwarded-host') || headersList.get('host') || "";
       if (host) host = host.split(":")[0];
+      cookieHeader = headersList.get("cookie") || "";
     } catch { }
 
     if (!host) {
@@ -601,9 +606,17 @@ export default async function RootLayout({
     }
 
     const { deriveContainerIdentityFromHostname } = require("@/lib/brand-config");
-    const derived = await deriveContainerIdentityFromHostname(host);
+    const derived = await deriveContainerIdentityFromHostname(host, cookieHeader);
     if (derived) {
       brandKeyFromHost = derived.brandKey;
+    }
+
+    // Read split mode override from cookies asynchronously on the server
+    const sMatch = cookieHeader.match(/pp_sandbox_split_mode=([^;]+)/);
+    if (sMatch && sMatch[1]) {
+      serverDualSplit = sMatch[1] === "dual";
+    } else {
+      serverDualSplit = isDualSplitEnabled();
     }
     // Prefer server-provided container identity (uses NEXT_PUBLIC_BRAND_KEY/BRAND_KEY)
     // Direct env access - no HTTP call needed
@@ -782,7 +795,7 @@ export default async function RootLayout({
       data-pp-brand-primary={brand.colors.primary}
       data-pp-brand-accent={brand.colors.accent}
       data-pp-brand-body="#e5e7eb"
-      data-pp-dual-split={isDualSplitEnabled() ? "1" : "0"}
+      data-pp-dual-split={serverDualSplit ? "1" : "0"}
       data-pp-debug={isDebug() ? "true" : "false"}
       data-pp-env={process.env.NODE_ENV || "production"}
       suppressHydrationWarning
@@ -1023,6 +1036,7 @@ export default async function RootLayout({
                       <div id="mobile-navbar-spacer" className="sm:hidden h-2" />
                       <SplitGuardMount />
                       {children}
+                      <SandboxWidget />
                     </AutoTranslateProvider>
                   </I18nProvider>
                 </FarcasterProvider>

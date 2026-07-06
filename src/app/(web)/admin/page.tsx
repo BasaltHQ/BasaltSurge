@@ -50,6 +50,7 @@ import AdminManagementPanel from "./panels/AdminManagementPanel";
 import IntegrationsPanel from "@/app/(web)/admin/panels/IntegrationsPanel";
 import PlatformPluginsPanel from "@/app/(web)/admin/panels/PlatformPluginsPanel";
 import PartnerPluginsPanel from "@/app/(web)/admin/panels/PartnerPluginsPanel";
+import SandboxPanel from "@/app/(web)/admin/panels/SandboxPanel";
 import GlobalArtPanel from "@/app/(web)/admin/panels/GlobalArtPanel";
 import GetSupportPanel from "@/app/(web)/admin/panels/GetSupportPanel";
 import SupportAdminPanel from "@/app/(web)/admin/panels/SupportAdminPanel";
@@ -4807,6 +4808,7 @@ function UsersPanel() {
     kioskEnabled?: boolean;
     terminalEnabled?: boolean;
     splitAddress?: string;
+    splitAddressCredit?: string;
   }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -4825,6 +4827,7 @@ function UsersPanel() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [balancesCache, setBalancesCache] = useState<Map<string, ReserveBalancesResponse | null>>(new Map());
   const [selectedMerchantSplitVersion, setSelectedMerchantSplitVersion] = useState<Record<string, string>>({});
+  const [activeSplitTab, setActiveSplitTab] = useState<Record<string, "credit" | "debit">>({});
   const [resLoading, setResLoading] = useState<Record<string, boolean>>({});
   const [resError, setResError] = useState<Record<string, string>>({});
   // Transaction tracking state
@@ -4835,7 +4838,16 @@ function UsersPanel() {
   const [releaseLoading, setReleaseLoading] = useState<Record<string, boolean>>({});
   const [releaseError, setReleaseError] = useState<Record<string, string>>({});
   const [releaseResults, setReleaseResults] = useState<Map<string, any[]>>(new Map());
-  const [brandKeyFilter, setBrandKeyFilter] = useState<string>("__none__");
+  const [brandKeyFilter, setBrandKeyFilter] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const cookies = window.document.cookie || "";
+      const match = cookies.match(/pp_sandbox_brand_key=([^;]+)/);
+      if (match && match[1]) {
+        return match[1].toLowerCase().trim();
+      }
+    }
+    return brand?.key && brand.key !== "basaltsurge" && brand.key !== "portalpay" ? brand.key : "__none__";
+  });
   const [brandsList, setBrandsList] = useState<string[]>([]);
   // Friendly formatter for platform release messages
   function formatPlatformMessage(rr: { symbol?: string; status?: string; transactionHash?: string; reason?: string }): string {
@@ -4880,13 +4892,11 @@ function UsersPanel() {
   // Cache of releasable amounts per merchant per token
   const [releasableCache, setReleasableCache] = useState<Map<string, Record<string, { units: number }>>>(new Map());
 
-  async function fetchReleasable(wallet: string) {
+  async function fetchReleasable(wallet: string, overrideSplitAddress?: string) {
     try {
       const w = String(wallet || "").toLowerCase();
       const b = balancesCache.get(w) || null;
-      if (!b || !b.splitAddressUsed) return;
-
-      const split = String(b.splitAddressUsed || "").toLowerCase();
+      const split = String(overrideSplitAddress || b?.splitAddressUsed || "").toLowerCase();
       const isHex = (s: string) => /^0x[a-f0-9]{40}$/i.test(String(s || "").trim());
       const platformRecipient = String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "").toLowerCase();
       if (!isHex(split) || !isHex(platformRecipient)) return;
@@ -4938,7 +4948,9 @@ function UsersPanel() {
         abi: PAYMENT_SPLITTER_READ_ABI as any,
       });
 
-      const symbols = Object.keys((b.balances || {}) as Record<string, any>);
+      const cacheKey = overrideSplitAddress ? `${w}_${overrideSplitAddress.toLowerCase()}` : w;
+      const targetB = balancesCache.get(cacheKey) || b;
+      const symbols = Object.keys((targetB?.balances || {}) as Record<string, any>);
       const nextRecord: Record<string, { units: number }> = {};
 
       for (const symbol of symbols) {
@@ -4971,7 +4983,7 @@ function UsersPanel() {
 
       setReleasableCache((prev) => {
         const next = new Map(prev);
-        next.set(w, nextRecord);
+        next.set(cacheKey, nextRecord);
         return next;
       });
     } catch {
@@ -5130,7 +5142,7 @@ function UsersPanel() {
     }
   }
 
-  useEffect(() => { fetchUsersData(); }, [account?.address]);
+  useEffect(() => { fetchUsersData(); }, [account?.address, brandKeyFilter]);
 
   // Load brand list for filter
   useEffect(() => {
@@ -5143,11 +5155,6 @@ function UsersPanel() {
       } catch { }
     })();
   }, []);
-
-  // Brand filter is fixed by container; no auto reindex
-  useEffect(() => {
-    // no-op to avoid auto reindexing
-  }, [brandKeyFilter]);
 
   async function toggleMerchantFeature(merchant: string, feature: 'kioskEnabled' | 'terminalEnabled', value: boolean) {
     // Optimistic update
@@ -5189,10 +5196,11 @@ function UsersPanel() {
 
   // Load reserve balances for a merchant (uses split if configured, or specific override)
   async function fetchMerchantBalances(wallet: string, overrideSplitAddress?: string) {
+    const w = String(wallet || "").toLowerCase();
+    const cacheKey = overrideSplitAddress ? `${w}_${overrideSplitAddress.toLowerCase()}` : w;
     try {
-      const w = String(wallet || "").toLowerCase();
-      setResLoading(prev => ({ ...prev, [w]: true }));
-      setResError(prev => ({ ...prev, [w]: "" }));
+      setResLoading(prev => ({ ...prev, [cacheKey]: true }));
+      setResError(prev => ({ ...prev, [cacheKey]: "" }));
       let url = `/api/reserve/balances?wallet=${encodeURIComponent(w)}`;
       if (overrideSplitAddress) {
         url += `&splitAddress=${encodeURIComponent(overrideSplitAddress)}`;
@@ -5200,47 +5208,46 @@ function UsersPanel() {
       const r = await fetch(url, { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.error) {
-        setResError(prev => ({ ...prev, [w]: j?.error || "Failed to load balances" }));
+        setResError(prev => ({ ...prev, [cacheKey]: j?.error || "Failed to load balances" }));
         setBalancesCache(prev => {
           const next = new Map(prev);
-          next.set(w, null);
+          next.set(cacheKey, null);
           return next;
         });
       } else {
         setBalancesCache(prev => {
           const next = new Map(prev);
-          next.set(w, j as ReserveBalancesResponse);
+          next.set(cacheKey, j as ReserveBalancesResponse);
           return next;
         });
       }
     } catch (e: any) {
-      const w = String(wallet || "").toLowerCase();
-      setResError(prev => ({ ...prev, [w]: e?.message || "Failed to load balances" }));
+      setResError(prev => ({ ...prev, [cacheKey]: e?.message || "Failed to load balances" }));
       setBalancesCache(prev => {
         const next = new Map(prev);
-        next.set(w, null);
+        next.set(cacheKey, null);
         return next;
       });
     } finally {
-      const w = String(wallet || "").toLowerCase();
-      setResLoading(prev => ({ ...prev, [w]: false }));
+      setResLoading(prev => ({ ...prev, [cacheKey]: false }));
     }
   }
 
   // Fetch split transactions for a merchant
   async function fetchMerchantTransactions(wallet: string, overrideSplitAddress?: string, forceLive?: boolean) {
+    const w = String(wallet || "").toLowerCase();
     try {
-      const w = String(wallet || "").toLowerCase();
       const b = balancesCache.get(w);
-      const splitAddress = overrideSplitAddress || b?.splitAddressUsed;
+      const splitAddress = (overrideSplitAddress || b?.splitAddressUsed || "").toLowerCase();
 
       if (!splitAddress || !/^0x[a-f0-9]{40}$/i.test(splitAddress)) {
         setTxError(prev => ({ ...prev, [w]: "No split address configured" }));
         return;
       }
 
-      setTxLoading(prev => ({ ...prev, [w]: true }));
-      setTxError(prev => ({ ...prev, [w]: "" }));
+      const cacheKey = `${w}_${splitAddress}`;
+      setTxLoading(prev => ({ ...prev, [cacheKey]: true }));
+      setTxError(prev => ({ ...prev, [cacheKey]: "" }));
 
       // Force live fetch on accordion expansion to capture correct on-chain timestamps
       // Persisted data from initial indexing may have had Date.now() timestamps
@@ -5251,15 +5258,15 @@ function UsersPanel() {
       const j = await r.json().catch(() => ({}));
 
       if (!r.ok || j?.error) {
-        setTxError(prev => ({ ...prev, [w]: j?.error || "Failed to load transactions" }));
+        setTxError(prev => ({ ...prev, [cacheKey]: j?.error || "Failed to load transactions" }));
         setTransactionsCache(prev => {
           const next = new Map(prev);
-          next.set(w, []);
+          next.set(cacheKey, []);
           return next;
         });
         setCumulativeCache(prev => {
           const next = new Map(prev);
-          next.set(w, { payments: {}, merchantReleases: {}, platformReleases: {} });
+          next.set(cacheKey, { payments: {}, merchantReleases: {}, platformReleases: {} });
           return next;
         });
       } else {
@@ -5267,26 +5274,30 @@ function UsersPanel() {
         const cumulative = j?.cumulative || { payments: {}, merchantReleases: {}, platformReleases: {} };
         setTransactionsCache(prev => {
           const next = new Map(prev);
-          next.set(w, txs);
+          next.set(cacheKey, txs);
           return next;
         });
         setCumulativeCache(prev => {
           const next = new Map(prev);
-          next.set(w, cumulative);
+          next.set(cacheKey, cumulative);
           return next;
         });
       }
     } catch (e: any) {
-      const w = String(wallet || "").toLowerCase();
-      setTxError(prev => ({ ...prev, [w]: e?.message || "Failed to load transactions" }));
+      const b = balancesCache.get(w);
+      const splitAddress = (overrideSplitAddress || b?.splitAddressUsed || "").toLowerCase();
+      const cacheKey = `${w}_${splitAddress}`;
+      setTxError(prev => ({ ...prev, [cacheKey]: e?.message || "Failed to load transactions" }));
       setTransactionsCache(prev => {
         const next = new Map(prev);
-        next.set(w, []);
+        next.set(cacheKey, []);
         return next;
       });
     } finally {
-      const w = String(wallet || "").toLowerCase();
-      setTxLoading(prev => ({ ...prev, [w]: false }));
+      const b = balancesCache.get(w);
+      const splitAddress = (overrideSplitAddress || b?.splitAddressUsed || "").toLowerCase();
+      const cacheKey = `${w}_${splitAddress}`;
+      setTxLoading(prev => ({ ...prev, [cacheKey]: false }));
     }
   }
 
@@ -5301,18 +5312,26 @@ function UsersPanel() {
         // Always fetch balances first
         await fetchMerchantBalances(w);
 
-        // Read the split address from the ITEMS data (synced from API) as fallback,
-        // since React state (balancesCache) may not have flushed yet
         const balanceData = balancesCache.get(w);
-        const splitFromItems = items.find(it => it.merchant === w)?.splitAddress;
+        const merchantItem = items.find(it => it.merchant === w);
+        const splitFromItems = merchantItem?.splitAddress;
         const splitAddr = balanceData?.splitAddressUsed || splitFromItems;
 
+        const splitFromItemsCredit = merchantItem?.splitAddressCredit;
+        const splitAddrCredit = balanceData?.splitAddressCreditUsed || splitFromItemsCredit;
+
+        const promises: Promise<any>[] = [];
         if (splitAddr && /^0x[a-f0-9]{40}$/i.test(splitAddr)) {
-          // Run these in parallel — forceLive=true to re-index with correct timestamps
-          await Promise.all([
-            fetchReleasable(w),
-            fetchMerchantTransactions(w, splitAddr, true)
-          ]);
+          promises.push(fetchReleasable(w, splitAddr));
+          promises.push(fetchMerchantTransactions(w, splitAddr, true));
+        }
+        if (splitAddrCredit && /^0x[a-f0-9]{40}$/i.test(splitAddrCredit)) {
+          promises.push(fetchReleasable(w, splitAddrCredit));
+          promises.push(fetchMerchantTransactions(w, splitAddrCredit, true));
+        }
+
+        if (promises.length > 0) {
+          await Promise.all(promises);
         }
       } catch (e) {
         console.error('Error loading merchant data:', e);
@@ -5320,7 +5339,7 @@ function UsersPanel() {
     }
   }
 
-  async function releasePlatformShare(wallet: string, onlySymbol?: string) {
+  async function releasePlatformShare(wallet: string, onlySymbol?: string, targetSplitAddress?: string) {
     const w = String(wallet || "").toLowerCase();
     try {
       if (!account?.address) {
@@ -5335,7 +5354,13 @@ function UsersPanel() {
         b = balancesCache.get(w) || null;
       }
 
-      const split = String(b?.splitAddressUsed || "").toLowerCase();
+      const activeTab = activeSplitTab[w] || "credit";
+      const split = String(
+        targetSplitAddress ||
+        (activeTab === "credit" ? b?.splitAddressUsed : b?.splitAddressCreditUsed) ||
+        ""
+      ).toLowerCase();
+
       const isHex = (s: string) => /^0x[a-f0-9]{40}$/i.test(String(s || "").trim());
       if (!isHex(split)) {
         setReleaseError((prev) => ({ ...prev, [w]: "split_address_not_configured" }));
@@ -5344,7 +5369,8 @@ function UsersPanel() {
 
       const preferred = ["ETH", "USDC", "USDT", "cbBTC", "cbXRP"];
       // Build queue based on platform releasable amounts (not split balances)
-      const relMap = releasableCache.get(w) || {};
+      const cacheKey = targetSplitAddress ? `${w}_${targetSplitAddress.toLowerCase()}` : `${w}_${split}`;
+      const relMap = releasableCache.get(cacheKey) || {};
       const positiveRel = preferred.filter((sym) => {
         try {
           const u = Number(((relMap as any)[sym]?.units || 0));
@@ -5544,8 +5570,19 @@ function UsersPanel() {
       }
 
       // Refresh balances after releasing
-      await fetchMerchantBalances(w);
-      try { await fetchReleasable(w); } catch { }
+      if (targetSplitAddress) {
+        await fetchMerchantBalances(w, targetSplitAddress);
+        try { await fetchReleasable(w, targetSplitAddress); } catch { }
+      } else {
+        await fetchMerchantBalances(w);
+        const merchantItem = items.find(it => it.merchant === w);
+        if (merchantItem?.splitAddress) {
+          try { await fetchReleasable(w, merchantItem.splitAddress); } catch { }
+        }
+        if (merchantItem?.splitAddressCredit) {
+          try { await fetchReleasable(w, merchantItem.splitAddressCredit); } catch { }
+        }
+      }
     } catch (e: any) {
       setReleaseError((prev) => ({ ...prev, [w]: e?.message || "Release failed" }));
     } finally {
@@ -5623,7 +5660,7 @@ function UsersPanel() {
       </div>
 
       {/* Controls: search/filter/sort/pagination */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className={`grid grid-cols-1 md:grid-cols-2 ${containerTypeEnv === "platform" ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-4`}>
         <div className="space-y-1.5">
           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Search</label>
           <input
@@ -5633,6 +5670,22 @@ function UsersPanel() {
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+
+        {containerTypeEnv === "platform" && (
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Brand Filter</label>
+            <select
+              className="w-full h-10 px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none font-mono text-xs"
+              value={brandKeyFilter}
+              onChange={(e) => setBrandKeyFilter(e.target.value)}
+            >
+              <option value="__none__">All Brands</option>
+              {brandsList.map((bk) => (
+                <option key={bk} value={bk}>{bk}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="space-y-1.5">
           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Tag Filter</label>
@@ -5749,16 +5802,44 @@ function UsersPanel() {
                     <td className="px-4 py-3"><TruncatedAddress address={it.merchant} /></td>
                     <td className="px-4 py-3">
                       {(() => {
-                        if (!b || !b.splitAddressUsed) return <span className="text-xs text-muted-foreground">—</span>;
-                        const hist = Array.isArray(b.splitHistory) ? b.splitHistory : [];
+                        const activeSplit = b?.splitAddressUsed || it.splitAddress;
+                        const activeSplitCredit = b?.splitAddressCreditUsed || it.splitAddressCredit;
+                        const isDual = b ? b.isDual : !!activeSplitCredit;
+
+                        if (!activeSplit) return <span className="text-xs text-muted-foreground">—</span>;
+                        const hist = Array.isArray(b?.splitHistory) ? b.splitHistory : [];
                         // History is ascending (oldest first).
-                        const idx = hist.findIndex(h => String(h.address).toLowerCase() === String(b.splitAddressUsed).toLowerCase());
+                        const idx = hist.findIndex(h => String(h.address).toLowerCase() === String(activeSplit).toLowerCase());
                         const ver = idx >= 0 ? `v${idx + 1}` : "Custom";
+
+                        if (isDual && activeSplitCredit) {
+                          const idxCredit = hist.findIndex(h => String(h.address).toLowerCase() === String(activeSplitCredit).toLowerCase());
+                          const verCredit = idxCredit >= 0 ? `v${idxCredit + 1}` : "Custom";
+                          return (
+                            <div className="flex flex-col gap-0.5">
+                              <div className="text-[10px] leading-tight">
+                                <span className="text-emerald-400 font-semibold uppercase tracking-wider text-[8px] mr-1">Credit:</span>
+                                <span className="font-mono text-xs">{ver}</span>{" "}
+                                <span className="text-[10px] text-muted-foreground font-mono">
+                                  ({activeSplit.slice(0, 6)}...{activeSplit.slice(-4)})
+                                </span>
+                              </div>
+                              <div className="text-[10px] leading-tight">
+                                <span className="text-purple-400 font-semibold uppercase tracking-wider text-[8px] mr-1">Debit:</span>
+                                <span className="font-mono text-xs">{verCredit}</span>{" "}
+                                <span className="text-[10px] text-muted-foreground font-mono">
+                                  ({activeSplitCredit.slice(0, 6)}...{activeSplitCredit.slice(-4)})
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        }
+
                         return (
                           <div className="flex flex-col">
                             <span className="text-xs font-mono">{ver}</span>
                             <span className="text-[10px] text-muted-foreground font-mono">
-                              {b.splitAddressUsed.slice(0, 6)}...{b.splitAddressUsed.slice(-4)}
+                              {activeSplit.slice(0, 6)}...{activeSplit.slice(-4)}
                             </span>
                           </div>
                         );
@@ -5840,323 +5921,421 @@ function UsersPanel() {
                     <tr className="border-t border-foreground/[0.05] bg-foreground/[0.02]">
                       <td className="px-3 py-3" colSpan={10}>
                         <div className="rounded-md border p-3 space-y-3">
-                          <div className="flex items-center justify-between">
-                            <div className="microtext text-muted-foreground">
-                              Split: {(() => {
-                                // Determine the canonical current split from stable users API data
-                                const canonicalCurrent = String(it.splitAddress || b?.splitAddressUsed || "").toLowerCase();
-                                if (!canonicalCurrent || !/^0x[a-f0-9]{40}$/i.test(canonicalCurrent)) return "Not configured";
+                          {(() => {
+                            const isDual = b ? b.isDual : !!it.splitAddressCredit;
+                            const currentTab = activeSplitTab[w] || "credit";
 
-                                const viewingAddr = selectedMerchantSplitVersion[w] || b?.splitAddressUsed || canonicalCurrent;
-                                const allHistory: Array<{ address: string;[k: string]: any }> = [];
-                                const seenAddrs = new Set<string>();
-                                // Merge from users API (it.allSplitAddresses - discovers from ALL site_config docs)
-                                if (Array.isArray((it as any).allSplitAddresses)) {
-                                  for (const h of (it as any).allSplitAddresses) {
-                                    const addr = String(h?.address || "").toLowerCase();
-                                    if (addr && /^0x[a-f0-9]{40}$/i.test(addr) && !seenAddrs.has(addr)) {
-                                      seenAddrs.add(addr);
-                                      allHistory.push(h);
-                                    }
-                                  }
-                                }
-                                // Also merge from reserve/balances API (b.splitHistory)
-                                if (b && Array.isArray(b.splitHistory)) {
-                                  for (const h of b.splitHistory) {
-                                    const addr = String(h?.address || "").toLowerCase();
-                                    if (addr && /^0x[a-f0-9]{40}$/i.test(addr) && !seenAddrs.has(addr)) {
-                                      seenAddrs.add(addr);
-                                      allHistory.push(h);
-                                    }
-                                  }
-                                }
-                                // Historical entries that aren't the canonical current
-                                const historicalEntries = allHistory.filter(
-                                  (h: any) => String(h.address || "").toLowerCase() !== canonicalCurrent
-                                );
-                                return (
-                                  <div className="flex items-center gap-2 inline-flex">
-                                    <a className="underline" href={`https://base.blockscout.com/address/${viewingAddr}`} target="_blank" rel="noopener noreferrer">
-                                      <TruncatedAddress address={viewingAddr} />
-                                    </a>
-                                    {historicalEntries.length > 0 && (
-                                      <select
-                                        className="ml-2 h-6 text-xs border rounded bg-background px-1"
-                                        value={selectedMerchantSplitVersion[w] || canonicalCurrent}
-                                        onChange={(e) => {
-                                          const val = e.target.value;
-                                          setSelectedMerchantSplitVersion(prev => ({ ...prev, [w]: val }));
-                                          fetchMerchantBalances(w, val);
-                                          fetchMerchantTransactions(w, val);
-                                        }}
-                                        onClick={(e) => e.stopPropagation()}
+                            // Resolve details based on the active tab
+                            const canonicalCredit = String(it.splitAddress || b?.splitAddressUsed || "").toLowerCase();
+                            const canonicalDebit = String(it.splitAddressCredit || b?.splitAddressCreditUsed || "").toLowerCase();
+
+                            const isCreditTab = currentTab === "credit";
+                            const canonicalCurrent = isCreditTab ? canonicalCredit : canonicalDebit;
+
+                            if (!canonicalCurrent || !/^0x[a-f0-9]{40}$/i.test(canonicalCurrent)) {
+                              return (
+                                <div className="space-y-3">
+                                  {isDual && (
+                                    <div className="flex border-b border-foreground/10 mb-4">
+                                      <button
+                                        onClick={() => setActiveSplitTab(prev => ({ ...prev, [w]: "credit" }))}
+                                        className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 -mb-[2px] ${
+                                          currentTab === "credit"
+                                            ? "border-emerald-500 text-emerald-400 font-semibold"
+                                            : "border-transparent text-muted-foreground hover:text-foreground"
+                                        }`}
                                       >
-                                        {/* Current active split — always present */}
-                                        <option value={canonicalCurrent} className="bg-background text-foreground">
-                                          Current ({canonicalCurrent.slice(0, 6)}...{canonicalCurrent.slice(-4)})
-                                        </option>
-                                        {/* Archived old splits */}
-                                        {historicalEntries.map((h: any, i: number) => (
-                                          <option key={h.address} value={String(h.address || "").toLowerCase()} className="bg-background text-foreground">
-                                            v{historicalEntries.length - i} ({String(h.address || "").slice(0, 6)}...{String(h.address || "").slice(-4)})
-                                          </option>
-                                        ))}
-                                      </select>
-                                    )}
-                                  </div>
-                                );
-                              })()}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                className="px-2 py-1 rounded-md border text-xs"
-                                onClick={() => releasePlatformShare(w)}
-                                disabled={
-                                  relLoading ||
-                                  !(b && b.splitAddressUsed)
-                                }
-                                title={String(process.env.CONTAINER_TYPE || "platform").toLowerCase() === "partner" ? "Release partner share from merchant's split" : "Release platform share from merchant's split"}
-                              >
-                                {relLoading ? "Releasing…" : (String(process.env.CONTAINER_TYPE || "platform").toLowerCase() === "partner" ? "Release Partner Share" : "Release Platform Share")}
-                              </button>
-                              {relError && <span className="microtext text-red-500">{relError}</span>}
-                            </div>
-                          </div>
-                          <div className="space-y-1 mb-2">
-                            <div className="microtext text-muted-foreground">
-                              {(() => {
-                                const receiptFee = Number(it.platformFeeUsd || 0);
-                                const onChainReleases = Object.entries(cumulative.platformReleases || {});
-                                const onChainTokens = onChainReleases.filter(([, v]) => Number(v) > 0);
-                                const onChainSummary = onChainTokens
-                                  .map(([token, v]) => `${Number(v).toFixed(4)} ${token}`)
-                                  .join(", ");
-
-                                if (receiptFee > 0) {
-                                  return `Platform fee: $${receiptFee.toFixed(2)} (receipts)`;
-                                } else if (onChainTokens.length > 0) {
-                                  return `Platform fee: ${onChainSummary} (on-chain releases)`;
-                                }
-                                return "Platform fee: $0.00";
-                              })()}
-                            </div>
-                            {transactions.length > 0 && (
-                              <div className="microtext text-muted-foreground">
-                                Recent transactions: {transactions.length} • Total volume: {(() => {
-                                  const byToken: Record<string, number> = {};
-                                  for (const tx of transactions) {
-                                    if (tx?.type === 'payment') {
-                                      const token = String(tx.token || 'ETH');
-                                      byToken[token] = (byToken[token] || 0) + Number(tx.value || 0);
-                                    }
-                                  }
-                                  const parts = Object.entries(byToken)
-                                    .filter(([, v]) => v > 0)
-                                    .map(([token, v]) => `${v.toFixed(4)} ${token}`);
-                                  return parts.length > 0 ? parts.join(", ") : "0";
-                                })()}
-                              </div>
-                            )}
-                          </div>
-
-                          {relResults.length > 0 && (
-                            <div className="microtext">
-                              {relResults.map((rr: any, idx: number) => (
-                                <div key={idx} className={statusClassPlatform(rr)}>
-                                  {formatPlatformMessage(rr)}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {resLoad ? (
-                            <div className="microtext text-muted-foreground">Loading balances…</div>
-                          ) : resErr ? (
-                            <div className="microtext text-red-500">Error: {resErr}</div>
-                          ) : b && b.balances ? (
-                            <>
-                              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                                {Object.entries(b.balances).map(([symbol, info]: [string, any]) => {
-                                  const totalGenerated = (() => {
-                                    try {
-                                      const payments = Number(cumulative.payments?.[symbol] || 0);
-                                      const merchantReleases = Number(cumulative.merchantReleases?.[symbol] || 0);
-                                      return payments;
-                                    } catch {
-                                      return 0;
-                                    }
-                                  })();
-
-                                  return (
-                                    <div key={symbol} className="p-3 rounded-md border glass-pane space-y-2">
-                                      <div>
-                                        <div className="text-xs font-medium text-muted-foreground">{symbol}</div>
-                                        <div className="text-sm font-semibold">{Number(info.units || 0).toFixed(6)}</div>
-                                        <div className="microtext text-muted-foreground">${Number(info.usd || 0).toFixed(2)}</div>
-                                      </div>
-
-                                      {/* Show total generated - compact format */}
-                                      {totalGenerated > 0 && (
-                                        <div className="text-xs text-blue-600 font-medium border-t pt-1">
-                                          ↑ {totalGenerated.toFixed(4)}
-                                        </div>
-                                      )}
-
-                                      {b && b.splitAddressUsed && (() => {
-                                        try {
-                                          const relMap = releasableCache.get(w) || {};
-                                          const rel = (relMap as any)[symbol];
-                                          if (rel && typeof rel.units === "number") {
-                                            const unitVal = Number(rel.units || 0);
-                                            if (unitVal > 0) {
-                                              return (
-                                                <div className="microtext text-amber-600 border-t pt-1">
-                                                  ⚡ {unitVal.toFixed(4)} releasable
-                                                </div>
-                                              );
-                                            }
-                                          }
-                                          return null;
-                                        } catch {
-                                          return null;
-                                        }
-                                      })()}
-
-                                      <div>
-                                        <button
-                                          className="px-2 py-1 rounded-md border text-xs"
-                                          onClick={() => releasePlatformShare(w, symbol)}
-                                          disabled={
-                                            relLoading ||
-                                            !(b && b.splitAddressUsed)
-                                          }
-                                          title="Release platform share for this token"
-                                        >
-                                          {relLoading ? "Working…" : `Release ${symbol}`}
-                                        </button>
-                                        {(() => {
-                                          try {
-                                            const arr = releaseResults.get(w) || [];
-                                            const rr = (arr || []).find((x: any) => String(x?.symbol || "") === String(symbol));
-                                            return rr ? (
-                                              <div className={`microtext mt-1 ${statusClassPlatform(rr)}`}>
-                                                {formatPlatformMessage(rr)}
-                                              </div>
-                                            ) : null;
-                                          } catch {
-                                            return null;
-                                          }
-                                        })()}
-                                      </div>
+                                        Credit/Crypto Split
+                                      </button>
+                                      <button
+                                        onClick={() => setActiveSplitTab(prev => ({ ...prev, [w]: "debit" }))}
+                                        className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 -mb-[2px] ${
+                                          currentTab === "debit"
+                                            ? "border-purple-500 text-purple-400 font-semibold"
+                                            : "border-transparent text-muted-foreground hover:text-foreground"
+                                        }`}
+                                      >
+                                        Debit Split
+                                      </button>
                                     </div>
-                                  );
-                                })}
-                              </div>
-                              <div className="microtext text-muted-foreground">
-                                Total Reserve Value (USD): ${Number(b.totalUsd || 0).toFixed(2)}
-                              </div>
+                                  )}
+                                  <div className="microtext text-muted-foreground">Split not configured for {currentTab === "credit" ? "Credit" : "Debit"}</div>
+                                </div>
+                              );
+                            }
 
-                              {/* Transaction History */}
-                              {b && b.splitAddressUsed && (
-                                <div className="mt-3 rounded-md border p-3">
-                                  <div className="flex items-center justify-between mb-2">
-                                    <div className="text-sm font-medium">Recent Transactions</div>
+                            const viewingAddr = selectedMerchantSplitVersion[`${w}_${currentTab}`] || canonicalCurrent;
+
+                            const allHistory: Array<{ address: string;[k: string]: any }> = [];
+                            const seenAddrs = new Set<string>();
+
+                            // Merge from users API
+                            if (Array.isArray((it as any).allSplitAddresses)) {
+                              for (const h of (it as any).allSplitAddresses) {
+                                const addr = String(h?.address || "").toLowerCase();
+                                if (addr && /^0x[a-f0-9]{40}$/i.test(addr) && !seenAddrs.has(addr)) {
+                                  seenAddrs.add(addr);
+                                  allHistory.push(h);
+                                }
+                              }
+                            }
+                            // Also merge from reserve/balances API
+                            if (b && Array.isArray(b.splitHistory)) {
+                              for (const h of b.splitHistory) {
+                                const addr = String(h?.address || "").toLowerCase();
+                                if (addr && /^0x[a-f0-9]{40}$/i.test(addr) && !seenAddrs.has(addr)) {
+                                  seenAddrs.add(addr);
+                                  allHistory.push(h);
+                                }
+                              }
+                            }
+
+                            // Filter history by tab type
+                            const historicalEntries = allHistory.filter((h: any) => {
+                              const addrLower = String(h.address || "").toLowerCase();
+                              if (addrLower === canonicalCurrent) return false;
+                              if (isCreditTab) {
+                                return !h.isCredit && addrLower !== canonicalDebit;
+                              } else {
+                                return h.isCredit && addrLower !== canonicalCredit;
+                              }
+                            });
+
+                            const cacheKey = viewingAddr ? `${w}_${viewingAddr.toLowerCase()}` : w;
+                            const targetB = balancesCache.get(cacheKey) || balancesCache.get(w);
+
+                            const targetBalances = (() => {
+                              if (!targetB) return null;
+                              if (currentTab === "debit") {
+                                // If viewing current Debit split version, its balances are stored in balancesCredit of default response.
+                                // If viewing historical Debit split version, we fetched it standalone so it is in balances.
+                                return (viewingAddr === canonicalDebit) ? targetB.balancesCredit : targetB.balances;
+                              } else {
+                                return targetB.balances;
+                              }
+                            })();
+
+                            const transactions = transactionsCache.get(cacheKey) || [];
+                            const cumulative = cumulativeCache.get(cacheKey) || { payments: {}, merchantReleases: {}, platformReleases: {} };
+
+                            return (
+                              <div className="space-y-3">
+                                {isDual && (
+                                  <div className="flex border-b border-foreground/10 mb-4">
                                     <button
-                                      className="px-2 py-1 rounded-md border text-xs"
-                                      onClick={() => fetchMerchantTransactions(w)}
-                                      disabled={txLoad}
+                                      onClick={() => setActiveSplitTab(prev => ({ ...prev, [w]: "credit" }))}
+                                      className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 -mb-[2px] ${
+                                        currentTab === "credit"
+                                          ? "border-emerald-500 text-emerald-400 font-semibold"
+                                          : "border-transparent text-muted-foreground hover:text-foreground"
+                                      }`}
                                     >
-                                      {txLoad ? "Loading…" : "Refresh"}
+                                      Credit/Crypto Split
+                                    </button>
+                                    <button
+                                      onClick={() => setActiveSplitTab(prev => ({ ...prev, [w]: "debit" }))}
+                                      className={`px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 -mb-[2px] ${
+                                        currentTab === "debit"
+                                          ? "border-purple-500 text-purple-400 font-semibold"
+                                          : "border-transparent text-muted-foreground hover:text-foreground"
+                                      }`}
+                                    >
+                                      Debit Split
                                     </button>
                                   </div>
-                                  {txLoad ? (
-                                    <div className="microtext text-muted-foreground">Loading transactions…</div>
-                                  ) : txErr ? (
-                                    <div className="microtext text-red-500">{txErr}</div>
-                                  ) : transactions.length > 0 ? (
-                                    <>
-                                      <div className="microtext text-muted-foreground mb-2">
-                                        Showing last {transactions.length} transactions to split
-                                      </div>
-                                      <div className="max-h-60 overflow-y-auto space-y-1">
-                                        {transactions.map((tx: any, idx: number) => {
-                                          const txType = tx?.type || 'unknown';
-                                          const releaseType = tx?.releaseType;
-                                          const isPayment = txType === 'payment';
-                                          const isRelease = txType === 'release';
+                                )}
 
-                                          return (
-                                            <div key={idx} className={`p-2 rounded border text-xs ${isRelease ? 'bg-amber-50 dark:bg-amber-950/20' : ''}`}>
-                                              <div className="flex items-center justify-between mb-1">
-                                                <div className="flex items-center gap-2">
-                                                  <span className="font-mono">
-                                                    <a
-                                                      href={`https://base.blockscout.com/tx/${tx.hash}`}
-                                                      target="_blank"
-                                                      rel="noopener noreferrer"
-                                                      className="underline"
-                                                    >
-                                                      {String(tx.hash || "").slice(0, 10)}…{String(tx.hash || "").slice(-8)}
-                                                    </a>
-                                                  </span>
-                                                  {isPayment && <span className="px-1.5 py-0.5 rounded-md border border-green-500/20 text-[10px] bg-green-500/10 text-green-500 font-semibold">Payment</span>}
-                                                  {isRelease && releaseType === 'merchant' && <span className="px-1.5 py-0.5 rounded-md border border-blue-500/20 text-[10px] bg-blue-500/10 text-blue-500 font-semibold">Merchant Release</span>}
-                                                  {isRelease && releaseType === 'platform' && <span className="px-1.5 py-0.5 rounded-md border border-purple-500/20 text-[10px] bg-purple-500/10 text-purple-500 font-semibold">Platform Release</span>}
-                                                </div>
-                                                <span className="font-semibold">{Number(tx.value || 0).toFixed(4)} {String(tx.token || 'ETH').toUpperCase()}</span>
-                                              </div>
-                                              <div className="flex items-center justify-between microtext text-muted-foreground">
-                                                <span>{isPayment ? 'From' : 'To'}: {String(isPayment ? tx.from : tx.to || "").slice(0, 8)}…</span>
-                                                <span>{new Date(Number(tx.timestamp || 0)).toLocaleString()}</span>
-                                              </div>
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                      <div className="mt-2 space-y-1">
-                                        <div className="microtext text-muted-foreground">
-                                          Payments: {(() => {
-                                            const payments = transactions.filter((tx: any) => tx?.type === 'payment');
-                                            const total = payments.reduce((sum: number, tx: any) => sum + Number(tx.value || 0), 0);
-                                            return `${payments.length} tx • ${total.toFixed(4)} ETH`;
-                                          })()}
-                                        </div>
-                                        <div className="microtext text-muted-foreground">
-                                          Merchant Releases: {(() => {
-                                            const releases = transactions.filter((tx: any) => tx?.type === 'release' && tx?.releaseType === 'merchant');
-                                            const total = releases.reduce((sum: number, tx: any) => sum + Number(tx.value || 0), 0);
-                                            return `${releases.length} tx • ${total.toFixed(4)} ETH`;
-                                          })()}
-                                        </div>
-                                        <div className="microtext text-muted-foreground">
-                                          Platform Releases: {(() => {
-                                            const releases = transactions.filter((tx: any) => tx?.type === 'release' && tx?.releaseType === 'platform');
-                                            const total = releases.reduce((sum: number, tx: any) => sum + Number(tx.value || 0), 0);
-                                            return `${releases.length} tx • ${total.toFixed(4)} ETH`;
-                                          })()}
-                                        </div>
-                                        <div className="microtext text-muted-foreground">
-                                          View on{" "}
-                                          <a
-                                            href={`https://base.blockscout.com/address/${b.splitAddressUsed}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="underline"
-                                          >
-                                            Blockscout
-                                          </a>
-                                        </div>
-                                      </div>
-                                    </>
-                                  ) : (
-                                    <div className="microtext text-muted-foreground">No transactions found</div>
+                                <div className="flex items-center justify-between">
+                                  <div className="microtext text-muted-foreground">
+                                    Split:{" "}
+                                    <div className="flex items-center gap-2 inline-flex">
+                                      <a className="underline" href={`https://base.blockscout.com/address/${viewingAddr}`} target="_blank" rel="noopener noreferrer">
+                                        <TruncatedAddress address={viewingAddr} />
+                                      </a>
+                                      {historicalEntries.length > 0 && (
+                                        <select
+                                          className="ml-2 h-6 text-xs border rounded bg-background px-1"
+                                          value={selectedMerchantSplitVersion[`${w}_${currentTab}`] || canonicalCurrent}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            setSelectedMerchantSplitVersion(prev => ({ ...prev, [`${w}_${currentTab}`]: val }));
+                                            fetchMerchantBalances(w, val);
+                                            fetchMerchantTransactions(w, val, true);
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          {/* Current active split — always present */}
+                                          <option value={canonicalCurrent} className="bg-background text-foreground">
+                                            Current ({canonicalCurrent.slice(0, 6)}...{canonicalCurrent.slice(-4)})
+                                          </option>
+                                          {/* Archived old splits */}
+                                          {historicalEntries.map((h: any, i: number) => (
+                                            <option key={h.address} value={String(h.address || "").toLowerCase()} className="bg-background text-foreground">
+                                              v{historicalEntries.length - i} ({String(h.address || "").slice(0, 6)}...{String(h.address || "").slice(-4)})
+                                            </option>
+                                          ))}
+                                        </select>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      className="px-2 py-1 rounded-md border text-xs"
+                                      onClick={() => releasePlatformShare(w, undefined, viewingAddr)}
+                                      disabled={
+                                        relLoading ||
+                                        !viewingAddr
+                                      }
+                                      title={String(process.env.CONTAINER_TYPE || "platform").toLowerCase() === "partner" ? "Release partner share from merchant's split" : "Release platform share from merchant's split"}
+                                    >
+                                      {relLoading ? "Releasing…" : (String(process.env.CONTAINER_TYPE || "platform").toLowerCase() === "partner" ? "Release Partner Share" : "Release Platform Share")}
+                                    </button>
+                                    {relError && <span className="microtext text-red-500">{relError}</span>}
+                                  </div>
+                                </div>
+
+                                <div className="space-y-1 mb-2">
+                                  <div className="microtext text-muted-foreground">
+                                    {(() => {
+                                      const receiptFee = Number(it.platformFeeUsd || 0);
+                                      const onChainReleases = Object.entries(cumulative.platformReleases || {});
+                                      const onChainTokens = onChainReleases.filter(([, v]) => Number(v) > 0);
+                                      const onChainSummary = onChainTokens
+                                        .map(([token, v]) => `${Number(v).toFixed(4)} ${token}`)
+                                        .join(", ");
+
+                                      if (receiptFee > 0 && viewingAddr === canonicalCurrent) {
+                                        return `Platform fee: $${receiptFee.toFixed(2)} (receipts)`;
+                                      } else if (onChainTokens.length > 0) {
+                                        return `Platform fee: ${onChainSummary} (on-chain releases)`;
+                                      }
+                                      return "Platform fee: $0.00";
+                                    })()}
+                                  </div>
+                                  {transactions.length > 0 && (
+                                    <div className="microtext text-muted-foreground">
+                                      Recent transactions: {transactions.length} • Total volume: {(() => {
+                                        const byToken: Record<string, number> = {};
+                                        for (const tx of transactions) {
+                                          if (tx?.type === 'payment') {
+                                            const token = String(tx.token || 'ETH');
+                                            byToken[token] = (byToken[token] || 0) + Number(tx.value || 0);
+                                          }
+                                        }
+                                        const parts = Object.entries(byToken)
+                                          .filter(([, v]) => v > 0)
+                                          .map(([token, v]) => `${v.toFixed(4)} ${token}`);
+                                        return parts.length > 0 ? parts.join(", ") : "0";
+                                      })()}
+                                    </div>
                                   )}
                                 </div>
-                              )}
-                            </>
-                          ) : (
-                            <div className="microtext text-muted-foreground">No balance data</div>
-                          )}
+
+                                {relResults.length > 0 && (
+                                  <div className="microtext">
+                                    {relResults.map((rr: any, idx: number) => (
+                                      <div key={idx} className={statusClassPlatform(rr)}>
+                                        {formatPlatformMessage(rr)}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {resLoad ? (
+                                  <div className="microtext text-muted-foreground">Loading balances…</div>
+                                ) : resErr ? (
+                                  <div className="microtext text-red-500">Error: {resErr}</div>
+                                ) : targetBalances ? (
+                                  <>
+                                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                      {Object.entries(targetBalances).map(([symbol, info]: [string, any]) => {
+                                        const totalGenerated = (() => {
+                                          try {
+                                            const payments = Number(cumulative.payments?.[symbol] || 0);
+                                            return payments;
+                                          } catch {
+                                            return 0;
+                                          }
+                                        })();
+
+                                        return (
+                                          <div key={symbol} className="p-3 rounded-md border glass-pane space-y-2">
+                                            <div>
+                                              <div className="text-xs font-medium text-muted-foreground">{symbol}</div>
+                                              <div className="text-sm font-semibold">{Number(info.units || 0).toFixed(6)}</div>
+                                              <div className="microtext text-muted-foreground">${Number(info.usd || 0).toFixed(2)}</div>
+                                            </div>
+
+                                            {totalGenerated > 0 && (
+                                              <div className="text-xs text-blue-600 font-medium border-t pt-1">
+                                                ↑ {totalGenerated.toFixed(4)}
+                                              </div>
+                                            )}
+
+                                            {viewingAddr && (() => {
+                                              try {
+                                                const relMap = releasableCache.get(cacheKey) || {};
+                                                const rel = (relMap as any)[symbol];
+                                                if (rel && typeof rel.units === "number") {
+                                                  const unitVal = Number(rel.units || 0);
+                                                  if (unitVal > 0) {
+                                                    return (
+                                                      <div className="microtext text-amber-600 border-t pt-1">
+                                                        ⚡ {unitVal.toFixed(4)} releasable
+                                                      </div>
+                                                    );
+                                                  }
+                                                }
+                                                return null;
+                                              } catch {
+                                                return null;
+                                              }
+                                            })()}
+
+                                            <div>
+                                              <button
+                                                className="px-2 py-1 rounded-md border text-xs"
+                                                onClick={() => releasePlatformShare(w, symbol, viewingAddr)}
+                                                disabled={
+                                                  relLoading ||
+                                                  !viewingAddr
+                                                }
+                                                title="Release platform share for this token"
+                                              >
+                                                {relLoading ? "Working…" : `Release ${symbol}`}
+                                              </button>
+                                              {(() => {
+                                                try {
+                                                  const arr = releaseResults.get(w) || [];
+                                                  const rr = (arr || []).find((x: any) => String(x?.symbol || "") === String(symbol));
+                                                  return rr ? (
+                                                    <div className={`microtext mt-1 ${statusClassPlatform(rr)}`}>
+                                                      {formatPlatformMessage(rr)}
+                                                    </div>
+                                                  ) : null;
+                                                } catch {
+                                                  return null;
+                                                }
+                                              })()}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                    <div className="microtext text-muted-foreground">
+                                      Total Reserve Value (USD): ${(() => {
+                                        if (currentTab === "debit") {
+                                          return Number((targetB as any)?.totalUsdCredit || 0).toFixed(2);
+                                        } else {
+                                          return Number((targetB as any)?.totalUsdDebit || (targetB as any)?.totalUsd || 0).toFixed(2);
+                                        }
+                                      })()}
+                                    </div>
+
+                                    {/* Transaction History */}
+                                    {viewingAddr && (
+                                      <div className="mt-3 rounded-md border p-3">
+                                        <div className="flex items-center justify-between mb-2">
+                                          <div className="text-sm font-medium">Recent Transactions</div>
+                                          <button
+                                            className="px-2 py-1 rounded-md border text-xs"
+                                            onClick={() => fetchMerchantTransactions(w, viewingAddr, true)}
+                                            disabled={txLoad}
+                                          >
+                                            {txLoad ? "Loading…" : "Refresh"}
+                                          </button>
+                                        </div>
+                                        {txLoad ? (
+                                          <div className="microtext text-muted-foreground">Loading transactions…</div>
+                                        ) : txErr ? (
+                                          <div className="microtext text-red-500">{txErr}</div>
+                                        ) : transactions.length > 0 ? (
+                                          <>
+                                            <div className="microtext text-muted-foreground mb-2">
+                                              Showing last {transactions.length} transactions to split
+                                            </div>
+                                            <div className="max-h-60 overflow-y-auto space-y-1">
+                                              {transactions.map((tx: any, idx: number) => {
+                                                const txType = tx?.type || 'unknown';
+                                                const releaseType = tx?.releaseType;
+                                                const isPayment = txType === 'payment';
+                                                const isRelease = txType === 'release';
+
+                                                return (
+                                                  <div key={idx} className={`p-2 rounded border text-xs ${isRelease ? 'bg-amber-50 dark:bg-amber-950/20' : ''}`}>
+                                                    <div className="flex items-center justify-between mb-1">
+                                                      <div className="flex items-center gap-2">
+                                                        <span className="font-mono">
+                                                          <a
+                                                            href={`https://base.blockscout.com/tx/${tx.hash}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="underline"
+                                                          >
+                                                            {String(tx.hash || "").slice(0, 10)}…{String(tx.hash || "").slice(-8)}
+                                                          </a>
+                                                        </span>
+                                                        {isPayment && <span className="px-1.5 py-0.5 rounded-md border border-green-500/20 text-[10px] bg-green-500/10 text-green-500 font-semibold">Payment</span>}
+                                                        {isRelease && releaseType === 'merchant' && <span className="px-1.5 py-0.5 rounded-md border border-blue-500/20 text-[10px] bg-blue-500/10 text-blue-500 font-semibold">Merchant Release</span>}
+                                                        {isRelease && releaseType === 'platform' && <span className="px-1.5 py-0.5 rounded-md border border-purple-500/20 text-[10px] bg-purple-500/10 text-purple-500 font-semibold">Platform Release</span>}
+                                                      </div>
+                                                      <span className="font-semibold">{Number(tx.value || 0).toFixed(4)} {String(tx.token || 'ETH').toUpperCase()}</span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between microtext text-muted-foreground">
+                                                      <span>{isPayment ? 'From' : 'To'}: {String(isPayment ? tx.from : tx.to || "").slice(0, 8)}…</span>
+                                                      <span>{new Date(Number(tx.timestamp || 0)).toLocaleString()}</span>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                            <div className="mt-2 space-y-1">
+                                              <div className="microtext text-muted-foreground">
+                                                Payments: {(() => {
+                                                  const payments = transactions.filter((tx: any) => tx?.type === 'payment');
+                                                  const total = payments.reduce((sum: number, tx: any) => sum + Number(tx.value || 0), 0);
+                                                  return `${payments.length} tx • ${total.toFixed(4)} ETH`;
+                                                })()}
+                                              </div>
+                                              <div className="microtext text-muted-foreground">
+                                                Merchant Releases: {(() => {
+                                                  const releases = transactions.filter((tx: any) => tx?.type === 'release' && tx?.releaseType === 'merchant');
+                                                  const total = releases.reduce((sum: number, tx: any) => sum + Number(tx.value || 0), 0);
+                                                  return `${releases.length} tx • ${total.toFixed(4)} ETH`;
+                                                })()}
+                                              </div>
+                                              <div className="microtext text-muted-foreground">
+                                                Platform Releases: {(() => {
+                                                  const releases = transactions.filter((tx: any) => tx?.type === 'release' && tx?.releaseType === 'platform');
+                                                  const total = releases.reduce((sum: number, tx: any) => sum + Number(tx.value || 0), 0);
+                                                  return `${releases.length} tx • ${total.toFixed(4)} ETH`;
+                                                })()}
+                                              </div>
+                                              <div className="microtext text-muted-foreground">
+                                                View on{" "}
+                                                <a
+                                                  href={`https://base.blockscout.com/address/${viewingAddr}`}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                  className="underline"
+                                                >
+                                                  Blockscout
+                                                </a>
+                                              </div>
+                                            </div>
+                                          </>
+                                        ) : (
+                                          <div className="microtext text-muted-foreground">No transactions found</div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </>
+                                ) : (
+                                  <div className="microtext text-muted-foreground">No balance data</div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </td>
                     </tr>
@@ -11287,6 +11466,9 @@ export default function AdminPage() {
         )}
         {activeTab === "pluginStudio" && canAccessPanel("pluginStudio", wallet) && (
           <PlatformPluginsPanel />
+        )}
+        {activeTab === "sandbox" && canAccessPanel("sandbox", wallet) && (
+          <SandboxPanel />
         )}
 
         {activeTab === "clientRequests" && canAccessPanel("clientRequests", wallet) && (

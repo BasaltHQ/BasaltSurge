@@ -523,7 +523,7 @@ export async function GET(req: NextRequest) {
       allSplitAddressesMap.set(w, existing);
     }
 
-    const allowedWallets =
+    const allowedWallets = (
       containerType === "partner"
         ? Array.from(new Set<string>([...walletsFromIndex, ...fallbackWalletsFromSiteConfig]))
         : (qBrand
@@ -533,7 +533,8 @@ export async function GET(req: NextRequest) {
               .map(([w]) => w),
             ...fallbackWalletsFromSiteConfig,
           ]))
-          : allWallets);
+          : allWallets)
+    ).filter(w => !disallowedWallets.has(w));
 
     const items: UsersAggRow[] = allowedWallets
       .map((m) => {
@@ -576,20 +577,25 @@ export async function GET(req: NextRequest) {
           }
 
           // If no releases yet but payments exist, use payments as volume (not yet distributed)
+          const acc = byMerchant.get(m);
+          const accruedFee = acc ? acc.platformFeeUsd : 0;
+
           if (merchantEarnedUsd === 0 && platformEarnedUsd === 0) {
             let totalPaymentsUsd = 0;
             for (const [token, amount] of Object.entries(cumulativePayments)) {
               const price = tokenPrices[token] || 0;
               totalPaymentsUsd += Number(amount || 0) * price;
             }
-            // If payments exist but nothing released yet, show payment volume
+            // If payments exist but nothing released yet, show payment volume (net of fee)
             // Fall back to stored totalVolumeUsd only as last resort
-            totalEarnedUsd = round2(totalPaymentsUsd > 0 ? totalPaymentsUsd : indexedMetrics.totalVolumeUsd);
+            const grossUsd = totalPaymentsUsd > 0 ? totalPaymentsUsd : indexedMetrics.totalVolumeUsd;
+            totalEarnedUsd = round2(grossUsd - accruedFee);
+            platformFeeUsd = round2(accruedFee > 0 ? accruedFee : indexedMetrics.platformFeeUsd);
           } else {
             totalEarnedUsd = round2(merchantEarnedUsd);
+            platformFeeUsd = round2(platformEarnedUsd > 0 ? platformEarnedUsd : (accruedFee > 0 ? accruedFee : indexedMetrics.platformFeeUsd));
           }
 
-          platformFeeUsd = round2(platformEarnedUsd > 0 ? platformEarnedUsd : indexedMetrics.platformFeeUsd);
           totalVolumeEth = round2((merchantEarnedUsd + platformEarnedUsd) / (ethUsdRate || 1));
         } else {
           // Fallback to receipt-based data ONLY if split index unavailable

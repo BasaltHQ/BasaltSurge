@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
 
     // Support direct splitAddress parameter to bypass lookup (used by Partners panel accordion)
     const querySplitAddress = String(url.searchParams.get("splitAddress") || "").toLowerCase();
+    const querySplitAddressCredit = String(url.searchParams.get("splitAddressCredit") || "").toLowerCase();
     const queryBrandKey = String(url.searchParams.get("brandKey") || "").toLowerCase();
 
     const { isDualSplitEnabled } = await import("@/lib/env");
@@ -45,9 +46,12 @@ export async function GET(req: NextRequest) {
     let splitAddressDebit = "";
     let splitAddressCredit = "";
 
-    // Priority 1: Use directly provided splitAddress parameter (most reliable for brand-scoped queries)
+    // Priority 1: Use directly provided splitAddress parameters
     if (querySplitAddress && /^0x[a-f0-9]{40}$/i.test(querySplitAddress)) {
       splitAddressDebit = querySplitAddress;
+    }
+    if (querySplitAddressCredit && /^0x[a-f0-9]{40}$/i.test(querySplitAddressCredit)) {
+      splitAddressCredit = querySplitAddressCredit;
     }
 
     // Priority 2: Try site-config lookup

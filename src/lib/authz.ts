@@ -155,6 +155,7 @@ export type AdminPanel =
   | 'shopifyPlatform' // Shopify Platform
   | 'autoclose'       // Autoclose Daily Settlement
   | 'emailConfig'     // Email sender/DKIM settings
+  | 'sandbox'         // Sandbox panel
   | 'users';          // Users/Merchants tab in partner group
 
 // ------------------------------------------------------------------
@@ -349,6 +350,13 @@ export function canAccessPanel(panel: AdminPanel, wallet?: string): boolean {
   const permissions = customOverrides[role] || ROLE_PERMISSIONS[role] || [];
 
   // Specific Logic per Panel
+  if (panel === 'sandbox') {
+    if (typeof window !== 'undefined' && window.location.hostname !== 'surge-sand.basalthq.com') {
+      return false;
+    }
+    return role.startsWith('platform_');
+  }
+
   if (panel === 'admins') {
     return permissions.includes('manage:admins');
   }

@@ -107,6 +107,18 @@ export async function POST(req: NextRequest) {
     if (merchantWallet) params.append("metadata[merchantWallet]", merchantWallet);
     if (brandKey) params.append("metadata[brandKey]", brandKey);
 
+    const splitMode = String(body.splitMode || "").trim().toLowerCase();
+    if (splitMode) {
+      params.append("metadata[splitMode]", splitMode);
+    } else {
+      const cookieHeader = req.headers.get("cookie") || "";
+      if (cookieHeader.includes("pp_sandbox_split_mode=dual")) {
+        params.append("metadata[splitMode]", "dual");
+      } else if (cookieHeader.includes("pp_sandbox_split_mode=single")) {
+        params.append("metadata[splitMode]", "single");
+      }
+    }
+
     console.log("[ONRAMP V2] Creating headless session for customer:", cryptoCustomerId);
 
     const response = await fetch("https://api.stripe.com/v1/crypto/onramp_sessions", {
