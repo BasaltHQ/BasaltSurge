@@ -77,9 +77,16 @@ export function SandboxWidget() {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Only show on sandbox hostname or localhost
+    // Never show the sandbox widget on partner containers
+    const isPartnerContainer = process.env.NEXT_PUBLIC_CONTAINER_TYPE === "partner";
+    if (isPartnerContainer) {
+      setVisible(false);
+      return;
+    }
+
+    // Only show on the official sandbox hostname
     const hostname = window.location.hostname;
-    const isSandboxHost = hostname === "surge-sand.basalthq.com" || hostname === "localhost" || hostname === "127.0.0.1";
+    const isSandboxHost = hostname === "surge-sand.basalthq.com";
     if (!isSandboxHost) return;
 
     const cookies = window.document.cookie || "";
