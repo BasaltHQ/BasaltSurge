@@ -132,9 +132,24 @@ export async function POST(req: NextRequest) {
       payments: {}, merchantReleases: {}, platformReleases: {},
     };
     const seenHashes = new Set<string>(); // Deduplicate across splits
+    const cumulativePerSplit: Record<string, {
+      payments: Record<string, number>;
+      merchantReleases: Record<string, number>;
+      partnerReleases: Record<string, number>;
+      agentReleases: Record<string, number>;
+      platformReleases: Record<string, number>;
+    }> = {};
 
     for (const split of allSplitAddresses) {
       const { transactions, cumulative } = await fetchSplitTransactions(split.address, merchantWallet);
+
+      cumulativePerSplit[split.address.toLowerCase()] = {
+        payments: cumulative.payments || {},
+        merchantReleases: cumulative.merchantReleases || {},
+        partnerReleases: (cumulative as any).partnerReleases || {},
+        agentReleases: (cumulative as any).agentReleases || {},
+        platformReleases: cumulative.platformReleases || {},
+      };
 
       // Merge transactions (deduplicate by hash)
       for (const tx of transactions) {
@@ -286,6 +301,7 @@ export async function POST(req: NextRequest) {
       transactionCount: allTransactions.length,
 
       // Sanitized cumulative token amounts (merged across all splits)
+      cumulativePerSplit,
       cumulativePayments: sanitizedPayments,
       cumulativeMerchantReleases: sanitizedMerchantReleases,
       cumulativePlatformReleases: sanitizedPlatformReleases,

@@ -386,6 +386,90 @@ export async function GET(req: NextRequest) {
           if (ts > lastTransactionAt) lastTransactionAt = ts;
         }
 
+        const splitAddrLower = splitAddress.toLowerCase();
+        let cumulativePerSplit = existingDoc?.cumulativePerSplit || {};
+
+        // On-the-fly migration: if existingDoc exists but doesn't have cumulativePerSplit,
+        // seed it using existingDoc's top-level cumulative fields and its stored splitAddress
+        if (existingDoc && !existingDoc.cumulativePerSplit && existingDoc.splitAddress) {
+          const oldSplit = String(existingDoc.splitAddress).toLowerCase();
+          cumulativePerSplit[oldSplit] = {
+            payments: existingDoc.cumulativePayments || {},
+            merchantReleases: existingDoc.cumulativeMerchantReleases || {},
+            partnerReleases: existingDoc.cumulativePartnerReleases || {},
+            agentReleases: existingDoc.cumulativeAgentReleases || {},
+            platformReleases: existingDoc.cumulativePlatformReleases || {},
+          };
+        }
+
+        // Store the newly fetched cumulative metrics for this split
+        cumulativePerSplit[splitAddrLower] = {
+          payments: cumulative.payments || {},
+          merchantReleases: cumulative.merchantReleases || {},
+          partnerReleases: (cumulative as any).partnerReleases || {},
+          agentReleases: (cumulative as any).agentReleases || {},
+          platformReleases: cumulative.platformReleases || {},
+        };
+
+        // Aggregate cumulative amounts across all splits
+        const aggCumulative = {
+          payments: {} as Record<string, number>,
+          merchantReleases: {} as Record<string, number>,
+          partnerReleases: {} as Record<string, number>,
+          agentReleases: {} as Record<string, number>,
+          platformReleases: {} as Record<string, number>,
+        };
+
+        for (const splitData of Object.values(cumulativePerSplit) as any[]) {
+          for (const [token, amount] of Object.entries(splitData.payments || {})) {
+            aggCumulative.payments[token] = (aggCumulative.payments[token] || 0) + Number(amount || 0);
+          }
+          for (const [token, amount] of Object.entries(splitData.merchantReleases || {})) {
+            aggCumulative.merchantReleases[token] = (aggCumulative.merchantReleases[token] || 0) + Number(amount || 0);
+          }
+          for (const [token, amount] of Object.entries(splitData.partnerReleases || {})) {
+            aggCumulative.partnerReleases[token] = (aggCumulative.partnerReleases[token] || 0) + Number(amount || 0);
+          }
+          for (const [token, amount] of Object.entries(splitData.agentReleases || {})) {
+            aggCumulative.agentReleases[token] = (aggCumulative.agentReleases[token] || 0) + Number(amount || 0);
+          }
+          for (const [token, amount] of Object.entries(splitData.platformReleases || {})) {
+            aggCumulative.platformReleases[token] = (aggCumulative.platformReleases[token] || 0) + Number(amount || 0);
+          }
+        }
+
+        // Get ETH rate for USD conversion
+        let ethUsdRate = 0;
+        try {
+          const { fetchEthRates } = await import("@/lib/eth");
+          const rates = await fetchEthRates();
+          ethUsdRate = Number(rates?.USD || 0);
+        } catch { }
+
+        const tokenPrices: Record<string, number> = {
+          ETH: ethUsdRate || 2500,
+          USDC: 1.0,
+          USDT: 1.0,
+          cbBTC: 65000,
+          cbXRP: 0.50,
+        };
+
+        let totalVolumeUsd = 0;
+        let platformFeeUsd = 0;
+        for (const [token, amount] of Object.entries(aggCumulative.payments)) {
+          const price = tokenPrices[token] || 0;
+          totalVolumeUsd += Number(amount || 0) * price;
+        }
+        for (const [token, amount] of Object.entries(aggCumulative.platformReleases)) {
+          const price = tokenPrices[token] || 0;
+          platformFeeUsd += Number(amount || 0) * price;
+        }
+        const merchantEarnedUsd = totalVolumeUsd - platformFeeUsd;
+
+        const totalVolumeUsdRounded = Math.round(totalVolumeUsd * 100) / 100;
+        const merchantEarnedUsdRounded = Math.round(merchantEarnedUsd * 100) / 100;
+        const platformFeeUsdRounded = Math.round(platformFeeUsd * 100) / 100;
+
         const indexDoc = {
           ...(existingDoc || {}),
           id: indexId,
@@ -393,11 +477,15 @@ export async function GET(req: NextRequest) {
           merchantWallet: merchantAddrLower,
           splitAddress: existingDoc?.splitAddress || splitAddrLower,
           splitAddresses: existingDoc?.splitAddresses || [{ address: splitAddrLower, version: "current" }],
-          cumulativePayments: cumulative.payments,
-          cumulativeMerchantReleases: cumulative.merchantReleases,
-          cumulativePartnerReleases: cumulative.partnerReleases,
-          cumulativeAgentReleases: cumulative.agentReleases,
-          cumulativePlatformReleases: cumulative.platformReleases,
+          cumulativePerSplit,
+          cumulativePayments: aggCumulative.payments,
+          cumulativeMerchantReleases: aggCumulative.merchantReleases,
+          cumulativePartnerReleases: aggCumulative.partnerReleases,
+          cumulativeAgentReleases: aggCumulative.agentReleases,
+          cumulativePlatformReleases: aggCumulative.platformReleases,
+          totalVolumeUsd: totalVolumeUsdRounded,
+          merchantEarnedUsd: merchantEarnedUsdRounded,
+          platformFeeUsd: platformFeeUsdRounded,
           transactions: mergedTransactions,
           transactionCount: mergedTransactions.length,
           customers: uniqueCustomers.size,
