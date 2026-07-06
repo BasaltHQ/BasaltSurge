@@ -14,40 +14,29 @@ const _isDebug = isDebug();
 // ── Connection pool ─────────────────────────────────────────────────────
 
 let _client: MongoClient | null = null;
+let _clientPromise: Promise<MongoClient> | null = null;
 
 async function getMongoClient(uri: string): Promise<MongoClient> {
-    // Simplified check: since the driver handles reconnection, we just check if the client is initialized.
-    const isConnected = !!_client;
-
-    if (!_client || !isConnected) {
-        if (_client) {
-            // Attempt to cleanly close the broken client before replacing
-            _client.close().catch(() => { });
-        }
-
-        _client = new MongoClient(uri, {
-            maxPoolSize: 20,
-            minPoolSize: 2,
-            retryWrites: true,
-            retryReads: true,
-        });
-        await _client.connect();
-
-        // Graceful shutdown
-        const cleanup = async () => {
-            if (_client) {
-                await _client.close();
-                _client = null;
-            }
-        };
-        // Remove existing listeners to prevent leaks when replacing clients
-        const events = ["SIGINT", "SIGTERM"];
-        events.forEach(eventName => {
-            process.removeAllListeners(eventName);
-            process.on(eventName, cleanup);
-        });
+    if (_clientPromise) {
+        return _clientPromise;
     }
-    return _client;
+
+    _client = new MongoClient(uri, {
+        maxPoolSize: 20,
+        minPoolSize: 2,
+        retryWrites: true,
+        retryReads: true,
+    });
+
+    _clientPromise = _client.connect()
+        .then((client) => client)
+        .catch((err) => {
+            _clientPromise = null;
+            _client = null;
+            throw err;
+        });
+
+    return _clientPromise;
 }
 
 // ── Types matching Cosmos SDK shapes ────────────────────────────────────
