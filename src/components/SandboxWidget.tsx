@@ -8,9 +8,10 @@ import {
   Check, 
   Globe, 
   DollarSign, 
-  GitMerge,
+  GitMerge, 
   Sparkles,
-  User
+  User,
+  Lock
 } from "lucide-react";
 
 export function SandboxWidget() {
@@ -18,9 +19,18 @@ export function SandboxWidget() {
   const [isOpen, setIsOpen] = useState(false);
   const [feeMode, setFeeMode] = useState<"fee_plus" | "fee_minus">("fee_plus");
   const [splitMode, setSplitMode] = useState<"single" | "dual">("single");
-  const [brandKey, setBrandKey] = useState("");
-  const [merchantWallet, setMerchantWallet] = useState("");
+  const [brandsList, setBrandsList] = useState<string[]>([]);
+  const [selectedBrand, setSelectedBrand] = useState("basaltsurge");
+  const [merchantsList, setMerchantsList] = useState<Array<{ merchant: string; displayName?: string }>>([]);
+  const [selectedMerchant, setSelectedMerchant] = useState("");
+  const [isConfigLoading, setIsConfigLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
+
+  const updateCookie = (name: string, value: string) => {
+    if (typeof window !== "undefined") {
+      document.cookie = `${name}=${value}; path=/; max-age=31536000; SameSite=Lax`;
+    }
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -37,36 +47,88 @@ export function SandboxWidget() {
     }
 
     setVisible(true);
-    if (cookies.includes("pp_sandbox_fee_mode=fee_minus")) {
-      setFeeMode("fee_minus");
-    } else {
-      setFeeMode("fee_plus");
-    }
 
-    if (cookies.includes("pp_sandbox_split_mode=dual")) {
-      setSplitMode("dual");
-    } else {
-      setSplitMode("single");
-    }
-
-    const match = cookies.match(/pp_sandbox_brand_key=([^;]+)/);
-    if (match && match[1]) {
-      setBrandKey(match[1]);
-    }
+    const bMatch = cookies.match(/pp_sandbox_brand_key=([^;]+)/);
+    const initialBrand = bMatch ? bMatch[1].toLowerCase().trim() : "basaltsurge";
+    setSelectedBrand(initialBrand);
 
     const mMatch = cookies.match(/pp_sandbox_merchant_wallet=([^;]+)/);
-    if (mMatch && mMatch[1]) {
-      setMerchantWallet(mMatch[1]);
+    if (mMatch) {
+      setSelectedMerchant(mMatch[1].toLowerCase().trim());
     }
+
+    (async () => {
+      try {
+        const r = await fetch("/api/platform/brands", { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        const arr = Array.isArray(j?.brands) ? j.brands : [];
+        const normalized = arr.map((k: any) => String(k || "").toLowerCase()).filter(Boolean);
+        if (!normalized.includes("basaltsurge")) {
+          normalized.unshift("basaltsurge");
+        }
+        setBrandsList(normalized);
+      } catch (e) {
+        console.error("Failed to load brands:", e);
+        setBrandsList(["basaltsurge", "aipowerpay", "paynex", "xoinpay", "icunow-store"]);
+      }
+    })();
   }, []);
 
-  if (!visible) return null;
+  // Fetch configs and merchants when brand key changes
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (typeof window === "undefined" || !selectedBrand) return;
+      try {
+        setIsConfigLoading(true);
+        
+        // Fetch brand config from Cosmos DB to set locked configs
+        const r = await fetch(`/api/platform/brands/${encodeURIComponent(selectedBrand)}/config`, { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (!active) return;
 
-  const updateCookie = (name: string, value: string) => {
-    if (typeof window !== "undefined") {
-      document.cookie = `${name}=${value}; path=/; max-age=31536000; SameSite=Lax`;
-    }
-  };
+        const brandData = j?.brand || {};
+        
+        // Fee Mode configuration resolution
+        const targetFeeMode = brandData.feeMinusEnabled ? "fee_minus" : "fee_plus";
+        setFeeMode(targetFeeMode);
+
+        // Split Strategy resolution
+        const hasAgents = Array.isArray(brandData.agents) && brandData.agents.length > 0;
+        const isAipowerpay = selectedBrand.toLowerCase() === "aipowerpay";
+        const targetSplitMode = (hasAgents || isAipowerpay || brandData.primaryAgentWallet) ? "dual" : "single";
+        setSplitMode(targetSplitMode);
+
+        // Load merchants under this brand
+        const rm = await fetch(`/api/admin/users?brandKey=${encodeURIComponent(selectedBrand)}`, { cache: "no-store" });
+        const jm = await rm.json().catch(() => ({}));
+        if (!active) return;
+
+        const items = Array.isArray(jm?.items) ? jm.items : [];
+        const mappedMerchants = items.map((it: any) => ({
+          merchant: String(it.merchant || "").toLowerCase(),
+          displayName: it.displayName || ""
+        }));
+        setMerchantsList(mappedMerchants);
+
+        // Reconcile selected merchant override
+        const cookies = window.document.cookie || "";
+        const mMatch = cookies.match(/pp_sandbox_merchant_wallet=([^;]+)/);
+        const currentOverride = mMatch ? mMatch[1].toLowerCase().trim() : "";
+        if (currentOverride && mappedMerchants.some((m: any) => m.merchant === currentOverride)) {
+          setSelectedMerchant(currentOverride);
+        } else {
+          setSelectedMerchant("");
+        }
+
+      } catch (err) {
+        console.error("Failed to load sandbox brand config/merchants inside widget:", err);
+      } finally {
+        if (active) setIsConfigLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [selectedBrand]);
 
   const handleApply = () => {
     // Write fee mode
@@ -76,17 +138,15 @@ export function SandboxWidget() {
     updateCookie("pp_sandbox_split_mode", splitMode);
 
     // Write or clear brand override
-    const cleanedBrand = brandKey.trim().toLowerCase();
-    if (cleanedBrand) {
-      updateCookie("pp_sandbox_brand_key", cleanedBrand);
+    if (selectedBrand && selectedBrand !== "basaltsurge") {
+      updateCookie("pp_sandbox_brand_key", selectedBrand);
     } else {
       document.cookie = `pp_sandbox_brand_key=; path=/; max-age=0; SameSite=Lax`;
     }
 
     // Write or clear merchant override
-    const cleanedMerchant = merchantWallet.trim();
-    if (cleanedMerchant) {
-      updateCookie("pp_sandbox_merchant_wallet", cleanedMerchant);
+    if (selectedMerchant) {
+      updateCookie("pp_sandbox_merchant_wallet", selectedMerchant);
     } else {
       document.cookie = `pp_sandbox_merchant_wallet=; path=/; max-age=0; SameSite=Lax`;
     }
@@ -132,113 +192,125 @@ export function SandboxWidget() {
 
           {/* Controls list */}
           <div className="space-y-4">
-            {/* Fee Mode toggle */}
-            <div className="space-y-1.5">
+            {/* Fee Mode */}
+            <div className="space-y-1.5 relative opacity-60 select-none">
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
+                <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5 text-amber-400" />
+                  Locked: Brand Config
+                </span>
+              </div>
               <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
                 <DollarSign className="w-3 h-3 text-emerald-400" />
                 Fee Mode
               </label>
-              <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5">
-                <button
-                  onClick={() => setFeeMode("fee_plus")}
-                  className={`py-1.5 text-[10px] font-bold rounded-md transition-all ${
+              <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
+                <div
+                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
                     feeMode === "fee_plus"
                       ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-400 hover:text-white"
+                      : "text-zinc-600"
                   }`}
                 >
                   Fee on Top (Fee+)
-                </button>
-                <button
-                  onClick={() => setFeeMode("fee_minus")}
-                  className={`py-1.5 text-[10px] font-bold rounded-md transition-all ${
+                </div>
+                <div
+                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
                     feeMode === "fee_minus"
                       ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-400 hover:text-white"
+                      : "text-zinc-600"
                   }`}
                 >
                   Deducted (Fee-)
-                </button>
+                </div>
               </div>
             </div>
 
-            {/* Split Mode toggle */}
-            <div className="space-y-1.5">
+            {/* Split Mode */}
+            <div className="space-y-1.5 relative opacity-60 select-none">
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
+                <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5 text-amber-400" />
+                  Locked: Brand Config
+                </span>
+              </div>
               <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
                 <GitMerge className="w-3 h-3 text-purple-400" />
                 Split Strategy
               </label>
-              <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5">
-                <button
-                  onClick={() => setSplitMode("single")}
-                  className={`py-1.5 text-[10px] font-bold rounded-md transition-all ${
+              <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
+                <div
+                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
                     splitMode === "single"
                       ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-400 hover:text-white"
+                      : "text-zinc-600"
                   }`}
                 >
                   Single Split
-                </button>
-                <button
-                  onClick={() => setSplitMode("dual")}
-                  className={`py-1.5 text-[10px] font-bold rounded-md transition-all ${
+                </div>
+                <div
+                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
                     splitMode === "dual"
                       ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-400 hover:text-white"
+                      : "text-zinc-600"
                   }`}
                 >
                   Dual Split
-                </button>
+                </div>
               </div>
             </div>
 
-            {/* Brand Key input */}
+            {/* Brand Key Selector */}
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
                 <Globe className="w-3 h-3 text-sky-400" />
                 Brand Container Override
               </label>
               <div className="relative">
-                <input
-                  type="text"
-                  value={brandKey}
-                  onChange={(e) => setBrandKey(e.target.value)}
-                  placeholder="e.g. aipowerpay"
-                  className="w-full px-2.5 py-1.5 text-[10px] rounded-lg border border-white/10 bg-zinc-950 text-white placeholder-zinc-600 focus:outline-none focus:border-amber-500/50"
-                />
-                {brandKey && (
-                  <button
-                    onClick={() => setBrandKey("")}
-                    className="absolute right-2 top-1.5 text-zinc-500 hover:text-white text-[9px] font-bold"
-                  >
-                    Clear
-                  </button>
-                )}
+                <select
+                  value={selectedBrand}
+                  onChange={(e) => setSelectedBrand(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-[10px] rounded-lg border border-white/10 bg-zinc-950 text-white focus:outline-none focus:border-amber-500/50 appearance-none font-mono"
+                >
+                  {brandsList.map((bk) => (
+                    <option key={bk} value={bk} className="bg-zinc-950">
+                      {bk === "basaltsurge" ? "basaltsurge (Default)" : bk}
+                    </option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-zinc-400">
+                  <svg className="fill-current h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                    <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+                  </svg>
+                </div>
               </div>
             </div>
 
-            {/* Merchant Wallet input */}
+            {/* Merchant Wallet Selector */}
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
                 <User className="w-3 h-3 text-emerald-400" />
                 Merchant Wallet Override
               </label>
               <div className="relative">
-                <input
-                  type="text"
-                  value={merchantWallet}
-                  onChange={(e) => setMerchantWallet(e.target.value)}
-                  placeholder="e.g. 0xabcd..."
-                  className="w-full px-2.5 py-1.5 text-[10px] rounded-lg border border-white/10 bg-zinc-950 text-white placeholder-zinc-600 focus:outline-none focus:border-amber-500/50"
-                />
-                {merchantWallet && (
-                  <button
-                    onClick={() => setMerchantWallet("")}
-                    className="absolute right-2 top-1.5 text-zinc-500 hover:text-white text-[9px] font-bold"
-                  >
-                    Clear
-                  </button>
-                )}
+                <select
+                  value={selectedMerchant}
+                  onChange={(e) => setSelectedMerchant(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-[10px] rounded-lg border border-white/10 bg-zinc-950 text-white focus:outline-none focus:border-amber-500/50 appearance-none font-mono"
+                  disabled={merchantsList.length === 0}
+                >
+                  <option value="" className="bg-zinc-950">None (Clear Override)</option>
+                  {merchantsList.map((m) => (
+                    <option key={m.merchant} value={m.merchant} className="bg-zinc-950">
+                      {m.displayName ? `${m.displayName} (${m.merchant.slice(0, 8)}...)` : m.merchant}
+                    </option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-zinc-400">
+                  <svg className="fill-current h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                    <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+                  </svg>
+                </div>
               </div>
             </div>
           </div>
@@ -246,7 +318,7 @@ export function SandboxWidget() {
           {/* Action buttons */}
           <div className="mt-5 pt-3 border-t border-white/5 flex items-center justify-between">
             <span className="text-[9px] text-zinc-500 font-medium italic">
-              {statusMessage || "Unsaved changes"}
+              {statusMessage || (isConfigLoading ? "Loading config..." : "Unsaved changes")}
             </span>
             <button
               onClick={handleApply}

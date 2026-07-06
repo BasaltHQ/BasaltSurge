@@ -10,40 +10,37 @@ import {
   Globe,
   User,
   Eye,
-  EyeOff
+  EyeOff,
+  Lock
 } from "lucide-react";
 
 export default function SandboxPanel() {
   const [feeMode, setFeeMode] = useState<"fee_plus" | "fee_minus">("fee_plus");
   const [splitMode, setSplitMode] = useState<"single" | "dual">("single");
-  const [brandKeyOverride, setBrandKeyOverride] = useState("");
-  const [merchantWalletOverride, setMerchantWalletOverride] = useState("");
+  const [brandsList, setBrandsList] = useState<string[]>([]);
+  const [selectedBrand, setSelectedBrand] = useState("basaltsurge");
+  const [merchantsList, setMerchantsList] = useState<Array<{ merchant: string; displayName?: string }>>([]);
+  const [selectedMerchant, setSelectedMerchant] = useState("");
+  const [isConfigLoading, setIsConfigLoading] = useState(false);
   const [widgetDisabled, setWidgetDisabled] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  const updateCookie = (name: string, value: string) => {
+    if (typeof window !== "undefined") {
+      document.cookie = `${name}=${value}; path=/; max-age=31536000; SameSite=Lax`;
+    }
+  };
+
+  // 1. Initial mounting cookies check and dynamic brand key list load
   useEffect(() => {
-    // Read active cookies on load
     const cookies = typeof window !== "undefined" ? window.document.cookie || "" : "";
-    if (cookies.includes("pp_sandbox_fee_mode=fee_minus")) {
-      setFeeMode("fee_minus");
-    } else {
-      setFeeMode("fee_plus");
-    }
-
-    if (cookies.includes("pp_sandbox_split_mode=dual")) {
-      setSplitMode("dual");
-    } else {
-      setSplitMode("single");
-    }
-
-    const match = cookies.match(/pp_sandbox_brand_key=([^;]+)/);
-    if (match && match[1]) {
-      setBrandKeyOverride(match[1]);
-    }
+    const bMatch = cookies.match(/pp_sandbox_brand_key=([^;]+)/);
+    const initialBrand = bMatch ? bMatch[1].toLowerCase().trim() : "basaltsurge";
+    setSelectedBrand(initialBrand);
 
     const mMatch = cookies.match(/pp_sandbox_merchant_wallet=([^;]+)/);
-    if (mMatch && mMatch[1]) {
-      setMerchantWalletOverride(mMatch[1]);
+    if (mMatch) {
+      setSelectedMerchant(mMatch[1].toLowerCase().trim());
     }
 
     if (cookies.includes("pp_sandbox_widget_disabled=true")) {
@@ -51,13 +48,89 @@ export default function SandboxPanel() {
     } else {
       setWidgetDisabled(false);
     }
+
+    (async () => {
+      try {
+        const r = await fetch("/api/platform/brands", { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        const arr = Array.isArray(j?.brands) ? j.brands : [];
+        const normalized = arr.map((k: any) => String(k || "").toLowerCase()).filter(Boolean);
+        if (!normalized.includes("basaltsurge")) {
+          normalized.unshift("basaltsurge");
+        }
+        setBrandsList(normalized);
+      } catch (e) {
+        console.error("Failed to load brands:", e);
+        setBrandsList(["basaltsurge", "aipowerpay", "paynex", "xoinpay", "icunow-store"]);
+      }
+    })();
   }, []);
 
-  const updateCookie = (name: string, value: string) => {
-    if (typeof window !== "undefined") {
-      document.cookie = `${name}=${value}; path=/; max-age=31536000; SameSite=Lax`;
-    }
-  };
+  // 2. Load configurations and merchants for the selected brand
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!selectedBrand) return;
+      try {
+        setIsConfigLoading(true);
+        
+        // Save the brand key override immediately to cookie
+        if (selectedBrand && selectedBrand !== "basaltsurge") {
+          updateCookie("pp_sandbox_brand_key", selectedBrand);
+        } else {
+          document.cookie = `pp_sandbox_brand_key=; path=/; max-age=0; SameSite=Lax`;
+        }
+
+        // Fetch brand config from Cosmos DB to set locked configs
+        const r = await fetch(`/api/platform/brands/${encodeURIComponent(selectedBrand)}/config`, { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (!active) return;
+
+        const brandData = j?.brand || {};
+        
+        // Fee Mode configuration resolution
+        const targetFeeMode = brandData.feeMinusEnabled ? "fee_minus" : "fee_plus";
+        setFeeMode(targetFeeMode);
+        updateCookie("pp_sandbox_fee_mode", targetFeeMode);
+
+        // Split Strategy resolution
+        const hasAgents = Array.isArray(brandData.agents) && brandData.agents.length > 0;
+        const isAipowerpay = selectedBrand.toLowerCase() === "aipowerpay";
+        const targetSplitMode = (hasAgents || isAipowerpay || brandData.primaryAgentWallet) ? "dual" : "single";
+        setSplitMode(targetSplitMode);
+        updateCookie("pp_sandbox_split_mode", targetSplitMode);
+
+        // Load merchants under this brand
+        const rm = await fetch(`/api/admin/users?brandKey=${encodeURIComponent(selectedBrand)}`, { cache: "no-store" });
+        const jm = await rm.json().catch(() => ({}));
+        if (!active) return;
+
+        const items = Array.isArray(jm?.items) ? jm.items : [];
+        const mappedMerchants = items.map((it: any) => ({
+          merchant: String(it.merchant || "").toLowerCase(),
+          displayName: it.displayName || ""
+        }));
+        setMerchantsList(mappedMerchants);
+
+        // Auto-select current merchant override if it exists in the new brand list, else clear
+        const cookies = window.document.cookie || "";
+        const mMatch = cookies.match(/pp_sandbox_merchant_wallet=([^;]+)/);
+        const currentOverride = mMatch ? mMatch[1].toLowerCase().trim() : "";
+        if (currentOverride && mappedMerchants.some((m: any) => m.merchant === currentOverride)) {
+          setSelectedMerchant(currentOverride);
+        } else {
+          setSelectedMerchant("");
+          document.cookie = `pp_sandbox_merchant_wallet=; path=/; max-age=0; SameSite=Lax`;
+        }
+
+      } catch (err) {
+        console.error("Failed to load sandbox brand config/merchants:", err);
+      } finally {
+        if (active) setIsConfigLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [selectedBrand]);
 
   const handleToggleWidget = (disabled: boolean) => {
     setWidgetDisabled(disabled);
@@ -72,23 +145,9 @@ export default function SandboxPanel() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleSaveBrandKey = (val: string) => {
-    const cleaned = val.trim();
-    setBrandKeyOverride(cleaned);
-    if (cleaned) {
-      updateCookie("pp_sandbox_brand_key", cleaned);
-    } else {
-      if (typeof window !== "undefined") {
-        document.cookie = `pp_sandbox_brand_key=; path=/; max-age=0; SameSite=Lax`;
-      }
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
   const handleSaveMerchantWallet = (val: string) => {
-    const cleaned = val.trim();
-    setMerchantWalletOverride(cleaned);
+    const cleaned = val.trim().toLowerCase();
+    setSelectedMerchant(cleaned);
     if (cleaned) {
       updateCookie("pp_sandbox_merchant_wallet", cleaned);
     } else {
@@ -96,17 +155,6 @@ export default function SandboxPanel() {
         document.cookie = `pp_sandbox_merchant_wallet=; path=/; max-age=0; SameSite=Lax`;
       }
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleSetPreset = (fee: "fee_plus" | "fee_minus", split: "single" | "dual") => {
-    setFeeMode(fee);
-    setSplitMode(split);
-    updateCookie("pp_sandbox_fee_mode", fee);
-    updateCookie("pp_sandbox_split_mode", split);
-    
-    // Quick user feedback flash
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -128,153 +176,49 @@ export default function SandboxPanel() {
               </span>
             </h2>
             <p className="text-sm text-zinc-400 mt-1 max-w-2xl leading-relaxed">
-              Use this panel to instantly configure the checkout portal fee and split engine settings. 
-              These changes apply dynamically across your active sandbox sessions and background processors.
+              Use this panel to instantly configure the checkout portal. Setting a brand automatically loads its specific fee model, split routing structures, and lists of registered merchants.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Preset combos section */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          { name: "Fee+ & Single Split", fee: "fee_plus", split: "single", desc: "Platform defaults (fee on top, one contract)" },
-          { name: "Fee+ & Dual Split", fee: "fee_plus", split: "dual", desc: "Separate credit/debit split contracts (fee on top)" },
-          { name: "Fee- & Single Split", fee: "fee_minus", split: "single", desc: "Merchant bears fee (deducted, one contract)" },
-          { name: "Fee- & Dual Split", fee: "fee_minus", split: "dual", desc: "Merchant bears fee, dual splits" }
-        ].map((preset) => {
-          const isActive = feeMode === preset.fee && splitMode === preset.split;
-          return (
-            <button
-              key={preset.name}
-              onClick={() => handleSetPreset(preset.fee as any, preset.split as any)}
-              className={`p-4 rounded-xl border text-left transition-all duration-200 ${
-                isActive 
-                  ? "bg-amber-500/15 border-amber-500/40 shadow-lg shadow-amber-500/5 ring-1 ring-amber-500/35" 
-                  : "bg-zinc-950/45 border-white/5 hover:border-white/10 hover:bg-zinc-900/30"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-1.5">
-                <span className={`text-xs font-bold ${isActive ? "text-amber-400" : "text-zinc-300"}`}>{preset.name}</span>
-                {isActive && <Check className="w-3.5 h-3.5 text-amber-400" />}
-              </div>
-              <p className="text-[10px] text-zinc-500 leading-normal">{preset.desc}</p>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Fine-grained controls */}
-      <div className="grid md:grid-cols-2 gap-6 mt-4">
-        {/* Fee Configuration */}
-        <div className="p-6 rounded-xl border border-white/5 bg-black/45 glass-pane space-y-4">
-          <div className="flex items-center gap-2 border-b border-white/5 pb-3">
-            <DollarSign className="w-4 h-4 text-emerald-400" />
-            <h3 className="text-sm font-semibold text-white">Fee Structure Model</h3>
-          </div>
-          
-          <p className="text-xs text-zinc-400 leading-relaxed">
-            Choose whether processing fees are added as a surcharge on top of the subtotal (Fee+), or deducted directly from the merchant's checkout share (Fee-).
-          </p>
-
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            {[
-              { id: "fee_plus", title: "Fee-on-Top (Fee+)", desc: "Customer pays transaction fee" },
-              { id: "fee_minus", title: "Fee-Deducted (Fee-)", desc: "Merchant absorbs transaction fee" }
-            ].map((opt) => (
-              <button
-                key={opt.id}
-                onClick={() => {
-                  setFeeMode(opt.id as any);
-                  updateCookie("pp_sandbox_fee_mode", opt.id);
-                }}
-                className={`p-3 rounded-lg border text-left text-xs transition-all ${
-                  feeMode === opt.id
-                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-                    : "bg-black/20 border-white/5 text-zinc-400 hover:border-white/10"
-                }`}
-              >
-                <div className="font-semibold">{opt.title}</div>
-                <div className="text-[10px] text-zinc-500 mt-1">{opt.desc}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Split Configuration */}
-        <div className="p-6 rounded-xl border border-white/5 bg-black/45 glass-pane space-y-4">
-          <div className="flex items-center gap-2 border-b border-white/5 pb-3">
-            <GitMerge className="w-4 h-4 text-purple-400" />
-            <h3 className="text-sm font-semibold text-white">Split Routing Architecture</h3>
-          </div>
-
-          <p className="text-xs text-zinc-400 leading-relaxed">
-            Choose whether to route all native and credit card funds into one single split contract, or route card transactions into a separate secondary split.
-          </p>
-
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            {[
-              { id: "single", title: "Single Split", desc: "Unified split routing" },
-              { id: "dual", title: "Dual Split Config", desc: "Separate credit/debit targets" }
-            ].map((opt) => (
-              <button
-                key={opt.id}
-                onClick={() => {
-                  setSplitMode(opt.id as any);
-                  updateCookie("pp_sandbox_split_mode", opt.id);
-                }}
-                className={`p-3 rounded-lg border text-left text-xs transition-all ${
-                  splitMode === opt.id
-                    ? "bg-purple-500/10 border-purple-500/30 text-purple-400"
-                    : "bg-black/20 border-white/5 text-zinc-400 hover:border-white/10"
-                }`}
-              >
-                <div className="font-semibold">{opt.title}</div>
-                <div className="text-[10px] text-zinc-500 mt-1">{opt.desc}</div>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Brand Key Override */}
+      {/* Brand Selection Card (First) */}
       <div className="p-6 rounded-xl border border-white/5 bg-black/45 glass-pane space-y-4">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
           <Globe className="w-4 h-4 text-sky-400" />
-          <h3 className="text-sm font-semibold text-white">Brand Key / Partner Container Override</h3>
+          <h3 className="text-sm font-semibold text-white">Brand Container Selection</h3>
         </div>
 
         <p className="text-xs text-zinc-400 leading-relaxed">
-          Type the brand key/identifier of the partner container you wish to test (e.g. <code>aipowerpay</code>, <code>paynex</code>, <code>xoinpay</code>, <code>icunow-store</code>). 
-          Leave blank to clear the override and default back to <code>basaltsurge</code>.
+          Select the active brand container to test. Setting a brand will automatically load its fee/split configurations and populate the available merchants dropdown list.
         </p>
 
-        <div className="flex items-center gap-2 max-w-md">
-          <input
-            type="text"
-            value={brandKeyOverride}
-            onChange={(e) => setBrandKeyOverride(e.target.value)}
-            placeholder="e.g. aipowerpay"
-            className="flex-1 px-3 py-2 text-xs rounded-lg border border-white/10 bg-zinc-950/70 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/50"
-          />
-          <button
-            onClick={() => handleSaveBrandKey(brandKeyOverride)}
-            className="px-4 py-2 text-xs font-semibold rounded-lg bg-amber-500 hover:bg-amber-600 text-black transition-colors"
-          >
-            Apply Override
-          </button>
-          {brandKeyOverride && (
-            <button
-              onClick={() => handleSaveBrandKey("")}
-              className="px-3 py-2 text-xs font-semibold rounded-lg border border-white/10 hover:bg-white/5 text-zinc-400 hover:text-white transition-all"
+        <div className="flex items-center gap-3 max-w-md">
+          <div className="flex-1 relative">
+            <select
+              value={selectedBrand}
+              onChange={(e) => setSelectedBrand(e.target.value)}
+              className="w-full px-3 py-2 text-xs rounded-lg border border-white/10 bg-zinc-950 text-white focus:outline-none focus:border-amber-500/50 appearance-none font-mono"
             >
-              Reset
-            </button>
+              {brandsList.map((bk) => (
+                <option key={bk} value={bk} className="bg-zinc-950">
+                  {bk === "basaltsurge" ? "basaltsurge (Platform Default)" : bk}
+                </option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-zinc-400">
+              <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+              </svg>
+            </div>
+          </div>
+          {isConfigLoading && (
+            <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin shrink-0" />
           )}
         </div>
       </div>
 
-      {/* Merchant Wallet Override */}
+      {/* Merchant Wallet Override Card (Second) */}
       <div className="p-6 rounded-xl border border-white/5 bg-black/45 glass-pane space-y-4">
         <div className="flex items-center gap-2 border-b border-white/5 pb-3">
           <User className="w-4 h-4 text-emerald-400" />
@@ -282,32 +226,152 @@ export default function SandboxPanel() {
         </div>
 
         <p className="text-xs text-zinc-400 leading-relaxed">
-          Type the Ethereum wallet address of the specific merchant you wish to load (e.g. <code>0xaCDAa03...</code>). 
-          This will force checkout configurations and themes to resolve to this merchant instead of the default.
+          Select a specific merchant under <strong>{selectedBrand}</strong> to test their custom configurations and checkout theme.
         </p>
 
-        <div className="flex items-center gap-2 max-w-md">
-          <input
-            type="text"
-            value={merchantWalletOverride}
-            onChange={(e) => setMerchantWalletOverride(e.target.value)}
-            placeholder="e.g. 0xaCDAa03140001d10f3e9EF1B88e986A72AA3f6e"
-            className="flex-1 px-3 py-2 text-xs rounded-lg border border-white/10 bg-zinc-950/70 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/50"
-          />
-          <button
-            onClick={() => handleSaveMerchantWallet(merchantWalletOverride)}
-            className="px-4 py-2 text-xs font-semibold rounded-lg bg-amber-500 hover:bg-amber-600 text-black transition-colors"
-          >
-            Apply Override
-          </button>
-          {merchantWalletOverride && (
+        <div className="flex items-center gap-3 max-w-md">
+          <div className="flex-1 relative">
+            <select
+              value={selectedMerchant}
+              onChange={(e) => handleSaveMerchantWallet(e.target.value)}
+              className="w-full px-3 py-2 text-xs rounded-lg border border-white/10 bg-zinc-950 text-white focus:outline-none focus:border-amber-500/50 appearance-none font-mono"
+              disabled={merchantsList.length === 0}
+            >
+              <option value="" className="bg-zinc-950">None (Clear Override)</option>
+              {merchantsList.map((m) => (
+                <option key={m.merchant} value={m.merchant} className="bg-zinc-950">
+                  {m.displayName ? `${m.displayName} (${m.merchant.slice(0, 10)}...)` : m.merchant}
+                </option>
+              ))}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-zinc-400">
+              <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+              </svg>
+            </div>
+          </div>
+          {selectedMerchant && (
             <button
               onClick={() => handleSaveMerchantWallet("")}
-              className="px-3 py-2 text-xs font-semibold rounded-lg border border-white/10 hover:bg-white/5 text-zinc-400 hover:text-white transition-all"
+              className="px-3 py-2 text-xs font-semibold rounded-lg border border-white/10 hover:bg-white/5 text-zinc-400 hover:text-white transition-all shrink-0"
             >
-              Reset
+              Clear
             </button>
           )}
+        </div>
+        {merchantsList.length === 0 && !isConfigLoading && (
+          <p className="text-[10px] text-zinc-500 italic">No merchants registered under this brand.</p>
+        )}
+      </div>
+
+      {/* Preset combos section */}
+      <div className="relative">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/35 backdrop-blur-[0.5px] rounded-xl border border-white/5">
+          <span className="px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-wider bg-zinc-950/95 text-amber-400 border border-amber-500/30 rounded-full flex items-center gap-1.5 shadow-2xl">
+            <Lock className="w-3.5 h-3.5 text-amber-400" />
+            Locked: Managed by {selectedBrand} config
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 opacity-40 select-none pointer-events-none">
+          {[
+            { name: "Fee+ & Single Split", fee: "fee_plus", split: "single", desc: "Platform defaults (fee on top, one contract)" },
+            { name: "Fee+ & Dual Split", fee: "fee_plus", split: "dual", desc: "Separate credit/debit split contracts (fee on top)" },
+            { name: "Fee- & Single Split", fee: "fee_minus", split: "single", desc: "Merchant bears fee (deducted, one contract)" },
+            { name: "Fee- & Dual Split", fee: "fee_minus", split: "dual", desc: "Merchant bears fee, dual splits" }
+          ].map((preset) => {
+            const isActive = feeMode === preset.fee && splitMode === preset.split;
+            return (
+              <div
+                key={preset.name}
+                className={`p-4 rounded-xl border text-left transition-all duration-200 ${
+                  isActive 
+                    ? "bg-amber-500/15 border-amber-500/40 shadow-lg shadow-amber-500/5 ring-1 ring-amber-500/35" 
+                    : "bg-zinc-950/45 border-white/5"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className={`text-xs font-bold ${isActive ? "text-amber-400" : "text-zinc-300"}`}>{preset.name}</span>
+                  {isActive && <Check className="w-3.5 h-3.5 text-amber-400" />}
+                </div>
+                <p className="text-[10px] text-zinc-500 leading-normal">{preset.desc}</p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Fine-grained controls */}
+      <div className="relative">
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/35 backdrop-blur-[0.5px] rounded-xl border border-white/5">
+          <span className="px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-wider bg-zinc-950/95 text-amber-400 border border-amber-500/30 rounded-full flex items-center gap-1.5 shadow-2xl">
+            <Lock className="w-3.5 h-3.5 text-amber-400" />
+            Locked: Managed by {selectedBrand} config
+          </span>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-6 opacity-40 select-none pointer-events-none">
+          {/* Fee Configuration */}
+          <div className="p-6 rounded-xl border border-white/5 bg-black/45 glass-pane space-y-4">
+            <div className="flex items-center gap-2 border-b border-white/5 pb-3">
+              <DollarSign className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-sm font-semibold text-white">Fee Structure Model</h3>
+            </div>
+            
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Choose whether processing fees are added as a surcharge on top of the subtotal (Fee+), or deducted directly from the merchant's checkout share (Fee-).
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {[
+                { id: "fee_plus", title: "Fee-on-Top (Fee+)", desc: "Customer pays transaction fee" },
+                { id: "fee_minus", title: "Fee-Deducted (Fee-)", desc: "Merchant absorbs transaction fee" }
+              ].map((opt) => (
+                <div
+                  key={opt.id}
+                  className={`p-3 rounded-lg border text-left text-xs transition-all ${
+                    feeMode === opt.id
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                      : "bg-black/20 border-white/5 text-zinc-400"
+                  }`}
+                >
+                  <div className="font-semibold">{opt.title}</div>
+                  <div className="text-[10px] text-zinc-500 mt-1">{opt.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Split Configuration */}
+          <div className="p-6 rounded-xl border border-white/5 bg-black/45 glass-pane space-y-4">
+            <div className="flex items-center gap-2 border-b border-white/5 pb-3">
+              <GitMerge className="w-4 h-4 text-purple-400" />
+              <h3 className="text-sm font-semibold text-white">Split Routing Architecture</h3>
+            </div>
+
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Choose whether to route all native and credit card funds into one single split contract, or route card transactions into a separate secondary split.
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {[
+                { id: "single", title: "Single Split", desc: "Unified split routing" },
+                { id: "dual", title: "Dual Split Config", desc: "Separate credit/debit targets" }
+              ].map((opt) => (
+                <div
+                  key={opt.id}
+                  className={`p-3 rounded-lg border text-left text-xs transition-all ${
+                    splitMode === opt.id
+                      ? "bg-purple-500/10 border-purple-500/30 text-purple-400"
+                      : "bg-black/20 border-white/5 text-zinc-400"
+                  }`}
+                >
+                  <div className="font-semibold">{opt.title}</div>
+                  <div className="text-[10px] text-zinc-500 mt-1">{opt.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
