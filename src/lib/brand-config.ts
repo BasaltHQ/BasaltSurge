@@ -184,6 +184,25 @@ export async function deriveContainerIdentityFromHostname(host: string): Promise
   // Remove port number if present (e.g., localhost:3001 -> localhost)
   const hostLower = host.toLowerCase().split(":")[0];
 
+  // Sandbox cookie override check
+  if (hostLower.includes("surge-sand.basalthq.com") || hostLower.includes("localhost")) {
+    let cookieVal = "";
+    if (typeof window !== "undefined") {
+      const match = window.document.cookie.match(/pp_sandbox_brand_key=([^;]+)/);
+      if (match && match[1]) cookieVal = match[1].toLowerCase().trim();
+    } else {
+      try {
+        const { cookies } = require("next/headers");
+        cookieVal = String(cookies().get("pp_sandbox_brand_key")?.value || "").toLowerCase().trim();
+      } catch {}
+    }
+
+    if (cookieVal) {
+      const isPlatform = cookieVal === "basaltsurge" || cookieVal === "portalpay";
+      return { brandKey: cookieVal, containerType: isPlatform ? "platform" : "partner" };
+    }
+  }
+
   // Check dynamic partner domains first (populated from db)
   try {
     const dynamicDomains = await getDynamicPartnerDomains();

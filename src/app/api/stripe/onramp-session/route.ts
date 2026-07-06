@@ -61,6 +61,19 @@ export async function POST(req: NextRequest) {
     if (merchantWallet) params.append("metadata[merchantWallet]", merchantWallet);
     if (redirectUrl) params.append("metadata[redirectUrl]", redirectUrl);
 
+    const body = await req.clone().json().catch(() => ({}));
+    const splitMode = String(body.splitMode || "").trim().toLowerCase();
+    if (splitMode) {
+      params.append("metadata[splitMode]", splitMode);
+    } else {
+      const cookieHeader = req.headers.get("cookie") || "";
+      if (cookieHeader.includes("pp_sandbox_split_mode=dual")) {
+        params.append("metadata[splitMode]", "dual");
+      } else if (cookieHeader.includes("pp_sandbox_split_mode=single")) {
+        params.append("metadata[splitMode]", "single");
+      }
+    }
+
     // NOTE: We intentionally do NOT send customer_ip_address here.
     // Stripe does an early geo-check that can reject the entire session creation.
     // The onramp UI handles geographic restrictions more gracefully later in the flow.

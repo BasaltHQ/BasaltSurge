@@ -534,6 +534,13 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
       cfg.rampnowOnrampEnabled = false;
     }
 
+    const cookieHeader = req.headers.get("cookie") || "";
+    if (cookieHeader.includes("pp_sandbox_fee_mode=fee_minus")) {
+      cfg.feeMinusEnabled = true;
+    } else if (cookieHeader.includes("pp_sandbox_fee_mode=fee_plus")) {
+      cfg.feeMinusEnabled = false;
+    }
+
     return cfg;
   } catch {
     return cfg;
@@ -1123,7 +1130,20 @@ export async function GET(req: NextRequest) {
     } catch { }
     // Prioritize query wallet parameter for public viewing (e.g., portal theming)
     const queryWallet = String(url.searchParams.get("wallet") || "").toLowerCase();
-    let wallet = /^0x[a-f0-9]{40}$/.test(queryWallet) ? queryWallet : "";
+    let wallet = "";
+
+    // Sandbox merchant wallet override check
+    const cookieHeader = req.headers.get("cookie") || "";
+    if (host.toLowerCase().includes("surge-sand.basalthq.com") || host.toLowerCase().includes("localhost")) {
+      const match = cookieHeader.match(/pp_sandbox_merchant_wallet=([^;]+)/);
+      if (match && match[1]) {
+        wallet = match[1].toLowerCase().trim();
+      }
+    }
+
+    if (!wallet) {
+      wallet = /^0x[a-f0-9]{40}$/.test(queryWallet) ? queryWallet : "";
+    }
 
     // Defensive portal isolation: if request originates from /portal and a recipient context is present,
     // prefer the portal recipient (from header or referer) over any provided query wallet to avoid cross-user theme fetches.

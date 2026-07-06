@@ -141,7 +141,8 @@ export async function POST(req: NextRequest) {
     const txDetails = session?.transaction_details || {};
 
     const { isDualSplitEnabled } = await import("@/lib/env");
-    const isDual = isDualSplitEnabled();
+    const splitModeFromMetadata = String(metadata?.splitMode || "").toLowerCase();
+    const isDual = splitModeFromMetadata === "dual" ? true : (splitModeFromMetadata === "single" ? false : isDualSplitEnabled());
     const paymentMethod = String(session?.payment_method || "").toLowerCase();
     const cardFundingDetail = String(session?.payment_details?.card?.funding || "").toLowerCase();
     let cardFunding = "";

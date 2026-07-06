@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
+import { isDualSplitEnabled } from "@/lib/env";
 
 /**
  * useStripeEmbeddedOnramp
@@ -864,6 +865,7 @@ export function useStripeEmbeddedOnramp({
             receiptId,
             merchantWallet,
             brandKey,
+            splitMode: isDualSplitEnabled() ? "dual" : "single",
           }),
         });
 

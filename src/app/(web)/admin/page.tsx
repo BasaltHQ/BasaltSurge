@@ -50,6 +50,7 @@ import AdminManagementPanel from "./panels/AdminManagementPanel";
 import IntegrationsPanel from "@/app/(web)/admin/panels/IntegrationsPanel";
 import PlatformPluginsPanel from "@/app/(web)/admin/panels/PlatformPluginsPanel";
 import PartnerPluginsPanel from "@/app/(web)/admin/panels/PartnerPluginsPanel";
+import SandboxPanel from "@/app/(web)/admin/panels/SandboxPanel";
 import GlobalArtPanel from "@/app/(web)/admin/panels/GlobalArtPanel";
 import GetSupportPanel from "@/app/(web)/admin/panels/GetSupportPanel";
 import SupportAdminPanel from "@/app/(web)/admin/panels/SupportAdminPanel";
@@ -4807,6 +4808,7 @@ function UsersPanel() {
     kioskEnabled?: boolean;
     terminalEnabled?: boolean;
     splitAddress?: string;
+    splitAddressCredit?: string;
   }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -5749,16 +5751,44 @@ function UsersPanel() {
                     <td className="px-4 py-3"><TruncatedAddress address={it.merchant} /></td>
                     <td className="px-4 py-3">
                       {(() => {
-                        if (!b || !b.splitAddressUsed) return <span className="text-xs text-muted-foreground">—</span>;
-                        const hist = Array.isArray(b.splitHistory) ? b.splitHistory : [];
+                        const activeSplit = b?.splitAddressUsed || it.splitAddress;
+                        const activeSplitCredit = b?.splitAddressCreditUsed || it.splitAddressCredit;
+                        const isDual = b ? b.isDual : !!activeSplitCredit;
+
+                        if (!activeSplit) return <span className="text-xs text-muted-foreground">—</span>;
+                        const hist = Array.isArray(b?.splitHistory) ? b.splitHistory : [];
                         // History is ascending (oldest first).
-                        const idx = hist.findIndex(h => String(h.address).toLowerCase() === String(b.splitAddressUsed).toLowerCase());
+                        const idx = hist.findIndex(h => String(h.address).toLowerCase() === String(activeSplit).toLowerCase());
                         const ver = idx >= 0 ? `v${idx + 1}` : "Custom";
+
+                        if (isDual && activeSplitCredit) {
+                          const idxCredit = hist.findIndex(h => String(h.address).toLowerCase() === String(activeSplitCredit).toLowerCase());
+                          const verCredit = idxCredit >= 0 ? `v${idxCredit + 1}` : "Custom";
+                          return (
+                            <div className="flex flex-col gap-0.5">
+                              <div className="text-[10px] leading-tight">
+                                <span className="text-emerald-400 font-semibold uppercase tracking-wider text-[8px] mr-1">Credit:</span>
+                                <span className="font-mono text-xs">{ver}</span>{" "}
+                                <span className="text-[10px] text-muted-foreground font-mono">
+                                  ({activeSplit.slice(0, 6)}...{activeSplit.slice(-4)})
+                                </span>
+                              </div>
+                              <div className="text-[10px] leading-tight">
+                                <span className="text-purple-400 font-semibold uppercase tracking-wider text-[8px] mr-1">Debit:</span>
+                                <span className="font-mono text-xs">{verCredit}</span>{" "}
+                                <span className="text-[10px] text-muted-foreground font-mono">
+                                  ({activeSplitCredit.slice(0, 6)}...{activeSplitCredit.slice(-4)})
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        }
+
                         return (
                           <div className="flex flex-col">
                             <span className="text-xs font-mono">{ver}</span>
                             <span className="text-[10px] text-muted-foreground font-mono">
-                              {b.splitAddressUsed.slice(0, 6)}...{b.splitAddressUsed.slice(-4)}
+                              {activeSplit.slice(0, 6)}...{activeSplit.slice(-4)}
                             </span>
                           </div>
                         );
@@ -11287,6 +11317,9 @@ export default function AdminPage() {
         )}
         {activeTab === "pluginStudio" && canAccessPanel("pluginStudio", wallet) && (
           <PlatformPluginsPanel />
+        )}
+        {activeTab === "sandbox" && canAccessPanel("sandbox", wallet) && (
+          <SandboxPanel />
         )}
 
         {activeTab === "clientRequests" && canAccessPanel("clientRequests", wallet) && (

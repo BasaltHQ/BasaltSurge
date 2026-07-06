@@ -18,6 +18,7 @@ import { I18nProvider } from "@/components/providers/i18n-provider";
 import { AutoTranslateProvider } from "@/components/providers/auto-translate-provider";
 import FarcasterProvider from "@/components/providers/FarcasterProvider";
 import SplitGuardMount from "@/components/split-guard-mount";
+import { SandboxWidget } from "@/components/SandboxWidget";
 import { getBaseUrl, isLocalhostUrl } from "@/lib/base-url";
 import messages from "../../messages/en.json";
 import { getBrandConfig, getBrandKey } from "@/config/brands";
@@ -1023,6 +1024,7 @@ export default async function RootLayout({
                       <div id="mobile-navbar-spacer" className="sm:hidden h-2" />
                       <SplitGuardMount />
                       {children}
+                      <SandboxWidget />
                     </AutoTranslateProvider>
                   </I18nProvider>
                 </FarcasterProvider>

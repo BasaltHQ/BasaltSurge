@@ -488,8 +488,8 @@ export async function GET(req: NextRequest) {
         parseJson(process.env.NEXT_PUBLIC_AGENT_WALLETS_JSON, envAgents, creditBpsVal);
         parseJson(process.env.AGENT_WALLETS_JSON, envAgents, creditBpsVal);
 
-        const isDualSplit = String(process.env.DUAL_SPLIT_CONFIG || process.env.NEXT_PUBLIC_DUAL_SPLIT_CONFIG || "").trim().toLowerCase() === "true";
-        const { getSanitizedCreditSplitBps, getEnv } = await import("@/lib/env");
+        const { getSanitizedCreditSplitBps, getEnv, isDualSplitEnabled } = await import("@/lib/env");
+        const isDualSplit = isDualSplitEnabled();
         const creditBps = getSanitizedCreditSplitBps();
         const creditPlatformBps = dbCreditPlatformFeeBps !== undefined ? dbCreditPlatformFeeBps : (creditBps?.platform ?? 125);
         const debitPlatformBps = dbPlatformFeeBps !== undefined ? dbPlatformFeeBps : (getEnv().PLATFORM_BPS ?? 125);

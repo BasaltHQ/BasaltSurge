@@ -175,6 +175,26 @@ export function getBrandKey(req?: NextRequest): string {
     return null;
   };
 
+  // Sandbox cookie override check
+  if (req) {
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+    if (host.toLowerCase().includes("surge-sand.basalthq.com") || host.toLowerCase().includes("localhost")) {
+      const cookieHeader = req.headers.get("cookie") || "";
+      const match = cookieHeader.match(/pp_sandbox_brand_key=([^;]+)/);
+      if (match && match[1]) {
+        return match[1].toLowerCase().trim();
+      }
+    }
+  } else if (typeof window !== "undefined") {
+    const host = window.location.host || "";
+    if (host.toLowerCase().includes("surge-sand.basalthq.com") || host.toLowerCase().includes("localhost")) {
+      const match = window.document.cookie.match(/pp_sandbox_brand_key=([^;]+)/);
+      if (match && match[1]) {
+        return match[1].toLowerCase().trim();
+      }
+    }
+  }
+
   // 1. Explicit header (passed from API routes)
   if (req) {
     const header = req.headers.get("x-brand-key");

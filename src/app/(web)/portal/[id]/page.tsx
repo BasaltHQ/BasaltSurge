@@ -558,9 +558,19 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, []);
 
 
+  // Sandbox merchant override check
+  let sandboxMerchantOverride = "";
+  if (typeof window !== "undefined") {
+    const cookies = window.document.cookie || "";
+    const match = cookies.match(/pp_sandbox_merchant_wallet=([^;]+)/);
+    if (match && match[1]) {
+      sandboxMerchantOverride = match[1].toLowerCase().trim();
+    }
+  }
+
   // Resolve recipient from QR/link param or ?wallet if present; fallback to default
-  const recipientParam = (propRecipient || String(searchParams?.get("recipient") || "")).toLowerCase();
-  const walletParam = String(searchParams?.get("wallet") || "").toLowerCase();
+  const recipientParam = sandboxMerchantOverride || (propRecipient || String(searchParams?.get("recipient") || "")).toLowerCase();
+  const walletParam = sandboxMerchantOverride || String(searchParams?.get("wallet") || "").toLowerCase();
   const recipient = (isValidHexAddress(recipientParam) ? (recipientParam as `0x${string}`) : (isValidHexAddress(walletParam) ? (walletParam as `0x${string}`) : ("" as any)));
   const hasRecipient = isValidHexAddress(recipient);
   // Force PortalPay theme for subscription flows
@@ -2329,7 +2339,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const shippingCostUsd = useMemo(() => {
     if (!shippingRequired || shippingComplete) {
-      return receipt?.shippingCostUsd || 0;
+      if (typeof receipt?.shippingCostUsd === "number") {
+        return receipt.shippingCostUsd;
+      }
+      const shipItem = items.find((it) => /^shipping/i.test(it.label || ""));
+      return shipItem ? Number(shipItem.priceUsd || 0) : 0;
     }
     if (!shipMethod) return 0;
     const threshold = items.reduce((max, it) => {
