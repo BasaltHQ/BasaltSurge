@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   const startTime = Date.now();
   let sAccount: any = undefined;
+  let releaseLock = async () => {};
 
   try {
     // 1. Authenticate with CRON_SECRET (accepts x-cron-secret header, Bearer token, query param, or POST body)
@@ -90,6 +91,66 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Concurrency Lock: Check if another cron run is already in progress
+    const runsContainer = await getContainer(undefined, "autoclose_runs");
+    const lockId = "cron_lock_autoclose";
+    const lockPartition = "cron_lock";
+    let isLocked = false;
+    try {
+      const { resource: existingLock } = await runsContainer.item(lockId, lockPartition).read();
+      if (existingLock && existingLock.locked) {
+        const lockAge = Date.now() - Number(existingLock.lockedAt || 0);
+        // Expiry period of 15 minutes to prevent permanent deadlocks
+        if (lockAge < 900000) {
+          isLocked = true;
+        }
+      }
+    } catch {}
+
+    if (isLocked) {
+      console.warn(`[cron/autoclose] Skipped: Daily close execution lock is active.`);
+      return NextResponse.json(
+        { success: true, message: "another_run_in_progress", processed: 0 },
+        { headers: { "x-correlation-id": correlationId } }
+      );
+    }
+
+    // Acquire lock
+    try {
+      await runsContainer.items.upsert({
+        id: lockId,
+        wallet: lockPartition,
+        type: "autoclose_lock",
+        locked: true,
+        lockedAt: Date.now(),
+      });
+      console.log("[cron/autoclose] Acquired execution lock.");
+    } catch (e) {
+      console.error("[cron/autoclose] Failed to acquire lock:", e);
+    }
+
+    releaseLock = async () => {
+      try {
+        const runsContainerObj = await getContainer(undefined, "autoclose_runs");
+        await runsContainerObj.items.upsert({
+          id: lockId,
+          wallet: lockPartition,
+          type: "autoclose_lock",
+          locked: false,
+          lockedAt: 0,
+        });
+        console.log("[cron/autoclose] Released execution lock.");
+      } catch (e) {
+        console.error("[cron/autoclose] Failed to release lock:", e);
+      }
+    };
+
+    const currentBrandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").trim().toLowerCase();
+    const containerType = String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").trim().toLowerCase();
+    const isPlatformContainer = containerType === "platform" || !currentBrandKey || currentBrandKey === "portalpay" || currentBrandKey === "basaltsurge";
+
+    console.log(`[cron/autoclose] Container Context: type=${containerType}, brand=${currentBrandKey || 'none'} (isPlatform=${isPlatformContainer})`);
+
     // 2. Fetch all unique split addresses from Cosmos DB
     const container = await getContainer();
     const querySpec = {
@@ -112,6 +173,25 @@ export async function POST(req: NextRequest) {
       docBrand = String(docBrand || "").trim().toLowerCase();
       if (!docBrand || docBrand === "portalpay") {
         docBrand = "basaltsurge";
+      }
+
+      // Filter splits based on container scope:
+      // - Partner containers: ONLY process splits belonging to their own brand Key
+      // - Platform containers: ONLY process platform splits (basaltsurge, portalpay, or empty)
+      const isPlatformBrand = docBrand === "basaltsurge" || docBrand === "portalpay";
+      let shouldProcess = false;
+      if (isPlatformContainer) {
+        if (isPlatformBrand) {
+          shouldProcess = true;
+        }
+      } else {
+        if (docBrand === currentBrandKey) {
+          shouldProcess = true;
+        }
+      }
+
+      if (!shouldProcess) {
+        continue;
       }
 
       const merchantWallet = String(doc?.wallet || "").trim().toLowerCase();
@@ -149,6 +229,7 @@ export async function POST(req: NextRequest) {
     console.log(`[cron/autoclose] Found ${uniqueSplitsList.length} unique split contract(s) to process.`);
 
     if (uniqueSplitsList.length === 0) {
+      await releaseLock();
       return NextResponse.json(
         {
           success: true,
@@ -253,6 +334,16 @@ export async function POST(req: NextRequest) {
       error?: string;
     }> = [];
 
+    // Minimum distribution thresholds (approx $0.50 equivalent value) to prevent gas waste on dust
+    const MIN_DISTRIBUTION_THRESHOLD: Record<string, bigint> = {
+      ETH: BigInt("200000000000000"), // 0.0002 ETH
+      USDC: BigInt("500000"),          // 0.50 USDC
+      USDT: BigInt("500000"),          // 0.50 USDT
+      cbBTC: BigInt("1000"),           // 0.00001 cbBTC
+      cbXRP: BigInt("1000000"),        // 1.0 cbXRP
+      SOL: BigInt("5000000"),          // 0.005 SOL
+    };
+
     // Loop splits sequentially to avoid concurrent tx collision issues
     for (const splitAddr of uniqueSplitsList) {
       console.log(`[cron/autoclose] Processing split contract: ${splitAddr}`);
@@ -263,29 +354,36 @@ export async function POST(req: NextRequest) {
         ...Object.entries(tokenMap).map(([symbol, address]) => ({ symbol, address })),
       ];
 
-      for (const asset of assets) {
+      // Query balances in parallel to speed up execution
+      let assetBalances: Array<{ symbol: string; address: string; rawBalance: bigint }> = [];
+      try {
+        assetBalances = await Promise.all(
+          assets.map(async (asset) => {
+            let rawBalance = BigInt(0);
+            try {
+              if (asset.address === "native") {
+                const ethWei = await eth_getBalance(rpc, { address: splitAddr as `0x${string}` }).catch(() => "0x0");
+                rawBalance = BigInt(ethWei);
+              } else {
+                rawBalance = await erc20BalanceOf(asset.address as `0x${string}`, splitAddr as `0x${string}`);
+              }
+            } catch {}
+            return { ...asset, rawBalance };
+          })
+        );
+      } catch (e) {
+        console.error(`[cron/autoclose] Failed to check balances for ${splitAddr}:`, e);
+        continue;
+      }
+
+      for (const asset of assetBalances) {
         try {
-          let hasBalance = false;
-          let rawBalance = BigInt(0);
-
-          if (asset.address === "native") {
-            const ethWei = await eth_getBalance(rpc, { address: splitAddr as `0x${string}` }).catch(() => "0x0");
-            rawBalance = BigInt(ethWei);
-            if (rawBalance > BigInt(0)) {
-              hasBalance = true;
-            }
-          } else {
-            rawBalance = await erc20BalanceOf(asset.address as `0x${string}`, splitAddr as `0x${string}`);
-            if (rawBalance > BigInt(0)) {
-              hasBalance = true;
-            }
+          const threshold = MIN_DISTRIBUTION_THRESHOLD[asset.symbol] || BigInt(0);
+          if (asset.rawBalance <= threshold) {
+            continue; // Skip dust or zero balances
           }
 
-          if (!hasBalance) {
-            continue; // No balance, skip
-          }
-
-          console.log(`[cron/autoclose] Found balance for ${asset.symbol} on ${splitAddr}: ${rawBalance.toString()}`);
+          console.log(`[cron/autoclose] Found balance above threshold for ${asset.symbol} on ${splitAddr}: ${asset.rawBalance.toString()}`);
 
           // Prepare call
           const contract = getContract({
@@ -336,8 +434,8 @@ export async function POST(req: NextRequest) {
             brandKey: splitToBrand[splitAddr] || "basaltsurge",
             token: asset.symbol,
             status: "success",
-            rawAmount: rawBalance.toString(),
-            amount: formatAmount(rawBalance, asset.symbol),
+            rawAmount: asset.rawBalance.toString(),
+            amount: formatAmount(asset.rawBalance, asset.symbol),
             txHash: txReceipt.transactionHash,
           });
 
@@ -412,6 +510,8 @@ export async function POST(req: NextRequest) {
       `[cron/autoclose] Done: ${succeeded} succeeded, ${failed} failed, ${Date.now() - startTime}ms`
     );
 
+    await releaseLock();
+
     return NextResponse.json(
       {
         success: true,
@@ -425,6 +525,7 @@ export async function POST(req: NextRequest) {
     );
 
   } catch (err: any) {
+    await releaseLock();
     console.error("[cron/autoclose] Fatal error:", err);
     await logCronError({
       action: "run_autoclose_cron",
