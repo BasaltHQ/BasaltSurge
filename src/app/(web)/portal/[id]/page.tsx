@@ -2406,7 +2406,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const totalUsd = useMemo(() => {
     if (!receipt) return 0;
     if (feeMinusEnabled) {
-      return +((itemsSubtotalUsd * unscaleFactor) + (taxUsd * unscaleFactor) + tipUsd + shippingCostUsd).toFixed(2);
+      return +(((itemsSubtotalUsd + taxUsd + shippingCostUsd) * unscaleFactor) + tipUsd).toFixed(2);
     }
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + processingFeeUsd).toFixed(2);
   }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd, feeMinusEnabled, unscaleFactor]);
@@ -5061,9 +5061,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         )}
 
                         <div className={isVibrantLayout ? "border-t border-dashed border-primary/20 my-4" : "border-t border-dashed my-2"} />
-                        <div className={`flex items-center justify-between ${isVibrantLayout ? "text-lg md:text-xl font-bold py-1" : "text-sm"}`}>
-                          <span>{isVibrantLayout ? "Amount Due" : "Subtotal"}</span>
-                          <span className={isVibrantLayout ? "text-2xl md:text-3xl font-black bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent" : ""}>{(() => {
+                        <div className="flex items-center justify-between text-sm">
+                          <span>Subtotal</span>
+                          <span>{(() => {
                             if (currency === "USD") {
                               return formatCurrency(displayItemsSubtotalUsd, "USD");
                             }
@@ -5072,6 +5072,20 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayItemsSubtotalUsd, "USD");
                           })()}</span>
                         </div>
+                        {shippingCostUsd > 0 && (
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="opacity-80">Shipping</span>
+                            <span>{(() => {
+                              const shipVal = feeMinusEnabled ? +(shippingCostUsd * unscaleFactor).toFixed(2) : shippingCostUsd;
+                              if (currency === "USD") {
+                                return formatCurrency(shipVal, "USD");
+                              }
+                              const converted = convertFromUsd(shipVal, currency, rates);
+                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(shipVal, "USD");
+                            })()}</span>
+                          </div>
+                        )}
                         {tipUsd > 0 && (
                           <div className="flex items-center justify-between text-sm">
                             <span className="opacity-80">Tip</span>
@@ -5131,6 +5145,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                               </svg>
                               <span>Secure Encrypted Checkout</span>
+                            </div>
+                            <div className={isVibrantLayout ? "border-t border-dashed border-primary/20 my-4" : "border-t border-dashed my-2"} />
+                            <div className={`flex items-center justify-between ${isVibrantLayout ? "text-lg md:text-xl font-bold py-1" : "text-sm font-semibold"}`}>
+                              <span>{feeMinusEnabled ? "Amount Due" : "Total"}</span>
+                              <span className={isVibrantLayout ? "text-2xl md:text-3xl font-black bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent" : ""}>{(() => {
+                                if (currency === "USD") {
+                                  return formatCurrency(totalUsd, "USD");
+                                }
+                                const converted = convertFromUsd(totalUsd, currency, rates);
+                                const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
+                                return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(totalUsd, "USD");
+                              })()}</span>
                             </div>
                             <span className="text-xs text-muted-foreground mt-1">
                               Payments are securely processed with end-to-end encryption.
@@ -5756,7 +5782,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
                   <div className="border-t border-dashed my-2" />
                   <div className="flex items-center justify-between text-sm">
-                    <span>{feeMinusEnabled ? "Amount Due" : "Subtotal"}</span>
+                    <span>Subtotal</span>
                     <span>{(() => {
                       if (currency === "USD") {
                         return formatCurrency(displayItemsSubtotalUsd, "USD");
@@ -5766,6 +5792,20 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayItemsSubtotalUsd, "USD");
                     })()}</span>
                   </div>
+                  {shippingCostUsd > 0 && (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="opacity-80">Shipping</span>
+                      <span>{(() => {
+                        const shipVal = feeMinusEnabled ? +(shippingCostUsd * unscaleFactor).toFixed(2) : shippingCostUsd;
+                        if (currency === "USD") {
+                          return formatCurrency(shipVal, "USD");
+                        }
+                        const converted = convertFromUsd(shipVal, currency, rates);
+                        const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
+                        return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(shipVal, "USD");
+                      })()}</span>
+                    </div>
+                  )}
                   {tipUsd > 0 && (
                     <div className="flex items-center justify-between text-sm">
                       <span className="opacity-80">Tip</span>
@@ -5812,6 +5852,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       })()}</span>
                     </div>
                   )}
+                  <div className="border-t border-dashed my-2" />
+                  <div className="flex items-center justify-between text-sm font-semibold">
+                    <span>{feeMinusEnabled ? "Amount Due" : "Total"}</span>
+                    <span>{(() => {
+                      if (currency === "USD") {
+                        return formatCurrency(totalUsd, "USD");
+                      }
+                      const converted = convertFromUsd(totalUsd, currency, rates);
+                      const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
+                      return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(totalUsd, "USD");
+                    })()}</span>
+                  </div>
                   <div className="border-t border-dashed my-2" />
                 </div>
 
