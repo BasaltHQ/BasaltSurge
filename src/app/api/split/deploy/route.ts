@@ -718,22 +718,12 @@ export async function POST(req: NextRequest) {
         partnerFeeBpsPost = basePartnerBpsPost > 0 ? basePartnerBpsPost : (envPartnerBpsPost > 0 ? envPartnerBpsPost : defaultPartnerBpsPost);
       }
     } else {
-      if (isCredit) {
-        const creditBps = getSanitizedCreditSplitBps();
-        if (creditBps) {
-          platformSharesBps = creditBps.platform;
-          partnerFeeBpsPost = creditBps.agent;
-        } else {
-          platformSharesBps = 150;
-          partnerFeeBpsPost = 0;
-        }
-      } else {
-        const sanitizedPost = getSanitizedSplitBps();
-        const envPartnerBpsPost = typeof sanitizedPost?.partner === "number" ? Math.max(0, Math.min(10000, sanitizedPost.partner)) : 0;
-        const basePartnerBpsPost = typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0;
-        const defaultPartnerBpsPost = 50;
-        partnerFeeBpsPost = basePartnerBpsPost > 0 ? basePartnerBpsPost : (envPartnerBpsPost > 0 ? envPartnerBpsPost : defaultPartnerBpsPost);
-      }
+      // In single split mode, do not differentiate between credit and debit. Always use standard split values.
+      const sanitizedPost = getSanitizedSplitBps();
+      const envPartnerBpsPost = typeof sanitizedPost?.partner === "number" ? Math.max(0, Math.min(10000, sanitizedPost.partner)) : 0;
+      const basePartnerBpsPost = typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0;
+      const defaultPartnerBpsPost = 50;
+      partnerFeeBpsPost = basePartnerBpsPost > 0 ? basePartnerBpsPost : (envPartnerBpsPost > 0 ? envPartnerBpsPost : defaultPartnerBpsPost);
     }
 
     const partnerSharesBps = !isPartnerBrand ? 0 : (isHexAddress(partnerWallet) && partnerFeeBpsPost > 0)
