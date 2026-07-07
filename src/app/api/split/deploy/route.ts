@@ -705,7 +705,7 @@ export async function POST(req: NextRequest) {
         const sanitizedPost = getSanitizedSplitBps();
         const envPartnerBpsPost = typeof sanitizedPost?.partner === "number" ? Math.max(0, Math.min(10000, sanitizedPost.partner)) : 0;
         const basePartnerBpsPost = typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0;
-        const defaultPartnerBpsPost = 50;
+        const defaultPartnerBpsPost = 0;
         partnerFeeBpsPost = basePartnerBpsPost > 0 ? basePartnerBpsPost : (envPartnerBpsPost > 0 ? envPartnerBpsPost : defaultPartnerBpsPost);
       } else {
         // Debit component (alternate split)
@@ -714,7 +714,7 @@ export async function POST(req: NextRequest) {
         const sanitizedPost = getSanitizedSplitBps();
         const envPartnerBpsPost = typeof sanitizedPost?.partner === "number" ? Math.max(0, Math.min(10000, sanitizedPost.partner)) : 0;
         const basePartnerBpsPost = typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0;
-        const defaultPartnerBpsPost = 50;
+        const defaultPartnerBpsPost = 0;
         partnerFeeBpsPost = basePartnerBpsPost > 0 ? basePartnerBpsPost : (envPartnerBpsPost > 0 ? envPartnerBpsPost : defaultPartnerBpsPost);
       }
     } else {
