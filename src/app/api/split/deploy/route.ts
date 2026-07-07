@@ -629,8 +629,15 @@ export async function POST(req: NextRequest) {
     // The known Platform (Basalt) wallet is 0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e
     const CANONICAL_PLATFORM_WALLET = "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e";
     const partnerWalletBrand = String(brand?.partnerWallet || "").toLowerCase();
+    const isPartnerBrand = brandKey !== "portalpay" && brandKey !== "basaltsurge";
 
-    if (platformRecipient === partnerWalletBrand && partnerWalletBrand !== "") {
+    const isPlatformColliding = 
+      platformRecipient === partnerWalletBrand || 
+      platformRecipient === String(brand?.wallet || "").toLowerCase() ||
+      platformRecipient === String(brand?.primaryAgentWallet || "").toLowerCase() ||
+      platformRecipient === "0x42e6a8413a3951721db05a1f57035391c28386f1";
+
+    if (isPlatformColliding && isPartnerBrand) {
       platformRecipient = CANONICAL_PLATFORM_WALLET;
     }
 
@@ -645,7 +652,6 @@ export async function POST(req: NextRequest) {
     // Platform share derived from brand config/env/static defaults; allow body override (client-asserted)
     let platformSharesBps = resolvePlatformBpsFromBrand(brandKey, brand, body);
     // Partner recipient present when brandKey !== 'portalpay' and partner is configured
-    const isPartnerBrand = !isPlatformBrand(String(brandKey || "").toLowerCase());
 
     const isCredit = body.isCredit === true;
     const isDual = isDualSplitEnabled() || isCredit;
@@ -683,11 +689,20 @@ export async function POST(req: NextRequest) {
 
     const partnerWalletPrev = String((prev as any)?.partnerWallet || "").toLowerCase();
     const bodyPartnerWallet = String((body as any)?.partnerWallet || "").toLowerCase();
-    const partnerWallet = isHexAddress(bodyPartnerWallet)
+    let partnerWallet = isHexAddress(bodyPartnerWallet)
       ? (bodyPartnerWallet as `0x${string}`)
       : (isHexAddress(partnerWalletBrand)
         ? (partnerWalletBrand as `0x${string}`)
         : (isHexAddress(partnerWalletPrev) ? (partnerWalletPrev as `0x${string}`) : ("" as any)));
+
+    // Failsafe platform routing for partner brands
+    if (isPartnerBrand) {
+      if (!partnerWallet && platformRecipient && platformRecipient !== CANONICAL_PLATFORM_WALLET.toLowerCase()) {
+        console.warn("[deploySplit] Partner wallet missing; falling back to env platform recipient:", platformRecipient);
+        partnerWallet = platformRecipient as any;
+      }
+      platformRecipient = CANONICAL_PLATFORM_WALLET;
+    }
 
     let partnerFeeBpsPost = 50;
     // Check if dual split is enabled (cleared duplicate declaration)
@@ -708,7 +723,7 @@ export async function POST(req: NextRequest) {
         const creditBps = getSanitizedCreditSplitBps();
         if (creditBps) {
           platformSharesBps = creditBps.platform;
-          partnerFeeBpsPost = creditBps.partner;
+          partnerFeeBpsPost = creditBps.agent;
         } else {
           platformSharesBps = 150;
           partnerFeeBpsPost = 0;
