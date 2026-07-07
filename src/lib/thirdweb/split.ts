@@ -135,16 +135,22 @@ export async function ensureSplitForWallet(
     }
 
     // Resolve partner wallet: prefer override, then brand config
-    const partner = partnerWalletOverride && isValidHexAddress(partnerWalletOverride)
+    let partner = partnerWalletOverride && isValidHexAddress(partnerWalletOverride)
       ? partnerWalletOverride.toLowerCase()
       : String(brand?.partnerWallet || "").toLowerCase();
 
     // Guard: On partner containers, NEXT_PUBLIC_RECIPIENT_ADDRESS may be set
-    // to the partner wallet. If platform === partner, fall back to the
-    // canonical platform treasury to prevent duplicate-payee reverts.
+    // to the partner wallet. Enforce that on partner brands, the platform fee
+    // ALWAYS routes to the canonical platform wallet (0xaCDAa...), and use the env
+    // recipient address as a fallback partner wallet if the DB config is empty.
     const CANONICAL_PLATFORM_WALLET = "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e";
-    if (platform === partner && String(partner) !== "") {
-      console.warn("[ensureSplitForWallet] Platform wallet collides with partner wallet, using canonical platform:", CANONICAL_PLATFORM_WALLET);
+    const isPartnerBrand = brandKey !== "portalpay" && brandKey !== "basaltsurge";
+
+    if (isPartnerBrand) {
+      if (!partner && platform && platform !== CANONICAL_PLATFORM_WALLET.toLowerCase()) {
+        console.warn("[ensureSplitForWallet] Partner wallet missing in DB config; falling back to env recipient address:", platform);
+        partner = platform;
+      }
       platform = CANONICAL_PLATFORM_WALLET.toLowerCase();
     }
 
@@ -156,7 +162,7 @@ export async function ensureSplitForWallet(
         // Debit card component
         const env = getEnv();
         defaultPlatformBps = env.PLATFORM_BPS ?? 125;
-        defaultPartnerBps = 0;
+        defaultPartnerBps = typeof brand?.partnerFeeBps === "number" ? brand.partnerFeeBps : 50;
       } else {
         // Credit & Crypto component
         const creditBps = getSanitizedCreditSplitBps();
@@ -165,7 +171,7 @@ export async function ensureSplitForWallet(
         } else {
           defaultPlatformBps = 150;
         }
-        defaultPartnerBps = 0;
+        defaultPartnerBps = typeof brand?.partnerFeeBps === "number" ? brand.partnerFeeBps : 50;
       }
     }
 
