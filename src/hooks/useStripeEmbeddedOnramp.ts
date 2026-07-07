@@ -583,6 +583,7 @@ export function useStripeEmbeddedOnramp({
         console.log("[EMBEDDED ONRAMP] Polling aborted because run was stopped/reset.");
         return false;
       }
+      let isRejected = false;
       try {
         const res = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(custId)}`, {
           headers: {
@@ -593,18 +594,24 @@ export function useStripeEmbeddedOnramp({
           const kycData = await res.json();
           console.log(`[EMBEDDED ONRAMP] Polled KYC status (attempt ${i + 1}/90): kycStatus=${kycData.kycStatus}, idDocStatus=${kycData.idDocStatus}`);
           
-          const isKycApproved = kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed";
-          const isDocApproved = kycData.idDocStatus === "approved" || kycData.idDocStatus === "verified" || kycData.idDocStatus === "completed";
-          
-          if (isKycApproved || isDocApproved) {
-            console.log("[EMBEDDED ONRAMP] KYC status is approved on Stripe's end!");
-            return true;
+          if (kycData.kycStatus === "rejected" || kycData.idDocStatus === "rejected") {
+            console.warn("[EMBEDDED ONRAMP] Identity verification was rejected by Stripe.");
+            isRejected = true;
+          } else {
+            const isKycApproved = kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed";
+            const isDocApproved = kycData.idDocStatus === "approved" || kycData.idDocStatus === "verified" || kycData.idDocStatus === "completed";
+            
+            if (isKycApproved || isDocApproved) {
+              console.log("[EMBEDDED ONRAMP] KYC status is approved on Stripe's end!");
+              return true;
+            }
           }
-
-
         }
       } catch (err) {
         console.warn("[EMBEDDED ONRAMP] Error polling KYC status:", err);
+      }
+      if (isRejected) {
+        throw new Error("Identity verification was rejected. Please check your document and try again.");
       }
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
