@@ -342,6 +342,7 @@ export async function readBrandOverridesFromCosmos(brandKey: string): Promise<Br
     const PLATFORM_ALIASES: Record<string, string> = {
       basaltsurge: "portalpay",
       portalpay: "basaltsurge",
+      "lucky13-marketing": "lucky13",
     };
     const fallbackKey = PLATFORM_ALIASES[brandKey];
     if (fallbackKey) {

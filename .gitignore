@@ -89,3 +89,6 @@ vcrun.py
 
 # Shopify CLI temp build directories
 .shopify-deploy-*
+
+# Local utility scripts
+trigger-transfer.js

@@ -73,6 +73,7 @@ export async function executeGaslessTransferServer(
       payload: JSON.stringify({
         email: fromWalletEmail,
         verificationToken,
+        brandKey: brandKey || "",
       }),
     });
 
