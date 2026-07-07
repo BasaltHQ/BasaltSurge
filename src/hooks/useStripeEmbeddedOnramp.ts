@@ -577,7 +577,7 @@ export function useStripeEmbeddedOnramp({
 
   const pollKycStatus = useCallback(async (custId: string): Promise<boolean> => {
     console.log("[EMBEDDED ONRAMP] Polling KYC status for completion...");
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 90; i++) {
       if (!mountedRef.current) return false;
       if (!isRunningRef.current) {
         console.log("[EMBEDDED ONRAMP] Polling aborted because run was stopped/reset.");
@@ -591,7 +591,7 @@ export function useStripeEmbeddedOnramp({
         });
         if (res.ok) {
           const kycData = await res.json();
-          console.log(`[EMBEDDED ONRAMP] Polled KYC status (attempt ${i + 1}/15): kycStatus=${kycData.kycStatus}, idDocStatus=${kycData.idDocStatus}`);
+          console.log(`[EMBEDDED ONRAMP] Polled KYC status (attempt ${i + 1}/90): kycStatus=${kycData.kycStatus}, idDocStatus=${kycData.idDocStatus}`);
           
           const isKycApproved = kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed";
           const isDocApproved = kycData.idDocStatus === "approved" || kycData.idDocStatus === "verified" || kycData.idDocStatus === "completed";
@@ -608,7 +608,7 @@ export function useStripeEmbeddedOnramp({
       }
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
-    console.warn("[EMBEDDED ONRAMP] Polling KYC status timed out after 30 seconds.");
+    console.warn("[EMBEDDED ONRAMP] Polling KYC status timed out after 180 seconds.");
     return false;
   }, []);
 

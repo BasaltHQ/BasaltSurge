@@ -4277,6 +4277,67 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   Done
                 </button>
               </div>
+            ) : headlessStep === "checking_kyc" ? (
+              <div className="text-center flex flex-col items-center justify-center gap-5 min-h-[320px] px-5 py-8 w-full animate-in fade-in duration-500">
+                <style>{`
+                  @keyframes laserScan {
+                    0%, 100% { top: 0%; opacity: 0.2; }
+                    50% { top: 100%; opacity: 0.9; }
+                  }
+                `}</style>
+                <div className="relative flex items-center justify-center scale-125 mb-4 mt-2">
+                  {/* Glowing blur background */}
+                  <div 
+                    className="absolute w-24 h-24 rounded-full blur-xl opacity-20 animate-pulse duration-2000"
+                    style={{ backgroundColor: "#10b981" }}
+                  />
+                  
+                  {/* Outer scan ring ping animation */}
+                  <div className="absolute w-20 h-20 rounded-full border-2 border-emerald-500/20 animate-ping duration-3000" />
+                  
+                  {/* Rotating Outer Dashed Ring */}
+                  <div 
+                    className={`absolute w-18 h-18 rounded-full border-2 border-dashed animate-spin duration-10000 ${
+                      isLightText ? 'border-white/10 border-t-emerald-500/40' : 'border-black/10 border-t-emerald-500/40'
+                    }`}
+                  />
+                  
+                  {/* Rotating Inner Ring (reverse spin) */}
+                  <div 
+                    className={`absolute w-14 h-14 rounded-full border border-dotted animate-spin duration-3000 ${
+                      isLightText ? 'border-white/20 border-t-emerald-400' : 'border-black/20 border-t-[#635BFF]'
+                    }`}
+                    style={{ animationDirection: "reverse" }}
+                  />
+                  
+                  {/* Green pulse core */}
+                  <div className="w-10.5 h-10.5 rounded-full border border-emerald-500/30 flex items-center justify-center bg-emerald-500/10 text-emerald-400 shadow-lg shadow-emerald-500/10 relative overflow-hidden z-10">
+                    <svg className="h-5 w-5 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                      <path d="m9 12 2 2 4-4" />
+                    </svg>
+                    {/* Scan line laser overlay */}
+                    <div 
+                      className="absolute left-0 right-0 h-[2px] bg-emerald-400 shadow-[0_0_8px_#34d399]" 
+                      style={{ animation: "laserScan 2s infinite ease-in-out" }}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-center gap-1.5 max-w-xs">
+                  <h3 className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>Verifying Identity</h3>
+                  <p className={`text-[11.5px] leading-relaxed ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+                    Stripe is reviewing your document photo. This process can take up to 2-3 minutes. Please keep this tab open.
+                  </p>
+                </div>
+
+                {/* Progress dot indicator */}
+                <div className="flex items-center gap-1.5 mt-2.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: "200ms" }} />
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: "400ms" }} />
+                </div>
+              </div>
             ) : headlessStep === "collecting_phone" ? (
               <div className="w-full flex flex-col items-stretch p-2 animate-in zoom-in duration-300">
                 <h3 className={`text-base font-bold tracking-tight mb-1 ${isLightText ? 'text-white' : 'text-black'}`}>Stripe Verification Required</h3>
