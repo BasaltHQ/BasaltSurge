@@ -632,6 +632,7 @@ export async function POST(req: NextRequest) {
 
     const CANONICAL_PLATFORM_WALLET = "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e";
     const partnerWalletBrand = String(brand?.partnerWallet || "").toLowerCase();
+    const isPartnerBrand = brandKey !== "portalpay" && brandKey !== "basaltsurge";
 
     if (!isHexAddress(platformRecipient)) {
       // Fallback to canonical if env is missing/invalid
@@ -644,7 +645,6 @@ export async function POST(req: NextRequest) {
     // Platform share derived from brand config/env/static defaults; allow body override (client-asserted)
     let platformSharesBps = resolvePlatformBpsFromBrand(brandKey, brand, body);
     // Partner recipient present when brandKey !== 'portalpay' and partner is configured
-    const isPartnerBrand = !isPlatformBrand(String(brandKey || "").toLowerCase());
 
     const isCredit = body.isCredit === true;
     const isDual = isDualSplitEnabled() || isCredit;
@@ -722,7 +722,7 @@ export async function POST(req: NextRequest) {
         const creditBps = getSanitizedCreditSplitBps();
         if (creditBps) {
           platformSharesBps = creditBps.platform;
-          partnerFeeBpsPost = creditBps.partner;
+          partnerFeeBpsPost = creditBps.agent;
         } else {
           platformSharesBps = 150;
           partnerFeeBpsPost = 0;
