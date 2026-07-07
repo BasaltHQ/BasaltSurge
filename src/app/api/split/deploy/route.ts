@@ -373,10 +373,18 @@ export async function GET(req: NextRequest) {
       const isCreditQuery = url.searchParams.get("isCredit") === "true";
       const isDual = isDualSplitEnabled() || isCreditQuery;
 
-      const platformRecipient = String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.PLATFORM_WALLET || "").toLowerCase();
+      let platformRecipient = String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.PLATFORM_WALLET || "").toLowerCase();
       let platformSharesBps = resolvePlatformBpsFromBrand(resolvedBrand, brand, overrides);
       const envPartnerWallet = String(process.env.PARTNER_WALLET || "").toLowerCase();
       const partnerWallet = String(brand?.partnerWallet || envPartnerWallet || "").toLowerCase();
+
+      // Guard: On partner containers, NEXT_PUBLIC_RECIPIENT_ADDRESS may be set
+      // to the partner wallet. If platformRecipient === partnerWallet, fall back to the
+      // canonical platform treasury to prevent duplicate-payee reverts.
+      const CANONICAL_PLATFORM_WALLET = "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e";
+      if (platformRecipient === partnerWallet && partnerWallet !== "") {
+        platformRecipient = CANONICAL_PLATFORM_WALLET.toLowerCase();
+      }
 
       const sanitized = getSanitizedSplitBps();
       const envPartnerBps = typeof sanitized?.partner === "number" ? Math.max(0, Math.min(10000, sanitized.partner)) : 0;
@@ -398,12 +406,10 @@ export async function GET(req: NextRequest) {
           } else {
             platformSharesBps = 150;
           }
-          partnerFeeBps = 0;
         } else {
           // Debit component
           const env = getEnv();
           platformSharesBps = env.PLATFORM_BPS ?? 125;
-          partnerFeeBps = 0;
         }
       }
 
@@ -624,15 +630,8 @@ export async function POST(req: NextRequest) {
 
     let platformRecipient = String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.PLATFORM_WALLET || "").toLowerCase();
 
-    // Safety check: specific hardcoded platform wallet for PortalPay/Basalt
-    // If we are in a partner context and the platform recipient matches the partner wallet, we must fix it.
-    // The known Platform (Basalt) wallet is 0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e
     const CANONICAL_PLATFORM_WALLET = "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e";
     const partnerWalletBrand = String(brand?.partnerWallet || "").toLowerCase();
-
-    if (platformRecipient === partnerWalletBrand && partnerWalletBrand !== "") {
-      platformRecipient = CANONICAL_PLATFORM_WALLET;
-    }
 
     if (!isHexAddress(platformRecipient)) {
       // Fallback to canonical if env is missing/invalid
@@ -683,11 +682,18 @@ export async function POST(req: NextRequest) {
 
     const partnerWalletPrev = String((prev as any)?.partnerWallet || "").toLowerCase();
     const bodyPartnerWallet = String((body as any)?.partnerWallet || "").toLowerCase();
-    const partnerWallet = isHexAddress(bodyPartnerWallet)
+    let partnerWallet = isHexAddress(bodyPartnerWallet)
       ? (bodyPartnerWallet as `0x${string}`)
       : (isHexAddress(partnerWalletBrand)
         ? (partnerWalletBrand as `0x${string}`)
         : (isHexAddress(partnerWalletPrev) ? (partnerWalletPrev as `0x${string}`) : ("" as any)));
+
+    // Guard: On partner containers, NEXT_PUBLIC_RECIPIENT_ADDRESS may be set
+    // to the partner wallet. If platformRecipient === partnerWallet, fall back to the
+    // canonical platform treasury to prevent duplicate-payee reverts.
+    if (platformRecipient === String(partnerWallet).toLowerCase() && String(partnerWallet) !== "") {
+      platformRecipient = CANONICAL_PLATFORM_WALLET.toLowerCase();
+    }
 
     let partnerFeeBpsPost = 50;
     // Check if dual split is enabled (cleared duplicate declaration)
@@ -696,12 +702,20 @@ export async function POST(req: NextRequest) {
         // Credit & Crypto component (standard split)
         const creditBps = getSanitizedCreditSplitBps();
         platformSharesBps = creditBps?.platform ?? 150;
-        partnerFeeBpsPost = 0;
+        const sanitizedPost = getSanitizedSplitBps();
+        const envPartnerBpsPost = typeof sanitizedPost?.partner === "number" ? Math.max(0, Math.min(10000, sanitizedPost.partner)) : 0;
+        const basePartnerBpsPost = typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0;
+        const defaultPartnerBpsPost = 50;
+        partnerFeeBpsPost = basePartnerBpsPost > 0 ? basePartnerBpsPost : (envPartnerBpsPost > 0 ? envPartnerBpsPost : defaultPartnerBpsPost);
       } else {
         // Debit component (alternate split)
         const env = getEnv();
         platformSharesBps = env.PLATFORM_BPS ?? 125;
-        partnerFeeBpsPost = 0;
+        const sanitizedPost = getSanitizedSplitBps();
+        const envPartnerBpsPost = typeof sanitizedPost?.partner === "number" ? Math.max(0, Math.min(10000, sanitizedPost.partner)) : 0;
+        const basePartnerBpsPost = typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0;
+        const defaultPartnerBpsPost = 50;
+        partnerFeeBpsPost = basePartnerBpsPost > 0 ? basePartnerBpsPost : (envPartnerBpsPost > 0 ? envPartnerBpsPost : defaultPartnerBpsPost);
       }
     } else {
       if (isCredit) {

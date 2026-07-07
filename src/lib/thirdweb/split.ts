@@ -156,7 +156,7 @@ export async function ensureSplitForWallet(
         // Debit card component
         const env = getEnv();
         defaultPlatformBps = env.PLATFORM_BPS ?? 125;
-        defaultPartnerBps = 0;
+        defaultPartnerBps = typeof brand?.partnerFeeBps === "number" ? brand.partnerFeeBps : 50;
       } else {
         // Credit & Crypto component
         const creditBps = getSanitizedCreditSplitBps();
@@ -165,7 +165,7 @@ export async function ensureSplitForWallet(
         } else {
           defaultPlatformBps = 150;
         }
-        defaultPartnerBps = 0;
+        defaultPartnerBps = typeof brand?.partnerFeeBps === "number" ? brand.partnerFeeBps : 50;
       }
     }
 
