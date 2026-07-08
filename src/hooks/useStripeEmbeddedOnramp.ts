@@ -1224,6 +1224,23 @@ export function useStripeEmbeddedOnramp({
 
           const errMessage = String(checkoutErr?.message || "").toLowerCase();
           const errCode = String(checkoutErr?.code || "").toLowerCase();
+
+          const isCardDecline = errMessage.includes("card") || 
+                                errMessage.includes("decline") || 
+                                errMessage.includes("insufficient") || 
+                                errMessage.includes("limit") ||
+                                errMessage.includes("not support") ||
+                                errCode.includes("card") || 
+                                errCode.includes("decline") ||
+                                errCode.includes("payment_intent_payment_attempt_failed") ||
+                                lastError === "payment_intent_payment_attempt_failed";
+
+          if (isCardDecline) {
+            console.warn("[EMBEDDED ONRAMP] Card decline detected, aborting retry loop immediately.");
+            handleError(checkoutErr?.message || "Your card was declined. Please try another card.");
+            return;
+          }
+
           const isKycError = errMessage.includes("identity verification") || 
                              errMessage.includes("verification_required") || 
                              errMessage.includes("kyc") ||
