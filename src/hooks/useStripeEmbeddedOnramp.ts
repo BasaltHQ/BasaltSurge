@@ -1337,6 +1337,7 @@ export function useStripeEmbeddedOnramp({
     }
     console.log("[EMBEDDED ONRAMP] Submitting KYC info...");
     updateStep("submitting_kyc");
+    isRunningRef.current = true;
     try {
       await onrampRef.current.submitKycInfo(kycInfo);
       console.log("[EMBEDDED ONRAMP] KYC demographics submitted successfully! Checking if document verification is needed...");
