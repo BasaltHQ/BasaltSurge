@@ -83,6 +83,17 @@ type OnrampCoordinator = {
   destroy: () => void;
 };
 
+/** Helper to wrap Stripe KYC submission with a timeout to prevent iframe postMessage hangs */
+async function submitKycInfoWithTimeout(coordinator: OnrampCoordinator, kycInfo: any, timeoutMs = 15000): Promise<void> {
+  return Promise.race([
+    coordinator.submitKycInfo(kycInfo),
+    new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error("Stripe KYC submission timed out. Please refresh and try again.")), timeoutMs)
+    )
+  ]);
+}
+
+
 export type UseStripeEmbeddedOnrampProps = {
   /** Buyer's email */
   email?: string;
@@ -478,7 +489,7 @@ export function useStripeEmbeddedOnramp({
               
               if (isTestMode) {
                 console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics globally...");
-                await onrampRef.current!.submitKycInfo({
+                await submitKycInfoWithTimeout(onrampRef.current!, {
                   given_name: "John",
                   surname: "Verified",
                   date_of_birth: { day: 1, month: 1, year: 1901 },
@@ -929,9 +940,46 @@ export function useStripeEmbeddedOnramp({
             errCode.includes("verification") || 
             errCode.includes("kyc")
           ) {
-            console.log("[EMBEDDED ONRAMP] Document verification required during session creation. Launching verifyDocuments...");
-            updateStep("verifying_identity");
+            console.log("[EMBEDDED ONRAMP] Document verification required during session creation. Checking customer status first...");
             if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
+            
+            try {
+              // Pre-check customer KYC status to see if it is already under review/pending.
+              // If so, we avoid presenting the verifyDocuments modal again.
+              const customerCheckRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}`, {
+                headers: {
+                  "x-stripe-oauth-token": oauthTokenRef.current || "",
+                },
+              });
+              if (customerCheckRes.ok) {
+                const kycData = await customerCheckRes.json();
+                console.log("[EMBEDDED ONRAMP] Pre-verification customer status:", kycData);
+                const idDocStatus = String(kycData.idDocStatus || "").toLowerCase();
+                const kycStatus = String(kycData.kycStatus || "").toLowerCase();
+                if (
+                  idDocStatus === "pending" ||
+                  idDocStatus === "processing" ||
+                  idDocStatus === "under_review" ||
+                  kycStatus === "pending" ||
+                  kycStatus === "processing" ||
+                  kycStatus === "under_review"
+                ) {
+                  console.log("[EMBEDDED ONRAMP] Stripe verification is already under review. Skipping modal and polling L2...");
+                  updateStep("checking_kyc");
+                  const kycApproved = await pollKycStatus(customerId, "l2");
+                  if (!kycApproved) {
+                    throw new Error("Document verification was not approved.");
+                  }
+                  console.log("[EMBEDDED ONRAMP] Document verification approved! Retrying session creation...");
+                  return await execute(amt);
+                }
+              }
+            } catch (checkErr) {
+              console.warn("[EMBEDDED ONRAMP] Failed to pre-check customer status:", checkErr);
+            }
+
+            console.log("[EMBEDDED ONRAMP] Launching verifyDocuments modal...");
+            updateStep("verifying_identity");
             
             try {
               isVerifyingRef.current = true;
@@ -1450,7 +1498,7 @@ export function useStripeEmbeddedOnramp({
     updateStep("submitting_kyc");
     isRunningRef.current = true;
     try {
-      await onrampRef.current.submitKycInfo(kycInfo);
+      await submitKycInfoWithTimeout(onrampRef.current, kycInfo);
       console.log("[EMBEDDED ONRAMP] KYC demographics submitted successfully! Checking verification status...");
 
       // Determine which tier was just submitted based on the payload fields
@@ -1940,7 +1988,7 @@ export function useStripeEmbeddedOnramp({
             
             if (isTestMode) {
               console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics on payment collection catch...");
-              await onrampRef.current.submitKycInfo({
+              await submitKycInfoWithTimeout(onrampRef.current, {
                 given_name: "John",
                 surname: "Verified",
                 date_of_birth: { day: 1, month: 1, year: 1901 },

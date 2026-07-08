@@ -3332,28 +3332,57 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
     const checkPayment = async () => {
       try {
-        const res = await fetch("/api/terminal/check-payment", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            wallet: merchantWallet,
-            receiptId: receiptId,
-            since: receipt.createdAt,
-            amount: activeAmount,
-            currency: token
-          })
-        });
-        if (!res.ok) {
-          throw new Error(`Server returned status ${res.status}`);
+        const queryParams = new URLSearchParams({
+          wallet: String(merchantWallet || ""),
+          receiptId: String(receiptId || ""),
+          since: String(receipt?.createdAt || ""),
+          amount: String(activeAmount || ""),
+          currency: String(token || "")
+        }).toString();
+
+        let res = await fetch(`/api/terminal/check-payment?${queryParams}`, {
+          method: "GET",
+          headers: { "Accept": "application/json" }
+        }).catch(() => null);
+
+        // Fallback to POST if GET fails or returns non-200 or empty response
+        let text = "";
+        let isGetSuccess = false;
+        if (res && res.ok) {
+          const contentType = res.headers.get("content-type") || "";
+          if (contentType.includes("application/json")) {
+            text = await res.text();
+            if (text && text.trim()) {
+              isGetSuccess = true;
+            }
+          }
         }
-        const contentType = res.headers.get("content-type") || "";
-        if (!contentType.includes("application/json")) {
-          throw new Error(`Server returned non-JSON content-type: ${contentType}`);
+
+        if (!isGetSuccess) {
+          res = await fetch("/api/terminal/check-payment", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              wallet: merchantWallet,
+              receiptId: receiptId,
+              since: receipt.createdAt,
+              amount: activeAmount,
+              currency: token
+            })
+          });
+          if (!res.ok) {
+            throw new Error(`Server returned status ${res.status}`);
+          }
+          const contentType = res.headers.get("content-type") || "";
+          if (!contentType.includes("application/json")) {
+            throw new Error(`Server returned non-JSON content-type: ${contentType}`);
+          }
+          text = await res.text();
+          if (!text || !text.trim()) {
+            throw new Error("Server returned an empty response");
+          }
         }
-        const text = await res.text();
-        if (!text || !text.trim()) {
-          throw new Error("Server returned an empty response");
-        }
+
         let data;
         try {
           data = JSON.parse(text);
