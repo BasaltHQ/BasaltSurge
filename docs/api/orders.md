@@ -68,6 +68,16 @@ Body Parameters:
 | `returnUrl` | string | No | Optional redirect URL. Customer's browser will be redirected here after successful payment (also accepted as `return_url`) |
 | `onSuccess` | string | No | Optional custom logic. Can be a redirect URL or a raw JavaScript code snippet string to be evaluated after successful payment |
 | `stripeEmail` | string | No | Buyer's email to pre-populate in Stripe Link / credit card email field. Passing this allows the checkout portal to bypass the email prompt and automatically proceed. |
+| `billingFirstName` | string | No | Buyer's first name to pre-populate in the KYC/billing section (also accepted as `customerFirstName`) |
+| `billingLastName` | string | No | Buyer's last name to pre-populate in the KYC/billing section (also accepted as `customerLastName`) |
+| `billingEmail` | string | No | Buyer's email for billing/KYC section (also accepted as `customerEmail` or `stripeEmail`) |
+| `billingPhone` | string | No | Buyer's phone number to pre-populate in the KYC/billing section (also accepted as `customerPhone`) |
+| `billingAddressLine1` | string | No | Address line 1 for the billing address (also accepted as `customerAddressLine1`) |
+| `billingAddressLine2` | string | No | Address line 2 (Apt, Suite, Unit) for the billing address (also accepted as `customerAddressLine2`) |
+| `billingAddressCity` | string | No | City for the billing address (also accepted as `customerAddressCity`) |
+| `billingAddressState` | string | No | State or region (2-letter code preferred) for the billing address (also accepted as `customerAddressState`) |
+| `billingAddressPostalCode` | string | No | Zip or postal code for the billing address (also accepted as `billingAddressZip` or `customerAddressPostalCode`) |
+| `billingAddressCountry` | string | No | Country code (2-letter ISO, e.g. "US") for the billing address (also accepted as `customerAddressCountry`) |
 
 Example Requests:
 

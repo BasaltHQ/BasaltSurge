@@ -77,6 +77,7 @@ export async function GET(
       providedFields: customer.provided_fields ?? [],
       kycStatus: kycVerified?.status ?? "not_started",
       idDocStatus: idDocVerified?.status ?? "not_started",
+      kycTiers: customer.kyc_tiers ?? [],
     });
   } catch (e: any) {
     console.error("[CRYPTO CUSTOMER] Error:", e);

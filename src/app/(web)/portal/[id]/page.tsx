@@ -2059,6 +2059,29 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               setShipEmail((prev) => prev || emailVal);
               setHeadlessEmailInput((prev) => prev || emailVal);
             }
+            if (rec.billingAddress) {
+              const b = rec.billingAddress;
+              if (b.firstName) setKycFirstName((prev) => prev || b.firstName);
+              if (b.lastName) setKycLastName((prev) => prev || b.lastName);
+              if (b.phone) {
+                setHeadlessPhoneInput((prev) => prev || b.phone);
+                setLocalPhone((prev) => prev || b.phone);
+              }
+              if (b.email) {
+                setShipEmail((prev) => prev || b.email);
+                setHeadlessEmailInput((prev) => prev || b.email);
+              }
+              if (b.line1) setKycLine1((prev) => prev || b.line1);
+              if (b.line2) setKycLine2((prev) => prev || b.line2);
+              if (b.city) setKycCity((prev) => prev || b.city);
+              if (b.state) setKycState((prev) => prev || b.state);
+              if (b.zip) setKycZip((prev) => prev || b.zip);
+              if (b.country) {
+                setKycCountry((prev) => prev || b.country);
+                setKycNationalities((prev) => prev || b.country);
+                setKycBirthCountry((prev) => prev || b.country);
+              }
+            }
             try {
               const rw = String((rec as any)?.recipientWallet || "").toLowerCase();
               if (/^0x[a-f0-9]{40}$/i.test(rw)) setResolvedRecipient(rw as `0x${string}`);
@@ -2328,6 +2351,80 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [kycBirthCountry, setKycBirthCountry] = useState("US");
   const [kycBirthCity, setKycBirthCity] = useState("");
   const [kycSameAsShipping, setKycSameAsShipping] = useState(false);
+
+  // ── Address Autocomplete State & Handlers ──
+  const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
+  const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
+  const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
+
+  const STATE_MAP: Record<string, string> = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA", "colorado": "CO", "connecticut": "CT",
+    "delaware": "DE", "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN",
+    "iowa": "IA", "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD", "massachusetts": "MA",
+    "michigan": "MI", "minnesota": "MN", "mississippi": "MS", "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND",
+    "ohio": "OH", "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT", "virginia": "VA", "washington": "WA",
+    "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY", "washington dc": "DC", "district of columbia": "DC"
+  };
+
+  const fetchAddressSuggestions = async (val: string) => {
+    if (val.length < 3) {
+      setAddressSuggestions([]);
+      setShowAddressSuggestions(false);
+      return;
+    }
+    setIsFetchingSuggestions(true);
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(val)}&format=json&addressdetails=1&limit=5`, {
+        headers: {
+          "User-Agent": "PortalPay-Checkout/1.0 (contact@portalpay.org)"
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAddressSuggestions(data || []);
+        setShowAddressSuggestions((data || []).length > 0);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch address suggestions:", err);
+    } finally {
+      setIsFetchingSuggestions(false);
+    }
+  };
+
+  const selectAddressSuggestion = (item: any) => {
+    const addr = item.address;
+    if (!addr) return;
+
+    // Extract line1
+    const number = addr.house_number || "";
+    const road = addr.road || "";
+    const line1 = `${number} ${road}`.trim();
+    setKycLine1(line1);
+
+    // Extract city
+    const city = addr.city || addr.town || addr.village || addr.suburb || addr.city_district || "";
+    setKycCity(city);
+
+    // Extract state
+    const rawState = (addr.state || "").toLowerCase();
+    const stateAbbr = STATE_MAP[rawState] || addr.state || "";
+    setKycState(stateAbbr);
+
+    // Extract postcode
+    const zip = addr.postcode || "";
+    setKycZip(zip);
+
+    // Extract country code
+    const countryCode = (addr.country_code || "US").toUpperCase();
+    setKycCountry(countryCode);
+    setKycNationalities(countryCode);
+    setKycBirthCountry(countryCode);
+
+    setAddressSuggestions([]);
+    setShowAddressSuggestions(false);
+  };
 
   // Sync shipping info to KYC form demographics when toggle is active
   useEffect(() => {
@@ -3512,6 +3609,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     sessionId: headlessSessionId,
     submitKycInfo,
     reset: resetHeadlessOnramp,
+    kycTierRequired,
   } = useStripeEmbeddedOnramp({
     email: shipEmail || headlessEmailInput || undefined,
     fullName: shipName || undefined,
@@ -4326,10 +4424,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               <div className="w-full flex flex-col items-stretch p-2 animate-in zoom-in duration-300 max-h-[500px] overflow-y-auto pr-1 text-left">
                 <div className="mb-4">
                   <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>Identity Verification</h3>
-                  <p className={`text-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>Stripe requires legal information to authorize this transaction.</p>
+                  <p className={`text-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+                    {kycTierRequired === "l0" 
+                      ? "Stripe requires basic identity information to authorize this transaction."
+                      : "Stripe requires additional demographics to complete authorization."}
+                  </p>
                 </div>
                 
-                {shippingRequired && (
+                {kycTierRequired === "l0" && shippingRequired && (
                   <div className="mb-4 flex items-center gap-2 px-1">
                     <input
                       type="checkbox"
@@ -4346,242 +4448,451 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 )}
 
                 <div className="space-y-3.5">
-                  {/* Name Fields */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal First Name</label>
-                      <input
-                        type="text"
-                        placeholder="John"
-                        className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                            ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                            : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                          }`}
-                        value={kycFirstName}
-                        onChange={(e) => setKycFirstName(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal Last Name</label>
-                      <input
-                        type="text"
-                        placeholder="Smith"
-                        className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                            ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                            : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                          }`}
-                        value={kycLastName}
-                        onChange={(e) => setKycLastName(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Date of Birth Fields */}
-                  <div>
-                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Date of Birth</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      <input
-                        type="number"
-                        placeholder="Month (MM)"
-                        min="1"
-                        max="12"
-                        className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                            ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                            : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                          }`}
-                        value={kycDobMonth}
-                        onChange={(e) => setKycDobMonth(e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        placeholder="Day (DD)"
-                        min="1"
-                        max="31"
-                        className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                            ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                            : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                          }`}
-                        value={kycDobDay}
-                        onChange={(e) => setKycDobDay(e.target.value)}
-                      />
-                      <input
-                        type="number"
-                        placeholder="Year (YYYY)"
-                        min="1900"
-                        max="2026"
-                        className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                            ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                            : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                          }`}
-                        value={kycDobYear}
-                        onChange={(e) => setKycDobYear(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Country Field */}
-                  <div>
-                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Country</label>
-                    <select
-                      className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                          ? 'bg-white/5 border border-white/10 text-white focus:border-white/20 focus:bg-white/10 [&>option]:bg-neutral-900 [&>option]:text-white'
-                          : 'bg-black/5 border border-black/10 text-black focus:border-black/20 focus:bg-black/10 [&>option]:bg-white [&>option]:text-black'
-                        }`}
-                      value={kycCountry}
-                      onChange={(e) => {
-                        setKycCountry(e.target.value);
-                        setKycNationalities(e.target.value);
-                        setKycBirthCountry(e.target.value);
-                      }}
-                    >
-                      <option value="US">United States</option>
-                      <option value="CA">Canada</option>
-                      <option value="GB">United Kingdom</option>
-                      <option value="DE">Germany</option>
-                      <option value="FR">France</option>
-                      <option value="ES">Spain</option>
-                      <option value="IT">Italy</option>
-                      <option value="NL">Netherlands</option>
-                      <option value="IE">Ireland</option>
-                    </select>
-                  </div>
-
-                  {/* Address Fields */}
-                  <div className="space-y-2">
-                    <div>
-                      <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 1</label>
-                      <input
-                        type="text"
-                        placeholder="123 Main St"
-                        className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                            ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                            : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                          }`}
-                        value={kycLine1}
-                        onChange={(e) => setKycLine1(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 2 (Optional)</label>
-                      <input
-                        type="text"
-                        placeholder="Apt, Suite, Unit"
-                        className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                            ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                            : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                          }`}
-                        value={kycLine2}
-                        onChange={(e) => setKycLine2(e.target.value)}
-                      />
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div>
-                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>City</label>
-                        <input
-                          type="text"
-                          placeholder="Seattle"
-                          className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                              ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                              : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                            }`}
-                          value={kycCity}
-                          onChange={(e) => setKycCity(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>State/Region</label>
-                        <input
-                          type="text"
-                          placeholder="WA"
-                          className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                              ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                              : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                            }`}
-                          value={kycState}
-                          onChange={(e) => setKycState(e.target.value)}
-                        />
-                      </div>
-                      <div>
-                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Zip/Postal</label>
-                        <input
-                          type="text"
-                          placeholder="98101"
-                          className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                              ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                              : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                            }`}
-                          value={kycZip}
-                          onChange={(e) => setKycZip(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Conditional KYC fields based on region */}
-                  {kycCountry === "US" ? (
-                    <div>
-                      <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Social Security Number (SSN)</label>
-                      <input
-                        type="password"
-                        placeholder="SSN (9 digits)"
-                        maxLength={9}
-                        className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                            ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                            : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                          }`}
-                        value={kycSsn}
-                        onChange={(e) => setKycSsn(e.target.value.replace(/\D/g, ''))}
-                      />
-                      <p className={`mt-1 text-[10px] leading-relaxed ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
-                        SSN is processed securely and directly on Stripe's server.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
+                  {kycTierRequired === "l0" ? (
+                    <>
+                      {/* L0 Name Fields */}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Nationality</label>
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal First Name</label>
                           <input
                             type="text"
-                            placeholder="e.g. DE, FR"
-                            maxLength={2}
-                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium uppercase ${isLightText
+                            placeholder="John"
+                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                 : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
-                            value={kycNationalities}
-                            onChange={(e) => setKycNationalities(e.target.value.toUpperCase())}
+                            value={kycFirstName}
+                            onChange={(e) => setKycFirstName(e.target.value)}
                           />
                         </div>
                         <div>
-                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Birth Country</label>
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal Last Name</label>
                           <input
                             type="text"
-                            placeholder="e.g. DE, FR"
-                            maxLength={2}
-                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium uppercase ${isLightText
+                            placeholder="Smith"
+                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                 : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
-                            value={kycBirthCountry}
-                            onChange={(e) => setKycBirthCountry(e.target.value.toUpperCase())}
+                            value={kycLastName}
+                            onChange={(e) => setKycLastName(e.target.value)}
                           />
                         </div>
                       </div>
-                      <div>
-                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Birth City</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Berlin"
-                          className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                              ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                              : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                            }`}
-                          value={kycBirthCity}
-                          onChange={(e) => setKycBirthCity(e.target.value)}
-                        />
+
+                      {/* L0 Contact Fields */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Email Address</label>
+                          <input
+                            type="email"
+                            placeholder="email@example.com"
+                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              }`}
+                            value={shipEmail || headlessEmailInput}
+                            onChange={(e) => {
+                              setShipEmail(e.target.value);
+                              setHeadlessEmailInput(e.target.value);
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Phone Number</label>
+                          <input
+                            type="tel"
+                            placeholder="+15555555555"
+                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              }`}
+                            value={headlessPhoneInput}
+                            onChange={(e) => setHeadlessPhoneInput(e.target.value)}
+                          />
+                        </div>
                       </div>
-                    </div>
+
+                      {/* L0 Country Field */}
+                      <div>
+                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Country</label>
+                        <select
+                          className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                              ? 'bg-white/5 border border-white/10 text-white focus:border-white/20 focus:bg-white/10 [&>option]:bg-neutral-900 [&>option]:text-white'
+                              : 'bg-black/5 border border-black/10 text-black focus:border-black/20 focus:bg-black/10 [&>option]:bg-white [&>option]:text-black'
+                            }`}
+                          value={kycCountry}
+                          onChange={(e) => {
+                            setKycCountry(e.target.value);
+                            setKycNationalities(e.target.value);
+                            setKycBirthCountry(e.target.value);
+                          }}
+                        >
+                          <option value="US">United States</option>
+                          <option value="CA">Canada</option>
+                          <option value="GB">United Kingdom</option>
+                          <option value="DE">Germany</option>
+                          <option value="FR">France</option>
+                          <option value="ES">Spain</option>
+                          <option value="IT">Italy</option>
+                          <option value="NL">Netherlands</option>
+                          <option value="IE">Ireland</option>
+                        </select>
+                      </div>
+
+                      {/* L0 Address Fields */}
+                      <div className="space-y-2">
+                        <div className="relative">
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 1</label>
+                          <input
+                            type="text"
+                            placeholder="123 Main St"
+                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              }`}
+                            value={kycLine1}
+                            onChange={(e) => {
+                              setKycLine1(e.target.value);
+                              fetchAddressSuggestions(e.target.value);
+                            }}
+                            onFocus={() => setShowAddressSuggestions(addressSuggestions.length > 0)}
+                            onBlur={() => {
+                              setTimeout(() => setShowAddressSuggestions(false), 250);
+                            }}
+                          />
+                          {showAddressSuggestions && addressSuggestions.length > 0 && (
+                            <div className={`absolute left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border p-1 shadow-2xl backdrop-blur-xl animate-in fade-in duration-100 ${
+                              isLightText 
+                                ? 'border-white/10 bg-neutral-950/95 text-white shadow-black/80' 
+                                : 'border-black/10 bg-white/95 text-black shadow-black/20'
+                            }`}>
+                              {addressSuggestions.map((item, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex flex-col gap-0.5 ${
+                                    isLightText ? 'hover:bg-white/10 text-white/85' : 'hover:bg-black/10 text-black/85'
+                                  }`}
+                                  onClick={() => selectAddressSuggestion(item)}
+                                >
+                                  <span className="font-semibold truncate">{item.display_name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 2 (Optional)</label>
+                          <input
+                            type="text"
+                            placeholder="Apt, Suite, Unit"
+                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              }`}
+                            value={kycLine2}
+                            onChange={(e) => setKycLine2(e.target.value)}
+                          />
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>City</label>
+                            <input
+                              type="text"
+                              placeholder="Seattle"
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                }`}
+                              value={kycCity}
+                              onChange={(e) => setKycCity(e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>State/Region</label>
+                            <input
+                              type="text"
+                              placeholder="WA"
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                }`}
+                              value={kycState}
+                              onChange={(e) => setKycState(e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Zip/Postal</label>
+                            <input
+                              type="text"
+                              placeholder="98101"
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                }`}
+                              value={kycZip}
+                              onChange={(e) => setKycZip(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* L1 Form - Collapsible Address Accordion */}
+                      <details className={`group rounded-xl border overflow-hidden ${
+                        isLightText ? 'border-white/10 bg-white/[0.02]' : 'border-black/10 bg-black/[0.02]'
+                      }`}>
+                        <summary className={`p-3 text-[11px] font-semibold cursor-pointer select-none flex items-center justify-between hover:bg-white/[0.04] active:bg-white/[0.06] transition-colors ${
+                          isLightText ? 'text-white/80' : 'text-black/80'
+                        }`}>
+                          <div className="flex items-center gap-1.5">
+                            <svg className="w-3.5 h-3.5 text-emerald-400 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2.5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043 3.745 3.745 0 01-1.043-3.296A3.745 3.745 0 013 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 011.043-3.296 3.746 3.746 0 013.296-1.043A3.746 3.746 0 0112 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 013.296 1.043 3.746 3.746 0 011.043 3.296A3.745 3.745 0 0121 12z" />
+                            </svg>
+                            <span>Billing & Address details carried over</span>
+                          </div>
+                          <span className={`text-[10px] ${isLightText ? 'text-white/40' : 'text-black/40'} group-open:rotate-180 transition-transform duration-200`}>▼</span>
+                        </summary>
+                        <div className="p-3 border-t border-dashed space-y-3.5 bg-black/[0.04] border-white/5">
+                          {/* Carried over Name Fields */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Legal First Name</label>
+                              <input
+                                type="text"
+                                placeholder="John"
+                                className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  }`}
+                                value={kycFirstName}
+                                onChange={(e) => setKycFirstName(e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Legal Last Name</label>
+                              <input
+                                type="text"
+                                placeholder="Smith"
+                                className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  }`}
+                                value={kycLastName}
+                                onChange={(e) => setKycLastName(e.target.value)}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Carried over Country Field */}
+                          <div>
+                            <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Country</label>
+                            <select
+                              className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-neutral-800 border border-white/10 text-white [&>option]:bg-neutral-900'
+                                  : 'bg-white border border-black/10 text-black [&>option]:bg-white'
+                                }`}
+                              value={kycCountry}
+                              onChange={(e) => {
+                                setKycCountry(e.target.value);
+                                setKycNationalities(e.target.value);
+                                setKycBirthCountry(e.target.value);
+                              }}
+                            >
+                              <option value="US">United States</option>
+                              <option value="CA">Canada</option>
+                              <option value="GB">United Kingdom</option>
+                              <option value="DE">Germany</option>
+                              <option value="FR">France</option>
+                              <option value="ES">Spain</option>
+                              <option value="IT">Italy</option>
+                              <option value="NL">Netherlands</option>
+                              <option value="IE">Ireland</option>
+                            </select>
+                          </div>
+
+                          {/* Carried over Address Fields */}
+                          <div className="space-y-2">
+                            <div>
+                              <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Address Line 1</label>
+                              <input
+                                type="text"
+                                placeholder="123 Main St"
+                                className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  }`}
+                                value={kycLine1}
+                                onChange={(e) => setKycLine1(e.target.value)}
+                              />
+                            </div>
+                            <div>
+                              <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Address Line 2</label>
+                              <input
+                                type="text"
+                                placeholder="Apt, Suite, Unit"
+                                className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  }`}
+                                value={kycLine2}
+                                onChange={(e) => setKycLine2(e.target.value)}
+                              />
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div>
+                                <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>City</label>
+                                <input
+                                  type="text"
+                                  className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
+                                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                      : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                    }`}
+                                  value={kycCity}
+                                  onChange={(e) => setKycCity(e.target.value)}
+                                />
+                              </div>
+                              <div>
+                                <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>State</label>
+                                <input
+                                  type="text"
+                                  className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
+                                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                      : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                    }`}
+                                  value={kycState}
+                                  onChange={(e) => setKycState(e.target.value)}
+                                />
+                              </div>
+                              <div>
+                                <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Zip</label>
+                                <input
+                                  type="text"
+                                  className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
+                                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                      : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                    }`}
+                                  value={kycZip}
+                                  onChange={(e) => setKycZip(e.target.value)}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </details>
+
+                      {/* DOB Field */}
+                      <div>
+                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Date of Birth</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          <input
+                            type="number"
+                            placeholder="Month (MM)"
+                            min="1"
+                            max="12"
+                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              }`}
+                            value={kycDobMonth}
+                            onChange={(e) => setKycDobMonth(e.target.value)}
+                          />
+                          <input
+                            type="number"
+                            placeholder="Day (DD)"
+                            min="1"
+                            max="31"
+                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              }`}
+                            value={kycDobDay}
+                            onChange={(e) => setKycDobDay(e.target.value)}
+                          />
+                          <input
+                            type="number"
+                            placeholder="Year (YYYY)"
+                            min="1900"
+                            max="2026"
+                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              }`}
+                            value={kycDobYear}
+                            onChange={(e) => setKycDobYear(e.target.value)}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Conditional KYC identification fields based on region */}
+                      {kycCountry === "US" ? (
+                        <div>
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Social Security Number (SSN)</label>
+                          <input
+                            type="password"
+                            placeholder="SSN (9 digits)"
+                            maxLength={9}
+                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              }`}
+                            value={kycSsn}
+                            onChange={(e) => setKycSsn(e.target.value.replace(/\D/g, ''))}
+                          />
+                          <p className={`mt-1 text-[10px] leading-relaxed ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
+                            SSN is processed securely and directly on Stripe's server.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Nationality</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. DE, FR"
+                                maxLength={2}
+                                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium uppercase ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                  }`}
+                                value={kycNationalities}
+                                onChange={(e) => setKycNationalities(e.target.value.toUpperCase())}
+                              />
+                            </div>
+                            <div>
+                              <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Birth Country</label>
+                              <input
+                                type="text"
+                                placeholder="e.g. DE, FR"
+                                maxLength={2}
+                                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium uppercase ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                  }`}
+                                value={kycBirthCountry}
+                                onChange={(e) => setKycBirthCountry(e.target.value.toUpperCase())}
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Birth City</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. Berlin"
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                }`}
+                              value={kycBirthCity}
+                              onChange={(e) => setKycBirthCity(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {/* Submit Button */}
@@ -4593,58 +4904,86 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       backgroundColor: theme.primaryColor || "#635BFF",
                     }}
                     disabled={
-                      !kycFirstName ||
-                      !kycLastName ||
-                      !kycDobDay ||
-                      !kycDobMonth ||
-                      !kycDobYear ||
-                      !kycLine1 ||
-                      !kycCity ||
-                      !kycState ||
-                      !kycZip ||
-                      (kycCountry === "US" ? kycSsn.length < 9 : (!kycNationalities || !kycBirthCountry || !kycBirthCity))
+                      kycTierRequired === "l0"
+                        ? (
+                          !kycFirstName ||
+                          !kycLastName ||
+                          !kycLine1 ||
+                          !kycCity ||
+                          !kycState ||
+                          !kycZip ||
+                          !(shipEmail || headlessEmailInput) ||
+                          !headlessPhoneInput
+                        ) : (
+                          !kycFirstName ||
+                          !kycLastName ||
+                          !kycDobDay ||
+                          !kycDobMonth ||
+                          !kycDobYear ||
+                          !kycLine1 ||
+                          !kycCity ||
+                          !kycState ||
+                          !kycZip ||
+                          (kycCountry === "US" ? kycSsn.length < 9 : (!kycNationalities || !kycBirthCountry || !kycBirthCity))
+                        )
                     }
                     onClick={() => {
-                      const dobDay = Number(kycDobDay);
-                      const dobMonth = Number(kycDobMonth);
-                      const dobYear = Number(kycDobYear);
-                      
-                      const kycPayload: any = {
-                        given_name: kycFirstName.trim(),
-                        surname: kycLastName.trim(),
-                        date_of_birth: {
-                          day: dobDay,
-                          month: dobMonth,
-                          year: dobYear
-                        },
-                        address: {
-                          line1: kycLine1.trim(),
-                          line2: kycLine2 ? kycLine2.trim() : undefined,
-                          city: kycCity.trim(),
-                          state: kycState.trim().toUpperCase(),
-                          postal_code: kycZip.trim().toUpperCase(),
-                          country: kycCountry.trim().toUpperCase()
-                        }
-                      };
-
-                      if (kycCountry.trim().toUpperCase() === "US") {
-                        kycPayload.id_number = {
-                          value: kycSsn.trim(),
-                          type: "us_ssn"
+                      if (kycTierRequired === "l0") {
+                        const l0Payload: any = {
+                          given_name: kycFirstName.trim(),
+                          surname: kycLastName.trim(),
+                          address: {
+                            line1: kycLine1.trim(),
+                            line2: kycLine2 ? kycLine2.trim() : undefined,
+                            city: kycCity.trim(),
+                            state: kycState.trim().toUpperCase(),
+                            postal_code: kycZip.trim().toUpperCase(),
+                            country: kycCountry.trim().toUpperCase()
+                          }
                         };
+                        submitKycInfo(l0Payload);
                       } else {
-                        kycPayload.nationalities = [kycNationalities.trim().toUpperCase()];
-                        kycPayload.birth_country = kycBirthCountry.trim().toUpperCase();
-                        kycPayload.birth_city = kycBirthCity.trim();
-                      }
+                        const dobDay = Number(kycDobDay);
+                        const dobMonth = Number(kycDobMonth);
+                        const dobYear = Number(kycDobYear);
+                        
+                        const l1Payload: any = {
+                          given_name: kycFirstName.trim(),
+                          surname: kycLastName.trim(),
+                          date_of_birth: {
+                            day: dobDay,
+                            month: dobMonth,
+                            year: dobYear
+                          },
+                          address: {
+                            line1: kycLine1.trim(),
+                            line2: kycLine2 ? kycLine2.trim() : undefined,
+                            city: kycCity.trim(),
+                            state: kycState.trim().toUpperCase(),
+                            postal_code: kycZip.trim().toUpperCase(),
+                            country: kycCountry.trim().toUpperCase()
+                          }
+                        };
 
-                      submitKycInfo(kycPayload);
+                        if (kycCountry.trim().toUpperCase() === "US") {
+                          l1Payload.id_number = {
+                            value: kycSsn.trim(),
+                            type: "us_ssn"
+                          };
+                        } else {
+                          l1Payload.nationalities = [kycNationalities.trim().toUpperCase()];
+                          l1Payload.birth_country = kycBirthCountry.trim().toUpperCase();
+                          l1Payload.birth_city = kycBirthCity.trim();
+                        }
+
+                        submitKycInfo(l1Payload);
+                      }
                     }}
                   >
                     <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
                       <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1s1 .45 1 1v3c0 .55-.45 1-1 1zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
                     </svg>
-                    Submit KYC Verification
+                    {kycTierRequired === "l0" ? "Submit KYC Verification" : "Submit KYC Details"}
                   </button>
                 </div>
               </div>
