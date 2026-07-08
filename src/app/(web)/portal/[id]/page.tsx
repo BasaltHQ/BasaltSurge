@@ -4610,32 +4610,32 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       const dobYear = Number(kycDobYear);
                       
                       const kycPayload: any = {
-                        given_name: kycFirstName,
-                        surname: kycLastName,
+                        given_name: kycFirstName.trim(),
+                        surname: kycLastName.trim(),
                         date_of_birth: {
                           day: dobDay,
                           month: dobMonth,
                           year: dobYear
                         },
                         address: {
-                          line1: kycLine1,
-                          line2: kycLine2 || undefined,
-                          city: kycCity,
-                          state: kycState,
-                          postal_code: kycZip,
-                          country: kycCountry
+                          line1: kycLine1.trim(),
+                          line2: kycLine2 ? kycLine2.trim() : undefined,
+                          city: kycCity.trim(),
+                          state: kycState.trim().toUpperCase(),
+                          postal_code: kycZip.trim().toUpperCase(),
+                          country: kycCountry.trim().toUpperCase()
                         }
                       };
 
-                      if (kycCountry === "US") {
+                      if (kycCountry.trim().toUpperCase() === "US") {
                         kycPayload.id_number = {
-                          value: kycSsn,
+                          value: kycSsn.trim(),
                           type: "us_ssn"
                         };
                       } else {
-                        kycPayload.nationalities = [kycNationalities];
-                        kycPayload.birth_country = kycBirthCountry;
-                        kycPayload.birth_city = kycBirthCity;
+                        kycPayload.nationalities = [kycNationalities.trim().toUpperCase()];
+                        kycPayload.birth_country = kycBirthCountry.trim().toUpperCase();
+                        kycPayload.birth_city = kycBirthCity.trim();
                       }
 
                       submitKycInfo(kycPayload);

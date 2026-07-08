@@ -597,8 +597,11 @@ export function useStripeEmbeddedOnramp({
           const kycData = await res.json();
           console.log(`[EMBEDDED ONRAMP] Polled KYC status (attempt ${i + 1}/90): kycStatus=${kycData.kycStatus}, idDocStatus=${kycData.idDocStatus}`);
           
-          if (kycData.kycStatus === "rejected" || kycData.idDocStatus === "rejected") {
-            console.warn("[EMBEDDED ONRAMP] Identity verification was rejected by Stripe.");
+          const isKycRejected = kycData.kycStatus === "rejected" || kycData.kycStatus === "failed";
+          const isDocRejected = kycData.idDocStatus === "rejected" || kycData.idDocStatus === "failed";
+          
+          if (isKycRejected || isDocRejected) {
+            console.warn("[EMBEDDED ONRAMP] Identity verification failed or was rejected by Stripe.");
             isRejected = true;
           } else {
             const isKycApproved = kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed";
@@ -1689,7 +1692,10 @@ export function useStripeEmbeddedOnramp({
 
         const needsKycSubmit = kycData.kycStatus === "not_started" ||
                                kycData.kycStatus === "requires_action" ||
-                               kycData.kycStatus === "failed";
+                               kycData.kycStatus === "failed" ||
+                               kycData.kycStatus === "rejected" ||
+                               kycData.idDocStatus === "failed" ||
+                               kycData.idDocStatus === "rejected";
 
         if (needsKycSubmit) {
           console.log("[EMBEDDED ONRAMP] Demographics KYC submission required. Transitioning to collecting_kyc.");
