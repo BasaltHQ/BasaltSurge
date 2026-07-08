@@ -605,9 +605,16 @@ export function useStripeEmbeddedOnramp({
           const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
           const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
 
-          const isL0Verified = l0Tier?.verification_status === "verified";
-          const isL1Verified = l1Tier?.verification_status === "verified";
-          const isL2Verified = l2Tier?.verification_status === "verified";
+          const isOverallVerified = kycData.kycStatus === "approved" ||
+                                    kycData.kycStatus === "verified" ||
+                                    kycData.kycStatus === "completed" ||
+                                    kycData.idDocStatus === "approved" ||
+                                    kycData.idDocStatus === "verified" ||
+                                    kycData.idDocStatus === "completed";
+
+          const isL0Verified = isOverallVerified || l0Tier?.verification_status === "verified";
+          const isL1Verified = isOverallVerified || l1Tier?.verification_status === "verified";
+          const isL2Verified = isOverallVerified || l2Tier?.verification_status === "verified";
 
           const isL0Rejected = l0Tier?.verification_status === "rejected";
           const isL1Rejected = l1Tier?.verification_status === "rejected";
@@ -1190,7 +1197,7 @@ export function useStripeEmbeddedOnramp({
             }),
           });
 
-          const checkoutData = await checkoutRes.json();
+          const checkoutData = await checkoutRes.json().catch(() => ({}));
 
           if (checkoutData.refreshedToken) {
             console.log("[EMBEDDED ONRAMP] Checkout returned refreshed OAuth token, updating ref...");
@@ -1233,7 +1240,7 @@ export function useStripeEmbeddedOnramp({
           const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId)}`, {
             headers: statusHeaders
           });
-          const statusData = await statusRes.json();
+          const statusData = await statusRes.json().catch(() => ({}));
 
           // Short-circuit: If the transaction is already successful, do not retry checkout
           const isFinalStatus = ["awaiting_funds", "fulfillment_processing", "fulfillment_complete"].includes(statusData.status);
@@ -1594,18 +1601,18 @@ export function useStripeEmbeddedOnramp({
         });
 
         if (!retryRes.ok) {
-          const retryData = await retryRes.json();
+          const retryData = await retryRes.json().catch(() => ({}));
           handleError(retryData.error || "Failed to create auth intent after registration");
           return;
         }
 
-        const retryData = await retryRes.json();
+        const retryData = await retryRes.json().catch(() => ({}));
         authIntentId = retryData.authIntentId;
       } else if (linkRes.ok) {
-        const linkData = await linkRes.json();
+        const linkData = await linkRes.json().catch(() => ({}));
         authIntentId = linkData.authIntentId;
       } else {
-        const linkData = await linkRes.json();
+        const linkData = await linkRes.json().catch(() => ({}));
         handleError(linkData.error || "Link auth check failed");
         return;
       }
@@ -1760,9 +1767,16 @@ export function useStripeEmbeddedOnramp({
         const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
         const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
 
-        const isL0Verified = l0Tier?.verification_status === "verified";
-        const isL1Verified = l1Tier?.verification_status === "verified";
-        const isL2Verified = l2Tier?.verification_status === "verified";
+        const isOverallVerified = kycData.kycStatus === "approved" ||
+                                  kycData.kycStatus === "verified" ||
+                                  kycData.kycStatus === "completed" ||
+                                  kycData.idDocStatus === "approved" ||
+                                  kycData.idDocStatus === "verified" ||
+                                  kycData.idDocStatus === "completed";
+
+        const isL0Verified = isOverallVerified || l0Tier?.verification_status === "verified";
+        const isL1Verified = isOverallVerified || l1Tier?.verification_status === "verified";
+        const isL2Verified = isOverallVerified || l2Tier?.verification_status === "verified";
 
         if (!isL0Verified) {
           if (l0Tier?.verification_status === "pending") {
