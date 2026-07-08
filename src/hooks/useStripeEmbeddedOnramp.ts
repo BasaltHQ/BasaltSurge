@@ -36,6 +36,7 @@ export type OnrampStep =
   | "exchanging_tokens"
   | "checking_kyc"
   | "collecting_kyc"
+  | "submitting_kyc"
   | "verifying_identity"
   | "creating_wallet"
   | "registering_wallet"
@@ -182,6 +183,7 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
   exchanging_tokens: "Securing session...",
   checking_kyc: "Checking verification...",
   collecting_kyc: "Collecting identity info...",
+  submitting_kyc: "Submitting identity info...",
   verifying_identity: "Verifying identity documents...",
   creating_wallet: "Setting up your wallet...",
   registering_wallet: "Registering wallet...",
@@ -469,24 +471,25 @@ export function useStripeEmbeddedOnramp({
         if (onrampRef.current) {
           const runVerify = async () => {
             try {
-              const isTestMode = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_") || 
-                                 (typeof window !== "undefined" && window.location.hostname === "localhost");
+              const isTestMode = !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_");
               
               if (isTestMode) {
                 console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics globally...");
                 await onrampRef.current!.submitKycInfo({
-                  firstName: "John",
-                  lastName: "Verified",
-                  dateOfBirth: { day: 1, month: 1, year: 1901 },
+                  given_name: "John",
+                  surname: "Verified",
+                  date_of_birth: { day: 1, month: 1, year: 1901 },
                   address: {
                     line1: "address_full_match",
                     city: "Seattle",
                     state: "WA",
-                    postalCode: "12345",
+                    postal_code: "12345",
                     country: "US"
                   },
-                  idNumber: "000000000",
-                  idType: "ssn"
+                  id_number: {
+                    value: "000000000",
+                    type: "us_ssn"
+                  }
                 });
               } else {
                 console.log("[EMBEDDED ONRAMP] Live mode detected. Skipping mock demographics submission.");
@@ -1333,21 +1336,68 @@ export function useStripeEmbeddedOnramp({
       throw new Error("Onramp not initialized");
     }
     console.log("[EMBEDDED ONRAMP] Submitting KYC info...");
-    updateStep("collecting_kyc");
+    updateStep("submitting_kyc");
     try {
       await onrampRef.current.submitKycInfo(kycInfo);
-      console.log("[EMBEDDED ONRAMP] KYC submitted successfully! Resuming checkout loop...");
+      console.log("[EMBEDDED ONRAMP] KYC demographics submitted successfully! Checking if document verification is needed...");
       
-      if (activeEmailRef.current && customerIdRef.current && paymentTokenRef.current && buyerWalletRef.current) {
-        runCheckoutLoop(
-          activeEmailRef.current,
-          customerIdRef.current,
-          paymentTokenRef.current,
-          buyerWalletRef.current,
-          detectedCardFunding
-        ).catch((err) => {
-          handleError(err?.message || "Checkout failed after KYC submission");
-        });
+      const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerIdRef.current || "")}`, {
+        headers: {
+          "x-stripe-oauth-token": oauthTokenRef.current || "",
+        },
+      });
+
+      if (!mountedRef.current) return;
+
+      let needsDocumentVerify = false;
+      if (checkRes.ok) {
+        const checkData = await checkRes.json();
+        console.log("[EMBEDDED ONRAMP] KYC status after demographics submission:", checkData);
+        needsDocumentVerify = checkData.kycStatus === "requires_action" ||
+                              checkData.kycStatus === "failed" ||
+                              checkData.idDocStatus === "requires_action" ||
+                              checkData.idDocStatus === "failed" ||
+                              checkData.idDocStatus === "rejected";
+      }
+
+      if (needsDocumentVerify) {
+        console.log("[EMBEDDED ONRAMP] L2 document verification is required. Launching verifyDocuments...");
+        updateStep("verifying_identity");
+        const verifyResult = await onrampRef.current.verifyDocuments();
+        if (verifyResult.result === "abandoned") {
+          handleError("Identity verification was abandoned");
+          return;
+        }
+        console.log("[EMBEDDED ONRAMP] L2 document flow completed by user. Polling for approval status...");
+        updateStep("checking_kyc");
+        const kycApproved = await pollKycStatus(customerIdRef.current || "");
+        if (!kycApproved) {
+          throw new Error("Identity verification was not approved. Please try again.");
+        }
+      }
+
+      console.log("[EMBEDDED ONRAMP] KYC check passed! Resuming checkout flow...");
+      if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
+        if (paymentTokenRef.current) {
+          runCheckoutLoop(
+            activeEmailRef.current,
+            customerIdRef.current,
+            paymentTokenRef.current,
+            buyerWalletRef.current,
+            detectedCardFunding
+          ).catch((err) => {
+            handleError(err?.message || "Checkout failed after KYC submission");
+          });
+        } else {
+          // Reset isRunning flag so startOnramp can start again
+          // Reset isRunning flag so startOnramp can start again
+          isRunningRef.current = false;
+          if (startOnrampRef.current) {
+            startOnrampRef.current(activeEmailRef.current).catch((err: any) => {
+              handleError(err?.message || "Flow resumption failed after KYC submission");
+            });
+          }
+        }
       } else {
         throw new Error("Missing checkout state to resume flow");
       }
@@ -1356,7 +1406,7 @@ export function useStripeEmbeddedOnramp({
       handleError(err?.message || "KYC submission failed");
       throw err;
     }
-  }, [updateStep, handleError, runCheckoutLoop]);
+  }, [updateStep, handleError, runCheckoutLoop, pollKycStatus, detectedCardFunding]);
 
   const startOnramp = useCallback(async (overrideEmail?: string, overridePhone?: string, overrideName?: string) => {
     if (isRunningRef.current) {
@@ -1619,6 +1669,10 @@ export function useStripeEmbeddedOnramp({
       }
 
       // ─── Step 6b: Check KYC ───
+      activeEmailRef.current = activeEmail;
+      customerIdRef.current = customerId;
+      buyerWalletRef.current = buyerWallet;
+
       updateStep("checking_kyc");
 
       const kycRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}`, {
@@ -1632,18 +1686,22 @@ export function useStripeEmbeddedOnramp({
       if (kycRes.ok) {
         const kycData = await kycRes.json();
 
-        if (kycData.kycStatus === "not_started") {
-          console.log("[EMBEDDED ONRAMP] KYC not started — will handle during checkout");
-        }
+        const needsKycSubmit = kycData.kycStatus === "not_started" ||
+                               kycData.kycStatus === "requires_action" ||
+                               kycData.kycStatus === "failed";
 
-        if (kycData.idDocStatus === "not_started") {
-          console.log("[EMBEDDED ONRAMP] Identity doc not started — will handle during checkout");
+        if (needsKycSubmit) {
+          console.log("[EMBEDDED ONRAMP] Demographics KYC submission required. Transitioning to collecting_kyc.");
+          updateStep("collecting_kyc");
+          isRunningRef.current = false; // allow starting onramp again to resume
+          return;
         }
 
         const needsDocumentVerify = kycData.kycStatus === "requires_action" ||
                                    kycData.kycStatus === "failed" ||
                                    kycData.idDocStatus === "requires_action" ||
-                                   kycData.idDocStatus === "failed";
+                                   kycData.idDocStatus === "failed" ||
+                                   kycData.idDocStatus === "rejected";
 
         if (needsDocumentVerify && onramp) {
           console.log("[EMBEDDED ONRAMP] Proactive KYC document verification required. Launching verifyDocuments...");
@@ -1654,7 +1712,12 @@ export function useStripeEmbeddedOnramp({
               handleError("Identity verification was abandoned");
               return;
             }
-            console.log("[EMBEDDED ONRAMP] Proactive document verification complete.");
+            console.log("[EMBEDDED ONRAMP] Proactive document verification complete. Polling for approval status...");
+            updateStep("checking_kyc");
+            const kycApproved = await pollKycStatus(customerId);
+            if (!kycApproved) {
+              throw new Error("Identity verification was not approved. Please try again.");
+            }
           } catch (verifyErr: any) {
             handleError(verifyErr?.message || "Identity verification failed");
             return;
@@ -1776,24 +1839,25 @@ export function useStripeEmbeddedOnramp({
         try {
           updateStep("verifying_identity");
           try {
-            const isTestMode = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_") || 
-                               (typeof window !== "undefined" && window.location.hostname === "localhost");
+            const isTestMode = !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_");
             
             if (isTestMode) {
               console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics on payment collection catch...");
               await onrampRef.current.submitKycInfo({
-                firstName: "John",
-                lastName: "Verified",
-                dateOfBirth: { day: 1, month: 1, year: 1901 },
+                given_name: "John",
+                surname: "Verified",
+                date_of_birth: { day: 1, month: 1, year: 1901 },
                 address: {
                   line1: "address_full_match",
                   city: "Seattle",
                   state: "WA",
-                  postalCode: "12345",
+                  postal_code: "12345",
                   country: "US"
                 },
-                idNumber: "000000000",
-                idType: "ssn"
+                id_number: {
+                  value: "000000000",
+                  type: "us_ssn"
+                }
               });
             } else {
               console.log("[EMBEDDED ONRAMP] Live mode detected. Skipping mock demographics submission.");
