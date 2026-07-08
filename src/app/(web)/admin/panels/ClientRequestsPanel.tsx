@@ -843,27 +843,17 @@ export default function ClientRequestsPanel() {
 
                 setLastVerifiedConfig({ partnerBps: foundPartnerBps, agents: mergedAgents });
 
-                if (matches) {
-                    setPartnerBps(foundPartnerBps);
-                    setAgents(mergedAgents);
-                    const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
-                    const verifiedMerchantBps = 10000 - platformBps - foundPartnerBps - verifiedAgentsBps;
-                    nextConfig = {
-                        ...nextConfig,
-                        partnerBps: foundPartnerBps,
-                        merchantBps: verifiedMerchantBps,
-                        platformBps: platformBps,
-                        agents: mergedAgents
-                    };
-                } else {
-                    nextConfig = {
-                        ...nextConfig,
-                        partnerBps: partnerBps,
-                        merchantBps: 10000 - platformBps - partnerBps - agents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0),
-                        platformBps: platformBps,
-                        agents: agents
-                    };
-                }
+                setPartnerBps(foundPartnerBps);
+                setAgents(mergedAgents);
+                const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
+                const verifiedMerchantBps = 10000 - platformBps - foundPartnerBps - verifiedAgentsBps;
+                nextConfig = {
+                    ...nextConfig,
+                    partnerBps: foundPartnerBps,
+                    merchantBps: verifiedMerchantBps,
+                    platformBps: platformBps,
+                    agents: mergedAgents
+                };
             } else {
                 nextConfig = {
                     ...nextConfig,
@@ -908,25 +898,16 @@ export default function ClientRequestsPanel() {
 
                 setLastVerifiedConfigDebit({ partnerBps: foundPartnerBps, agents: mergedAgents });
 
-                if (matches) {
-                    setPartnerBpsDebit(foundPartnerBps);
-                    setAgentsDebit(mergedAgents);
-                    const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
-                    const verifiedMerchantBps = 10000 - platformBpsDebit - foundPartnerBps - verifiedAgentsBps;
-                    nextConfig.splitConfigCredit = {
-                        partnerBps: foundPartnerBps,
-                        merchantBps: verifiedMerchantBps,
-                        platformBps: platformBpsDebit,
-                        agents: mergedAgents
-                    };
-                } else {
-                    nextConfig.splitConfigCredit = {
-                        partnerBps: partnerBpsDebit,
-                        merchantBps: 10000 - platformBpsDebit - partnerBpsDebit - agentsDebit.reduce((sum, a) => sum + (Number(a.bps) || 0), 0),
-                        platformBps: platformBpsDebit,
-                        agents: agentsDebit
-                    };
-                }
+                setPartnerBpsDebit(foundPartnerBps);
+                setAgentsDebit(mergedAgents);
+                const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
+                const verifiedMerchantBps = 10000 - platformBpsDebit - foundPartnerBps - verifiedAgentsBps;
+                nextConfig.splitConfigCredit = {
+                    partnerBps: foundPartnerBps,
+                    merchantBps: verifiedMerchantBps,
+                    platformBps: platformBpsDebit,
+                    agents: mergedAgents
+                };
             } else {
                 nextConfig.splitConfigCredit = {
                     partnerBps: partnerBpsDebit,
@@ -2010,28 +1991,7 @@ export default function ClientRequestsPanel() {
                                                                 const isImmutable = isAgentImmutable(agent.wallet, isDebitTab);
 
                                                                 if (isImmutable) {
-                                                                    return (
-                                                                        <div key={idx} className="space-y-1.5 opacity-80">
-                                                                            <div className="flex gap-2">
-                                                                                <div className="flex-1 bg-black/20 border border-white/5 rounded px-3 py-2 text-sm text-zinc-400 font-mono flex items-center justify-between">
-                                                                                    <span className="font-semibold text-zinc-300">Required Agent</span>
-                                                                                    <span className="text-xs text-zinc-500 font-normal">({agent.wallet.slice(0, 6)}…{agent.wallet.slice(-4)})</span>
-                                                                                </div>
-                                                                                <div className="flex items-center gap-1 bg-black/20 border border-white/5 rounded px-2 w-24">
-                                                                                    <input
-                                                                                        type="number"
-                                                                                        disabled
-                                                                                        value={agent.bps}
-                                                                                        className="w-full bg-transparent text-right font-mono text-sm text-zinc-400 outline-none"
-                                                                                    />
-                                                                                    <span className="text-zinc-500 text-xs">bps</span>
-                                                                                </div>
-                                                                                <div className="p-2 text-zinc-500 rounded flex items-center justify-center w-8" title="Required Partner Agent (Immutable)">
-                                                                                    <Lock className="w-3.5 h-3.5" />
-                                                                                </div>
-                                                                            </div>
-                                                                        </div>
-                                                                    );
+                                                                    return null;
                                                                 }
 
                                                                 return (
