@@ -83,6 +83,17 @@ type OnrampCoordinator = {
   destroy: () => void;
 };
 
+/** Helper to wrap Stripe KYC submission with a timeout to prevent iframe postMessage hangs */
+async function submitKycInfoWithTimeout(coordinator: OnrampCoordinator, kycInfo: any, timeoutMs = 15000): Promise<void> {
+  return Promise.race([
+    coordinator.submitKycInfo(kycInfo),
+    new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error("Stripe KYC submission timed out. Please refresh and try again.")), timeoutMs)
+    )
+  ]);
+}
+
+
 export type UseStripeEmbeddedOnrampProps = {
   /** Buyer's email */
   email?: string;
@@ -478,7 +489,7 @@ export function useStripeEmbeddedOnramp({
               
               if (isTestMode) {
                 console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics globally...");
-                await onrampRef.current!.submitKycInfo({
+                await submitKycInfoWithTimeout(onrampRef.current!, {
                   given_name: "John",
                   surname: "Verified",
                   date_of_birth: { day: 1, month: 1, year: 1901 },
@@ -929,9 +940,62 @@ export function useStripeEmbeddedOnramp({
             errCode.includes("verification") || 
             errCode.includes("kyc")
           ) {
-            console.log("[EMBEDDED ONRAMP] Document verification required during session creation. Launching verifyDocuments...");
-            updateStep("verifying_identity");
+            console.log("[EMBEDDED ONRAMP] Document verification required during session creation. Checking customer status first...");
             if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
+            
+            try {
+              // Pre-check customer KYC status to see if L1 is needed first, or if L2 is already under review.
+              const customerCheckRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}`, {
+                headers: {
+                  "x-stripe-oauth-token": oauthTokenRef.current || "",
+                },
+              });
+              if (customerCheckRes.ok) {
+                const kycData = await customerCheckRes.json();
+                console.log("[EMBEDDED ONRAMP] Pre-verification customer status:", kycData);
+                
+                const kycTiers = kycData.kycTiers || [];
+                const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+                const isL1Verified = kycData.kycStatus === "approved" ||
+                                     kycData.kycStatus === "verified" ||
+                                     kycData.kycStatus === "completed" ||
+                                     l1Tier?.verification_status === "verified";
+                
+                // If L1 demographics are unverified and not pending, prompt for L1 first
+                if (!isL1Verified && l1Tier?.verification_status !== "pending") {
+                  console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Directing to L1 input first.");
+                  setKycTierRequired("l1");
+                  updateStep("collecting_kyc");
+                  isRunningRef.current = false;
+                  return null;
+                }
+
+                const idDocStatus = String(kycData.idDocStatus || "").toLowerCase();
+                const kycStatus = String(kycData.kycStatus || "").toLowerCase();
+                if (
+                  idDocStatus === "pending" ||
+                  idDocStatus === "processing" ||
+                  idDocStatus === "under_review" ||
+                  kycStatus === "pending" ||
+                  kycStatus === "processing" ||
+                  kycStatus === "under_review"
+                ) {
+                  console.log("[EMBEDDED ONRAMP] Stripe verification is already under review. Skipping modal and polling L2...");
+                  updateStep("checking_kyc");
+                  const kycApproved = await pollKycStatus(customerId, "l2");
+                  if (!kycApproved) {
+                    throw new Error("Document verification was not approved.");
+                  }
+                  console.log("[EMBEDDED ONRAMP] Document verification approved! Retrying session creation...");
+                  return await execute(amt);
+                }
+              }
+            } catch (checkErr) {
+              console.warn("[EMBEDDED ONRAMP] Failed to pre-check customer status:", checkErr);
+            }
+
+            console.log("[EMBEDDED ONRAMP] Launching verifyDocuments modal...");
+            updateStep("verifying_identity");
             
             try {
               isVerifyingRef.current = true;
@@ -1319,6 +1383,37 @@ export function useStripeEmbeddedOnramp({
               updateStep("checking_out");
               continue;
             } else {
+              console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Pre-checking customer status...");
+              try {
+                const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}`, {
+                  headers: {
+                    "x-stripe-oauth-token": oauthTokenRef.current || "",
+                  },
+                });
+                if (checkRes.ok) {
+                  const kycData = await checkRes.json();
+                  console.log("[EMBEDDED ONRAMP] Pre-verification customer status (checkout):", kycData);
+                  
+                  const kycTiers = kycData.kycTiers || [];
+                  const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+                  const isL1Verified = kycData.kycStatus === "approved" ||
+                                       kycData.kycStatus === "verified" ||
+                                       kycData.kycStatus === "completed" ||
+                                       l1Tier?.verification_status === "verified";
+                  
+                  // If L1 demographics are unverified and not pending, prompt for L1 first
+                  if (!isL1Verified && l1Tier?.verification_status !== "pending") {
+                    console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Directing to L1 input first.");
+                    setKycTierRequired("l1");
+                    updateStep("collecting_kyc");
+                    isRunningRef.current = false;
+                    return;
+                  }
+                }
+              } catch (checkErr) {
+                console.warn("[EMBEDDED ONRAMP] Failed to pre-check status inside checkout loop:", checkErr);
+              }
+
               console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Launching verifyDocuments...");
               isVerifyingRef.current = true;
               updateStep("verifying_identity");
@@ -1450,7 +1545,7 @@ export function useStripeEmbeddedOnramp({
     updateStep("submitting_kyc");
     isRunningRef.current = true;
     try {
-      await onrampRef.current.submitKycInfo(kycInfo);
+      await submitKycInfoWithTimeout(onrampRef.current, kycInfo);
       console.log("[EMBEDDED ONRAMP] KYC demographics submitted successfully! Checking verification status...");
 
       // Determine which tier was just submitted based on the payload fields
@@ -1940,7 +2035,7 @@ export function useStripeEmbeddedOnramp({
             
             if (isTestMode) {
               console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics on payment collection catch...");
-              await onrampRef.current.submitKycInfo({
+              await submitKycInfoWithTimeout(onrampRef.current, {
                 given_name: "John",
                 surname: "Verified",
                 date_of_birth: { day: 1, month: 1, year: 1901 },
