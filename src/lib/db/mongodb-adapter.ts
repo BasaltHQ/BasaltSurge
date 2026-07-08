@@ -11,15 +11,17 @@ import { isDebug } from "@/lib/logger";
 
 const _isDebug = isDebug();
 
-// ── Connection pool ─────────────────────────────────────────────────────
+// ── Connection pool (cached on globalThis to survive Next.js hot-reloads) ──
 
-let _client: MongoClient | null = null;
-let _clientPromise: Promise<MongoClient> | null = null;
-let _registeredShutdown = false;
+const globalForMongo = globalThis as unknown as {
+    _mongoClient?: MongoClient | null;
+    _mongoClientPromise?: Promise<MongoClient> | null;
+    _registeredShutdown?: boolean;
+};
 
 async function getMongoClient(uri: string): Promise<MongoClient> {
-    if (_clientPromise) {
-        return _clientPromise;
+    if (globalForMongo._mongoClientPromise) {
+        return globalForMongo._mongoClientPromise;
     }
 
     const extraOptions: any = {
@@ -35,24 +37,26 @@ async function getMongoClient(uri: string): Promise<MongoClient> {
         extraOptions.minPoolSize = parseInt(process.env.MONGO_MIN_POOL_SIZE || "2", 10);
     }
 
-    _client = new MongoClient(uri, extraOptions);
+    const client = new MongoClient(uri, extraOptions);
+    globalForMongo._mongoClient = client;
 
-    _clientPromise = _client.connect()
-        .then((client) => client)
+    const promise = client.connect()
+        .then((c) => c)
         .catch((err) => {
-            _clientPromise = null;
-            _client = null;
+            globalForMongo._mongoClientPromise = null;
+            globalForMongo._mongoClient = null;
             throw err;
         });
+    globalForMongo._mongoClientPromise = promise;
 
-    if (!_registeredShutdown) {
-        _registeredShutdown = true;
+    if (!globalForMongo._registeredShutdown) {
+        globalForMongo._registeredShutdown = true;
         const cleanup = async () => {
-            if (_client) {
+            if (globalForMongo._mongoClient) {
                 console.log("[MongoDB] Gracefully closing client connection pool on process termination...");
-                const clientToClose = _client;
-                _client = null;
-                _clientPromise = null;
+                const clientToClose = globalForMongo._mongoClient;
+                globalForMongo._mongoClient = null;
+                globalForMongo._mongoClientPromise = null;
                 await clientToClose.close().catch(() => {});
             }
         };
@@ -60,7 +64,7 @@ async function getMongoClient(uri: string): Promise<MongoClient> {
         process.on("SIGTERM", cleanup);
     }
 
-    return _clientPromise;
+    return promise;
 }
 
 // ── Types matching Cosmos SDK shapes ────────────────────────────────────

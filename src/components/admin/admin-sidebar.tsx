@@ -138,6 +138,7 @@ export type AdminTabKey =
   | 'autoclose'
   | 'emailConfig'
   | 'sandbox'
+  | 'platformAnalytics'
   | 'agentUniversity';
 
 interface AdminSidebarProps {
@@ -513,6 +514,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
       title: 'Platform',
       icon: <Building2 className="w-4 h-4" />,
       items: [
+        { title: 'Platform Analytics', key: 'platformAnalytics' as AdminTabKey, icon: <LineChart className="w-4 h-4" /> },
         { title: 'Publications', key: 'publications' as AdminTabKey, icon: <BookOpen className="w-4 h-4" /> },
         { title: 'Updates', key: 'updates' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
         { title: 'Loyalty Config', key: 'loyaltyConfig' as AdminTabKey, icon: <Medal className="w-4 h-4" /> },
