@@ -156,6 +156,7 @@ export type AdminPanel =
   | 'autoclose'       // Autoclose Daily Settlement
   | 'emailConfig'     // Email sender/DKIM settings
   | 'sandbox'         // Sandbox panel
+  | 'platformAnalytics' // Platform Analytics HUD
   | 'users';          // Users/Merchants tab in partner group
 
 // ------------------------------------------------------------------
@@ -336,7 +337,8 @@ export function canAccessPanel(panel: AdminPanel, wallet?: string): boolean {
     'agentUniversity',
     'reportsPlatform',
     'notificationsPlatform',
-    'nodeOperators'
+    'nodeOperators',
+    'platformAnalytics'
   ];
 
   const isPartner = isPartnerCtx() || (typeof window !== 'undefined' && isPartnerContextClient());

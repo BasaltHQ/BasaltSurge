@@ -70,6 +70,7 @@ import { UpdatesPanel } from "@/components/admin/panels/updates-panel";
 import CannabisCompliancePanel from "@/app/(web)/admin/panels/CannabisCompliancePanel";
 import PublicationsPanelExt from "@/app/(web)/admin/panels/PublicationsPanel";
 import AgentUniversityPanelExt from "@/app/(web)/admin/panels/AgentUniversityPanel";
+import PlatformAnalyticsPanel from "@/app/(web)/admin/panels/PlatformAnalyticsPanel";
 // Placeholder to avoid errors - I will read file first
 import ReportsPanel from "@/app/(web)/admin/panels/ReportsPanel";
 import ReportsPanelMerchant from "@/app/(web)/admin/panels/ReportsPanelMerchant";
@@ -11339,6 +11340,7 @@ export default function AdminPage() {
         {activeTab === "profileSetup" && <ProfilePanel />}
         {activeTab === "roadmap" && <RoadmapPanel brandKey={getEffectiveBrandKey()} />}
         {activeTab === "updates" && canAccessPanel("updates", wallet) && <UpdatesPanel brandKey={getEffectiveBrandKey()} />}
+        {activeTab === "platformAnalytics" && canAccessPanel("platformAnalytics", wallet) && <PlatformAnalyticsPanel />}
 
         {activeTab === "manualWithdrawal" && (
           <div className="w-full space-y-6 pb-24 admin-panel-enter">
