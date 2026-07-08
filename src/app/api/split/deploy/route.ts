@@ -401,7 +401,10 @@ export async function GET(req: NextRequest) {
         if (!isCreditQuery) {
           // Credit & Crypto component
           const creditBps = getSanitizedCreditSplitBps();
-          if (creditBps) {
+          const brandPlat = typeof brand?.creditPlatformFeeBps === "number" ? clampBps(brand.creditPlatformFeeBps) : undefined;
+          if (brandPlat !== undefined) {
+            platformSharesBps = brandPlat;
+          } else if (creditBps) {
             platformSharesBps = creditBps.platform;
           } else {
             platformSharesBps = 150;
@@ -409,7 +412,8 @@ export async function GET(req: NextRequest) {
         } else {
           // Debit component
           const env = getEnv();
-          platformSharesBps = env.PLATFORM_BPS ?? 125;
+          const brandPlat = typeof brand?.platformFeeBps === "number" ? clampBps(brand.platformFeeBps) : undefined;
+          platformSharesBps = brandPlat !== undefined ? brandPlat : (env.PLATFORM_BPS ?? 125);
         }
       }
 
@@ -701,7 +705,8 @@ export async function POST(req: NextRequest) {
       if (!isCredit) {
         // Credit & Crypto component (standard split)
         const creditBps = getSanitizedCreditSplitBps();
-        platformSharesBps = creditBps?.platform ?? 150;
+        const brandPlat = typeof brand?.creditPlatformFeeBps === "number" ? clampBps(brand.creditPlatformFeeBps) : undefined;
+        platformSharesBps = brandPlat !== undefined ? brandPlat : (creditBps?.platform ?? 150);
         const sanitizedPost = getSanitizedSplitBps();
         const envPartnerBpsPost = typeof sanitizedPost?.partner === "number" ? Math.max(0, Math.min(10000, sanitizedPost.partner)) : 0;
         const basePartnerBpsPost = typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0;
@@ -710,7 +715,8 @@ export async function POST(req: NextRequest) {
       } else {
         // Debit component (alternate split)
         const env = getEnv();
-        platformSharesBps = env.PLATFORM_BPS ?? 125;
+        const brandPlat = typeof brand?.platformFeeBps === "number" ? clampBps(brand.platformFeeBps) : undefined;
+        platformSharesBps = brandPlat !== undefined ? brandPlat : (env.PLATFORM_BPS ?? 125);
         const sanitizedPost = getSanitizedSplitBps();
         const envPartnerBpsPost = typeof sanitizedPost?.partner === "number" ? Math.max(0, Math.min(10000, sanitizedPost.partner)) : 0;
         const basePartnerBpsPost = typeof brand?.partnerFeeBps === "number" ? Math.max(0, Math.min(10000, brand.partnerFeeBps)) : 0;

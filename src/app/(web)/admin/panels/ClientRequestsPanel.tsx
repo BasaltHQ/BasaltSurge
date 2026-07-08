@@ -644,7 +644,7 @@ export default function ClientRequestsPanel() {
 
 
 
-    const openApprovalModal = (
+    const openApprovalModal = async (
         id: string,
         existingSplit?: { platformBps?: number, partnerBps: number, agents?: { wallet: string, bps: number }[] },
         existingSplitCredit?: { platformBps?: number, partnerBps: number, agents?: { wallet: string, bps: number }[] }
@@ -654,17 +654,35 @@ export default function ClientRequestsPanel() {
         setDeployResult("");
         setDeployResultDebit("");
         setActiveSplitTab("credit"); // Default to Credit/Crypto tab
+
+        const req = items.find(i => i.wallet === id);
+        const reqBrandKey = req?.brandKey || "";
+
+        // Fetch brand config for this specific request
+        let targetBrand = brand;
+        if (reqBrandKey && reqBrandKey !== brand?.key) {
+            try {
+                const r = await fetch(`/api/platform/brands/${encodeURIComponent(reqBrandKey)}/config`);
+                const j = await r.json();
+                if (j?.brand) {
+                    targetBrand = j.brand;
+                }
+            } catch (err) {
+                console.error("Failed to fetch request brand config:", err);
+            }
+        }
+
         const envPartner = process.env.NEXT_PUBLIC_PARTNER_WALLET_ADDRESS || "";
-        const brandPartner = (brand as any)?.partnerWallet || "";
+        const brandPartner = (targetBrand as any)?.partnerWallet || "";
         setPartnerWallet(brandPartner || envPartner || "");
 
         // Build base agents list from brand context
         let baseAgents: { wallet: string; bps: number }[] = [];
-        if (Array.isArray((brand as any)?.agents) && (brand as any).agents.length > 0) {
-            baseAgents = (brand as any).agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps }));
+        if (Array.isArray((targetBrand as any)?.agents) && (targetBrand as any).agents.length > 0) {
+            baseAgents = (targetBrand as any).agents.map((a: any) => ({ wallet: a.wallet, bps: a.bps }));
         } else {
-            const defAgentWallet = (brand as any)?.agentWallet || "";
-            const defAgentFee = (brand as any)?.agentFeeBps || 0;
+            const defAgentWallet = (targetBrand as any)?.agentWallet || "";
+            const defAgentFee = (targetBrand as any)?.agentFeeBps || 0;
             if (defAgentWallet && defAgentFee > 0) {
                 baseAgents = [{ wallet: defAgentWallet, bps: defAgentFee }];
             }
@@ -684,13 +702,13 @@ export default function ClientRequestsPanel() {
             if (existingSplit.platformBps !== undefined && isPlatformContainer) {
                 setPlatformBps(existingSplit.platformBps);
             } else {
-                const dbVal = (brand as any)?.creditPlatformFeeBps !== undefined ? (brand as any).creditPlatformFeeBps : (serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
+                const dbVal = (targetBrand as any)?.creditPlatformFeeBps !== undefined ? (targetBrand as any).creditPlatformFeeBps : (serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
                 setPlatformBps(dbVal);
             }
             setAgents(mergeAgents(resolvedCreditAgents, false));
         } else {
             setPartnerBps(isPlatformContainer ? 0 : 50); // Reset to default
-            const dbVal = (brand as any)?.creditPlatformFeeBps !== undefined ? (brand as any).creditPlatformFeeBps : (serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
+            const dbVal = (targetBrand as any)?.creditPlatformFeeBps !== undefined ? (targetBrand as any).creditPlatformFeeBps : (serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
             setPlatformBps(dbVal);
             setAgents(mergeAgents(resolvedCreditAgents, false));
             setLastVerifiedConfig(null); // No verified config for new splits
@@ -702,13 +720,13 @@ export default function ClientRequestsPanel() {
             if (existingSplitCredit.platformBps !== undefined && isPlatformContainer) {
                 setPlatformBpsDebit(existingSplitCredit.platformBps);
             } else {
-                const dbVal = (brand as any)?.platformFeeBps !== undefined ? (brand as any).platformFeeBps : (serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
+                const dbVal = (targetBrand as any)?.platformFeeBps !== undefined ? (targetBrand as any).platformFeeBps : (serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
                 setPlatformBpsDebit(dbVal);
             }
             setAgentsDebit(mergeAgents(resolvedDebitAgents, true));
         } else {
             setPartnerBpsDebit(0);
-            const dbVal = (brand as any)?.platformFeeBps !== undefined ? (brand as any).platformFeeBps : (serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
+            const dbVal = (targetBrand as any)?.platformFeeBps !== undefined ? (targetBrand as any).platformFeeBps : (serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
             setPlatformBpsDebit(dbVal);
             setAgentsDebit(mergeAgents(resolvedDebitAgents, true));
         }
@@ -1992,7 +2010,28 @@ export default function ClientRequestsPanel() {
                                                                 const isImmutable = isAgentImmutable(agent.wallet, isDebitTab);
 
                                                                 if (isImmutable) {
-                                                                    return null;
+                                                                    return (
+                                                                        <div key={idx} className="space-y-1.5 opacity-80">
+                                                                            <div className="flex gap-2">
+                                                                                <div className="flex-1 bg-black/20 border border-white/5 rounded px-3 py-2 text-sm text-zinc-400 font-mono flex items-center justify-between">
+                                                                                    <span className="font-semibold text-zinc-300">Required Agent</span>
+                                                                                    <span className="text-xs text-zinc-500 font-normal">({agent.wallet.slice(0, 6)}…{agent.wallet.slice(-4)})</span>
+                                                                                </div>
+                                                                                <div className="flex items-center gap-1 bg-black/20 border border-white/5 rounded px-2 w-24">
+                                                                                    <input
+                                                                                        type="number"
+                                                                                        disabled
+                                                                                        value={agent.bps}
+                                                                                        className="w-full bg-transparent text-right font-mono text-sm text-zinc-400 outline-none"
+                                                                                    />
+                                                                                    <span className="text-zinc-500 text-xs">bps</span>
+                                                                                </div>
+                                                                                <div className="p-2 text-zinc-500 rounded flex items-center justify-center w-8" title="Required Partner Agent (Immutable)">
+                                                                                    <Lock className="w-3.5 h-3.5" />
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    );
                                                                 }
 
                                                                 return (
