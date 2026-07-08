@@ -148,6 +148,36 @@ export async function POST(
     }
 
     if (!response.ok) {
+      const errMessage = String(data.error?.message || "").toLowerCase();
+      if (errMessage.includes("valid state") || errMessage.includes("purchase confirmation")) {
+        console.log("[ONRAMP CHECKOUT] Payment intent is already confirmed. Fetching session details via GET...");
+        const getHeaders: Record<string, string> = {
+          "Authorization": `Bearer ${stripeKey}`,
+          "Stripe-Version": STRIPE_API_VERSION,
+        };
+        if (oauthToken) {
+          getHeaders["Stripe-OAuth-Token"] = oauthToken;
+        }
+        const getResponse = await fetch(
+          `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
+          {
+            method: "GET",
+            headers: getHeaders,
+          }
+        );
+        if (getResponse.ok) {
+          const getSessionData = await getResponse.json();
+          console.log("[ONRAMP CHECKOUT] GET session status:", getSessionData.status);
+          const isFinalStatus = ["awaiting_funds", "fulfillment_processing", "fulfillment_complete"].includes(getSessionData.status);
+          return NextResponse.json({
+            ok: true,
+            client_secret: isFinalStatus ? null : getSessionData.client_secret,
+            status: getSessionData.status,
+            ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
+          });
+        }
+      }
+
       console.error("[ONRAMP CHECKOUT] Checkout failed:", data);
       return NextResponse.json(
         { ok: false, error: data.error?.message || "checkout_failed", code: data.error?.code },
