@@ -1121,7 +1121,33 @@ export function useStripeEmbeddedOnramp({
       }
     }
 
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    // Check if the session is already completed or processing fulfillment
+    try {
+      console.log("[EMBEDDED ONRAMP] Checking initial session status before calling performCheckout...");
+      const statusHeaders: any = {
+        "x-stripe-oauth-token": oauthTokenRef.current || "",
+      };
+      if (customerId) {
+        statusHeaders["x-crypto-customer-id"] = customerId;
+      }
+      const checkRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId)}`, {
+        headers: statusHeaders
+      });
+      if (checkRes.ok) {
+        const statusData = await checkRes.json();
+        console.log("[EMBEDDED ONRAMP] Initial session status:", statusData.status);
+        const isFinalStatus = ["awaiting_funds", "fulfillment_processing", "fulfillment_complete"].includes(statusData.status);
+        if (statusData.ok !== false && isFinalStatus) {
+          console.log("[EMBEDDED ONRAMP] Session is already authorized/succeeded. Skipping performCheckout.");
+          checkoutSucceeded = true;
+        }
+      }
+    } catch (statusErr) {
+      console.warn("[EMBEDDED ONRAMP] Failed to check initial session status:", statusErr);
+    }
+
+    if (!checkoutSucceeded) {
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
         if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
 
@@ -1316,6 +1342,7 @@ export function useStripeEmbeddedOnramp({
         }
       }
     }
+  }
 
     if (!checkoutSucceeded || !mountedRef.current) {
       isRunningRef.current = false;
