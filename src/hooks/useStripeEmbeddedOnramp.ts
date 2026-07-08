@@ -706,6 +706,7 @@ export function useStripeEmbeddedOnramp({
         payload: JSON.stringify({
           email: buyerEmail,
           verificationToken: verificationTokenRef.current || "",
+          brandKey: brandKey || "",
         }),
       });
 
