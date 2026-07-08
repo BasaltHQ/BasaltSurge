@@ -226,12 +226,18 @@ export async function getSiteConfigForWallet(wallet?: string, brandKeyOverride?:
     // Use override if provided, otherwise env
     let brandKey: string | undefined = undefined;
     try {
-      const bRaw = brandKeyOverride || getBrandKey(req);
-      brandKey = bRaw;
-      // Explicitly alias basaltsurge: NO MORE -> BasaltSurge is now its own brand document
-      // if (brandKey && String(brandKey).toLowerCase() === "basaltsurge") {
-      //   brandKey = "portalpay";
-      // }
+      if (brandKeyOverride) {
+        brandKey = brandKeyOverride;
+      } else if (req) {
+        // Resolve brand key asynchronously from hostname to prevent race conditions with empty static cache
+        const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";
+        const cookieHeader = req.headers.get("cookie") || "";
+        const { deriveContainerIdentityFromHostname } = await import("@/lib/brand-config");
+        const identity = await deriveContainerIdentityFromHostname(host, cookieHeader);
+        brandKey = identity?.brandKey || getBrandKey(req);
+      } else {
+        brandKey = getBrandKey();
+      }
     } catch {
       // brand not configured (e.g., platform container w/ legacy merchants) — continue with legacy flow
       brandKey = undefined;

@@ -2785,9 +2785,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Consolidated site-config fetch (single call) to set fee, default token, and seller/split address
   useEffect(() => {
-    if (!merchantWallet) return; // avoid unscoped fetch on portal; wait for merchant wallet
+    if (!effectiveMerchantWallet) return; // avoid unscoped fetch on portal; wait for merchant wallet
     let cancelled = false;
-    getSiteConfigOnce(String(merchantWallet).toLowerCase(), String(merchantWallet))
+    getSiteConfigOnce(String(effectiveMerchantWallet).toLowerCase(), String(effectiveMerchantWallet))
       .then((j: SiteConfigResponse) => {
         if (cancelled) return;
         const cfg = j?.config || {};
@@ -2908,7 +2908,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         if (isValidHexAddress(String(splitAddr || ""))) {
           setSellerAddress(splitAddr as `0x${string}`);
         } else {
-          setSellerAddress(merchantWallet as `0x${string}`);
+          setSellerAddress(effectiveMerchantWallet as `0x${string}`);
         }
 
         const splitAddrCredit = (cfg as any)?.splitAddressCredit || (cfg as any)?.splitCredit?.address || "";
@@ -2917,7 +2917,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         } else if (isValidHexAddress(String(splitAddr || ""))) {
           setSellerAddressCredit(splitAddr as `0x${string}`);
         } else {
-          setSellerAddressCredit(merchantWallet as `0x${string}`);
+          setSellerAddressCredit(effectiveMerchantWallet as `0x${string}`);
         }
 
         // tipConfig (merchant tip presets)
@@ -2943,15 +2943,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       .catch(() => {
         if (!cancelled) {
           // fallback to merchant wallet if split lookup fails
-          setSellerAddress(merchantWallet as `0x${string}`);
-          setSellerAddressCredit(merchantWallet as `0x${string}`);
+          setSellerAddress(effectiveMerchantWallet as `0x${string}`);
+          setSellerAddressCredit(effectiveMerchantWallet as `0x${string}`);
           setConfigLoaded(true);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [merchantWallet, availableTokens]);
+  }, [effectiveMerchantWallet, availableTokens]);
 
   const displayableTokens = useMemo(
     () =>

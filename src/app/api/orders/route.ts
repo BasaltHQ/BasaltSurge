@@ -215,12 +215,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Determine effective brandKey using request body/headers and resolve brandKey
-    const effectiveBrandKey = (
-      typeof body?.brandKey === "string" ? body.brandKey.toLowerCase() :
-        (getBrandKey(req) || process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase()
-    ) || undefined;
-    const brandKey = effectiveBrandKey || "";
+    // Determine effective brandKey using request body/headers and resolve brandKey asynchronously
+    let resolvedBrandKey = typeof body?.brandKey === "string" ? body.brandKey.toLowerCase() : undefined;
+    if (!resolvedBrandKey) {
+      try {
+        const xfHost = req.headers.get("x-forwarded-host");
+        const host = req.headers.get("host");
+        const u = new URL(req.url);
+        const hostname = (xfHost || host || u.hostname || "").toLowerCase();
+        const { brandKey: bk } = await getContainerIdentity(hostname);
+        resolvedBrandKey = bk || undefined;
+      } catch (e: any) {
+        console.error("[Orders API] Failed to resolve brand key from host:", e.message);
+      }
+    }
+    const effectiveBrandKey = resolvedBrandKey || (getBrandKey(req) || process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "basaltsurge").toLowerCase();
+    const brandKey = effectiveBrandKey;
 
     const itemsBody: OrderItemBody[] = Array.isArray(body?.items) ? body.items : [];
     if (!itemsBody.length) {
