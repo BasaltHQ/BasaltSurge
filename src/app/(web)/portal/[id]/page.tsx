@@ -2357,12 +2357,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
   }, [shippingRequired, shippingOptions.methods, shipMethod]);
 
-  // Sync shipEmail with headlessEmailInput for Stripe prepopulation
+  // Sync shipEmail with headlessEmailInput for Stripe prepopulation, tracking changes to prevent overwrite when cleared
+  const lastSyncedShipEmailRef = useRef(shipEmail);
   useEffect(() => {
-    if (shipEmail && !headlessEmailInput) {
-      setHeadlessEmailInput(shipEmail);
+    if (shipEmail !== lastSyncedShipEmailRef.current) {
+      if (shipEmail) {
+        setHeadlessEmailInput(shipEmail);
+      }
+      lastSyncedShipEmailRef.current = shipEmail;
     }
-  }, [shipEmail, headlessEmailInput]);
+  }, [shipEmail]);
 
   // Auto-detect pre-existing shipping info (page refresh)
   useEffect(() => {
