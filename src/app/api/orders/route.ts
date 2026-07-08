@@ -261,6 +261,19 @@ export async function POST(req: NextRequest) {
     const onSuccess = typeof body?.onSuccess === "string" ? String(body.onSuccess).trim() : undefined;
     const stripeEmail = typeof body?.stripeEmail === "string" ? body.stripeEmail.trim() : "";
 
+    const billingAddress = {
+      firstName: typeof body?.billingFirstName === "string" ? body.billingFirstName.trim() : (typeof body?.customerFirstName === "string" ? body.customerFirstName.trim() : ""),
+      lastName: typeof body?.billingLastName === "string" ? body.billingLastName.trim() : (typeof body?.customerLastName === "string" ? body.customerLastName.trim() : ""),
+      phone: typeof body?.billingPhone === "string" ? body.billingPhone.trim() : (typeof body?.customerPhone === "string" ? body.customerPhone.trim() : ""),
+      email: typeof body?.billingEmail === "string" ? body.billingEmail.trim() : (typeof body?.customerEmail === "string" ? body.customerEmail.trim() : (stripeEmail || "")),
+      line1: typeof body?.billingAddressLine1 === "string" ? body.billingAddressLine1.trim() : (typeof body?.customerAddressLine1 === "string" ? body.customerAddressLine1.trim() : ""),
+      line2: typeof body?.billingAddressLine2 === "string" ? body.billingAddressLine2.trim() : (typeof body?.customerAddressLine2 === "string" ? body.customerAddressLine2.trim() : ""),
+      city: typeof body?.billingAddressCity === "string" ? body.billingAddressCity.trim() : (typeof body?.customerAddressCity === "string" ? body.customerAddressCity.trim() : ""),
+      state: typeof body?.billingAddressState === "string" ? body.billingAddressState.trim() : (typeof body?.customerAddressState === "string" ? body.customerAddressState.trim() : ""),
+      zip: typeof body?.billingAddressPostalCode === "string" ? body.billingAddressPostalCode.trim() : (typeof body?.billingAddressZip === "string" ? body.billingAddressZip.trim() : (typeof body?.customerAddressPostalCode === "string" ? body.customerAddressPostalCode.trim() : "")),
+      country: typeof body?.billingAddressCountry === "string" ? body.billingAddressCountry.trim() : (typeof body?.customerAddressCountry === "string" ? body.customerAddressCountry.trim() : "US"),
+    };
+
     // Fetch site config for brand, processing fee, tax presets, and fallback default token (prefer per-wallet, fallback global)
     const cfg = await getSiteConfigForWallet(wallet, effectiveBrandKey, req).catch(() => null as any);
 
@@ -1097,6 +1110,7 @@ export async function POST(req: NextRequest) {
       webhookUrl,
       onSuccess,
       stripeEmail,
+      billingAddress,
       shopifyShop: typeof body.shopifyShop === "string" ? body.shopifyShop : undefined,
       ttl: typeof body.ttl === "number" ? body.ttl : undefined,
       ...(webhookUrl ? {
