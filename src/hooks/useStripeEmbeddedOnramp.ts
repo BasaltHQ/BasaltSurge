@@ -847,11 +847,10 @@ export function useStripeEmbeddedOnramp({
         const rate = funding === "credit" ? 3.5 : 2.25;
         return +(totalUsd / (1 + rate / 100)).toFixed(2);
       }
-      const rate = funding === "credit" ? (creditFeePct ?? 0) : (debitFeePct ?? 0);
-      return +(totalUsd - (totalUsd * rate / 100)).toFixed(2);
+      return totalUsd;
     }
     return amount || 0;
-  }, [totalUsd, debitFeePct, creditFeePct, amount, feeMinusEnabled]);
+  }, [totalUsd, amount, feeMinusEnabled]);
 
   const createSessionHelper = useCallback(async (
     customerId: string,
