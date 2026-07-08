@@ -75,6 +75,27 @@ type SiteConfigResponse = {
 /** Map tid URL param (0-3) to touchpoint type key */
 const TID_MAP: TouchpointType[] = ["kiosk", "terminal", "handheld", "kds"];
 
+function formatPhoneAsYouType(value: string): string {
+  if (!value) return "";
+  let cleaned = value.replace(/[^\d+]/g, "");
+  if (cleaned.startsWith("+1")) {
+    const digits = cleaned.slice(2).replace(/\D/g, "");
+    if (digits.length === 0) return "+1 ";
+    if (digits.length <= 3) return `+1 (${digits}`;
+    if (digits.length <= 6) return `+1 (${digits.slice(0, 3)}) ${digits.slice(3)}`;
+    return `+1 (${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+  }
+  if (cleaned.startsWith("+")) {
+    return cleaned;
+  }
+  const digits = cleaned.replace(/\D/g, "");
+  if (digits.length === 0) return "";
+  if (digits.length <= 3) return `(${digits}`;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+}
+
+
 const CURRENCIES = SUPPORTED_CURRENCIES;
 
 type ReceiptLineItem = {
@@ -112,6 +133,18 @@ type Receipt = {
   status?: string;
   transactionHash?: string;
   shippingAddress?: { name?: string; line1?: string; line2?: string; city?: string; state?: string; zip?: string; country?: string; email?: string; phone?: string };
+  billingAddress?: {
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+    phone?: string;
+    line1?: string;
+    line2?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    country?: string;
+  };
   shippingMethod?: string;
   shippingCostUsd?: number;
   redirectUrl?: string;
@@ -2061,26 +2094,31 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             }
             if (rec.billingAddress) {
               const b = rec.billingAddress;
-              if (b.firstName) setKycFirstName((prev) => prev || b.firstName);
-              if (b.lastName) setKycLastName((prev) => prev || b.lastName);
+              if (b.firstName) setKycFirstName((prev) => prev || b.firstName || "");
+              if (b.lastName) setKycLastName((prev) => prev || b.lastName || "");
               if (b.phone) {
-                setHeadlessPhoneInput((prev) => prev || b.phone);
-                setLocalPhone((prev) => prev || b.phone);
+                setHeadlessPhoneInput((prev) => prev || formatPhoneAsYouType(b.phone || ""));
               }
               if (b.email) {
-                setShipEmail((prev) => prev || b.email);
-                setHeadlessEmailInput((prev) => prev || b.email);
+                setShipEmail((prev) => prev || b.email || "");
+                setHeadlessEmailInput((prev) => prev || b.email || "");
               }
-              if (b.line1) setKycLine1((prev) => prev || b.line1);
-              if (b.line2) setKycLine2((prev) => prev || b.line2);
-              if (b.city) setKycCity((prev) => prev || b.city);
-              if (b.state) setKycState((prev) => prev || b.state);
-              if (b.zip) setKycZip((prev) => prev || b.zip);
+              if (b.line1) setKycLine1((prev) => prev || b.line1 || "");
+              if (b.line2) setKycLine2((prev) => prev || b.line2 || "");
+              if (b.city) setKycCity((prev) => prev || b.city || "");
+              if (b.state) setKycState((prev) => prev || b.state || "");
+              if (b.zip) setKycZip((prev) => prev || b.zip || "");
               if (b.country) {
-                setKycCountry((prev) => prev || b.country);
-                setKycNationalities((prev) => prev || b.country);
-                setKycBirthCountry((prev) => prev || b.country);
+                setKycCountry((prev) => prev || b.country || "");
+                setKycNationalities((prev) => prev || b.country || "");
+                setKycBirthCountry((prev) => prev || b.country || "");
               }
+              const hasMissing = !b.firstName || !b.lastName || !b.line1 || !b.city || !b.zip || !b.phone;
+              if (hasMissing) {
+                setIsAccordionOpen(true);
+              }
+            } else {
+              setIsAccordionOpen(true);
             }
             try {
               const rw = String((rec as any)?.recipientWallet || "").toLowerCase();
@@ -2341,6 +2379,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [kycDobMonth, setKycDobMonth] = useState("");
   const [kycDobYear, setKycDobYear] = useState("");
   const [kycSsn, setKycSsn] = useState("");
+  const [showSsn, setShowSsn] = useState(false);
+  const [isAccordionOpen, setIsAccordionOpen] = useState(false);
   const [kycLine1, setKycLine1] = useState("");
   const [kycLine2, setKycLine2] = useState("");
   const [kycCity, setKycCity] = useState("");
@@ -4537,7 +4577,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
                             value={headlessPhoneInput}
-                            onChange={(e) => setHeadlessPhoneInput(e.target.value)}
+                            onChange={(e) => setHeadlessPhoneInput(formatPhoneAsYouType(e.target.value))}
                           />
                         </div>
                       </div>
@@ -4670,9 +4710,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   ) : (
                     <>
                       {/* L1 Form - Collapsible Address Accordion */}
-                      <details className={`group rounded-xl border overflow-hidden ${
-                        isLightText ? 'border-white/10 bg-white/[0.02]' : 'border-black/10 bg-black/[0.02]'
-                      }`}>
+                      <details 
+                        open={isAccordionOpen}
+                        onToggle={(e) => setIsAccordionOpen((e.target as HTMLDetailsElement).open)}
+                        className={`group rounded-xl border overflow-hidden ${
+                          isLightText ? 'border-white/10 bg-white/[0.02]' : 'border-black/10 bg-black/[0.02]'
+                        }`}
+                      >
                         <summary className={`p-3 text-[11px] font-semibold cursor-pointer select-none flex items-center justify-between hover:bg-white/[0.04] active:bg-white/[0.06] transition-colors ${
                           isLightText ? 'text-white/80' : 'text-black/80'
                         }`}>
@@ -4815,61 +4859,70 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       {/* DOB Field */}
                       <div>
                         <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Date of Birth</label>
-                        <div className="grid grid-cols-3 gap-2">
-                          <input
-                            type="number"
-                            placeholder="Month (MM)"
-                            min="1"
-                            max="12"
-                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                              }`}
-                            value={kycDobMonth}
-                            onChange={(e) => setKycDobMonth(e.target.value)}
-                          />
-                          <input
-                            type="number"
-                            placeholder="Day (DD)"
-                            min="1"
-                            max="31"
-                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                              }`}
-                            value={kycDobDay}
-                            onChange={(e) => setKycDobDay(e.target.value)}
-                          />
-                          <input
-                            type="number"
-                            placeholder="Year (YYYY)"
-                            min="1900"
-                            max="2026"
-                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                              }`}
-                            value={kycDobYear}
-                            onChange={(e) => setKycDobYear(e.target.value)}
-                          />
-                        </div>
+                        <input
+                          type="date"
+                          max="2026-12-31"
+                          min="1900-01-01"
+                          className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium [color-scheme:light] ${isLightText
+                              ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10 [color-scheme:dark]'
+                              : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                            }`}
+                          value={
+                            kycDobYear && kycDobMonth && kycDobDay
+                              ? `${kycDobYear}-${String(kycDobMonth).padStart(2, '0')}-${String(kycDobDay).padStart(2, '0')}`
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const dateVal = e.target.value;
+                            if (dateVal) {
+                              const [year, month, day] = dateVal.split("-");
+                              setKycDobYear(year || "");
+                              setKycDobMonth(month ? String(Number(month)) : "");
+                              setKycDobDay(day ? String(Number(day)) : "");
+                            } else {
+                              setKycDobYear("");
+                              setKycDobMonth("");
+                              setKycDobDay("");
+                            }
+                          }}
+                        />
                       </div>
 
                       {/* Conditional KYC identification fields based on region */}
                       {kycCountry === "US" ? (
                         <div>
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Social Security Number (SSN)</label>
-                          <input
-                            type="password"
-                            placeholder="SSN (9 digits)"
-                            maxLength={9}
-                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                          <div className="relative">
+                            <input
+                              type={showSsn ? "text" : "password"}
+                              placeholder="SSN (9 digits)"
+                              maxLength={9}
+                              className={`w-full h-10 pl-3 pr-10 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                }`}
+                              value={kycSsn}
+                              onChange={(e) => setKycSsn(e.target.value.replace(/\D/g, ''))}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowSsn(!showSsn)}
+                              className={`absolute right-3 top-1/2 -translate-y-1/2 focus:outline-none transition-opacity hover:opacity-80 active:opacity-100 ${
+                                isLightText ? 'text-white/40' : 'text-black/40'
                               }`}
-                            value={kycSsn}
-                            onChange={(e) => setKycSsn(e.target.value.replace(/\D/g, ''))}
-                          />
+                            >
+                              {showSsn ? (
+                                <svg className="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                                </svg>
+                              ) : (
+                                <svg className="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                                  <circle cx="12" cy="12" r="3" />
+                                </svg>
+                              )}
+                            </button>
+                          </div>
                           <p className={`mt-1 text-[10px] leading-relaxed ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
                             SSN is processed securely and directly on Stripe's server.
                           </p>
@@ -4921,6 +4974,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           </div>
                         </div>
                       )}
+                      {/* Secure connection badge */}
+                      <div className={`mt-4 p-3 rounded-xl border flex items-start gap-2.5 text-[10.5px] leading-relaxed transition-all ${
+                        isLightText 
+                          ? 'border-white/5 bg-white/[0.01] text-white/50' 
+                          : 'border-black/5 bg-black/[0.01] text-black/50'
+                      }`}>
+                        <svg className="w-4.5 h-4.5 mt-0.5 flex-shrink-0 text-emerald-400 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2.5">
+                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                          <path d="M7 11V7a5 5 0 0110 0v4" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                        <span>
+                          <strong className={isLightText ? 'text-white/70' : 'text-black/70'}>Secure Connection Verified</strong>
+                          <br />
+                          Your personal details are encrypted and securely submitted directly to Stripe for identity verification. We never store your full SSN or date of birth on our servers.
+                        </span>
+                      </div>
                     </>
                   )}
 
@@ -5117,7 +5186,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       : 'bg-black/5 border border-black/10 text-black placeholder-black/75 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
                     }`}
                   value={headlessPhoneInput}
-                  onChange={(e) => setHeadlessPhoneInput(e.target.value)}
+                  onChange={(e) => setHeadlessPhoneInput(formatPhoneAsYouType(e.target.value))}
                   autoFocus
                 />
                 <button

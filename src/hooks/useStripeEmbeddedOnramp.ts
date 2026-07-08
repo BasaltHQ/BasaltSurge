@@ -944,8 +944,7 @@ export function useStripeEmbeddedOnramp({
             if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
             
             try {
-              // Pre-check customer KYC status to see if it is already under review/pending.
-              // If so, we avoid presenting the verifyDocuments modal again.
+              // Pre-check customer KYC status to see if L1 is needed first, or if L2 is already under review.
               const customerCheckRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}`, {
                 headers: {
                   "x-stripe-oauth-token": oauthTokenRef.current || "",
@@ -954,6 +953,23 @@ export function useStripeEmbeddedOnramp({
               if (customerCheckRes.ok) {
                 const kycData = await customerCheckRes.json();
                 console.log("[EMBEDDED ONRAMP] Pre-verification customer status:", kycData);
+                
+                const kycTiers = kycData.kycTiers || [];
+                const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+                const isL1Verified = kycData.kycStatus === "approved" ||
+                                     kycData.kycStatus === "verified" ||
+                                     kycData.kycStatus === "completed" ||
+                                     l1Tier?.verification_status === "verified";
+                
+                // If L1 demographics are unverified and not pending, prompt for L1 first
+                if (!isL1Verified && l1Tier?.verification_status !== "pending") {
+                  console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Directing to L1 input first.");
+                  setKycTierRequired("l1");
+                  updateStep("collecting_kyc");
+                  isRunningRef.current = false;
+                  return null;
+                }
+
                 const idDocStatus = String(kycData.idDocStatus || "").toLowerCase();
                 const kycStatus = String(kycData.kycStatus || "").toLowerCase();
                 if (
@@ -1367,6 +1383,37 @@ export function useStripeEmbeddedOnramp({
               updateStep("checking_out");
               continue;
             } else {
+              console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Pre-checking customer status...");
+              try {
+                const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}`, {
+                  headers: {
+                    "x-stripe-oauth-token": oauthTokenRef.current || "",
+                  },
+                });
+                if (checkRes.ok) {
+                  const kycData = await checkRes.json();
+                  console.log("[EMBEDDED ONRAMP] Pre-verification customer status (checkout):", kycData);
+                  
+                  const kycTiers = kycData.kycTiers || [];
+                  const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+                  const isL1Verified = kycData.kycStatus === "approved" ||
+                                       kycData.kycStatus === "verified" ||
+                                       kycData.kycStatus === "completed" ||
+                                       l1Tier?.verification_status === "verified";
+                  
+                  // If L1 demographics are unverified and not pending, prompt for L1 first
+                  if (!isL1Verified && l1Tier?.verification_status !== "pending") {
+                    console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Directing to L1 input first.");
+                    setKycTierRequired("l1");
+                    updateStep("collecting_kyc");
+                    isRunningRef.current = false;
+                    return;
+                  }
+                }
+              } catch (checkErr) {
+                console.warn("[EMBEDDED ONRAMP] Failed to pre-check status inside checkout loop:", checkErr);
+              }
+
               console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Launching verifyDocuments...");
               isVerifyingRef.current = true;
               updateStep("verifying_identity");
