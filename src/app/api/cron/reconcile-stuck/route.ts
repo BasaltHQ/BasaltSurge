@@ -445,13 +445,53 @@ export async function POST(req: NextRequest) {
           address: BASE_USDC_ADDRESS,
         });
 
-        const balance = await readContract({
+        let balance = await readContract({
           contract: usdcContract,
           method: "function balanceOf(address account) view returns (uint256)",
           params: [guestAddress],
         });
 
         console.log(`[cron/reconcile-stuck] Receipt ${receiptId}: Guest EOA ${guestAddress} balance: ${balance.toString()} units.`);
+
+        let emailToSweep = email;
+        let guestAddressToSweep = guestAddress;
+
+        // Self-Healing: Check if the Stripe session's verified customer email is different and has a balance
+        const stripeEmail = onrampData.customer_information?.email || "";
+        if (balance === BigInt(0) && stripeEmail && stripeEmail.trim().toLowerCase() !== email.trim().toLowerCase()) {
+          console.log(`[cron/reconcile-stuck] Receipt ${receiptId}: Balance is 0 for receipt email ${email}. Checking Stripe session email ${stripeEmail}...`);
+          try {
+            const stripeVerificationToken = markEmailVerified(stripeEmail, authEndpointSecret);
+            const stripeWallet = inAppWallet({
+              auth: { options: ["auth_endpoint" as any] },
+              executionMode: { mode: "EIP7702", sponsorGas: true },
+            });
+
+            const stripeAccount = await stripeWallet.connect({
+              client: brandTwClient,
+              chain: base,
+              strategy: "auth_endpoint" as any,
+              payload: JSON.stringify({ email: stripeEmail, verificationToken: stripeVerificationToken, brandKey: brandKey || "" }),
+            });
+
+            const stripeGuestAddress = stripeAccount.address;
+            const stripeBalance = await readContract({
+              contract: usdcContract,
+              method: "function balanceOf(address account) view returns (uint256)",
+              params: [stripeGuestAddress],
+            });
+
+            console.log(`[cron/reconcile-stuck] Receipt ${receiptId}: Stripe email EOA ${stripeGuestAddress} balance: ${stripeBalance.toString()} units.`);
+            if (stripeBalance > BigInt(0)) {
+              emailToSweep = stripeEmail;
+              guestAddressToSweep = stripeGuestAddress;
+              balance = stripeBalance;
+              console.log(`[cron/reconcile-stuck] Mismatch resolved: Sweeping from Stripe email ${stripeEmail} instead of receipt email ${email}`);
+            }
+          } catch (stripeCheckErr: any) {
+            console.error(`[cron/reconcile-stuck] Failed to check Stripe email wallet for ${receiptId}:`, stripeCheckErr.message);
+          }
+        }
 
         if (balance === BigInt(0)) {
           // If balance is 0, check if we already reconciled it or if there was no deposit
@@ -460,9 +500,9 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        // Trigger gasless transfer sweep
+        // Trigger gasless transfer sweep using the resolved email
         const txHash = await executeGaslessTransferServer(
-          email,
+          emailToSweep,
           targetSplitAddress,
           amount,
           brandKey
@@ -481,6 +521,7 @@ export async function POST(req: NextRequest) {
           ? [...receipt.statusHistory, { status: "paid", ts: Date.now() }]
           : [{ status: "paid", ts: Date.now() }];
         receipt.ttl = -1; // disable expiration
+
 
         // Persist card funding if resolved from Stripe
         let isCreditCard = receipt.isCreditCard;
