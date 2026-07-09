@@ -47,7 +47,7 @@ export async function POST(
     // Resolve potentially updated/refreshed token from memory store first
     if (cryptoCustomerId) {
       const { getOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
-      const storedToken = getOAuthToken(cryptoCustomerId);
+      const storedToken = await getOAuthToken(cryptoCustomerId);
       if (storedToken && storedToken !== oauthToken) {
         console.log("[ONRAMP CHECKOUT] Using newer cached OAuth token from store");
         oauthToken = storedToken;

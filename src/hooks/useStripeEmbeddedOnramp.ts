@@ -661,7 +661,25 @@ export function useStripeEmbeddedOnramp({
   }, [onError, updateStep]);
 
   const pollKycStatus = useCallback(async (custId: string, targetTier?: "l0" | "l1" | "l2"): Promise<boolean> => {
-    console.log(`[EMBEDDED ONRAMP] Polling KYC status for completion (target: ${targetTier || 'legacy'})...`);
+    const startMsg = `[KYC POLL START] Polling KYC status for customer ${custId} (target: ${targetTier || 'legacy'})`;
+    console.log(startMsg);
+    fetch("/api/portal/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        level: "info",
+        type: "stripe_kyc_poll_start",
+        message: startMsg,
+        receiptId,
+        wallet: buyerWalletRef.current || "anonymous",
+        sessionId: sessionIdRef.current,
+        host: typeof window !== "undefined" ? window.location.host : "",
+        userAgent: typeof window !== "undefined" ? window.navigator.userAgent : "",
+        ts: Date.now()
+      })
+    }).catch(() => {});
+
+    let consecutiveErrors = 0;
     for (let i = 0; i < 90; i++) {
       if (!mountedRef.current) return false;
       if (!isRunningRef.current) {
@@ -676,6 +694,7 @@ export function useStripeEmbeddedOnramp({
           },
         });
         if (res.ok) {
+          consecutiveErrors = 0;
           const kycData = await res.json();
           if (kycData.refreshedToken) {
             console.log("[EMBEDDED ONRAMP] KYC poll returned refreshed OAuth token, updating ref...");
@@ -684,8 +703,10 @@ export function useStripeEmbeddedOnramp({
               sessionStorage.setItem("stripe_onramp_oauth_token", kycData.refreshedToken);
             }
           }
-          console.log(`[EMBEDDED ONRAMP] Polled KYC status (attempt ${i + 1}/90): kycStatus=${kycData.kycStatus}, idDocStatus=${kycData.idDocStatus}`);
           
+          const logMsg = `[KYC POLL STATUS] Attempt ${i + 1}/90: kycStatus=${kycData.kycStatus}, idDocStatus=${kycData.idDocStatus}`;
+          console.log(logMsg);
+
           const kycTiers = kycData.kycTiers || [];
           const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
           const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
@@ -727,6 +748,24 @@ export function useStripeEmbeddedOnramp({
             isTargetRejected = kycData.kycStatus === "rejected" || kycData.kycStatus === "failed" || kycData.idDocStatus === "rejected" || kycData.idDocStatus === "failed";
           }
 
+          // Log success or significant attempts
+          if (i === 0 || (i + 1) % 5 === 0 || isTargetVerified || isTargetRejected || isRejected) {
+            fetch("/api/portal/log", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                level: isTargetRejected ? "error" : "info",
+                type: "stripe_kyc_poll_attempt",
+                message: logMsg,
+                receiptId,
+                wallet: buyerWalletRef.current || "anonymous",
+                sessionId: sessionIdRef.current,
+                meta: { kycData, targetTier, isTargetVerified, isTargetRejected },
+                ts: Date.now()
+              })
+            }).catch(() => {});
+          }
+
           if (isTargetRejected) {
             console.warn(`[EMBEDDED ONRAMP] Identity verification for tier ${targetTier || 'legacy'} failed/rejected.`);
             isRejected = true;
@@ -734,9 +773,36 @@ export function useStripeEmbeddedOnramp({
             console.log(`[EMBEDDED ONRAMP] KYC tier ${targetTier || 'legacy'} is approved on Stripe's end!`);
             return true;
           }
+        } else {
+          const errMsg = `[KYC POLL ERROR] Attempt ${i + 1}/90: HTTP status ${res.status}`;
+          console.error(errMsg);
+          fetch("/api/portal/log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              level: "error",
+              type: "stripe_kyc_poll_failed",
+              message: errMsg,
+              receiptId,
+              wallet: buyerWalletRef.current || "anonymous",
+              sessionId: sessionIdRef.current,
+              ts: Date.now()
+            })
+          }).catch(() => {});
+
+          if (res.status === 401) {
+            throw new Error("Stripe authentication token has expired. Please refresh the page.");
+          }
+          consecutiveErrors++;
+          if (consecutiveErrors >= 5) {
+            throw new Error(`KYC status check failed repeatedly (HTTP status: ${res.status}). Please check your connection.`);
+          }
         }
-      } catch (err) {
+      } catch (err: any) {
         console.warn("[EMBEDDED ONRAMP] Error polling KYC status:", err);
+        if (err?.message?.includes("expired") || err?.message?.includes("repeatedly")) {
+          throw err;
+        }
       }
       if (isRejected) {
         throw new Error("Identity verification was rejected. Please check your document and try again.");
@@ -745,7 +811,7 @@ export function useStripeEmbeddedOnramp({
     }
     console.warn("[EMBEDDED ONRAMP] Polling KYC status timed out after 180 seconds.");
     return false;
-  }, []);
+  }, [receiptId]);
 
   const reset = useCallback(() => {
     if (onrampRef.current) {

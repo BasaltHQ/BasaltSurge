@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getContainer } from "@/lib/cosmos";
 
 export const dynamic = 'force-dynamic';
 
@@ -7,10 +8,6 @@ const STRIPE_API_VERSION = "2026-06-24.dahlia";
 /**
  * In-memory OAuth token store.
  * Maps crypto_customer_id → { accessToken, refreshToken, expiresAt }
- * 
- * In production, this should be stored in a persistent session store (Redis, DB, etc.)
- * For now, server-side in-memory is acceptable since tokens expire after 1hr
- * and the server process is long-lived.
  */
 const tokenStore = new Map<string, {
   accessToken: string;
@@ -22,25 +19,58 @@ const tokenStore = new Map<string, {
  * Get stored OAuth token for a customer.
  * Returns null if no token or expired.
  */
-export function getOAuthToken(customerId: string): string | null {
+export async function getOAuthToken(customerId: string): Promise<string | null> {
   const entry = tokenStore.get(customerId);
-  if (!entry) return null;
-  if (Date.now() / 1000 > entry.expiresAt - 60) {
-    // Token expired or within 60s of expiry — caller should refresh
+  if (entry && Date.now() / 1000 < entry.expiresAt - 60) {
+    return entry.accessToken;
+  }
+
+  try {
+    const container = await getContainer();
+    const { resource } = await container.item(`stripe:token:${customerId}`, "global").read();
+    if (!resource) return null;
+
+    tokenStore.set(customerId, {
+      accessToken: resource.accessToken,
+      refreshToken: resource.refreshToken,
+      expiresAt: resource.expiresAt,
+    });
+
+    if (Date.now() / 1000 > resource.expiresAt - 60) {
+      return null;
+    }
+    return resource.accessToken;
+  } catch (err) {
+    console.error("[LINK TOKENS DB] Error reading token:", err);
     return null;
   }
-  return entry.accessToken;
 }
 
 /**
  * Store OAuth token for a customer.
  */
-export function storeOAuthToken(customerId: string, accessToken: string, refreshToken: string, expiresIn: number) {
+export async function storeOAuthToken(customerId: string, accessToken: string, refreshToken: string, expiresIn: number) {
+  const expiresAt = Math.floor(Date.now() / 1000) + expiresIn;
+
   tokenStore.set(customerId, {
     accessToken,
     refreshToken,
-    expiresAt: Math.floor(Date.now() / 1000) + expiresIn,
+    expiresAt,
   });
+
+  try {
+    const container = await getContainer();
+    await container.items.upsert({
+      id: `stripe:token:${customerId}`,
+      wallet: "global",
+      accessToken,
+      refreshToken,
+      expiresAt,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error("[LINK TOKENS DB] Error storing token:", err);
+  }
 }
 
 /**
@@ -125,7 +155,24 @@ export async function POST(req: NextRequest) {
  * Refresh OAuth access token using stored refresh token.
  */
 export async function refreshOAuthToken(customerId: string): Promise<string | null> {
-  const entry = tokenStore.get(customerId);
+  let entry = tokenStore.get(customerId);
+  if (!entry || !entry.refreshToken) {
+    try {
+      const container = await getContainer();
+      const { resource } = await container.item(`stripe:token:${customerId}`, "global").read();
+      if (resource && resource.refreshToken) {
+        entry = {
+          accessToken: resource.accessToken,
+          refreshToken: resource.refreshToken,
+          expiresAt: resource.expiresAt,
+        };
+        tokenStore.set(customerId, entry);
+      }
+    } catch (dbErr) {
+      console.error("[LINK TOKENS DB] Error loading token for refresh:", dbErr);
+    }
+  }
+
   if (!entry || !entry.refreshToken) {
     console.log("[LINK TOKENS] No refresh token found for customer:", customerId);
     return null;

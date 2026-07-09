@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   try {
     const stripeKey = process.env.STRIPE_API_KEY;
     const oauthClientId = process.env.LINK_OAUTH_CLIENT_ID;
-    const oauthScopes = process.env.LINK_OAUTH_SCOPES || "kyc.status:read,crypto:ramp";
+    const oauthScopes = process.env.LINK_OAUTH_SCOPES || "kyc.status:read,crypto:ramp,auth.persist_login:read";
 
     if (!stripeKey) {
       return NextResponse.json(
