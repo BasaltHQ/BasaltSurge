@@ -309,6 +309,52 @@ export function formatToE164(phone: string, defaultCountryCode = "1"): string {
   return `+${cleaned}`;
 }
 
+function checkIfCardDecline(err: any, lastError?: string): boolean {
+  if (!err && !lastError) return false;
+  
+  // Extract all possible error strings from any shape of error object/primitive
+  const errStr = typeof err === "string" ? err : "";
+  const nestedErrObj = (err && typeof err === "object" && typeof err.error === "object") ? err.error : {};
+  const errorPropStr = (err && typeof err === "object" && typeof err.error === "string") ? err.error : "";
+  
+  const msg = String(err?.message || nestedErrObj?.message || errorPropStr || errStr || "").toLowerCase();
+  const code = String(err?.code || nestedErrObj?.code || err?.error_code || "").toLowerCase();
+  const declineCode = String(err?.decline_code || nestedErrObj?.decline_code || "").toLowerCase();
+  const type = String(err?.type || nestedErrObj?.type || "").toLowerCase();
+  const lastErr = String(lastError || "").toLowerCase();
+
+  // 1. Check if the thrown error is a KYC error first
+  const isThrownKyc = msg.includes("identity") || msg.includes("verification") || msg.includes("kyc") ||
+                      code.includes("identity") || code.includes("verification") || code.includes("kyc");
+
+  if (isThrownKyc) {
+    return false;
+  }
+
+  // 2. If the thrown error is an active payment failure or decline, prioritize it immediately
+  const isThrownCardDecline = msg.includes("decline") || msg.includes("card") || msg.includes("payment_failed") || msg.includes("failed") ||
+                              msg.includes("funds") || msg.includes("cvc") || msg.includes("zip") || msg.includes("expired") || msg.includes("invalid") ||
+                              code.includes("decline") || code.includes("card") || code.includes("failed") || code.includes("funds") || code.includes("cvc") || code.includes("zip");
+
+  if (isThrownCardDecline) {
+    return true;
+  }
+
+  // 3. Fallback: Check matches (including session lastError) for KYC terms
+  const isKycError = [msg, code, declineCode, type, lastErr].some(val =>
+    val.includes("identity") ||
+    val.includes("verification") ||
+    val.includes("kyc")
+  );
+
+  if (isKycError) {
+    return false;
+  }
+
+  // 4. Otherwise, treat ANY checkout-phase failure as a payment failure
+  return true;
+}
+
 export function useStripeEmbeddedOnramp({
   email,
   phone,
@@ -389,8 +435,8 @@ export function useStripeEmbeddedOnramp({
       if (!currentEmail) return;
 
       const storedEmail = sessionStorage.getItem("stripe_onramp_email");
-      if (storedEmail && storedEmail !== currentEmail) {
-        console.warn("[EMBEDDED ONRAMP] Email changed from", storedEmail, "to", currentEmail, ". Clearing stale session storage.");
+      if (storedEmail && storedEmail !== currentEmail && stepRef.current === "idle") {
+        console.warn("[EMBEDDED ONRAMP] Email changed from", storedEmail, "to", currentEmail, "while idle. Clearing stale session storage.");
         sessionStorage.removeItem("stripe_onramp_customer_id");
         sessionStorage.removeItem("stripe_onramp_oauth_token");
         sessionStorage.removeItem("stripe_onramp_buyer_wallet");
@@ -406,7 +452,9 @@ export function useStripeEmbeddedOnramp({
         setBuyerWalletAddress(null);
         setSessionId(null);
       }
-      sessionStorage.setItem("stripe_onramp_email", currentEmail);
+      if (stepRef.current === "idle") {
+        sessionStorage.setItem("stripe_onramp_email", currentEmail);
+      }
     }
   }, [email]);
 
@@ -418,8 +466,8 @@ export function useStripeEmbeddedOnramp({
       const storedEmail = sessionStorage.getItem("stripe_onramp_email");
       const currentEmail = (email || "").trim().toLowerCase();
 
-      if (storedEmail && currentEmail && storedEmail !== currentEmail) {
-        console.warn("[EMBEDDED ONRAMP] Email mismatch on reload. Resetting refs.");
+      if (storedEmail && currentEmail && storedEmail !== currentEmail && stepRef.current === "idle") {
+        console.warn("[EMBEDDED ONRAMP] Email mismatch on reload while idle. Resetting refs.");
         sessionStorage.removeItem("stripe_onramp_customer_id");
         sessionStorage.removeItem("stripe_onramp_oauth_token");
         sessionStorage.removeItem("stripe_onramp_buyer_wallet");
@@ -446,7 +494,7 @@ export function useStripeEmbeddedOnramp({
         if (storedSessionId) sessionIdRef.current = storedSessionId;
       }
 
-      if (currentEmail) {
+      if (currentEmail && stepRef.current === "idle") {
         sessionStorage.setItem("stripe_onramp_email", currentEmail);
       }
     }
@@ -710,9 +758,18 @@ export function useStripeEmbeddedOnramp({
 
     console.error(`[EMBEDDED ONRAMP] ${friendlyMessage}`, err);
     isRunningRef.current = false;
-    setError(friendlyMessage);
+    
+    const isCancellation = friendlyMessage.toLowerCase().includes("cancelled") || 
+                           friendlyMessage.toLowerCase().includes("declined") || 
+                           friendlyMessage.toLowerCase().includes("abandoned");
+
+    setError(isCancellation ? null : friendlyMessage);
     setAuthElement(null);
     setPaymentElement(null);
+    setDetectedCardFunding(null);
+    setDetectedCardBrand(null);
+    setDetectedCardLast4(null);
+    onCardDetected?.(null);
     if (onrampRef.current) {
       try {
         console.log("[EMBEDDED ONRAMP] Destroying onramp coordinator on error to remove lingering modals...");
@@ -722,9 +779,9 @@ export function useStripeEmbeddedOnramp({
       }
       onrampRef.current = null;
     }
-    updateStep("error");
+    updateStep(isCancellation ? "idle" : "error");
     onError?.(new Error(friendlyMessage));
-  }, [onError, updateStep]);
+  }, [onError, updateStep, onCardDetected]);
 
   const pollKycStatus = useCallback(async (custId: string, targetTier?: "l0" | "l1" | "l2"): Promise<boolean> => {
     const startMsg = `[KYC POLL START] Polling KYC status for customer ${custId} (target: ${targetTier || 'legacy'})`;
@@ -1256,7 +1313,12 @@ export function useStripeEmbeddedOnramp({
           paymentMethod: successData.paymentMethod,
         };
       } catch (err: any) {
-        handleError(err?.message || "Session creation failed");
+        const isCardDecline = checkIfCardDecline(err);
+        if (isCardDecline) {
+          console.warn("[EMBEDDED ONRAMP] Card decline detected during session creation, propagating error.");
+          throw err;
+        }
+        handleError(err?.message || "Session creation failed", err);
         return null;
       }
     };
@@ -1528,6 +1590,7 @@ export function useStripeEmbeddedOnramp({
       } catch (checkoutErr: any) {
         console.warn(`[EMBEDDED ONRAMP] Checkout attempt ${attempt + 1} failed, checking error state...`, checkoutErr);
         
+        let isCardDecline = false;
         try {
           const statusHeaders: any = {
             "x-stripe-oauth-token": oauthTokenRef.current || "",
@@ -1556,212 +1619,223 @@ export function useStripeEmbeddedOnramp({
 
           console.log(`[EMBEDDED ONRAMP] Inspecting lastError from session status:`, lastError);
 
-          const errMessage = String(checkoutErr?.message || "").toLowerCase();
-          const errCode = String(checkoutErr?.code || "").toLowerCase();
+          const nestedErr = checkoutErr?.error || {};
+          const errMessage = String(checkoutErr?.message || nestedErr?.message || "").toLowerCase();
+          const errCode = String(checkoutErr?.code || nestedErr?.code || "").toLowerCase();
 
-          const isCardDecline = errMessage.includes("card") || 
-                                errMessage.includes("decline") || 
-                                errMessage.includes("insufficient") || 
-                                errMessage.includes("limit") ||
-                                errMessage.includes("not support") ||
-                                errCode.includes("card") || 
-                                errCode.includes("decline") ||
-                                errCode.includes("payment_intent_payment_attempt_failed") ||
-                                lastError === "payment_intent_payment_attempt_failed";
+          isCardDecline = checkIfCardDecline(checkoutErr, lastError);
 
-          if (isCardDecline) {
-            console.warn("[EMBEDDED ONRAMP] Card decline detected, aborting retry loop immediately.");
-            handleError(checkoutErr?.message || "Your card was declined. Please try another card.", checkoutErr);
-            return;
-          }
+          if (!isCardDecline) {
+            const isL0Error = errCode === "crypto_onramp_missing_minimum_identity_verification" ||
+                              lastError === "crypto_onramp_missing_minimum_identity_verification" ||
+                              errMessage.includes("minimum_identity");
 
-          const isL0Error = errCode === "crypto_onramp_missing_minimum_identity_verification" ||
-                            lastError === "crypto_onramp_missing_minimum_identity_verification" ||
-                            errMessage.includes("minimum_identity");
+            const isL1Error = errCode === "crypto_onramp_missing_identity_verification" ||
+                              lastError === "missing_kyc" ||
+                              lastError === "crypto_onramp_missing_identity_verification" ||
+                              errMessage.includes("identity_verification");
 
-          const isL1Error = errCode === "crypto_onramp_missing_identity_verification" ||
-                            lastError === "missing_kyc" ||
-                            lastError === "crypto_onramp_missing_identity_verification" ||
-                            errMessage.includes("identity_verification");
+            const isL2Error = errCode === "crypto_onramp_missing_document_verification" ||
+                              lastError === "missing_document_verification" ||
+                              lastError === "crypto_onramp_missing_document_verification" ||
+                              lastError === "verification_required" ||
+                              lastError === "identity_verification" ||
+                              errMessage.includes("document_verification") ||
+                              errMessage.includes("verification_required") ||
+                              errMessage.includes("identity_verification");
 
-          const isL2Error = errCode === "crypto_onramp_missing_document_verification" ||
-                            lastError === "missing_document_verification" ||
-                            lastError === "crypto_onramp_missing_document_verification" ||
-                            errMessage.includes("document_verification");
+            const isGenericKycError = errMessage.includes("kyc") || 
+                                      errCode.includes("kyc") ||
+                                      errMessage.includes("verification") ||
+                                      errCode.includes("verification");
 
-          const isGenericKycError = errMessage.includes("kyc") || errCode.includes("kyc");
+            const isRecoverableError = isL0Error || isL1Error || isL2Error || isGenericKycError ||
+                                       lastError === "missing_consumer_wallet" ||
+                                       lastError === "charged_with_expired_quote" ||
+                                       lastError === "quote_rate_drifted";
 
-          const isRecoverableError = isL0Error || isL1Error || isL2Error || isGenericKycError ||
-                                     lastError === "missing_consumer_wallet" ||
-                                     lastError === "charged_with_expired_quote" ||
-                                     lastError === "quote_rate_drifted";
+            if (!isRecoverableError && errCode.startsWith("crypto_onramp_")) {
+              console.warn(`[EMBEDDED ONRAMP] Terminal onramp error code detected: ${errCode}. Aborting retry loop immediately.`);
+              handleError(checkoutErr?.message || "Checkout failed", checkoutErr);
+              return;
+            }
 
-          if (!isRecoverableError && errCode.startsWith("crypto_onramp_")) {
-            console.warn(`[EMBEDDED ONRAMP] Terminal onramp error code detected: ${errCode}. Aborting retry loop immediately.`);
-            handleError(checkoutErr?.message || "Checkout failed", checkoutErr);
-            return;
-          }
+            if (isL0Error) {
+              console.log("[EMBEDDED ONRAMP] L0 KYC required during checkout.");
+              setKycTierRequired("l0");
+              updateStep("collecting_kyc");
+              isRunningRef.current = false;
+              return;
+            }
 
-          if (isL0Error) {
-            console.log("[EMBEDDED ONRAMP] L0 KYC required during checkout.");
-            setKycTierRequired("l0");
-            updateStep("collecting_kyc");
-            isRunningRef.current = false;
-            return;
-          }
+            if (isL1Error) {
+              console.log("[EMBEDDED ONRAMP] L1 KYC required during checkout.");
+              setKycTierRequired("l1");
+              updateStep("collecting_kyc");
+              isRunningRef.current = false;
+              return;
+            }
 
-          if (isL1Error) {
-            console.log("[EMBEDDED ONRAMP] L1 KYC required during checkout.");
-            setKycTierRequired("l1");
-            updateStep("collecting_kyc");
-            isRunningRef.current = false;
-            return;
-          }
-
-          if (isL2Error) {
-            if (isVerifyingRef.current) {
-              console.log("[EMBEDDED ONRAMP] Verification already in progress. Awaiting completion...");
-              while (isVerifyingRef.current) {
-                await new Promise(r => setTimeout(r, 500));
-              }
-              console.log("[EMBEDDED ONRAMP] Verification completed/closed. Retrying checkout...");
-              updateStep("checking_out");
-              continue;
-            } else {
-              console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Pre-checking customer status...");
-              try {
-                const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
-                  headers: {
-                    "x-stripe-oauth-token": oauthTokenRef.current || "",
-                  },
-                });
-                if (checkRes.ok) {
-                  const kycData = await checkRes.json();
-                  if (kycData.refreshedToken) {
-                    console.log("[EMBEDDED ONRAMP] Pre-verification checkout customer status returned refreshed token, updating ref...");
-                    oauthTokenRef.current = kycData.refreshedToken;
-                    if (typeof window !== "undefined") {
-                      sessionStorage.setItem("stripe_onramp_oauth_token", kycData.refreshedToken);
+            if (isL2Error) {
+              if (isVerifyingRef.current) {
+                console.log("[EMBEDDED ONRAMP] Verification already in progress. Awaiting completion...");
+                while (isVerifyingRef.current) {
+                  await new Promise(r => setTimeout(r, 500));
+                }
+                console.log("[EMBEDDED ONRAMP] Verification completed/closed. Retrying checkout...");
+                updateStep("checking_out");
+                continue;
+              } else {
+                console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Pre-checking customer status...");
+                try {
+                  const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
+                    headers: {
+                      "x-stripe-oauth-token": oauthTokenRef.current || "",
+                    },
+                  });
+                  if (checkRes.ok) {
+                    const kycData = await checkRes.json();
+                    if (kycData.refreshedToken) {
+                      console.log("[EMBEDDED ONRAMP] Pre-verification checkout customer status returned refreshed token, updating ref...");
+                      oauthTokenRef.current = kycData.refreshedToken;
+                      if (typeof window !== "undefined") {
+                        sessionStorage.setItem("stripe_onramp_oauth_token", kycData.refreshedToken);
+                      }
+                    }
+                    console.log("[EMBEDDED ONRAMP] Pre-verification customer status (checkout):", kycData);
+                    
+                    const kycTiers = kycData.kycTiers || [];
+                    const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+                    const isL1Verified = kycData.kycStatus === "approved" ||
+                                         kycData.kycStatus === "verified" ||
+                                         kycData.kycStatus === "completed" ||
+                                         l1Tier?.verification_status === "verified";
+                    
+                    // If L1 demographics are unverified and not pending, prompt for L1 first
+                    if (!isL1Verified && l1Tier?.verification_status !== "pending") {
+                      console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Directing to L1 input first.");
+                      setKycTierRequired("l1");
+                      updateStep("collecting_kyc");
+                      isRunningRef.current = false;
+                      return;
                     }
                   }
-                  console.log("[EMBEDDED ONRAMP] Pre-verification customer status (checkout):", kycData);
-                  
-                  const kycTiers = kycData.kycTiers || [];
-                  const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-                  const isL1Verified = kycData.kycStatus === "approved" ||
-                                       kycData.kycStatus === "verified" ||
-                                       kycData.kycStatus === "completed" ||
-                                       l1Tier?.verification_status === "verified";
-                  
-                  // If L1 demographics are unverified and not pending, prompt for L1 first
-                  if (!isL1Verified && l1Tier?.verification_status !== "pending") {
-                    console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Directing to L1 input first.");
-                    setKycTierRequired("l1");
-                    updateStep("collecting_kyc");
-                    isRunningRef.current = false;
+                } catch (checkErr) {
+                  console.warn("[EMBEDDED ONRAMP] Failed to pre-check status inside checkout loop:", checkErr);
+                }
+
+                console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Launching verifyDocuments...");
+                isVerifyingRef.current = true;
+                updateStep("verifying_identity");
+                
+                if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
+                
+                try {
+                  const verifyResult = await onrampRef.current.verifyDocuments();
+                  isVerifyingRef.current = false;
+                  if (verifyResult.result === "abandoned") {
+                    handleError("Identity verification was abandoned");
                     return;
                   }
+                  console.log("[EMBEDDED ONRAMP] Document verification successful. Polling status...");
+                  updateStep("checking_kyc");
+                  const kycApproved = await pollKycStatus(customerId, "l2");
+                  if (!kycApproved) {
+                    throw new Error("Identity verification was not approved. Please try again.");
+                  }
+                  console.log("[EMBEDDED ONRAMP] Document verification successful, retrying checkout...");
+                  updateStep("checking_out");
+                  continue;
+                } catch (verifyErr: any) {
+                  isVerifyingRef.current = false;
+                  handleError(verifyErr?.message || "Identity verification failed");
+                  return;
                 }
-              } catch (checkErr) {
-                console.warn("[EMBEDDED ONRAMP] Failed to pre-check status inside checkout loop:", checkErr);
               }
+            }
 
-              console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Launching verifyDocuments...");
-              isVerifyingRef.current = true;
-              updateStep("verifying_identity");
-              
+            if (isGenericKycError) {
+              console.log("[EMBEDDED ONRAMP] Generic KYC error caught, treating as L1.");
+              setKycTierRequired("l1");
+              updateStep("collecting_kyc");
+              isRunningRef.current = false;
+              return;
+            }
+
+            if (lastError === "missing_consumer_wallet") {
+              console.log("[EMBEDDED ONRAMP] Wallet not registered. Attempting wallet registration...");
+              updateStep("registering_wallet");
               if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
               
               try {
-                const verifyResult = await onrampRef.current.verifyDocuments();
-                isVerifyingRef.current = false;
-                if (verifyResult.result === "abandoned") {
-                  handleError("Identity verification was abandoned");
-                  return;
-                }
-                console.log("[EMBEDDED ONRAMP] Document verification successful. Polling status...");
-                updateStep("checking_kyc");
-                const kycApproved = await pollKycStatus(customerId, "l2");
-                if (!kycApproved) {
-                  throw new Error("Identity verification was not approved. Please try again.");
-                }
-                console.log("[EMBEDDED ONRAMP] Document verification successful, retrying checkout...");
+                await onrampRef.current.registerWalletAddress(buyerWallet, network);
+                console.log("[EMBEDDED ONRAMP] Wallet registered successfully, retrying checkout...");
                 updateStep("checking_out");
                 continue;
-              } catch (verifyErr: any) {
-                isVerifyingRef.current = false;
-                handleError(verifyErr?.message || "Identity verification failed");
+              } catch (regErr: any) {
+                handleError(regErr?.message || "Wallet registration failed during recovery");
                 return;
               }
             }
-          }
 
-          if (isGenericKycError) {
-            console.log("[EMBEDDED ONRAMP] Generic KYC error caught, treating as L1.");
-            setKycTierRequired("l1");
-            updateStep("collecting_kyc");
-            isRunningRef.current = false;
-            return;
-          } else if (lastError === "missing_consumer_wallet") {
-            console.log("[EMBEDDED ONRAMP] Wallet not registered. Attempting wallet registration...");
-            updateStep("registering_wallet");
-            if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
-            
-            try {
-              await onrampRef.current.registerWalletAddress(buyerWallet, network);
-              console.log("[EMBEDDED ONRAMP] Wallet registered successfully, retrying checkout...");
-              updateStep("checking_out");
-              continue;
-            } catch (regErr: any) {
-              handleError(regErr?.message || "Wallet registration failed during recovery");
-              return;
-            }
-          } else if (lastError === "charged_with_expired_quote") {
-            console.log("[EMBEDDED ONRAMP] Quote expired. Refreshing quote...");
-            updateStep("creating_session");
-            try {
-              const refreshRes = await fetch("/api/stripe/onramp-quote-refresh", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  sessionId: currentSessionId,
-                  oauthToken: oauthTokenRef.current,
-                }),
-              });
-              if (!refreshRes.ok) {
-                const refreshErrData = await refreshRes.json().catch(() => ({}));
-                throw new Error(refreshErrData.error || "Failed to refresh quote");
+            if (lastError === "charged_with_expired_quote") {
+              console.log("[EMBEDDED ONRAMP] Quote expired. Refreshing quote...");
+              updateStep("creating_session");
+              try {
+                const refreshRes = await fetch("/api/stripe/onramp-quote-refresh", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    sessionId: currentSessionId,
+                    oauthToken: oauthTokenRef.current,
+                  }),
+                });
+                if (!refreshRes.ok) {
+                  const refreshErrData = await refreshRes.json().catch(() => ({}));
+                  throw new Error(refreshErrData.error || "Failed to refresh quote");
+                }
+                console.log("[EMBEDDED ONRAMP] Quote refreshed successfully, retrying checkout...");
+                updateStep("checking_out");
+                continue;
+              } catch (refreshErr: any) {
+                handleError(refreshErr?.message || "Quote refresh failed");
+                return;
               }
-              console.log("[EMBEDDED ONRAMP] Quote refreshed successfully, retrying checkout...");
+            }
+
+            if (lastError === "quote_rate_drifted") {
+              console.log("[EMBEDDED ONRAMP] Quote rate drifted. Recreating session with fresh quote...");
+              sessionIdRef.current = null;
+              setSessionId(null);
+              const targetAmount = getOnrampAmount(detectedCardFunding);
+              const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount);
+              if (!sessionResult) return;
+              currentSessionId = sessionResult.sessionId;
+              sessionIdRef.current = currentSessionId;
+              setSessionId(currentSessionId);
+              console.log("[EMBEDDED ONRAMP] New session created with fresh quote. Retrying checkout...");
               updateStep("checking_out");
               continue;
-            } catch (refreshErr: any) {
-              handleError(refreshErr?.message || "Quote refresh failed");
+            }
+
+            if (
+              lastError === "transaction_limit_reached" ||
+              lastError === "location_not_supported" ||
+              lastError === "transaction_failed"
+            ) {
+              handleError(`Transaction failed with error: ${lastError}`);
               return;
             }
-          } else if (lastError === "quote_rate_drifted") {
-            console.log("[EMBEDDED ONRAMP] Quote rate drifted. Recreating session with fresh quote...");
-            sessionIdRef.current = null;
-            setSessionId(null);
-            const targetAmount = getOnrampAmount(detectedCardFunding);
-            const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount);
-            if (!sessionResult) return;
-            currentSessionId = sessionResult.sessionId;
-            sessionIdRef.current = currentSessionId;
-            setSessionId(currentSessionId);
-            console.log("[EMBEDDED ONRAMP] New session created with fresh quote. Retrying checkout...");
-            updateStep("checking_out");
-            continue;
-          } else if (
-            lastError === "transaction_limit_reached" ||
-            lastError === "location_not_supported" ||
-            lastError === "transaction_failed"
-          ) {
-            handleError(`Transaction failed with error: ${lastError}`);
-            return;
           }
         } catch (statusErr: any) {
           console.warn("[EMBEDDED ONRAMP] Failed to fetch session status after checkout error:", statusErr);
+          // Fallback: If status fetch failed, check if the checkout exception itself is a card decline
+          isCardDecline = checkIfCardDecline(checkoutErr);
+        }
+
+        if (isCardDecline) {
+          console.warn("[EMBEDDED ONRAMP] Card decline verified, throwing error to exit loop.");
+          throw checkoutErr;
         }
 
         if (attempt === MAX_ATTEMPTS - 1) {
@@ -1819,9 +1893,35 @@ export function useStripeEmbeddedOnramp({
             buyerWalletRef.current,
             detectedCardFunding
           ).catch((err) => {
-            handleError(err?.message || "Checkout failed after KYC submission");
+            const isCardDecline = checkIfCardDecline(err);
+
+            if (isCardDecline) {
+              console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval, returning to payment selection...");
+              setError(err?.message || "Your card was declined. Please try another card.");
+              paymentTokenRef.current = null;
+              sessionIdRef.current = null;
+              setSessionId(null);
+              if (typeof window !== "undefined") {
+                sessionStorage.removeItem("stripe_onramp_session_id");
+              }
+              if (onrampRef.current) {
+                try { onrampRef.current.destroy(); } catch {}
+                onrampRef.current = null;
+              }
+              setDetectedCardFunding(null);
+              setDetectedCardBrand(null);
+              setDetectedCardLast4(null);
+              onCardDetected?.(null);
+              isRunningRef.current = false;
+              setTimeout(() => {
+                startOnrampRef.current?.(activeEmailRef.current || undefined);
+              }, 0);
+            } else {
+              handleError(err?.message || "Checkout failed after KYC submission", err);
+            }
           });
         } else {
+          isRunningRef.current = false;
           startOnrampRef.current?.(activeEmailRef.current || undefined);
         }
       }
@@ -1935,10 +2035,19 @@ export function useStripeEmbeddedOnramp({
             throw new Error("Registration returned created: false");
           }
         } catch (regErr: any) {
-          console.warn("[EMBEDDED ONRAMP] Link registration failed, asking for phone number:", regErr);
-          isRunningRef.current = false;
-          updateStep("collecting_phone");
-          return;
+          const errMsg = String(regErr?.message || regErr || "").toLowerCase();
+          const isAlreadyExists = errMsg.includes("already a user") || 
+                                  errMsg.includes("already exists") || 
+                                  errMsg.includes("conflict");
+
+          if (isAlreadyExists) {
+            console.log("[EMBEDDED ONRAMP] Link account already exists globally. Bypassing registration...");
+          } else {
+            console.warn("[EMBEDDED ONRAMP] Link registration failed, asking for phone number:", regErr);
+            isRunningRef.current = false;
+            updateStep("collecting_phone");
+            return;
+          }
         }
 
         const retryRes = await fetch("/api/stripe/link-auth-intent", {
@@ -2189,91 +2298,165 @@ export function useStripeEmbeddedOnramp({
       if (!mountedRef.current) return;
 
       // ─── Step 8: Collect payment method ───
-      updateStep("collecting_payment");
+      let checkoutSucceeded = false;
+      while (!checkoutSucceeded) {
+        if (!mountedRef.current) return;
+        updateStep("collecting_payment");
 
-      const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | null; brand: string; last4: string }>((resolve, reject) => {
-        paymentRejectRef.current = reject;
+        const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | null; brand: string; last4: string }>((resolve, reject) => {
+          paymentRejectRef.current = reject;
 
-        onramp.collectPaymentMethod(
-          {
-            payment_method_types: ["card"],
-            wallets: { applePay: "auto", googlePay: "auto" },
-          },
-          (result: any) => {
-            console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
-            if (result) {
-              const newToken = result.oauthToken || 
-                               result.accessToken || 
-                               result.oauth_token || 
-                               result.access_token ||
-                               result.paymentDetails?.oauthToken ||
-                               result.paymentDetails?.accessToken ||
-                               result.paymentMethod?.oauthToken ||
-                               result.payment_details?.oauthToken;
-              if (newToken) {
-                console.log("[EMBEDDED ONRAMP] Updated OAuth token detected in collectPaymentMethod result:", newToken.slice(0, 10) + "...");
-                oauthTokenRef.current = newToken;
-                if (typeof window !== "undefined") {
-                  sessionStorage.setItem("stripe_onramp_oauth_token", newToken);
+          onramp.collectPaymentMethod(
+            {
+              payment_method_types: ["card"],
+              wallets: { applePay: "auto", googlePay: "auto" },
+            },
+            (result: any) => {
+              console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
+              if (result) {
+                const newToken = result.oauthToken || 
+                                 result.accessToken || 
+                                 result.oauth_token || 
+                                 result.access_token ||
+                                 result.paymentDetails?.oauthToken ||
+                                 result.paymentDetails?.accessToken ||
+                                 result.paymentMethod?.oauthToken ||
+                                 result.payment_details?.oauthToken;
+                if (newToken) {
+                  console.log("[EMBEDDED ONRAMP] Updated OAuth token detected in collectPaymentMethod result:", newToken.slice(0, 10) + "...");
+                  oauthTokenRef.current = newToken;
+                  if (typeof window !== "undefined") {
+                    sessionStorage.setItem("stripe_onramp_oauth_token", newToken);
+                  }
                 }
               }
-            }
-            if (result.cryptoPaymentToken) {
-              let fundingType: "credit" | "debit" | null = null;
-              let brandStr = "";
-              let last4Str = "";
-              
-              const details = result.paymentDetails || result.payment_details || result;
-              const card = details?.card || details?.payment_method_details?.card;
-              if (card) {
-                const isDebit = card.funding === "debit" || card.funding === "prepaid";
-                fundingType = isDebit ? "debit" : "credit";
-                brandStr = card.brand || "";
-                last4Str = card.last4 || "";
-              } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
-                fundingType = "debit";
-              } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
-                fundingType = "credit";
+              if (result.cryptoPaymentToken) {
+                let fundingType: "credit" | "debit" | null = null;
+                let brandStr = "";
+                let last4Str = "";
+                
+                const details = result.paymentDetails || result.payment_details || result;
+                const card = details?.card || details?.payment_method_details?.card;
+                if (card) {
+                  const isDebit = card.funding === "debit" || card.funding === "prepaid";
+                  fundingType = isDebit ? "debit" : "credit";
+                  brandStr = card.brand || "";
+                  last4Str = card.last4 || "";
+                } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
+                  fundingType = "debit";
+                } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
+                  fundingType = "credit";
+                }
+                paymentRejectRef.current = null;
+                resolve({ token: result.cryptoPaymentToken, funding: fundingType, brand: brandStr, last4: last4Str });
+              } else {
+                paymentRejectRef.current = null;
+                reject(new Error("Payment method collection failed"));
               }
-              paymentRejectRef.current = null;
-              resolve({ token: result.cryptoPaymentToken, funding: fundingType, brand: brandStr, last4: last4Str });
-            } else {
-              paymentRejectRef.current = null;
-              reject(new Error("Payment method collection failed"));
             }
-          }
-        ).then((element: HTMLElement) => {
-          if (mountedRef.current) {
-            setPaymentElement(element);
-          }
-        }).catch((err) => {
-          paymentRejectRef.current = null;
-          reject(err);
+          ).then((element: HTMLElement) => {
+            if (mountedRef.current) {
+              setPaymentElement(element);
+            }
+          }).catch((err) => {
+            paymentRejectRef.current = null;
+            reject(err);
+          });
         });
-      });
 
-      const { token: pmToken, funding: collectedFunding, brand: collectedBrand, last4: collectedLast4 } = await paymentPromise;
-      paymentRejectRef.current = null;
-      if (!mountedRef.current) return;
+        let pmToken: string;
+        let collectedFunding: "credit" | "debit" | null = null;
+        let collectedBrand: string | null = null;
+        let collectedLast4: string | null = null;
 
-      paymentTokenRef.current = pmToken;
-      setPaymentElement(null);
+        try {
+          const result = await paymentPromise;
+          pmToken = result.token;
+          collectedFunding = result.funding;
+          collectedBrand = result.brand;
+          collectedLast4 = result.last4;
+        } catch (paymentErr: any) {
+          const isCardDecline = checkIfCardDecline(paymentErr);
+          if (isCardDecline) {
+            console.warn("[EMBEDDED ONRAMP] Card decline/collection error caught in paymentPromise, returning to payment selection...");
+            setError(paymentErr?.message || "Payment method collection failed.");
+            paymentTokenRef.current = null;
+            sessionIdRef.current = null;
+            setSessionId(null);
+            if (typeof window !== "undefined") {
+              sessionStorage.removeItem("stripe_onramp_session_id");
+            }
+            if (onrampRef.current) {
+              try { onrampRef.current.destroy(); } catch {}
+              onrampRef.current = null;
+            }
+            setDetectedCardFunding(null);
+            setDetectedCardBrand(null);
+            setDetectedCardLast4(null);
+            onCardDetected?.(null);
+            isRunningRef.current = false;
+            setTimeout(() => {
+              startOnrampRef.current?.(activeEmailRef.current || undefined);
+            }, 0);
+            return;
+          } else {
+            throw paymentErr;
+          }
+        }
 
-      if (collectedFunding) {
-        setDetectedCardFunding(collectedFunding);
-        if (collectedBrand) setDetectedCardBrand(collectedBrand);
-        if (collectedLast4) setDetectedCardLast4(collectedLast4);
-        onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
+        paymentRejectRef.current = null;
+        if (!mountedRef.current) return;
+
+        paymentTokenRef.current = pmToken;
+        setPaymentElement(null);
+
+        if (collectedFunding) {
+          setDetectedCardFunding(collectedFunding);
+          if (collectedBrand) setDetectedCardBrand(collectedBrand);
+          if (collectedLast4) setDetectedCardLast4(collectedLast4);
+          onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
+        }
+
+        // Save state in refs for KYC/error recovery
+        activeEmailRef.current = activeEmail;
+        customerIdRef.current = customerId;
+        paymentTokenRef.current = pmToken;
+        buyerWalletRef.current = buyerWallet;
+
+        // ─── Step 9-10: Run the headless checkout process ───
+        try {
+          await runCheckoutLoop(activeEmail, customerId, pmToken, buyerWallet, collectedFunding);
+          checkoutSucceeded = true;
+        } catch (checkoutErr: any) {
+          const isCardDecline = checkIfCardDecline(checkoutErr);
+
+          if (isCardDecline) {
+            console.warn("[EMBEDDED ONRAMP] Card decline caught in startOnramp, returning to payment selection...");
+            setError(checkoutErr?.message || "Your card was declined. Please try another card.");
+            paymentTokenRef.current = null;
+            sessionIdRef.current = null;
+            setSessionId(null);
+            if (typeof window !== "undefined") {
+              sessionStorage.removeItem("stripe_onramp_session_id");
+            }
+            if (onrampRef.current) {
+              try { onrampRef.current.destroy(); } catch {}
+              onrampRef.current = null;
+            }
+            setDetectedCardFunding(null);
+            setDetectedCardBrand(null);
+            setDetectedCardLast4(null);
+            onCardDetected?.(null);
+            isRunningRef.current = false;
+            setTimeout(() => {
+              startOnrampRef.current?.(activeEmailRef.current || undefined);
+            }, 0);
+            return;
+          } else {
+            throw checkoutErr;
+          }
+        }
       }
-
-      // Save state in refs for KYC/error recovery
-      activeEmailRef.current = activeEmail;
-      customerIdRef.current = customerId;
-      paymentTokenRef.current = pmToken;
-      buyerWalletRef.current = buyerWallet;
-
-      // ─── Step 9-10: Run the headless checkout process ───
-      await runCheckoutLoop(activeEmail, customerId, pmToken, buyerWallet, collectedFunding);
 
     } catch (err: any) {
       const errMessage = String(err?.message || "").toLowerCase();

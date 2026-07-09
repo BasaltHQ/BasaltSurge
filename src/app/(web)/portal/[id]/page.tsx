@@ -3742,6 +3742,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       });
     },
     onError: (error) => {
+      const errMsg = String(error?.message || "").toLowerCase();
+      const isCancellation = errMsg.includes("cancelled") || errMsg.includes("declined") || errMsg.includes("abandoned");
+
+      if (isCancellation) {
+        console.log("[STRIPE HEADLESS] Flow cancelled or abandoned by user, returning to email prompt.");
+        resetHeadlessOnramp();
+        setHeadlessEmailPrompt(true);
+        setHeadlessInitiated(false);
+        return;
+      }
+
       console.error("[STRIPE HEADLESS] Error:", error);
       postStatus("failed", { error: error.message });
       setDisplayError(error.message || "An error occurred during payment.");
@@ -4590,13 +4601,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Phone Number</label>
                           <input
                             type="tel"
+                            autoComplete="tel"
                             placeholder="+15555555555"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                 : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
                             value={headlessPhoneInput}
-                            onChange={(e) => setHeadlessPhoneInput(formatPhoneAsYouType(e.target.value))}
+                            onChange={(e) => setHeadlessPhoneInput(e.target.value)}
                           />
                         </div>
                       </div>
@@ -5198,14 +5210,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 <p className={`text-xs mb-4 ${isLightText ? 'text-white/60' : 'text-black/60'}`}>Enter your phone number to register your Link account securely.</p>
                 <input
                   type="tel"
-                  autoComplete="off"
+                  autoComplete="tel"
                   placeholder="Phone number (+1 555-555-5555)"
                   className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${isLightText
                       ? 'bg-white/5 border border-white/10 text-white placeholder-white/75 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
                       : 'bg-black/5 border border-black/10 text-black placeholder-black/75 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
                     }`}
                   value={headlessPhoneInput}
-                  onChange={(e) => setHeadlessPhoneInput(formatPhoneAsYouType(e.target.value))}
+                  onChange={(e) => setHeadlessPhoneInput(e.target.value)}
                   autoFocus
                 />
                 <button
@@ -5227,6 +5239,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               </div>
             ) : headlessAuthElement || headlessPaymentElement ? (
               <div className="w-full h-full flex flex-col items-stretch stripe-embedded-container animate-in fade-in duration-300 relative">
+                {headlessError && (
+                  <div className="mx-4 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs font-semibold flex items-center gap-2 mb-2 animate-in slide-in-from-top duration-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                    <span>{headlessError}</span>
+                  </div>
+                )}
                 <div
                   className="w-full h-full flex flex-col items-stretch"
                   ref={(el) => {
@@ -5243,10 +5261,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <div
                     className="absolute bottom-[14px] left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
                     style={{
-                      backgroundColor: isLightBackground ? "#ffffff" : (theme.pageBg || "#121214"),
+                      backgroundColor: isLightBackground ? "#ffffff" : "#0c111b",
+                      border: isLightBackground ? "1px solid #e6ebf1" : "1px solid rgba(255, 255, 255, 0.08)",
+                      borderRadius: "8px",
                       color: isLightBackground ? "#697386" : "#a3acba",
                       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
                       height: "78px",
+                      padding: "8px 16px",
                     }}
                   >
                     <span>
@@ -7032,7 +7053,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   </div>
                                   {shippingComplete && (
                                     <div className="px-2 pb-2">
-                                      {(headlessEmailPrompt || headlessActive) ? stripeHeadlessUI : (
+                                      {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
                                         <CheckoutWidget
                                           key={`ship-${token}-${currency}`}
                                           className="w-full"
@@ -7088,7 +7109,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             {/* Non-shipping: render CheckoutWidget directly */}
                             {!shippingRequired && (
                               <>
-                                {(headlessEmailPrompt || headlessActive) ? stripeHeadlessUI : (
+                                {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
                                   <CheckoutWidget
                                     key={`noshp-${token}-${currency}`}
                                     className="w-full"
