@@ -1288,7 +1288,12 @@ export function useStripeEmbeddedOnramp({
           paymentMethod: successData.paymentMethod,
         };
       } catch (err: any) {
-        handleError(err?.message || "Session creation failed");
+        const isCardDecline = checkIfCardDecline(err);
+        if (isCardDecline) {
+          console.warn("[EMBEDDED ONRAMP] Card decline detected during session creation, propagating error.");
+          throw err;
+        }
+        handleError(err?.message || "Session creation failed", err);
         return null;
       }
     };
