@@ -1564,15 +1564,15 @@ export function useStripeEmbeddedOnramp({
                                 errMessage.includes("insufficient") || 
                                 errMessage.includes("limit") ||
                                 errMessage.includes("not support") ||
+                                errMessage.includes("payment failed") ||
                                 errCode.includes("card") || 
                                 errCode.includes("decline") ||
                                 errCode.includes("payment_intent_payment_attempt_failed") ||
                                 lastError === "payment_intent_payment_attempt_failed";
 
           if (isCardDecline) {
-            console.warn("[EMBEDDED ONRAMP] Card decline detected, aborting retry loop immediately.");
-            handleError(checkoutErr?.message || "Your card was declined. Please try another card.", checkoutErr);
-            return;
+            console.warn("[EMBEDDED ONRAMP] Card decline detected, aborting retry loop and throwing error.");
+            throw checkoutErr;
           }
 
           const isL0Error = errCode === "crypto_onramp_missing_minimum_identity_verification" ||
@@ -2190,91 +2190,120 @@ export function useStripeEmbeddedOnramp({
       if (!mountedRef.current) return;
 
       // ─── Step 8: Collect payment method ───
-      updateStep("collecting_payment");
+      let checkoutSucceeded = false;
+      while (!checkoutSucceeded) {
+        if (!mountedRef.current) return;
+        updateStep("collecting_payment");
 
-      const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | null; brand: string; last4: string }>((resolve, reject) => {
-        paymentRejectRef.current = reject;
+        const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | null; brand: string; last4: string }>((resolve, reject) => {
+          paymentRejectRef.current = reject;
 
-        onramp.collectPaymentMethod(
-          {
-            payment_method_types: ["card"],
-            wallets: { applePay: "auto", googlePay: "auto" },
-          },
-          (result: any) => {
-            console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
-            if (result) {
-              const newToken = result.oauthToken || 
-                               result.accessToken || 
-                               result.oauth_token || 
-                               result.access_token ||
-                               result.paymentDetails?.oauthToken ||
-                               result.paymentDetails?.accessToken ||
-                               result.paymentMethod?.oauthToken ||
-                               result.payment_details?.oauthToken;
-              if (newToken) {
-                console.log("[EMBEDDED ONRAMP] Updated OAuth token detected in collectPaymentMethod result:", newToken.slice(0, 10) + "...");
-                oauthTokenRef.current = newToken;
-                if (typeof window !== "undefined") {
-                  sessionStorage.setItem("stripe_onramp_oauth_token", newToken);
+          onramp.collectPaymentMethod(
+            {
+              payment_method_types: ["card"],
+              wallets: { applePay: "auto", googlePay: "auto" },
+            },
+            (result: any) => {
+              console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
+              if (result) {
+                const newToken = result.oauthToken || 
+                                 result.accessToken || 
+                                 result.oauth_token || 
+                                 result.access_token ||
+                                 result.paymentDetails?.oauthToken ||
+                                 result.paymentDetails?.accessToken ||
+                                 result.paymentMethod?.oauthToken ||
+                                 result.payment_details?.oauthToken;
+                if (newToken) {
+                  console.log("[EMBEDDED ONRAMP] Updated OAuth token detected in collectPaymentMethod result:", newToken.slice(0, 10) + "...");
+                  oauthTokenRef.current = newToken;
+                  if (typeof window !== "undefined") {
+                    sessionStorage.setItem("stripe_onramp_oauth_token", newToken);
+                  }
                 }
               }
-            }
-            if (result.cryptoPaymentToken) {
-              let fundingType: "credit" | "debit" | null = null;
-              let brandStr = "";
-              let last4Str = "";
-              
-              const details = result.paymentDetails || result.payment_details || result;
-              const card = details?.card || details?.payment_method_details?.card;
-              if (card) {
-                const isDebit = card.funding === "debit" || card.funding === "prepaid";
-                fundingType = isDebit ? "debit" : "credit";
-                brandStr = card.brand || "";
-                last4Str = card.last4 || "";
-              } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
-                fundingType = "debit";
-              } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
-                fundingType = "credit";
+              if (result.cryptoPaymentToken) {
+                let fundingType: "credit" | "debit" | null = null;
+                let brandStr = "";
+                let last4Str = "";
+                
+                const details = result.paymentDetails || result.payment_details || result;
+                const card = details?.card || details?.payment_method_details?.card;
+                if (card) {
+                  const isDebit = card.funding === "debit" || card.funding === "prepaid";
+                  fundingType = isDebit ? "debit" : "credit";
+                  brandStr = card.brand || "";
+                  last4Str = card.last4 || "";
+                } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
+                  fundingType = "debit";
+                } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
+                  fundingType = "credit";
+                }
+                paymentRejectRef.current = null;
+                resolve({ token: result.cryptoPaymentToken, funding: fundingType, brand: brandStr, last4: last4Str });
+              } else {
+                paymentRejectRef.current = null;
+                reject(new Error("Payment method collection failed"));
               }
-              paymentRejectRef.current = null;
-              resolve({ token: result.cryptoPaymentToken, funding: fundingType, brand: brandStr, last4: last4Str });
-            } else {
-              paymentRejectRef.current = null;
-              reject(new Error("Payment method collection failed"));
             }
-          }
-        ).then((element: HTMLElement) => {
-          if (mountedRef.current) {
-            setPaymentElement(element);
-          }
-        }).catch((err) => {
-          paymentRejectRef.current = null;
-          reject(err);
+          ).then((element: HTMLElement) => {
+            if (mountedRef.current) {
+              setPaymentElement(element);
+            }
+          }).catch((err) => {
+            paymentRejectRef.current = null;
+            reject(err);
+          });
         });
-      });
 
-      const { token: pmToken, funding: collectedFunding, brand: collectedBrand, last4: collectedLast4 } = await paymentPromise;
-      paymentRejectRef.current = null;
-      if (!mountedRef.current) return;
+        const { token: pmToken, funding: collectedFunding, brand: collectedBrand, last4: collectedLast4 } = await paymentPromise;
+        paymentRejectRef.current = null;
+        if (!mountedRef.current) return;
 
-      paymentTokenRef.current = pmToken;
-      setPaymentElement(null);
+        paymentTokenRef.current = pmToken;
+        setPaymentElement(null);
 
-      if (collectedFunding) {
-        setDetectedCardFunding(collectedFunding);
-        if (collectedBrand) setDetectedCardBrand(collectedBrand);
-        if (collectedLast4) setDetectedCardLast4(collectedLast4);
-        onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
+        if (collectedFunding) {
+          setDetectedCardFunding(collectedFunding);
+          if (collectedBrand) setDetectedCardBrand(collectedBrand);
+          if (collectedLast4) setDetectedCardLast4(collectedLast4);
+          onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
+        }
+
+        // Save state in refs for KYC/error recovery
+        activeEmailRef.current = activeEmail;
+        customerIdRef.current = customerId;
+        paymentTokenRef.current = pmToken;
+        buyerWalletRef.current = buyerWallet;
+
+        // ─── Step 9-10: Run the headless checkout process ───
+        try {
+          await runCheckoutLoop(activeEmail, customerId, pmToken, buyerWallet, collectedFunding);
+          checkoutSucceeded = true;
+        } catch (checkoutErr: any) {
+          const errMessage = String(checkoutErr?.message || "").toLowerCase();
+          const errCode = String(checkoutErr?.code || "").toLowerCase();
+          
+          const isCardDecline = errMessage.includes("card") || 
+                                errMessage.includes("decline") || 
+                                errMessage.includes("insufficient") || 
+                                errMessage.includes("limit") ||
+                                errMessage.includes("not support") ||
+                                errMessage.includes("payment failed") ||
+                                errCode.includes("card") || 
+                                errCode.includes("decline") ||
+                                errCode.includes("payment_intent_payment_attempt_failed");
+
+          if (isCardDecline) {
+            console.warn("[EMBEDDED ONRAMP] Card decline caught in startOnramp, returning to payment selection...");
+            setError(checkoutErr?.message || "Your card was declined. Please try another card.");
+            paymentTokenRef.current = null;
+            // Loop back to collectPaymentMethod!
+          } else {
+            throw checkoutErr;
+          }
+        }
       }
-
-      // Save state in refs for KYC/error recovery
-      activeEmailRef.current = activeEmail;
-      customerIdRef.current = customerId;
-      paymentTokenRef.current = pmToken;
-      buyerWalletRef.current = buyerWallet;
-
-      // ─── Step 9-10: Run the headless checkout process ───
-      await runCheckoutLoop(activeEmail, customerId, pmToken, buyerWallet, collectedFunding);
 
     } catch (err: any) {
       const errMessage = String(err?.message || "").toLowerCase();
