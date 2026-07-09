@@ -382,20 +382,73 @@ export function useStripeEmbeddedOnramp({
     onStepChange?.(newStep);
   }, [onStepChange]);
 
+  // Synchronize email and clear session storage if the email changes dynamically or on reload
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const currentEmail = (email || "").trim().toLowerCase();
+      if (!currentEmail) return;
+
+      const storedEmail = sessionStorage.getItem("stripe_onramp_email");
+      if (storedEmail && storedEmail !== currentEmail) {
+        console.warn("[EMBEDDED ONRAMP] Email changed from", storedEmail, "to", currentEmail, ". Clearing stale session storage.");
+        sessionStorage.removeItem("stripe_onramp_customer_id");
+        sessionStorage.removeItem("stripe_onramp_oauth_token");
+        sessionStorage.removeItem("stripe_onramp_buyer_wallet");
+        sessionStorage.removeItem("stripe_onramp_session_id");
+        sessionStorage.removeItem("stripe_onramp_email");
+        
+        customerIdRef.current = null;
+        oauthTokenRef.current = null;
+        buyerWalletRef.current = null;
+        sessionIdRef.current = null;
+
+        setCryptoCustomerId(null);
+        setBuyerWalletAddress(null);
+        setSessionId(null);
+      }
+      sessionStorage.setItem("stripe_onramp_email", currentEmail);
+    }
+  }, [email]);
+
   useEffect(() => {
     mountedRef.current = true;
 
     // Restore refs from sessionStorage to survive page reloads/hot reloads
     if (typeof window !== "undefined") {
-      const storedCustId = sessionStorage.getItem("stripe_onramp_customer_id");
-      const storedToken = sessionStorage.getItem("stripe_onramp_oauth_token");
-      const storedWallet = sessionStorage.getItem("stripe_onramp_buyer_wallet");
-      const storedSessionId = sessionStorage.getItem("stripe_onramp_session_id");
+      const storedEmail = sessionStorage.getItem("stripe_onramp_email");
+      const currentEmail = (email || "").trim().toLowerCase();
 
-      if (storedCustId) customerIdRef.current = storedCustId;
-      if (storedToken) oauthTokenRef.current = storedToken;
-      if (storedWallet) buyerWalletRef.current = storedWallet;
-      if (storedSessionId) sessionIdRef.current = storedSessionId;
+      if (storedEmail && currentEmail && storedEmail !== currentEmail) {
+        console.warn("[EMBEDDED ONRAMP] Email mismatch on reload. Resetting refs.");
+        sessionStorage.removeItem("stripe_onramp_customer_id");
+        sessionStorage.removeItem("stripe_onramp_oauth_token");
+        sessionStorage.removeItem("stripe_onramp_buyer_wallet");
+        sessionStorage.removeItem("stripe_onramp_session_id");
+        sessionStorage.removeItem("stripe_onramp_email");
+
+        customerIdRef.current = null;
+        oauthTokenRef.current = null;
+        buyerWalletRef.current = null;
+        sessionIdRef.current = null;
+
+        setCryptoCustomerId(null);
+        setBuyerWalletAddress(null);
+        setSessionId(null);
+      } else {
+        const storedCustId = sessionStorage.getItem("stripe_onramp_customer_id");
+        const storedToken = sessionStorage.getItem("stripe_onramp_oauth_token");
+        const storedWallet = sessionStorage.getItem("stripe_onramp_buyer_wallet");
+        const storedSessionId = sessionStorage.getItem("stripe_onramp_session_id");
+
+        if (storedCustId) customerIdRef.current = storedCustId;
+        if (storedToken) oauthTokenRef.current = storedToken;
+        if (storedWallet) buyerWalletRef.current = storedWallet;
+        if (storedSessionId) sessionIdRef.current = storedSessionId;
+      }
+
+      if (currentEmail) {
+        sessionStorage.setItem("stripe_onramp_email", currentEmail);
+      }
     }
 
     // Window message monitor to log security/OTP/3DS triggers inside the Stripe/Link iframes
