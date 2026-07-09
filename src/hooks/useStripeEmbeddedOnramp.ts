@@ -1269,6 +1269,14 @@ export function useStripeEmbeddedOnramp({
                   console.log("[EMBEDDED ONRAMP] Document verification approved! Retrying session creation...");
                   return await execute(amt);
                 }
+              } else {
+                const errData = await customerCheckRes.json().catch(() => ({}));
+                console.error("[EMBEDDED ONRAMP] Pre-verification customer status check failed during session creation:", errData);
+                console.log("[EMBEDDED ONRAMP] Defaulting to L1 verification checklist due to fetch failure.");
+                setKycTierRequired("l1");
+                updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return null;
               }
             } catch (checkErr) {
               console.warn("[EMBEDDED ONRAMP] Failed to pre-check customer status:", checkErr);
@@ -1719,9 +1727,22 @@ export function useStripeEmbeddedOnramp({
                       isRunningRef.current = false;
                       return;
                     }
+                  } else {
+                    const errData = await checkRes.json().catch(() => ({}));
+                    console.error("[EMBEDDED ONRAMP] Pre-verification customer status check failed inside checkout loop:", errData);
+                    console.log("[EMBEDDED ONRAMP] Defaulting to L1 verification checklist due to fetch failure.");
+                    setKycTierRequired("l1");
+                    updateStep("collecting_kyc");
+                    isRunningRef.current = false;
+                    return;
                   }
                 } catch (checkErr) {
                   console.warn("[EMBEDDED ONRAMP] Failed to pre-check status inside checkout loop:", checkErr);
+                  console.log("[EMBEDDED ONRAMP] Defaulting to L1 verification checklist due to pre-check exception.");
+                  setKycTierRequired("l1");
+                  updateStep("collecting_kyc");
+                  isRunningRef.current = false;
+                  return;
                 }
 
                 console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Launching verifyDocuments...");

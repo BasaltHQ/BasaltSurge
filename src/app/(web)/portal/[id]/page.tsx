@@ -2698,7 +2698,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         const el = contentRef.current || containerRef.current;
         let h = el ? el.scrollHeight : document.documentElement.scrollHeight;
         const shippingExtra = shippingRequired ? 200 : 0;
-        const minH = isTwoColumnLayout ? (isEmbedded ? 580 + shippingExtra : 720 + shippingExtra) : (isEmbedded ? 920 + shippingExtra : 560 + shippingExtra);
+        const minH = isEmbedded ? 580 + shippingExtra : (isTwoColumnLayout ? 720 + shippingExtra : 560 + shippingExtra);
         h = Math.max(minH, h);
         const last = lastPreferredHeightRef.current || 0;
         if (Math.abs(h - last) > 8) {
