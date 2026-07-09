@@ -312,37 +312,33 @@ export function formatToE164(phone: string, defaultCountryCode = "1"): string {
 function checkIfCardDecline(err: any, lastError?: string): boolean {
   if (!err && !lastError) return false;
   
-  const nestedErr = err?.error || {};
-  const msg = String(err?.message || nestedErr?.message || "").toLowerCase();
-  const code = String(err?.code || nestedErr?.code || "").toLowerCase();
-  const declineCode = String(err?.decline_code || nestedErr?.decline_code || "").toLowerCase();
-  const type = String(err?.type || nestedErr?.type || "").toLowerCase();
+  // Extract all possible error strings from any shape of error object/primitive
+  const errStr = typeof err === "string" ? err : "";
+  const nestedErrObj = (err && typeof err === "object" && typeof err.error === "object") ? err.error : {};
+  const errorPropStr = (err && typeof err === "object" && typeof err.error === "string") ? err.error : "";
+  
+  const msg = String(err?.message || nestedErrObj?.message || errorPropStr || errStr || "").toLowerCase();
+  const code = String(err?.code || nestedErrObj?.code || err?.error_code || "").toLowerCase();
+  const declineCode = String(err?.decline_code || nestedErrObj?.decline_code || "").toLowerCase();
+  const type = String(err?.type || nestedErrObj?.type || "").toLowerCase();
   const lastErr = String(lastError || "").toLowerCase();
 
-  return (
-    msg.includes("card") ||
-    msg.includes("decline") ||
-    msg.includes("insufficient") ||
-    msg.includes("limit") ||
-    msg.includes("not support") ||
-    msg.includes("payment failed") ||
-    code.includes("card") ||
-    code.includes("decline") ||
-    code.includes("not support") ||
-    code.includes("payment_intent_payment_attempt_failed") ||
-    declineCode.includes("card") ||
-    declineCode.includes("decline") ||
-    declineCode.includes("insufficient") ||
-    declineCode.includes("limit") ||
-    declineCode.includes("not support") ||
-    type.includes("card") ||
-    type.includes("decline") ||
-    type.includes("not support") ||
-    lastErr === "payment_intent_payment_attempt_failed" ||
-    lastErr.includes("card") ||
-    lastErr.includes("decline") ||
-    lastErr.includes("not support")
+  const matches = [msg, code, declineCode, type, lastErr];
+
+  // 1. If it's a KYC error, it's not a card decline (it will be caught by KYC flows)
+  const isKycError = matches.some(val =>
+    val.includes("identity") ||
+    val.includes("verification") ||
+    val.includes("kyc")
   );
+
+  if (isKycError) {
+    return false;
+  }
+
+  // 2. Otherwise, treat ANY checkout-phase failure (CVC mismatch, zip error, decline, etc.)
+  // as a payment failure to allow the user to select another card.
+  return true;
 }
 
 export function useStripeEmbeddedOnramp({
