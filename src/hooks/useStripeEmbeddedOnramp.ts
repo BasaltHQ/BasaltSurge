@@ -309,6 +309,42 @@ export function formatToE164(phone: string, defaultCountryCode = "1"): string {
   return `+${cleaned}`;
 }
 
+function checkIfCardDecline(err: any, lastError?: string): boolean {
+  if (!err && !lastError) return false;
+  
+  const nestedErr = err?.error || {};
+  const msg = String(err?.message || nestedErr?.message || "").toLowerCase();
+  const code = String(err?.code || nestedErr?.code || "").toLowerCase();
+  const declineCode = String(err?.decline_code || nestedErr?.decline_code || "").toLowerCase();
+  const type = String(err?.type || nestedErr?.type || "").toLowerCase();
+  const lastErr = String(lastError || "").toLowerCase();
+
+  return (
+    msg.includes("card") ||
+    msg.includes("decline") ||
+    msg.includes("insufficient") ||
+    msg.includes("limit") ||
+    msg.includes("not support") ||
+    msg.includes("payment failed") ||
+    code.includes("card") ||
+    code.includes("decline") ||
+    code.includes("not support") ||
+    code.includes("payment_intent_payment_attempt_failed") ||
+    declineCode.includes("card") ||
+    declineCode.includes("decline") ||
+    declineCode.includes("insufficient") ||
+    declineCode.includes("limit") ||
+    declineCode.includes("not support") ||
+    type.includes("card") ||
+    type.includes("decline") ||
+    type.includes("not support") ||
+    lastErr === "payment_intent_payment_attempt_failed" ||
+    lastErr.includes("card") ||
+    lastErr.includes("decline") ||
+    lastErr.includes("not support")
+  );
+}
+
 export function useStripeEmbeddedOnramp({
   email,
   phone,
@@ -1556,19 +1592,11 @@ export function useStripeEmbeddedOnramp({
 
           console.log(`[EMBEDDED ONRAMP] Inspecting lastError from session status:`, lastError);
 
-          const errMessage = String(checkoutErr?.message || "").toLowerCase();
-          const errCode = String(checkoutErr?.code || "").toLowerCase();
+          const nestedErr = checkoutErr?.error || {};
+          const errMessage = String(checkoutErr?.message || nestedErr?.message || "").toLowerCase();
+          const errCode = String(checkoutErr?.code || nestedErr?.code || "").toLowerCase();
 
-          const isCardDecline = errMessage.includes("card") || 
-                                errMessage.includes("decline") || 
-                                errMessage.includes("insufficient") || 
-                                errMessage.includes("limit") ||
-                                errMessage.includes("not support") ||
-                                errMessage.includes("payment failed") ||
-                                errCode.includes("card") || 
-                                errCode.includes("decline") ||
-                                errCode.includes("payment_intent_payment_attempt_failed") ||
-                                lastError === "payment_intent_payment_attempt_failed";
+          const isCardDecline = checkIfCardDecline(checkoutErr, lastError);
 
           if (isCardDecline) {
             console.warn("[EMBEDDED ONRAMP] Card decline detected, aborting retry loop and throwing error.");
@@ -1819,7 +1847,17 @@ export function useStripeEmbeddedOnramp({
             buyerWalletRef.current,
             detectedCardFunding
           ).catch((err) => {
-            handleError(err?.message || "Checkout failed after KYC submission");
+            const isCardDecline = checkIfCardDecline(err);
+
+            if (isCardDecline) {
+              console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval, returning to payment selection...");
+              setError(err?.message || "Your card was declined. Please try another card.");
+              paymentTokenRef.current = null;
+              isRunningRef.current = false;
+              startOnrampRef.current?.(activeEmailRef.current || undefined);
+            } else {
+              handleError(err?.message || "Checkout failed after KYC submission", err);
+            }
           });
         } else {
           isRunningRef.current = false;
@@ -2281,18 +2319,7 @@ export function useStripeEmbeddedOnramp({
           await runCheckoutLoop(activeEmail, customerId, pmToken, buyerWallet, collectedFunding);
           checkoutSucceeded = true;
         } catch (checkoutErr: any) {
-          const errMessage = String(checkoutErr?.message || "").toLowerCase();
-          const errCode = String(checkoutErr?.code || "").toLowerCase();
-          
-          const isCardDecline = errMessage.includes("card") || 
-                                errMessage.includes("decline") || 
-                                errMessage.includes("insufficient") || 
-                                errMessage.includes("limit") ||
-                                errMessage.includes("not support") ||
-                                errMessage.includes("payment failed") ||
-                                errCode.includes("card") || 
-                                errCode.includes("decline") ||
-                                errCode.includes("payment_intent_payment_attempt_failed");
+          const isCardDecline = checkIfCardDecline(checkoutErr);
 
           if (isCardDecline) {
             console.warn("[EMBEDDED ONRAMP] Card decline caught in startOnramp, returning to payment selection...");
