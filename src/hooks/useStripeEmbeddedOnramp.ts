@@ -580,12 +580,25 @@ export function useStripeEmbeddedOnramp({
     window.addEventListener("message", handleWindowMessage);
 
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const err = event.reason;
+      const errMessage = String(err?.message || err || "").toLowerCase();
+
+      // Check for Stripe Link unsupported account error
+      const isUnsupportedLink = errMessage.includes("can't support your link account") || 
+                                 errMessage.includes("support.link.com") || 
+                                 errMessage.includes("unsupportable_customer");
+      
+      if (isUnsupportedLink) {
+        event.preventDefault(); // Stop default browser console logging
+        console.warn("[EMBEDDED ONRAMP] Intercepted unsupported Link account error. Resetting...");
+        handleError("We can't support your Link account at this time. Questions? Contact support.link.com.", err);
+        return;
+      }
+
       // Only intercept global KYC errors during active payment collection step
       if (stepRef.current !== "collecting_payment") {
         return;
       }
-      const err = event.reason;
-      const errMessage = String(err?.message || err || "").toLowerCase();
       if (errMessage.includes("identity verification") || errMessage.includes("verification_required") || errMessage.includes("kyc")) {
         event.preventDefault(); // Stop default browser console logging
         
