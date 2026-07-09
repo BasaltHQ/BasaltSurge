@@ -106,6 +106,7 @@ export async function POST(req: NextRequest) {
     const customerEmail = typeof body.customerEmail === "string" ? String(body.customerEmail).trim().toLowerCase() : undefined;
     const detectedCardFunding = typeof body.detectedCardFunding === "string" ? String(body.detectedCardFunding).trim().toLowerCase() : undefined;
     const isCreditCard = typeof body.isCreditCard === "boolean" ? body.isCreditCard : undefined;
+    const parentUrl = typeof body.parentUrl === "string" ? String(body.parentUrl).trim() : undefined;
     let brandKey: string | undefined = undefined;
     try { brandKey = getBrandKey(); } catch { brandKey = undefined; }
 
@@ -246,6 +247,7 @@ export async function POST(req: NextRequest) {
           ...(customerEmail ? { customerEmail } : {}),
           ...(detectedCardFunding ? { detectedCardFunding } : {}),
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
+          ...(parentUrl ? { parentUrl } : {}),
         }
         : {
           id,
@@ -279,6 +281,7 @@ export async function POST(req: NextRequest) {
           ...(customerEmail ? { customerEmail } : {}),
           ...(detectedCardFunding ? { detectedCardFunding } : {}),
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
+          ...(parentUrl ? { parentUrl } : {}),
         };
 
       if (["paid", "checkout_success", "tx_mined", "reconciled"].includes(status)) {

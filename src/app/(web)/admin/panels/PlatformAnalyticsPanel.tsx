@@ -72,6 +72,10 @@ interface ReceiptInfo {
   logs?: ReceiptLog[];
   kycLevel?: "L0" | "L1" | "L2";
   platformFee?: number;
+  lineItems?: { label: string; priceUsd: number; qty?: number }[];
+  parentUrl?: string | null;
+  splitAddress?: string | null;
+  splitAddressCredit?: string | null;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -97,10 +101,10 @@ export default function PlatformAnalyticsPanel() {
   const [kycFilter, setKycFilter] = useState<string>("all");
 
   // Sorting
-  const [sortKey, setSortKey] = useState<"receiptId" | "brandKey" | "totalUsd" | "status" | "kycLevel" | null>(null);
+  const [sortKey, setSortKey] = useState<"receiptId" | "brandKey" | "totalUsd" | "status" | "kycLevel" | "createdAt" | "stripeSessionId" | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
-  const handleSort = (key: "receiptId" | "brandKey" | "totalUsd" | "status" | "kycLevel") => {
+  const handleSort = (key: "receiptId" | "brandKey" | "totalUsd" | "status" | "kycLevel" | "createdAt" | "stripeSessionId") => {
     if (sortKey === key) {
       setSortDirection(prev => (prev === "asc" ? "desc" : "asc"));
     } else {
@@ -148,11 +152,14 @@ export default function PlatformAnalyticsPanel() {
     }
   }, [wallet, expandedLogs]);
 
+  const [activeTab, setActiveTab] = useState<string>("overview");
+
   const handleExpandReceipt = (receiptId: string) => {
     if (expandedReceiptId === receiptId) {
       setExpandedReceiptId(null);
     } else {
       setExpandedReceiptId(receiptId);
+      setActiveTab("overview");
       fetchReceiptLogs(receiptId);
     }
   };
@@ -796,6 +803,12 @@ export default function PlatformAnalyticsPanel() {
                         Receipt ID {sortKey === "receiptId" && (sortDirection === "asc" ? " ▲" : " ▼")}
                       </th>
                       <th
+                        onClick={() => handleSort("createdAt")}
+                        className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                      >
+                        Date {sortKey === "createdAt" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                      </th>
+                      <th
                         onClick={() => handleSort("brandKey")}
                         className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
                       >
@@ -808,6 +821,12 @@ export default function PlatformAnalyticsPanel() {
                         Amount {sortKey === "totalUsd" && (sortDirection === "asc" ? " ▲" : " ▼")}
                       </th>
                       <th className="py-2.5 px-3">Buyer Email</th>
+                      <th
+                        onClick={() => handleSort("stripeSessionId")}
+                        className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                      >
+                        Session ID {sortKey === "stripeSessionId" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                      </th>
                       <th
                         onClick={() => handleSort("status")}
                         className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
@@ -830,9 +849,32 @@ export default function PlatformAnalyticsPanel() {
                         <React.Fragment key={r.receiptId}>
                           <tr className={`hover:bg-white/5 transition-colors ${isExpanded ? "bg-white/5" : ""}`}>
                             <td className="py-3 px-4 font-mono font-medium text-white">{r.receiptId}</td>
+                            <td className="py-3 px-3 text-muted-foreground whitespace-nowrap">
+                              {r.createdAt ? new Date(r.createdAt).toLocaleString(undefined, {
+                                month: "short",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit"
+                              }) : "N/A"}
+                            </td>
                             <td className="py-3 px-3 font-mono font-medium text-white">{r.brandKey}</td>
                             <td className="py-3 px-3 font-semibold text-white">${r.totalUsd.toFixed(2)}</td>
                             <td className="py-3 px-3 max-w-[140px] truncate" title={r.email}>{r.email}</td>
+                            <td className="py-3 px-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={r.stripeSessionId || "N/A"}>
+                              {r.stripeSessionId ? (
+                                <a
+                                  href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="hover:text-primary hover:underline inline-flex items-center gap-1"
+                                >
+                                  <span>{r.stripeSessionId}</span>
+                                  <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
+                                </a>
+                              ) : (
+                                "N/A"
+                              )}
+                            </td>
                             <td className="py-3 px-3">
                               <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold inline-flex items-center gap-1 ${
                                 r.status === "paid" ? "bg-emerald-500/10 text-emerald-400" :
@@ -864,138 +906,308 @@ export default function PlatformAnalyticsPanel() {
                           </tr>
 
                           {/* Expanded Technical Investigation Detail panel */}
-                          {isExpanded && (
-                            <tr>
-                              <td colSpan={7} className="bg-neutral-900/60 p-4 border-t border-b border-white/5">
-                                <div className="space-y-4">
-                                  
-                                  {/* Diagnostics Meta Grid */}
-                                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-                                    <div className="space-y-1">
-                                      <div className="text-muted-foreground text-[10px] uppercase font-medium">Stripe Session ID</div>
-                                      <div className="flex items-center gap-1">
-                                        <span className="font-mono text-white/90 truncate max-w-[160px]">
-                                          {r.stripeSessionId || "N/A"}
-                                        </span>
-                                        {r.stripeSessionId && (
-                                          <button
-                                            onClick={() => handleCopy(r.stripeSessionId!, `stripe-${r.receiptId}`)}
-                                            className="text-muted-foreground hover:text-white transition-colors"
-                                          >
-                                            <Copy className="w-3 h-3" />
-                                          </button>
-                                        )}
-                                        {copySuccess[`stripe-${r.receiptId}`] && <span className="text-[10px] text-emerald-400">Copied!</span>}
-                                      </div>
-                                    </div>
+                          {isExpanded && (() => {
+                            const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status);
+                            const isCredit = r.cardFunding === "credit";
+                            const actualSplitAddress = isCredit ? (r.splitAddressCredit || r.splitAddress) : (r.splitAddress || r.splitAddressCredit);
 
-                                    <div className="space-y-1">
-                                      <div className="text-muted-foreground text-[10px] uppercase font-medium">On-chain Tx Hash</div>
-                                      <div className="flex items-center gap-1">
-                                        <span className="font-mono text-white/90 truncate max-w-[160px]">
-                                          {r.transactionHash || "N/A"}
-                                        </span>
-                                        {r.transactionHash && (
-                                          <>
-                                            <button
-                                              onClick={() => handleCopy(r.transactionHash!, `tx-${r.receiptId}`)}
-                                              className="text-muted-foreground hover:text-white transition-colors"
-                                            >
-                                              <Copy className="w-3 h-3" />
-                                            </button>
-                                            <a
-                                              href={`https://polygonscan.com/tx/${r.transactionHash}`}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="text-muted-foreground hover:text-white transition-colors"
-                                            >
-                                              <ExternalLink className="w-3 h-3" />
-                                            </a>
-                                          </>
-                                        )}
-                                        {copySuccess[`tx-${r.receiptId}`] && <span className="text-[10px] text-emerald-400">Copied!</span>}
-                                      </div>
-                                    </div>
-
-                                    <div className="space-y-1">
-                                      <div className="text-muted-foreground text-[10px] uppercase font-medium">Created At</div>
-                                      <div className="text-white/90">
-                                        {new Date(r.createdAt).toLocaleString()}
-                                      </div>
-                                    </div>
-
-                                    <div className="space-y-1">
-                                      <div className="text-muted-foreground text-[10px] uppercase font-medium">Card Funding</div>
-                                      <div className="text-white/90 capitalize">
-                                        {r.cardFunding || "unknown / N/A"}
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  {/* Error Reason alert box */}
-                                  {r.status === "failed" && (
-                                    <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/10 rounded-lg text-xs text-red-400">
-                                      <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                                      <div>
-                                        <div className="font-semibold">Decline / Failure Diagnosis</div>
-                                        <div className="mt-0.5 leading-relaxed">{r.failureReason || "Abandoned Checkout Session"}</div>
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {/* Detailed Client Logs matched to the receipt */}
-                                  <div>
-                                    <div className="text-muted-foreground text-[10px] uppercase font-medium mb-2 flex items-center gap-1">
-                                      <Activity className="w-3 h-3" />
-                                      <span>Technical Client Portal Logs</span>
-                                    </div>
+                            return (
+                              <tr>
+                                <td colSpan={9} className="bg-neutral-900/60 p-4 border-t border-b border-white/5">
+                                  <div className="space-y-4">
                                     
-                                    {loadingLogs[r.receiptId] ? (
-                                      <div className="text-xs text-muted-foreground p-4 text-center flex items-center justify-center gap-2">
-                                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
-                                        <span>Fetching logs from database...</span>
-                                      </div>
-                                    ) : (expandedLogs[r.receiptId] && expandedLogs[r.receiptId].length > 0) ? (
-                                      <div className="bg-black/25 border border-white/5 rounded-lg divide-y divide-white/5 max-h-[220px] overflow-y-auto font-mono text-[11px] leading-relaxed">
-                                        {expandedLogs[r.receiptId].map((log, idx) => (
-                                          <div key={idx} className="p-2.5 space-y-1">
-                                            <div className="flex items-center justify-between text-muted-foreground text-[10px]">
-                                              <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
-                                              <span className={`px-1 rounded text-[9px] uppercase font-semibold ${
-                                                log.level === "error" ? "bg-red-500/15 text-red-400" :
-                                                log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
-                                                "bg-blue-500/15 text-blue-400"
-                                              }`}>
-                                                {log.level}
+                                    {/* Tabs Navigation */}
+                                    <div className="flex items-center gap-1 border-b border-white/5 pb-2">
+                                      {[
+                                        { id: "overview", label: "Overview", icon: Sliders },
+                                        { id: "items", label: "Items Ordered", icon: FileText },
+                                        { id: "origin", label: "Initialization & Origin", icon: Chrome },
+                                        { id: "logs", label: "Client Logs", icon: Activity }
+                                      ].map(tab => {
+                                        const Icon = tab.icon;
+                                        const isActive = activeTab === tab.id;
+                                        return (
+                                          <button
+                                            key={tab.id}
+                                            onClick={() => setActiveTab(tab.id)}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                                              isActive
+                                                ? "bg-primary text-white shadow-sm"
+                                                : "text-muted-foreground hover:text-white hover:bg-white/5"
+                                            }`}
+                                          >
+                                            <Icon className="w-3.5 h-3.5" />
+                                            <span>{tab.label}</span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+
+                                    {/* Tab 1: Overview & Meta */}
+                                    {activeTab === "overview" && (
+                                      <div className="space-y-4 animate-in fade-in duration-200">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs mt-1">
+                                          <div className="space-y-1">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Stripe Session ID</div>
+                                            <div className="flex items-center gap-1">
+                                              <span className="font-mono text-white/90 truncate max-w-[160px]">
+                                                {r.stripeSessionId || "N/A"}
                                               </span>
+                                              {r.stripeSessionId && (
+                                                <>
+                                                  <button
+                                                    onClick={() => handleCopy(r.stripeSessionId!, `stripe-${r.receiptId}`)}
+                                                    className="text-muted-foreground hover:text-white transition-colors"
+                                                  >
+                                                    <Copy className="w-3 h-3" />
+                                                  </button>
+                                                  <a
+                                                    href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-muted-foreground hover:text-white transition-colors"
+                                                  >
+                                                    <ExternalLink className="w-3 h-3" />
+                                                  </a>
+                                                </>
+                                              )}
+                                              {copySuccess[`stripe-${r.receiptId}`] && <span className="text-[10px] text-emerald-400">Copied!</span>}
                                             </div>
-                                            <div className="text-white/80 whitespace-pre-wrap">{log.message}</div>
-                                            {log.userAgent && (
-                                              <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                                                <Smartphone className="w-3 h-3" />
-                                                <span>UA: {parseUserAgent(log.userAgent)}</span>
-                                              </div>
-                                            )}
                                           </div>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <div className="text-xs text-muted-foreground p-3 border border-white/5 border-dashed rounded-lg text-center">
-                                        No Client logs matched for this transaction. (Indicates they either completed seamlessly without errors or left early).
+
+                                          <div className="space-y-1">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">On-chain Tx Hash</div>
+                                            <div className="flex items-center gap-1">
+                                              <span className="font-mono text-white/90 truncate max-w-[160px]">
+                                                {r.transactionHash || "N/A"}
+                                              </span>
+                                              {r.transactionHash && (
+                                                <>
+                                                  <button
+                                                    onClick={() => handleCopy(r.transactionHash!, `tx-${r.receiptId}`)}
+                                                    className="text-muted-foreground hover:text-white transition-colors"
+                                                  >
+                                                    <Copy className="w-3 h-3" />
+                                                  </button>
+                                                  <a
+                                                    href={`https://polygonscan.com/tx/${r.transactionHash}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-muted-foreground hover:text-white transition-colors"
+                                                  >
+                                                    <ExternalLink className="w-3 h-3" />
+                                                  </a>
+                                                </>
+                                              )}
+                                              {copySuccess[`tx-${r.receiptId}`] && <span className="text-[10px] text-emerald-400">Copied!</span>}
+                                            </div>
+                                          </div>
+
+                                          <div className="space-y-1">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Created At</div>
+                                            <div className="text-white/90">
+                                              {new Date(r.createdAt).toLocaleString()}
+                                            </div>
+                                          </div>
+
+                                          <div className="space-y-1">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Card Funding</div>
+                                            <div className="text-white/90 capitalize">
+                                              {r.cardFunding || "unknown / N/A"}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Intended / Actual Split Address */}
+                                        <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3">
+                                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
+                                            {isSettled ? "Settled Split Address" : "Intended Split Addresses"}
+                                          </div>
+                                          {isSettled ? (
+                                            <div className="flex items-center gap-2 font-mono text-white text-xs">
+                                              <span className="font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded text-[9px] uppercase">
+                                                {isCredit ? "Credit Split" : "Standard Split"}
+                                              </span>
+                                              <span className="truncate">{actualSplitAddress || "N/A"}</span>
+                                              {actualSplitAddress && (
+                                                <button
+                                                  onClick={() => handleCopy(actualSplitAddress, `split-${r.receiptId}`)}
+                                                  className="text-muted-foreground hover:text-white transition-colors"
+                                                >
+                                                  <Copy className="w-3.5 h-3.5" />
+                                                </button>
+                                              )}
+                                              {copySuccess[`split-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
+                                            </div>
+                                          ) : (
+                                            <div className="space-y-1.5">
+                                              <div className="flex items-center gap-2 font-mono text-white text-xs">
+                                                <span className="text-muted-foreground w-28">Standard Split:</span>
+                                                <span className="truncate">{r.splitAddress || "N/A"}</span>
+                                                {r.splitAddress && (
+                                                  <button
+                                                    onClick={() => handleCopy(r.splitAddress!, `split-std-${r.receiptId}`)}
+                                                    className="text-muted-foreground hover:text-white transition-colors"
+                                                  >
+                                                    <Copy className="w-3.5 h-3.5" />
+                                                  </button>
+                                                )}
+                                                {copySuccess[`split-std-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
+                                              </div>
+                                              {r.splitAddressCredit && r.splitAddressCredit !== r.splitAddress && (
+                                                <div className="flex items-center gap-2 font-mono text-white text-xs">
+                                                  <span className="text-muted-foreground w-28">Credit Split:</span>
+                                                  <span className="truncate">{r.splitAddressCredit}</span>
+                                                  <button
+                                                    onClick={() => handleCopy(r.splitAddressCredit!, `split-cred-${r.receiptId}`)}
+                                                    className="text-muted-foreground hover:text-white transition-colors"
+                                                  >
+                                                    <Copy className="w-3.5 h-3.5" />
+                                                  </button>
+                                                  {copySuccess[`split-cred-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {r.status === "failed" && (
+                                          <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/10 rounded-lg text-xs text-red-400">
+                                            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                            <div>
+                                              <div className="font-semibold">Decline / Failure Diagnosis</div>
+                                              <div className="mt-0.5 leading-relaxed">{r.failureReason || "Abandoned Checkout Session"}</div>
+                                            </div>
+                                          </div>
+                                        )}
                                       </div>
                                     )}
-                                  </div>
 
-                                </div>
-                              </td>
-                            </tr>
-                          )}
+                                    {/* Tab 2: Items Ordered */}
+                                    {activeTab === "items" && (
+                                      <div className="space-y-2 animate-in fade-in duration-200 mt-1">
+                                        <div className="bg-black/20 border border-white/5 rounded-lg overflow-hidden">
+                                          <table className="w-full text-left text-xs">
+                                            <thead className="bg-white/5 text-muted-foreground text-[10px] uppercase font-semibold border-b border-white/5">
+                                              <tr>
+                                                <th className="py-2 px-3">Item Description</th>
+                                                <th className="py-2 px-3 text-right">Price</th>
+                                                <th className="py-2 px-3 text-center">Qty</th>
+                                                <th className="py-2 px-3 text-right">Total</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-white/5 text-white/90">
+                                              {r.lineItems && r.lineItems.length > 0 ? (
+                                                r.lineItems.map((item, idx) => {
+                                                  const qty = item.qty || 1;
+                                                  const price = item.priceUsd || 0;
+                                                  return (
+                                                    <tr key={idx}>
+                                                      <td className="py-2.5 px-3 font-medium">{item.label}</td>
+                                                      <td className="py-2.5 px-3 text-right">${price.toFixed(2)}</td>
+                                                      <td className="py-2.5 px-3 text-center">{qty}</td>
+                                                      <td className="py-2.5 px-3 text-right font-semibold">${(price * qty).toFixed(2)}</td>
+                                                    </tr>
+                                                  );
+                                                })
+                                              ) : (
+                                                <tr>
+                                                  <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                                                    No line items recorded for this receipt.
+                                                  </td>
+                                                </tr>
+                                              )}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Tab 3: Initialization & Origin */}
+                                    {activeTab === "origin" && (
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs animate-in fade-in duration-200 mt-1">
+                                        <div className="space-y-2">
+                                          <div className="text-muted-foreground text-[10px] uppercase font-medium">Site Initialized On</div>
+                                          <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                                            <Chrome className="w-4 h-4 text-primary flex-shrink-0" />
+                                            {r.parentUrl ? (
+                                              <a
+                                                href={r.parentUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="font-mono text-white hover:underline hover:text-primary truncate max-w-[280px]"
+                                              >
+                                                {r.parentUrl}
+                                              </a>
+                                            ) : (
+                                              <span className="text-muted-foreground">Direct Access / Parent URL unavailable</span>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                          <div className="text-muted-foreground text-[10px] uppercase font-medium">Integration Mode</div>
+                                          <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                                            <Activity className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                                            <span className="font-semibold text-white/90">
+                                              {r.parentUrl ? "Embedded Checkout (Iframe)" : "Direct Checkout Link"}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Tab 4: Client Logs */}
+                                    {activeTab === "logs" && (
+                                      <div className="space-y-2 animate-in fade-in duration-200 mt-1">
+                                        {loadingLogs[r.receiptId] ? (
+                                          <div className="text-xs text-muted-foreground p-4 text-center flex items-center justify-center gap-2">
+                                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+                                            <span>Fetching logs from database...</span>
+                                          </div>
+                                        ) : (expandedLogs[r.receiptId] && expandedLogs[r.receiptId].length > 0) ? (
+                                          <div className="bg-black/25 border border-white/5 rounded-lg divide-y divide-white/5 max-h-[220px] overflow-y-auto font-mono text-[11px] leading-relaxed">
+                                            {expandedLogs[r.receiptId].map((log, idx) => (
+                                              <div key={idx} className="p-2.5 space-y-1">
+                                                <div className="flex items-center justify-between text-muted-foreground text-[10px]">
+                                                  <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
+                                                  <span className={`px-1 rounded text-[9px] uppercase font-semibold ${
+                                                    log.level === "error" ? "bg-red-500/15 text-red-400" :
+                                                    log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
+                                                    "bg-blue-500/15 text-blue-400"
+                                                  }`}>
+                                                    {log.level}
+                                                  </span>
+                                                </div>
+                                                <div className="text-white/80 whitespace-pre-wrap">{log.message}</div>
+                                                {log.userAgent && (
+                                                  <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                                                    <Smartphone className="w-3 h-3" />
+                                                    <span>UA: {parseUserAgent(log.userAgent)}</span>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          <div className="text-xs text-muted-foreground p-3 border border-white/5 border-dashed rounded-lg text-center">
+                                            No Client logs matched for this transaction. (Indicates they either completed seamlessly without errors or left early).
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })()}
                         </React.Fragment>
                       );
                     })}
                     {tableReceipts.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="py-8 text-center text-muted-foreground text-xs">
+                        <td colSpan={9} className="py-8 text-center text-muted-foreground text-xs">
                           No transactions found matching the filter credentials.
                         </td>
                       </tr>

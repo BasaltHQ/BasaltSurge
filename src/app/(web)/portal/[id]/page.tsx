@@ -3230,6 +3230,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   async function postStatus(status: string, extra?: any) {
     try {
       if (!receiptId) return;
+      const parentUrl = typeof document !== "undefined" && document.referrer ? document.referrer : undefined;
       await fetch("/api/receipts/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3237,6 +3238,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           receiptId,
           wallet: merchantWallet || recipient,
           status,
+          parentUrl,
           ...(shopSlugParam ? { shopSlug: shopSlugParam } : {}),
           ...extra,
         }),
