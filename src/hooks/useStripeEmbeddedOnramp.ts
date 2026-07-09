@@ -1853,8 +1853,19 @@ export function useStripeEmbeddedOnramp({
               console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval, returning to payment selection...");
               setError(err?.message || "Your card was declined. Please try another card.");
               paymentTokenRef.current = null;
+              sessionIdRef.current = null;
+              setSessionId(null);
+              if (typeof window !== "undefined") {
+                sessionStorage.removeItem("stripe_onramp_session_id");
+              }
+              if (onrampRef.current) {
+                try { onrampRef.current.destroy(); } catch {}
+                onrampRef.current = null;
+              }
               isRunningRef.current = false;
-              startOnrampRef.current?.(activeEmailRef.current || undefined);
+              setTimeout(() => {
+                startOnrampRef.current?.(activeEmailRef.current || undefined);
+              }, 0);
             } else {
               handleError(err?.message || "Checkout failed after KYC submission", err);
             }
@@ -2325,7 +2336,20 @@ export function useStripeEmbeddedOnramp({
             console.warn("[EMBEDDED ONRAMP] Card decline caught in startOnramp, returning to payment selection...");
             setError(checkoutErr?.message || "Your card was declined. Please try another card.");
             paymentTokenRef.current = null;
-            // Loop back to collectPaymentMethod!
+            sessionIdRef.current = null;
+            setSessionId(null);
+            if (typeof window !== "undefined") {
+              sessionStorage.removeItem("stripe_onramp_session_id");
+            }
+            if (onrampRef.current) {
+              try { onrampRef.current.destroy(); } catch {}
+              onrampRef.current = null;
+            }
+            isRunningRef.current = false;
+            setTimeout(() => {
+              startOnrampRef.current?.(activeEmailRef.current || undefined);
+            }, 0);
+            return;
           } else {
             throw checkoutErr;
           }
