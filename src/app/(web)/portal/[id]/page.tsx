@@ -4509,10 +4509,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             ) : headlessStep === "collecting_kyc" ? (
               <div className="w-full flex flex-col items-stretch p-2 animate-in zoom-in duration-300 max-h-[500px] overflow-y-auto pr-1 text-left">
                 <div className="mb-4">
-                  <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>Identity Verification</h3>
+                  <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>
+                    {kycTierRequired === "l0" ? "Billing Information" : "Identity Verification"}
+                  </h3>
                   <p className={`text-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
                     {kycTierRequired === "l0" 
-                      ? "Stripe requires basic identity information to authorize this transaction."
+                      ? "Stripe requires basic billing and contact information to authorize this transaction."
                       : "Stripe requires additional demographics to complete authorization."}
                   </p>
                 </div>
