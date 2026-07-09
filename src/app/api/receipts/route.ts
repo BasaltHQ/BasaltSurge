@@ -270,6 +270,8 @@ export async function POST(req: NextRequest) {
     const splits = computeSplitAmounts(grossMinor, brand, merchantFeeBps ?? 0);
     const effectiveProcessingFeeBps = getEffectiveProcessingFeeBps(brand, merchantFeeBps);
 
+    const parentUrl = req.headers.get("referer") || req.headers.get("origin") || undefined;
+
     // Construct receipt doc
     const docId = `receipt:${id}`;
     const doc = {
@@ -283,6 +285,7 @@ export async function POST(req: NextRequest) {
       createdAt: now,
       brandName,
       status: "pending",
+      ...(parentUrl ? { parentUrl } : {}),
       statusHistory: [{ status: "pending", ts: now }],
       employeeId,
       employeeName,

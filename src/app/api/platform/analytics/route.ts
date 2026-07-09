@@ -38,7 +38,11 @@ export async function GET(req: NextRequest) {
             stripeSessionId: 1,
             statusHistory: 1,
             customerEmail: 1,
-            stripeEmail: 1
+            stripeEmail: 1,
+            lineItems: 1,
+            parentUrl: 1,
+            splitAddress: 1,
+            splitAddressCredit: 1
           }
         }
       ).sort({ createdAt: -1 }).toArray();
@@ -60,7 +64,7 @@ export async function GET(req: NextRequest) {
     } else {
       // Fallback for Cosmos DB
       const querySpec = {
-        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.detectedCardFunding, c.isCreditCard, c.transactionHash, c.stripeSessionId, c.statusHistory, c.customerEmail, c.stripeEmail FROM c WHERE c.type = 'receipt'"
+        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.detectedCardFunding, c.isCreditCard, c.transactionHash, c.stripeSessionId, c.statusHistory, c.customerEmail, c.stripeEmail, c.lineItems, c.parentUrl, c.splitAddress, c.splitAddressCredit FROM c WHERE c.type = 'receipt'"
       };
       const { resources } = await container.items.query(querySpec).fetchAll();
       receipts = resources || [];
@@ -166,6 +170,27 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Pre-fetch merchant configurations for split addresses resolution
+    const uniquePairs = Array.from(new Set(receipts.map(r => `${r.wallet || ""}:${r.brandKey || ""}`)));
+    const configMap: Record<string, { splitAddress?: string; splitAddressCredit?: string }> = {};
+    try {
+      const { getSiteConfigForWallet } = await import("@/lib/site-config");
+      for (const pair of uniquePairs) {
+        const [w, bk] = pair.split(":");
+        if (w) {
+          try {
+            const cfg = await getSiteConfigForWallet(w, bk || undefined);
+            if (cfg) {
+              configMap[pair] = {
+                splitAddress: (cfg as any).splitAddress || (cfg as any).split?.address || undefined,
+                splitAddressCredit: (cfg as any).splitAddressCredit || (cfg as any).splitCredit?.address || undefined
+              };
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+
     const processedReceipts = receipts.map((r: any) => {
       const rId = r.receiptId || r.id;
       const rLogs = logsByReceipt[rId] || [];
@@ -201,6 +226,9 @@ export async function GET(req: NextRequest) {
         failureReasonCounts[reason] = (failureReasonCounts[reason] || 0) + 1;
       }
 
+      const pairKey = `${r.wallet || ""}:${r.brandKey || ""}`;
+      const resolvedConfig = configMap[pairKey] || {};
+
       return {
         receiptId: rId,
         brandKey: bKey,
@@ -214,7 +242,11 @@ export async function GET(req: NextRequest) {
         cardFunding: r.detectedCardFunding || (r.isCreditCard ? "credit" : null),
         failureReason: status === "failed" ? getFailureReason(r, rLogs) : null,
         kycLevel: getKycLevel(r, rLogs),
-        platformFee: Number(r.amountPlatformMinor || 0) / 100
+        platformFee: Number(r.amountPlatformMinor || 0) / 100,
+        lineItems: r.lineItems || [],
+        parentUrl: r.parentUrl || null,
+        splitAddress: r.splitAddress || resolvedConfig.splitAddress || null,
+        splitAddressCredit: r.splitAddressCredit || resolvedConfig.splitAddressCredit || null
       };
     });
 
