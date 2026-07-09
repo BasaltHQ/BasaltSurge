@@ -94,7 +94,7 @@ export function recalculateReceiptForCardFunding(
   // Stripe fee percent: presented fee - platform - agent (from splitConfig)
   let stripeFeePct = 0;
   if (!isFeeMinus) {
-    stripeFeePct = isCredit ? 3.5 : 2.15;
+    stripeFeePct = isCredit ? 3.5 : 2.25;
   } else if (basePresentedBps !== undefined) {
     const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
     const agentBps = splitCfg && Array.isArray(splitCfg.agents)

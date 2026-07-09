@@ -2588,7 +2588,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
 
   const debitStripeFeePct = useMemo(() => {
-    if (!feeMinusEnabled) return 2.15;
+    if (!feeMinusEnabled) return 2.25;
     const activeSplitConfig = splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit;
     const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
     const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
