@@ -211,7 +211,7 @@ function applySecurityHeaders(req: NextRequest, res: NextResponse) {
     // Explicitly allow WebUSB prompts in top-level contexts
     res.headers.set(
         "Permissions-Policy",
-        `camera=(), ${micPolicy}, geolocation=(), accelerometer=(), gyroscope=(), usb=(self)`
+        `camera=(self "https://js.stripe.com" "https://*.stripe.com"), ${micPolicy}, geolocation=(), accelerometer=(), gyroscope=(), usb=(self)`
     );
     // Coinbase Smart Wallet SDK requires COOP not to be 'same-origin' to allow popup communication.
     // See: https://www.smartwallet.dev/guides/tips/popup-tips#cross-origin-opener-policy

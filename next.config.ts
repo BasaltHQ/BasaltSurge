@@ -158,6 +158,11 @@ const nextConfig = {
         destination: '/legal/terms',
         permanent: true,
       },
+      {
+        source: "/crypto-onramp/:path*",
+        destination: "https://crypto-js.stripe.com/crypto-onramp/:path*",
+        permanent: false,
+      },
     ];
   },
   async rewrites() {
@@ -169,10 +174,6 @@ const nextConfig = {
       {
         source: "/opengraph-image.png",
         destination: "/opengraph-image",
-      },
-      {
-        source: "/crypto-onramp/:path*",
-        destination: "https://crypto-js.stripe.com/crypto-onramp/:path*",
       },
     ];
   },
