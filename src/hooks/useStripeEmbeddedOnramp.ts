@@ -753,12 +753,16 @@ export function useStripeEmbeddedOnramp({
         return false;
       }
       let isRejected = false;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       try {
-        const res = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(custId)}`, {
+        const res = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(custId)}?t=${Date.now()}`, {
+          signal: controller.signal,
           headers: {
             "x-stripe-oauth-token": oauthTokenRef.current || "",
           },
         });
+        clearTimeout(timeoutId);
         if (res.ok) {
           consecutiveErrors = 0;
           const kycData = await res.json();
@@ -865,9 +869,14 @@ export function useStripeEmbeddedOnramp({
           }
         }
       } catch (err: any) {
+        if (typeof timeoutId !== "undefined") clearTimeout(timeoutId);
         console.warn("[EMBEDDED ONRAMP] Error polling KYC status:", err);
         if (err?.message?.includes("expired") || err?.message?.includes("repeatedly")) {
           throw err;
+        }
+        consecutiveErrors++;
+        if (consecutiveErrors >= 5) {
+          throw new Error(`KYC status check failed repeatedly (Network error: ${err.message || 'Timeout'}). Please check your connection.`);
         }
       }
       if (isRejected) {
@@ -1152,7 +1161,7 @@ export function useStripeEmbeddedOnramp({
             
             try {
               // Pre-check customer KYC status to see if L1 is needed first, or if L2 is already under review.
-              const customerCheckRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}`, {
+              const customerCheckRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
                 headers: {
                   "x-stripe-oauth-token": oauthTokenRef.current || "",
                 },
@@ -1621,7 +1630,7 @@ export function useStripeEmbeddedOnramp({
             } else {
               console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Pre-checking customer status...");
               try {
-                const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}`, {
+                const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
                   headers: {
                     "x-stripe-oauth-token": oauthTokenRef.current || "",
                   },
@@ -2089,7 +2098,7 @@ export function useStripeEmbeddedOnramp({
 
       updateStep("checking_kyc");
 
-      const kycRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}`, {
+      const kycRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
         headers: {
           "x-stripe-oauth-token": oauthTokenRef.current || "",
         },

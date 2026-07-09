@@ -59,6 +59,7 @@ export async function GET(
     let response = await fetch(
       `https://api.stripe.com/v1/crypto/customers/${encodeURIComponent(id)}`,
       {
+        cache: "no-store",
         headers: {
           "Authorization": `Bearer ${stripeKey}`,
           "Stripe-OAuth-Token": oauthToken,
@@ -87,6 +88,7 @@ export async function GET(
         response = await fetch(
           `https://api.stripe.com/v1/crypto/customers/${encodeURIComponent(id)}`,
           {
+            cache: "no-store",
             headers: {
               "Authorization": `Bearer ${stripeKey}`,
               "Stripe-OAuth-Token": oauthToken,
@@ -121,6 +123,12 @@ export async function GET(
       idDocStatus: idDocVerified?.status ?? "not_started",
       kycTiers: customer.kyc_tiers ?? [],
       ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
+    }, {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0"
+      }
     });
   } catch (e: any) {
     console.error("[CRYPTO CUSTOMER] Error:", e);

@@ -1926,7 +1926,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const hasPartnerPath = fullLogoCandidate.includes("/brands/");
   const canUseFullLogo = !!fullLogoCandidate && (hasPartnerPath || !genericRe.test(fileName));
   const effectiveNavbarMode: "symbol" | "logo" = (navbarMode === "logo" && canUseFullLogo) ? "logo" : "symbol";
-
   // Card Detection & Countdown States
   const [awaitingFundsSeconds, setAwaitingFundsSeconds] = useState(40);
   const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | null>(null);
@@ -1941,6 +1940,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [basePlatformFeePct, setBasePlatformFeePct] = useState<number>(0.5);
   const [splitConfig, setSplitConfig] = useState<any>(null);
   const [splitConfigCredit, setSplitConfigCredit] = useState<any>(null);
+  const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
 
   const effectiveBasePlatformFeePct = useMemo(() => {
     // If credit card is detected and splitConfig is present, calculate using credit config
@@ -1976,6 +1976,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Credit fee percentage calculation (presented fee + partner + merchant processing fee)
   // Used for the microtext footnote on the first pane before a card is scanned.
   const creditFeePct = useMemo(() => {
+    if (!feeMinusEnabled) {
+      return effectiveBasePlatformFeePct + Number(processingFeePct || 0) + 3.5;
+    }
     const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object"
       ? splitConfigCredit
       : splitConfig;
@@ -2000,7 +2003,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
 
     return (50 + partnerBps) / 100 + Number(processingFeePct || 0);
-  }, [splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps, processingFeePct]);
+  }, [splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps, processingFeePct, effectiveBasePlatformFeePct, feeMinusEnabled]);
 
   // Actual split fee percentage calculation based strictly on the smart contract split components.
   // This is used for Stripe calculations (stripeProcessingFeeUsd, stripeTotalUsd) to ensure the payment
@@ -2038,7 +2041,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Dynamic receipt
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [loadingReceipt, setLoadingReceipt] = useState(false);
-  const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
   const [currencySelectionEnabled, setCurrencySelectionEnabled] = useState<boolean>(true);
   useEffect(() => {
     if (!receiptId) return;
@@ -2583,10 +2585,40 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
   };
 
+
+
+  const debitStripeFeePct = useMemo(() => {
+    if (!feeMinusEnabled) return 2.15;
+    const activeSplitConfig = splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit;
+    const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
+    const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
+      ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+      : 0;
+    const basePresentedBps = presentedFeeBps !== undefined ? presentedFeeBps : 290;
+    return Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
+  }, [splitConfig, splitConfigCredit, presentedFeeBps, feeMinusEnabled]);
+
+  const creditStripeFeePct = useMemo(() => {
+    if (!feeMinusEnabled) return 3.5;
+    const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig;
+    const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
+    const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
+      ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+      : 0;
+    const basePresentedBps = creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : 390);
+    return Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
+  }, [splitConfig, splitConfigCredit, creditPresentedFeeBps, presentedFeeBps, feeMinusEnabled]);
+
+  const stripeFeePct = useMemo(() => {
+    const isCredit = detectedCardFunding === "credit";
+    return isCredit ? creditStripeFeePct : debitStripeFeePct;
+  }, [detectedCardFunding, debitStripeFeePct, creditStripeFeePct]);
+
   const processingFeeUsd = useMemo(() => {
-    const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0)) / 100);
+    const stripePct = feeMinusEnabled ? 0 : stripeFeePct;
+    const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct) / 100);
     return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
-  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, effectiveBasePlatformFeePct, processingFeePct]);
+  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled]);
 
   const totalUsd = useMemo(() => {
     if (!receipt) return 0;
@@ -2596,30 +2628,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + processingFeeUsd).toFixed(2);
   }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd, feeMinusEnabled, unscaleFactor]);
 
-  const debitStripeFeePct = useMemo(() => {
-    const activeSplitConfig = splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit;
-    const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
-    const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
-      ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-      : 0;
-    const basePresentedBps = presentedFeeBps !== undefined ? presentedFeeBps : 290;
-    return Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
-  }, [splitConfig, splitConfigCredit, presentedFeeBps]);
-
-  const creditStripeFeePct = useMemo(() => {
-    const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig;
-    const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
-    const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
-      ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-      : 0;
-    const basePresentedBps = creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : 390);
-    return Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
-  }, [splitConfig, splitConfigCredit, creditPresentedFeeBps, presentedFeeBps]);
-
-  const stripeFeePct = useMemo(() => {
-    const isCredit = detectedCardFunding === "credit";
-    return isCredit ? creditStripeFeePct : debitStripeFeePct;
-  }, [detectedCardFunding, debitStripeFeePct, creditStripeFeePct]);
+  const creditTotalUsd = useMemo(() => {
+    if (feeMinusEnabled) return totalUsd;
+    const creditPct = effectiveBasePlatformFeePct + Number(processingFeePct || 0) + creditStripeFeePct;
+    const creditFeeUsd = +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * (creditPct / 100)).toFixed(2);
+    return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + creditFeeUsd).toFixed(2);
+  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, effectiveBasePlatformFeePct, processingFeePct, creditStripeFeePct, feeMinusEnabled, totalUsd]);
 
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
@@ -6012,16 +6026,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         {!feeMinusEnabled && processingFeeUsd > 0 && (
                           <div className="flex items-center justify-between text-sm">
                             <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
-                              <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0)).toFixed(2)}%)</span>
+                              <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0) + (feeMinusEnabled ? 0 : stripeFeePct)).toFixed(2)}%)</span>
                               {detectedCardFunding && (
                                 <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
-                                  {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
+                                    {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
                                 </span>
                               )}
                             </span>
                             <span>{(() => {
                               if (currency === "USD") {
-                                return formatCurrency(processingFeeUsd, "USD");
+                                  return formatCurrency(processingFeeUsd, "USD");
                               }
                               const converted = convertFromUsd(processingFeeUsd, currency, rates);
                               const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
@@ -6030,10 +6044,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           </div>
                         )}
                         {!feeMinusEnabled && detectedCardFunding !== "credit" && (
-                          <div className="microtext text-muted-foreground opacity-70 text-right mt-1.5">
-                            * Credit card payments subject to a {creditFeePct.toFixed(2)}% fee
+                          <div className="microtext text-muted-foreground opacity-70 text-right mt-1.5 animate-in fade-in duration-500">
+                            * Credit card payments subject to a {creditFeePct.toFixed(2)}% fee (Total: {(() => {
+                              if (currency === "USD") {
+                                return formatCurrency(creditTotalUsd, "USD");
+                              }
+                              const converted = convertFromUsd(creditTotalUsd, currency, rates);
+                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(creditTotalUsd, "USD");
+                            })()})
                           </div>
                         )}
+
                         <div className={isVibrantLayout ? "border-t border-dashed border-primary/20 my-4" : "border-t border-dashed my-2"} />
                         <div className={`flex items-center justify-between ${isVibrantLayout ? "text-lg md:text-xl font-bold py-1" : "text-sm font-semibold"}`}>
                           <span>{feeMinusEnabled ? "Amount Due" : "Total"}</span>
@@ -6732,7 +6754,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   {!feeMinusEnabled && processingFeeUsd > 0 && (
                     <div className="flex items-center justify-between text-sm">
                       <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
-                        <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0)).toFixed(2)}%)</span>
+                        <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0) + (feeMinusEnabled ? 0 : stripeFeePct)).toFixed(2)}%)</span>
                         {detectedCardFunding && (
                           <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
                             {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
