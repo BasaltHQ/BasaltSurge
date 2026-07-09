@@ -1822,6 +1822,7 @@ export function useStripeEmbeddedOnramp({
             handleError(err?.message || "Checkout failed after KYC submission");
           });
         } else {
+          isRunningRef.current = false;
           startOnrampRef.current?.(activeEmailRef.current || undefined);
         }
       }
