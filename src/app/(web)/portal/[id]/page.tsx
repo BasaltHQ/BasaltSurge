@@ -3682,6 +3682,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   } = useStripeEmbeddedOnramp({
     email: shipEmail || headlessEmailInput || undefined,
     fullName: shipName || undefined,
+    theme: isLightBackground ? "stripe" : "night",
     splitAddress: sellerAddress as string,
     splitAddressCredit: sellerAddressCredit as string,
     amount: stripeTotalUsd,
@@ -5220,19 +5221,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     }
                   }}
                 />
-                {headlessAuthElement && (
+                 {headlessAuthElement && (
                   <div
                     className="absolute bottom-[14px] left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
                     style={{
-                      backgroundColor: "#ffffff",
-                      color: "#697386",
+                      backgroundColor: isLightBackground ? "#ffffff" : (theme.pageBg || "#121214"),
+                      color: isLightBackground ? "#697386" : "#a3acba",
                       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
                       height: "78px",
-                      filter: !isLightBackground ? "invert(0.93) hue-rotate(180deg) brightness(1.1) contrast(0.95)" : undefined,
                     }}
                   >
                     <span>
-                      By continuing, you allow <strong className="font-semibold" style={{ color: "#3c4257" }}>{theme.brandName || "BasaltSurge"}</strong> to check your identity verification and manage your saved crypto wallets and buy/sell crypto on your behalf.
+                      By continuing, you allow <strong className="font-semibold" style={{ color: isLightBackground ? "#3c4257" : "#ffffff" }}>{theme.brandName || "BasaltSurge"}</strong> to check your identity verification and manage your saved crypto wallets and buy/sell crypto on your behalf.
                     </span>
                   </div>
                 )}
@@ -5498,11 +5498,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               border: none !important;
               border-radius: 12px !important;
             }
-            ${!isLightBackground ? `
-            .stripe-embedded-container iframe {
-              filter: invert(0.93) hue-rotate(180deg) brightness(1.1) contrast(0.95) !important;
-            }
-            ` : ''}
 
             /* ── portalTheme live overrides ── */
             ${theme.pageBg ? `

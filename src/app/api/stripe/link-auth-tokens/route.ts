@@ -134,8 +134,19 @@ export async function refreshOAuthToken(customerId: string): Promise<string | nu
   try {
     const stripeKey = process.env.STRIPE_API_KEY;
     const oauthClientId = process.env.LINK_OAUTH_CLIENT_ID;
+    const oauthClientSecret = process.env.LINK_OAUTH_CLIENT_SECRET;
 
     console.log("[LINK TOKENS] Refreshing OAuth token for customer:", customerId);
+
+    const bodyParams: Record<string, string> = {
+      grant_type: "refresh_token",
+      refresh_token: entry.refreshToken,
+      client_id: oauthClientId || "",
+    };
+
+    if (oauthClientSecret) {
+      bodyParams.client_secret = oauthClientSecret;
+    }
 
     const res = await fetch("https://login.link.com/auth/token", {
       method: "POST",
@@ -143,11 +154,7 @@ export async function refreshOAuthToken(customerId: string): Promise<string | nu
         "Content-Type": "application/x-www-form-urlencoded",
         "Authorization": `Bearer ${stripeKey}`,
       },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: entry.refreshToken,
-        client_id: oauthClientId || "",
-      }).toString(),
+      body: new URLSearchParams(bodyParams).toString(),
     });
 
     const data = await res.json();

@@ -147,6 +147,8 @@ export type UseStripeEmbeddedOnrampProps = {
   onCardDetected?: (card: { funding: "credit" | "debit"; brand: string; last4: string } | null) => void;
   /** eCommerce mode flag */
   isEcommerceMode?: boolean;
+  /** Stripe visual theme: 'stripe', 'night', or 'flat' */
+  theme?: "stripe" | "night" | "flat";
 };
 
 export type UseStripeEmbeddedOnrampReturn = {
@@ -213,6 +215,66 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
 // ─── Base USDC contract address ───
 const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
+const ONRAMP_ERROR_MAPPINGS: Record<string, string> = {
+  crypto_onramp_amount_above_maximum: "The purchase amount exceeds the maximum allowed limit.",
+  crypto_onramp_amount_below_minimum: "The purchase amount is below the minimum allowed limit.",
+  crypto_onramp_bank_institution_block: "This bank account isn't supported. Try to pay using a different account or using your debit card.",
+  crypto_onramp_conflicting_destination_currency: "Destination currency is not in the supported currencies list.",
+  crypto_onramp_conflicting_destination_network: "Destination network is not in the supported networks list.",
+  crypto_onramp_conflicting_source_total_amount_parameters: "Only set one of source_total_amount, source_amount, or destination_amount parameters when creating a session.",
+  crypto_onramp_consumer_wallet_doesnt_exist: "The wallet address doesn't exist for the current user.",
+  crypto_onramp_currency_not_available_in_region: "The selected currency isn't available in your region.",
+  crypto_onramp_destination_tags_not_supported: "The networks provided aren't valid tag-based networks.",
+  crypto_onramp_disabled: "We temporarily disabled the onramp service. Please try again later.",
+  crypto_onramp_headless_invalid_amount: "The amount provided isn't valid for headless mode. Input a positive amount up to 2 decimal places.",
+  crypto_onramp_headless_unsupported_currency_or_network: "The currency or network provided isn't supported for headless mode.",
+  crypto_onramp_identity_verification_failed: "We couldn't verify your identity. Contact support for assistance.",
+  crypto_onramp_incomplete_destination_currency_and_network_pair: "Both destination currency and destination network must be specified together.",
+  crypto_onramp_invalid_amount: "The purchase amount is invalid.",
+  crypto_onramp_invalid_currency_pair: "This currency pair is invalid.",
+  crypto_onramp_invalid_destination_currency_and_network_pair: "The destination currency and network pair isn't supported.",
+  crypto_onramp_invalid_destination_exchange_amount: "Value for destination_exchange_amount is not a positive amount.",
+  crypto_onramp_invalid_merchant_configuration: "The merchant account is not properly configured for crypto onramp. Contact support.",
+  crypto_onramp_invalid_parameter: "One or more of the provided parameters is invalid, missing, or conflicting.",
+  crypto_onramp_invalid_payment_method: "Your card or payment method doesn't support crypto purchases. Try a different card or pay using a bank account.",
+  crypto_onramp_invalid_source_currency: "The source currency isn't currently supported. Only USD is currently supported.",
+  crypto_onramp_invalid_source_destination_pair: "Source amount and destination amount are mutually exclusive. Only set one.",
+  crypto_onramp_invalid_source_exchange_amount: "Value for source_exchange_amount is not a valid fiat amount. Input a positive amount up to 2 decimal places.",
+  crypto_onramp_invalid_supported_destination_currencies_and_networks: "None of the destination currency and network pairs are supported.",
+  crypto_onramp_invalid_wallet_address_parameters: "wallet_address and wallet_addresses cannot both be set.",
+  crypto_onramp_limit_exceeded: "You've reached your purchase limit. Try a smaller amount or try again in a few hours.",
+  crypto_onramp_merchant_not_properly_setup: "An onramp session can't be created for the requesting merchant. business_name and business_url are required.",
+  crypto_onramp_missing_destination_currency: "Set a destination currency if you're setting a destination exchange amount.",
+  crypto_onramp_missing_document_verification: "Document verification is required to complete this action.",
+  crypto_onramp_missing_identity_verification: "Identity verification is required to complete this action.",
+  crypto_onramp_missing_minimum_identity_verification: "Minimum identity verification is required for this transaction.",
+  crypto_onramp_missing_source_currency: "Set a source currency if you're setting a source exchange amount.",
+  crypto_onramp_missing_source_total_amount_parameters: "Set all parameters if you're setting a source total amount.",
+  crypto_onramp_no_wallet_address_to_lock: "lock_wallet_address is true but no wallet address was provided.",
+  crypto_onramp_quote_expired: "The exchange rate has moved significantly since your quote was locked. Fetch a new quote.",
+  crypto_onramp_quote_invalid_destination_currencies_and_networks: "None of the provided destination currency and network pairs are valid for the quote.",
+  crypto_onramp_quote_too_many_destination_currencies_and_networks: "Specify exactly one entry for both destination currency and destination network when destination exchange amount is specified.",
+  crypto_onramp_service_error: "An error occurred while processing your crypto purchase. Try again or contact support.",
+  crypto_onramp_session_error: "An error occurred with your crypto purchase session. Try creating a new session or contact support.",
+  crypto_onramp_skip_quote_screen_not_allowed: "A default quote is required if you are skipping the quote screen.",
+  crypto_onramp_transaction_blocked: "This transaction has been blocked. We're unable to complete this request.",
+  crypto_onramp_unsupportable_customer: "We're unable to support this customer based on the information provided.",
+  crypto_onramp_unsupported: "This service or payment method is not supported in your region.",
+  crypto_onramp_unsupported_country: "Transactions are not supported in this country.",
+  crypto_onramp_unsupported_region: "The provided region is not a supported region.",
+  crypto_onramp_verification_error: "The request could not be completed due to a verification issue.",
+  crypto_onramp_wallet_address_invalid: "The wallet address provided isn't a valid address for the specified network.",
+  crypto_onramp_wallet_addresses_not_all_networks_supported: "Specify a wallet only for a supported destination network."
+};
+
+export function getFriendlyOnrampErrorMessage(code: string, fallbackMessage: string): string {
+  const normalizedCode = String(code || "").trim().toLowerCase();
+  const matched = ONRAMP_ERROR_MAPPINGS[normalizedCode];
+  if (matched) return matched;
+  return fallbackMessage;
+}
+
+
 /**
  * Formats a phone number string to E.164 standard format.
  * E.164 format is: +[country_code][national_number] with no symbols, spaces, or dashes.
@@ -271,6 +333,7 @@ export function useStripeEmbeddedOnramp({
   debitFeePct = 0,
   creditFeePct = 0,
   totalUsd,
+  theme = "night",
 }: UseStripeEmbeddedOnrampProps): UseStripeEmbeddedOnrampReturn {
   const [step, setStep] = useState<OnrampStep>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -574,9 +637,14 @@ export function useStripeEmbeddedOnramp({
 
   const handleError = useCallback((message: string, err?: any) => {
     if (!mountedRef.current) return;
-    console.error(`[EMBEDDED ONRAMP] ${message}`, err);
+    
+    // Resolve programmatic code from error object if present
+    const code = err?.code || (err instanceof Error ? (err as any).code : undefined) || "";
+    const friendlyMessage = code ? getFriendlyOnrampErrorMessage(code, message) : message;
+
+    console.error(`[EMBEDDED ONRAMP] ${friendlyMessage}`, err);
     isRunningRef.current = false;
-    setError(message);
+    setError(friendlyMessage);
     setAuthElement(null);
     setPaymentElement(null);
     if (onrampRef.current) {
@@ -589,7 +657,7 @@ export function useStripeEmbeddedOnramp({
       onrampRef.current = null;
     }
     updateStep("error");
-    onError?.(new Error(message));
+    onError?.(new Error(friendlyMessage));
   }, [onError, updateStep]);
 
   const pollKycStatus = useCallback(async (custId: string, targetTier?: "l0" | "l1" | "l2"): Promise<boolean> => {
@@ -609,6 +677,13 @@ export function useStripeEmbeddedOnramp({
         });
         if (res.ok) {
           const kycData = await res.json();
+          if (kycData.refreshedToken) {
+            console.log("[EMBEDDED ONRAMP] KYC poll returned refreshed OAuth token, updating ref...");
+            oauthTokenRef.current = kycData.refreshedToken;
+            if (typeof window !== "undefined") {
+              sessionStorage.setItem("stripe_onramp_oauth_token", kycData.refreshedToken);
+            }
+          }
           console.log(`[EMBEDDED ONRAMP] Polled KYC status (attempt ${i + 1}/90): kycStatus=${kycData.kycStatus}, idDocStatus=${kycData.idDocStatus}`);
           
           const kycTiers = kycData.kycTiers || [];
@@ -952,6 +1027,13 @@ export function useStripeEmbeddedOnramp({
               });
               if (customerCheckRes.ok) {
                 const kycData = await customerCheckRes.json();
+                if (kycData.refreshedToken) {
+                  console.log("[EMBEDDED ONRAMP] Pre-verification customer check returned refreshed token, updating ref...");
+                  oauthTokenRef.current = kycData.refreshedToken;
+                  if (typeof window !== "undefined") {
+                    sessionStorage.setItem("stripe_onramp_oauth_token", kycData.refreshedToken);
+                  }
+                }
                 console.log("[EMBEDDED ONRAMP] Pre-verification customer status:", kycData);
                 
                 const kycTiers = kycData.kycTiers || [];
@@ -1005,14 +1087,25 @@ export function useStripeEmbeddedOnramp({
               return await execute(amt);
             } catch (verifyErr: any) {
               isVerifyingRef.current = false;
-              throw new Error(verifyErr?.message || "Identity verification failed or was cancelled");
+              const err = new Error(verifyErr?.message || "Identity verification failed or was cancelled");
+              (err as any).code = verifyErr?.code;
+              throw err;
             }
           } else {
-            throw new Error(errData.error || "Session creation failed");
+            const err = new Error(errData.error || "Session creation failed");
+            (err as any).code = errData.code;
+            throw err;
           }
         }
 
         const successData = await sessionRes.json().catch(() => ({}));
+        if (successData.refreshedToken) {
+          console.log("[EMBEDDED ONRAMP] Session creation returned refreshed OAuth token, updating ref...");
+          oauthTokenRef.current = successData.refreshedToken;
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem("stripe_onramp_oauth_token", successData.refreshedToken);
+          }
+        }
         if (!successData.id) {
           throw new Error("No session ID returned");
         }
@@ -1337,7 +1430,7 @@ export function useStripeEmbeddedOnramp({
 
           if (isCardDecline) {
             console.warn("[EMBEDDED ONRAMP] Card decline detected, aborting retry loop immediately.");
-            handleError(checkoutErr?.message || "Your card was declined. Please try another card.");
+            handleError(checkoutErr?.message || "Your card was declined. Please try another card.", checkoutErr);
             return;
           }
 
@@ -1356,6 +1449,17 @@ export function useStripeEmbeddedOnramp({
                             errMessage.includes("document_verification");
 
           const isGenericKycError = errMessage.includes("kyc") || errCode.includes("kyc");
+
+          const isRecoverableError = isL0Error || isL1Error || isL2Error || isGenericKycError ||
+                                     lastError === "missing_consumer_wallet" ||
+                                     lastError === "charged_with_expired_quote" ||
+                                     lastError === "quote_rate_drifted";
+
+          if (!isRecoverableError && errCode.startsWith("crypto_onramp_")) {
+            console.warn(`[EMBEDDED ONRAMP] Terminal onramp error code detected: ${errCode}. Aborting retry loop immediately.`);
+            handleError(checkoutErr?.message || "Checkout failed", checkoutErr);
+            return;
+          }
 
           if (isL0Error) {
             console.log("[EMBEDDED ONRAMP] L0 KYC required during checkout.");
@@ -1392,6 +1496,13 @@ export function useStripeEmbeddedOnramp({
                 });
                 if (checkRes.ok) {
                   const kycData = await checkRes.json();
+                  if (kycData.refreshedToken) {
+                    console.log("[EMBEDDED ONRAMP] Pre-verification checkout customer status returned refreshed token, updating ref...");
+                    oauthTokenRef.current = kycData.refreshedToken;
+                    if (typeof window !== "undefined") {
+                      sessionStorage.setItem("stripe_onramp_oauth_token", kycData.refreshedToken);
+                    }
+                  }
                   console.log("[EMBEDDED ONRAMP] Pre-verification customer status (checkout):", kycData);
                   
                   const kycTiers = kycData.kycTiers || [];
@@ -1629,7 +1740,7 @@ export function useStripeEmbeddedOnramp({
         const loadCryptoOnrampAndInitialize = stripeCryptoModule.loadCryptoOnrampAndInitialize || stripeCryptoModule.loadStripeOnramp;
 
         onramp = await loadCryptoOnrampAndInitialize(publishableKey, {
-          theme: "dark",
+          theme,
           wallets: {
             applePay: "auto",
             googlePay: "auto",
@@ -1856,6 +1967,13 @@ export function useStripeEmbeddedOnramp({
 
       if (kycRes.ok) {
         const kycData = await kycRes.json();
+        if (kycData.refreshedToken) {
+          console.log("[EMBEDDED ONRAMP] Start KYC check returned refreshed token, updating ref...");
+          oauthTokenRef.current = kycData.refreshedToken;
+          if (typeof window !== "undefined") {
+            sessionStorage.setItem("stripe_onramp_oauth_token", kycData.refreshedToken);
+          }
+        }
         const kycTiers = kycData.kycTiers || [];
 
         const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
