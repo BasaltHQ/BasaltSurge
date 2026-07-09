@@ -90,20 +90,21 @@ export function recalculateReceiptForCardFunding(
     ? (brandConfigDoc?.creditPresentedFeeBps ?? siteConfig.creditPresentedFeeBps ?? brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps)
     : (brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps);
   
+
   // Stripe fee percent: presented fee - platform - agent (from splitConfig)
   let stripeFeePct = 0;
-  if (basePresentedBps !== undefined) {
+  if (!isFeeMinus) {
+    stripeFeePct = isCredit ? 3.5 : 2.25;
+  } else if (basePresentedBps !== undefined) {
     const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
     const agentBps = splitCfg && Array.isArray(splitCfg.agents)
       ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
       : 0;
+
     stripeFeePct = Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
   }
-
   const totalFeePct = Math.max(0, basePlatformFeePct + processingFeePct + stripeFeePct);
   const feePct = totalFeePct / 100;
-
-  // Helpers for cents math
   const toCents = (n: number) => Math.round(Math.max(0, Number(n || 0)) * 100);
   const fromCents = (c: number) => Math.round(c) / 100;
 
