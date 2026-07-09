@@ -207,16 +207,6 @@ export const isDualSplitEnabled = (): boolean => {
     const cookies = window.document.cookie || "";
     if (cookies.includes("pp_sandbox_split_mode=dual")) return true;
     if (cookies.includes("pp_sandbox_split_mode=single")) return false;
-  } else {
-    try {
-      const { cookies } = require("next/headers");
-      const c = cookies();
-      const val = c.get("pp_sandbox_split_mode")?.value;
-      if (val === "dual") return true;
-      if (val === "single") return false;
-    } catch {
-      // Ignore context errors outside Next.js request context
-    }
   }
   const isPartner = typeof window === 'undefined' ? isPartnerContext() : isPartnerContextClient();
   return isPartner && !!getEnv().DUAL_SPLIT_CONFIG;
