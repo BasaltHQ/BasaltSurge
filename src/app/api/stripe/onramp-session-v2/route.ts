@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     // If the token is missing or contains invalid values like "undefined" / "null", resolve from store or refresh
     if ((!oauthToken || oauthToken === "undefined" || oauthToken === "null") && cryptoCustomerId) {
       const { getOAuthToken, refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
-      let storedToken = getOAuthToken(cryptoCustomerId);
+      let storedToken = await getOAuthToken(cryptoCustomerId);
       if (!storedToken) {
         storedToken = await refreshOAuthToken(cryptoCustomerId);
       }

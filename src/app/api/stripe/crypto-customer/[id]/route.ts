@@ -37,7 +37,7 @@ export async function GET(
     // If the token is missing or contains invalid values like "undefined" / "null", resolve from store or refresh
     if ((!oauthToken || oauthToken === "undefined" || oauthToken === "null") && id) {
       const { getOAuthToken, refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
-      let storedToken = getOAuthToken(id);
+      let storedToken = await getOAuthToken(id);
       if (!storedToken) {
         storedToken = await refreshOAuthToken(id);
       }
