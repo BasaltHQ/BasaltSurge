@@ -25,8 +25,6 @@ export async function GET(
     }
 
     const { id } = await params;
-    const oauthToken = req.headers.get("x-stripe-oauth-token") || "";
-
     if (!id) {
       return NextResponse.json(
         { ok: false, error: "missing_customer_id" },
@@ -34,7 +32,22 @@ export async function GET(
       );
     }
 
-    if (!oauthToken) {
+    let oauthToken = req.headers.get("x-stripe-oauth-token") || "";
+
+    // If the token is missing or contains invalid values like "undefined" / "null", resolve from store or refresh
+    if ((!oauthToken || oauthToken === "undefined" || oauthToken === "null") && id) {
+      const { getOAuthToken, refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+      let storedToken = getOAuthToken(id);
+      if (!storedToken) {
+        storedToken = await refreshOAuthToken(id);
+      }
+      if (storedToken) {
+        console.log("[CRYPTO CUSTOMER] Resolved OAuth token from server store or refresh for:", id);
+        oauthToken = storedToken;
+      }
+    }
+
+    if (!oauthToken || oauthToken === "undefined" || oauthToken === "null") {
       return NextResponse.json(
         { ok: false, error: "missing_oauth_token" },
         { status: 401 }
@@ -43,7 +56,7 @@ export async function GET(
 
     console.log("[CRYPTO CUSTOMER] Retrieving customer:", id);
 
-    const response = await fetch(
+    let response = await fetch(
       `https://api.stripe.com/v1/crypto/customers/${encodeURIComponent(id)}`,
       {
         headers: {
@@ -54,7 +67,36 @@ export async function GET(
       }
     );
 
-    const customer = await response.json();
+    let customer = await response.json();
+    let tokenRefreshed = false;
+
+    const errorMsg = String(customer.error?.message || "").toLowerCase();
+    const isOAuthError = response.status === 401 || 
+                         errorMsg.includes("oauth") || 
+                         customer.error?.param === "HTTP_HEADER[Stripe-OAuth-Token]" ||
+                         customer.error?.code === "parameter_missing";
+
+    if (isOAuthError && id) {
+      console.log("[CRYPTO CUSTOMER] OAuth token expired or rejected. Attempting background token refresh...");
+      const { refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+      const refreshedToken = await refreshOAuthToken(id);
+      if (refreshedToken) {
+        oauthToken = refreshedToken;
+        tokenRefreshed = true;
+        console.log("[CRYPTO CUSTOMER] Retrying customer fetch with refreshed token...");
+        response = await fetch(
+          `https://api.stripe.com/v1/crypto/customers/${encodeURIComponent(id)}`,
+          {
+            headers: {
+              "Authorization": `Bearer ${stripeKey}`,
+              "Stripe-OAuth-Token": oauthToken,
+              "Stripe-Version": STRIPE_API_VERSION,
+            },
+          }
+        );
+        customer = await response.json();
+      }
+    }
 
     if (!response.ok) {
       console.error("[CRYPTO CUSTOMER] Retrieval failed:", customer);
@@ -78,6 +120,7 @@ export async function GET(
       kycStatus: kycVerified?.status ?? "not_started",
       idDocStatus: idDocVerified?.status ?? "not_started",
       kycTiers: customer.kyc_tiers ?? [],
+      ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
     });
   } catch (e: any) {
     console.error("[CRYPTO CUSTOMER] Error:", e);

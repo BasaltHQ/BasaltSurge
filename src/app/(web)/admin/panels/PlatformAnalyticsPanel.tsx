@@ -69,50 +69,13 @@ interface ReceiptInfo {
   transactionHash: string | null;
   cardFunding: string | null;
   failureReason: string | null;
-  logs: ReceiptLog[];
+  logs?: ReceiptLog[];
+  kycLevel?: "L0" | "L1" | "L2";
   platformFee?: number;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
-  if (!r.logs || r.logs.length === 0) {
-    if (r.status === "paid") {
-      if (r.totalUsd >= 100) return "L2";
-      if (r.totalUsd >= 15) return "L1";
-    }
-    return "L0";
-  }
-
-  const hasL2Log = r.logs.some(l => {
-    const msg = String(l.message).toLowerCase();
-    return (
-      msg.includes("identity verification") ||
-      msg.includes("iddocstatus") ||
-      msg.includes("document") ||
-      msg.includes("doc_status") ||
-      msg.includes("passport") ||
-      msg.includes("needsiddocsubmit")
-    );
-  });
-  if (hasL2Log) return "L2";
-
-  const hasL1Log = r.logs.some(l => {
-    const msg = String(l.message).toLowerCase();
-    return (
-      msg.includes("kycstatus") ||
-      msg.includes("demographics") ||
-      msg.includes("needskycsubmit") ||
-      msg.includes("kyc submission") ||
-      msg.includes("state you provided")
-    );
-  });
-  if (hasL1Log) return "L1";
-
-  if (r.status === "paid") {
-    if (r.totalUsd >= 100) return "L2";
-    if (r.totalUsd >= 15) return "L1";
-  }
-
-  return "L0";
+  return r.kycLevel || "L0";
 };
 
 export default function PlatformAnalyticsPanel() {
@@ -148,8 +111,51 @@ export default function PlatformAnalyticsPanel() {
   
   // Investigation target / Expanded receipt ID
   const [expandedReceiptId, setExpandedReceiptId] = useState<string | null>(null);
+  const [expandedLogs, setExpandedLogs] = useState<Record<string, ReceiptLog[]>>({});
+  const [loadingLogs, setLoadingLogs] = useState<Record<string, boolean>>({});
   const [copySuccess, setCopySuccess] = useState<Record<string, boolean>>({});
   const [hoveredLineKey, setHoveredLineKey] = useState<string | null>(null);
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(25);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedBrand, statusFilter, timeRange, searchQuery, kycFilter, sortKey, sortDirection]);
+
+  const fetchReceiptLogs = useCallback(async (receiptId: string) => {
+    if (expandedLogs[receiptId]) return; // Already loaded
+    setLoadingLogs(prev => ({ ...prev, [receiptId]: true }));
+    try {
+      const res = await fetch(`/api/platform/receipt-logs?receiptId=${encodeURIComponent(receiptId)}`, {
+        headers: {
+          "x-wallet": wallet,
+        },
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setExpandedLogs(prev => ({ ...prev, [receiptId]: data.logs }));
+      } else {
+        console.error("Failed to load logs:", data.error);
+      }
+    } catch (err) {
+      console.error("Error loading logs:", err);
+    } finally {
+      setLoadingLogs(prev => ({ ...prev, [receiptId]: false }));
+    }
+  }, [wallet, expandedLogs]);
+
+  const handleExpandReceipt = (receiptId: string) => {
+    if (expandedReceiptId === receiptId) {
+      setExpandedReceiptId(null);
+    } else {
+      setExpandedReceiptId(receiptId);
+      fetchReceiptLogs(receiptId);
+    }
+  };
 
   const fetchAnalytics = useCallback(async () => {
     if (!wallet) return;
@@ -265,6 +271,17 @@ export default function PlatformAnalyticsPanel() {
 
     return filteredByKyc;
   }, [filteredReceipts, kycFilter, sortKey, sortDirection]);
+
+  const paginatedReceipts = useMemo(() => {
+    if (pageSize === -1) return tableReceipts;
+    const startIndex = (currentPage - 1) * pageSize;
+    return tableReceipts.slice(startIndex, startIndex + pageSize);
+  }, [tableReceipts, currentPage, pageSize]);
+
+  const totalPages = useMemo(() => {
+    if (pageSize === -1) return 1;
+    return Math.max(1, Math.ceil(tableReceipts.length / pageSize));
+  }, [tableReceipts.length, pageSize]);
 
   // Compute dynamic stats based on filtered list to make HUD react to filters
   const dynamicStats = useMemo(() => {
@@ -807,7 +824,7 @@ export default function PlatformAnalyticsPanel() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {tableReceipts.map(r => {
+                    {paginatedReceipts.map(r => {
                       const isExpanded = expandedReceiptId === r.receiptId;
                       return (
                         <React.Fragment key={r.receiptId}>
@@ -838,7 +855,7 @@ export default function PlatformAnalyticsPanel() {
                             </td>
                             <td className="py-3 px-4 text-right">
                               <button
-                                onClick={() => setExpandedReceiptId(isExpanded ? null : r.receiptId)}
+                                onClick={() => handleExpandReceipt(r.receiptId)}
                                 className="px-2.5 h-7 rounded border border-white/5 hover:bg-white/5 text-[10px] font-medium transition-all"
                               >
                                 {isExpanded ? "Close" : "Investigate"}
@@ -930,12 +947,17 @@ export default function PlatformAnalyticsPanel() {
                                   <div>
                                     <div className="text-muted-foreground text-[10px] uppercase font-medium mb-2 flex items-center gap-1">
                                       <Activity className="w-3 h-3" />
-                                      <span>Technical Client Portal Logs ({r.logs.length})</span>
+                                      <span>Technical Client Portal Logs</span>
                                     </div>
                                     
-                                    {r.logs.length > 0 ? (
+                                    {loadingLogs[r.receiptId] ? (
+                                      <div className="text-xs text-muted-foreground p-4 text-center flex items-center justify-center gap-2">
+                                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+                                        <span>Fetching logs from database...</span>
+                                      </div>
+                                    ) : (expandedLogs[r.receiptId] && expandedLogs[r.receiptId].length > 0) ? (
                                       <div className="bg-black/25 border border-white/5 rounded-lg divide-y divide-white/5 max-h-[220px] overflow-y-auto font-mono text-[11px] leading-relaxed">
-                                        {r.logs.map((log, idx) => (
+                                        {expandedLogs[r.receiptId].map((log, idx) => (
                                           <div key={idx} className="p-2.5 space-y-1">
                                             <div className="flex items-center justify-between text-muted-foreground text-[10px]">
                                               <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
@@ -971,7 +993,7 @@ export default function PlatformAnalyticsPanel() {
                         </React.Fragment>
                       );
                     })}
-                    {filteredReceipts.length === 0 && (
+                    {tableReceipts.length === 0 && (
                       <tr>
                         <td colSpan={6} className="py-8 text-center text-muted-foreground text-xs">
                           No transactions found matching the filter credentials.
@@ -980,6 +1002,88 @@ export default function PlatformAnalyticsPanel() {
                     )}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Pagination Controls */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-t border-white/5 text-xs text-muted-foreground select-none">
+                <div className="flex items-center gap-2">
+                  <span>Show</span>
+                  <select
+                    value={pageSize}
+                    onChange={e => {
+                      const val = Number(e.target.value);
+                      setPageSize(val);
+                      setCurrentPage(1);
+                    }}
+                    className="h-8 px-2 rounded bg-neutral-900 border border-white/5 text-xs text-white/80 focus:outline-none focus:border-primary/50"
+                  >
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={-1}>All</option>
+                  </select>
+                  <span>entries</span>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span>
+                    Showing {tableReceipts.length > 0 ? (currentPage - 1) * (pageSize === -1 ? tableReceipts.length : pageSize) + 1 : 0} to{" "}
+                    {Math.min(
+                      currentPage * (pageSize === -1 ? tableReceipts.length : pageSize),
+                      tableReceipts.length
+                    )}{" "}
+                    of {tableReceipts.length} entries
+                  </span>
+                </div>
+
+                {pageSize !== -1 && totalPages > 1 && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      className="h-8 px-3 rounded border border-white/5 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent font-medium transition-colors"
+                    >
+                      Previous
+                    </button>
+
+                    {/* Render page numbers */}
+                    {(() => {
+                      const pages = [];
+                      const maxPageButtons = 5;
+                      let startPage = Math.max(1, currentPage - 2);
+                      let endPage = Math.min(totalPages, startPage + maxPageButtons - 1);
+                      if (endPage - startPage < maxPageButtons - 1) {
+                        startPage = Math.max(1, endPage - maxPageButtons + 1);
+                      }
+
+                      for (let p = startPage; p <= endPage; p++) {
+                        pages.push(
+                          <button
+                            key={p}
+                            onClick={() => setCurrentPage(p)}
+                            className={`h-8 w-8 rounded text-xs transition-colors ${
+                              currentPage === p
+                                ? "bg-primary text-white font-semibold"
+                                : "border border-white/5 hover:bg-white/5 text-muted-foreground hover:text-white"
+                            }`}
+                          >
+                            {p}
+                        </button>
+                        );
+                      }
+                      return pages;
+                    })()}
+
+                    <button
+                      disabled={currentPage === totalPages}
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      className="h-8 px-3 rounded border border-white/5 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent font-medium transition-colors"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1292,9 +1396,16 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
 
         {/* Bottom X-axis Labels (HTML overlay, sitting cleanly below the chart area) */}
         <div className="w-full pl-12 pr-2 flex justify-between text-[10px] text-white/40 font-sans font-medium select-none z-10">
-          {data.map((d, i) => (
-            <span key={i}>{d.label}</span>
-          ))}
+          {data.map((d, i) => {
+            // Space out labels dynamically to prevent clutter
+            const labelInterval = Math.max(1, Math.ceil(data.length / 8));
+            const shouldShowLabel = i === 0 || i === data.length - 1 || i % labelInterval === 0;
+            return (
+              <span key={i} className="text-center truncate" style={{ width: `${100 / data.length}%` }}>
+                {shouldShowLabel ? d.label : ""}
+              </span>
+            );
+          })}
         </div>
       </div>
 

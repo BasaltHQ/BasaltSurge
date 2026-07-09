@@ -114,6 +114,49 @@ export async function GET(req: NextRequest) {
       return "Abandoned / Closed Portal";
     };
 
+    // Helper to compute KYC Level
+    const getKycLevel = (receipt: any, rLogs: any[]) => {
+      if (rLogs.length === 0) {
+        if (receipt.status === "paid") {
+          if (receipt.totalUsd >= 100) return "L2";
+          if (receipt.totalUsd >= 15) return "L1";
+        }
+        return "L0";
+      }
+
+      const hasL2Log = rLogs.some(l => {
+        const msg = String(l.message).toLowerCase();
+        return (
+          msg.includes("identity verification") ||
+          msg.includes("iddocstatus") ||
+          msg.includes("document") ||
+          msg.includes("doc_status") ||
+          msg.includes("passport") ||
+          msg.includes("needsiddocsubmit")
+        );
+      });
+      if (hasL2Log) return "L2";
+
+      const hasL1Log = rLogs.some(l => {
+        const msg = String(l.message).toLowerCase();
+        return (
+          msg.includes("kycstatus") ||
+          msg.includes("demographics") ||
+          msg.includes("needskycsubmit") ||
+          msg.includes("kyc submission") ||
+          msg.includes("state you provided")
+        );
+      });
+      if (hasL1Log) return "L1";
+
+      if (receipt.status === "paid") {
+        if (receipt.totalUsd >= 100) return "L2";
+        if (receipt.totalUsd >= 15) return "L1";
+      }
+
+      return "L0";
+    };
+
     // Group logs by receiptId for fast in-memory lookup
     const logsByReceipt: Record<string, any[]> = {};
     for (const l of logs) {
@@ -170,7 +213,7 @@ export async function GET(req: NextRequest) {
         transactionHash: r.transactionHash || null,
         cardFunding: r.detectedCardFunding || (r.isCreditCard ? "credit" : null),
         failureReason: status === "failed" ? getFailureReason(r, rLogs) : null,
-        logs: rLogs,
+        kycLevel: getKycLevel(r, rLogs),
         platformFee: Number(r.amountPlatformMinor || 0) / 100
       };
     });
@@ -201,7 +244,7 @@ export async function GET(req: NextRequest) {
           fees: +b.fees.toFixed(2)
         }))
         .sort((a, b) => b.gmv - a.gmv),
-      recentReceipts: processedReceipts.slice(0, 150)
+      recentReceipts: processedReceipts
     });
   } catch (e: any) {
     console.error("[PLATFORM ANALYTICS API] Error:", e);

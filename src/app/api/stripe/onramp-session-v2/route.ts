@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     const destinationCurrency = String(body.destinationCurrency || "usdc").trim().toLowerCase();
     const destinationNetwork = String(body.destinationNetwork || "base").trim().toLowerCase();
     const walletAddress = String(body.walletAddress || "").trim();
-    const oauthToken = String(body.oauthToken || "").trim();
+    let oauthToken = String(body.oauthToken || "").trim();
     const receiptId = String(body.receiptId || "").trim();
     const merchantWallet = String(body.merchantWallet || "").trim();
     const brandKey = String(body.brandKey || "").trim();
@@ -54,7 +54,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!oauthToken) {
+    // If the token is missing or contains invalid values like "undefined" / "null", resolve from store or refresh
+    if ((!oauthToken || oauthToken === "undefined" || oauthToken === "null") && cryptoCustomerId) {
+      const { getOAuthToken, refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+      let storedToken = getOAuthToken(cryptoCustomerId);
+      if (!storedToken) {
+        storedToken = await refreshOAuthToken(cryptoCustomerId);
+      }
+      if (storedToken) {
+        console.log("[ONRAMP V2] Resolved OAuth token from server store or refresh for:", cryptoCustomerId);
+        oauthToken = storedToken;
+      }
+    }
+
+    if (!oauthToken || oauthToken === "undefined" || oauthToken === "null") {
       return NextResponse.json(
         { ok: false, error: "missing_oauth_token" },
         { status: 401 }
@@ -121,7 +134,7 @@ export async function POST(req: NextRequest) {
 
     console.log("[ONRAMP V2] Creating headless session for customer:", cryptoCustomerId);
 
-    const response = await fetch("https://api.stripe.com/v1/crypto/onramp_sessions", {
+    let response = await fetch("https://api.stripe.com/v1/crypto/onramp_sessions", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -132,7 +145,36 @@ export async function POST(req: NextRequest) {
       body: params.toString(),
     });
 
-    const data = await response.json();
+    let data = await response.json();
+    let tokenRefreshed = false;
+
+    const errorMsg = String(data.error?.message || "").toLowerCase();
+    const isOAuthError = response.status === 401 || 
+                         errorMsg.includes("oauth") || 
+                         data.error?.param === "HTTP_HEADER[Stripe-OAuth-Token]" ||
+                         data.error?.code === "parameter_missing";
+
+    if (isOAuthError && cryptoCustomerId) {
+      console.log("[ONRAMP V2] OAuth token expired or rejected. Attempting background token refresh...");
+      const { refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+      const refreshedToken = await refreshOAuthToken(cryptoCustomerId);
+      if (refreshedToken) {
+        oauthToken = refreshedToken;
+        tokenRefreshed = true;
+        console.log("[ONRAMP V2] Retrying session creation with refreshed OAuth token...");
+        response = await fetch("https://api.stripe.com/v1/crypto/onramp_sessions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": `Bearer ${stripeKey}`,
+            "Stripe-OAuth-Token": oauthToken,
+            "Stripe-Version": STRIPE_API_VERSION,
+          },
+          body: params.toString(),
+        });
+        data = await response.json();
+      }
+    }
 
     if (!response.ok) {
       console.error("[ONRAMP V2] Session creation failed:", data);
@@ -171,6 +213,7 @@ export async function POST(req: NextRequest) {
       transactionDetails: data.transaction_details || null,
       paymentDetails: data.payment_details || null,
       paymentMethod: data.payment_method || null,
+      ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
     });
   } catch (e: any) {
     console.error("[ONRAMP V2] Error:", e);
