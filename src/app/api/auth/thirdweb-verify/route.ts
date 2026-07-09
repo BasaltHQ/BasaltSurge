@@ -101,9 +101,8 @@ export async function POST(req: NextRequest) {
 
     if (brandKey) {
       try {
-        const { getContainer } = await import("@/lib/cosmos");
-        const container = await getContainer();
-        const { resource: brandConfigDoc } = await container.item("brand:config", brandKey).read<any>();
+        const { readBrandOverridesCached } = await import("@/lib/brand-config");
+        const brandConfigDoc = await readBrandOverridesCached(brandKey);
         if (brandConfigDoc && brandConfigDoc.thirdwebAuthEndpointSecret) {
           customSecret = brandConfigDoc.thirdwebAuthEndpointSecret;
           expectedSecret = customSecret; // Use the brand's secret as the expected header auth secret

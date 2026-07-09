@@ -26,10 +26,18 @@ export async function executeGaslessTransferServer(
     let authEndpointSecret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
 
     if (brandKey) {
+      const bKey = String(brandKey).trim().toUpperCase();
+      const envClientId = process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] || process.env[`THIRDWEB_CLIENT_ID_${bKey}`];
+      const envSecretKey = process.env[`THIRDWEB_SECRET_KEY_${bKey}`];
+      const envAuthSecret = process.env[`THIRDWEB_AUTH_ENDPOINT_SECRET_${bKey}`];
+      
+      if (envClientId) clientId = envClientId;
+      if (envSecretKey) secretKey = envSecretKey;
+      if (envAuthSecret) authEndpointSecret = envAuthSecret;
+
       try {
-        const { getContainer } = await import("@/lib/cosmos");
-        const container = await getContainer();
-        const { resource: brandConfigDoc } = await container.item("brand:config", brandKey).read<any>();
+        const { readBrandOverridesCached } = await import("@/lib/brand-config");
+        const brandConfigDoc = await readBrandOverridesCached(brandKey);
         if (brandConfigDoc) {
           if (brandConfigDoc.thirdwebClientId) {
             clientId = brandConfigDoc.thirdwebClientId;
@@ -43,7 +51,7 @@ export async function executeGaslessTransferServer(
           console.log(`[BACKGROUND POLL] Loaded brand-specific Thirdweb credentials for ${brandKey} from DB`);
         }
       } catch (brandErr) {
-        console.warn("[BACKGROUND POLL] Failed to load brand config credentials:", brandErr);
+        console.warn("[BACKGROUND POLL] Failed to load brand config for custom secret:", brandErr);
       }
     }
 
