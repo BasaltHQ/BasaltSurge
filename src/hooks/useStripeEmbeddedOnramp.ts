@@ -428,31 +428,14 @@ export function useStripeEmbeddedOnramp({
     onStepChange?.(newStep);
   }, [onStepChange]);
 
-  // Synchronize email and clear session storage if the email changes dynamically or on reload
+  // Synchronize email in session storage when it changes dynamically (without clearing session data on keystrokes)
   useEffect(() => {
     if (typeof window !== "undefined") {
       const currentEmail = (email || "").trim().toLowerCase();
       if (!currentEmail) return;
 
       const storedEmail = sessionStorage.getItem("stripe_onramp_email");
-      if (storedEmail && storedEmail !== currentEmail && stepRef.current === "idle") {
-        console.warn("[EMBEDDED ONRAMP] Email changed from", storedEmail, "to", currentEmail, "while idle. Clearing stale session storage.");
-        sessionStorage.removeItem("stripe_onramp_customer_id");
-        sessionStorage.removeItem("stripe_onramp_oauth_token");
-        sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-        sessionStorage.removeItem("stripe_onramp_session_id");
-        sessionStorage.removeItem("stripe_onramp_email");
-        
-        customerIdRef.current = null;
-        oauthTokenRef.current = null;
-        buyerWalletRef.current = null;
-        sessionIdRef.current = null;
-
-        setCryptoCustomerId(null);
-        setBuyerWalletAddress(null);
-        setSessionId(null);
-      }
-      if (stepRef.current === "idle") {
+      if (!storedEmail && stepRef.current === "idle") {
         sessionStorage.setItem("stripe_onramp_email", currentEmail);
       }
     }
@@ -2111,7 +2094,28 @@ export function useStripeEmbeddedOnramp({
     isRunningRef.current = true;
     console.log("[EMBEDDED ONRAMP] startOnramp triggered. isEcommerceMode prop:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
 
-    const activeEmail = overrideEmail || email;
+    const activeEmail = (overrideEmail || email || "").trim().toLowerCase();
+    if (activeEmail && typeof window !== "undefined") {
+      const storedEmail = sessionStorage.getItem("stripe_onramp_email");
+      if (storedEmail && storedEmail !== activeEmail) {
+        console.warn("[EMBEDDED ONRAMP] Email mismatch on startOnramp. Clearing session storage for new user:", storedEmail, "->", activeEmail);
+        sessionStorage.removeItem("stripe_onramp_customer_id");
+        sessionStorage.removeItem("stripe_onramp_oauth_token");
+        sessionStorage.removeItem("stripe_onramp_buyer_wallet");
+        sessionStorage.removeItem("stripe_onramp_session_id");
+        sessionStorage.removeItem("stripe_onramp_email");
+
+        customerIdRef.current = null;
+        oauthTokenRef.current = null;
+        buyerWalletRef.current = null;
+        sessionIdRef.current = null;
+
+        setCryptoCustomerId(null);
+        setBuyerWalletAddress(null);
+        setSessionId(null);
+      }
+      sessionStorage.setItem("stripe_onramp_email", activeEmail);
+    }
     let activePhone = overridePhone || phone || localPhone;
     if (activePhone && activePhone.includes("*")) {
       activePhone = "";
