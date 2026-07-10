@@ -1360,8 +1360,16 @@ export function useStripeEmbeddedOnramp({
             
             try {
               isVerifyingRef.current = true;
-              await onrampRef.current.verifyDocuments();
+              const verifyResult = await onrampRef.current.verifyDocuments();
               isVerifyingRef.current = false;
+              console.log("[EMBEDDED ONRAMP] Stripe verifyDocuments response (session helper):", verifyResult);
+              
+              if (!verifyResult || verifyResult.result !== "success") {
+                const err = new Error(`Identity verification was not completed (result: ${verifyResult?.result || "failed/cancelled"})`);
+                (err as any).code = "kyc_not_completed";
+                throw err;
+              }
+              
               console.log("[EMBEDDED ONRAMP] Document verification completed. Retrying session creation...");
               return await execute(amt);
             } catch (verifyErr: any) {
@@ -1847,6 +1855,7 @@ export function useStripeEmbeddedOnramp({
                 try {
                   const verifyResult = await onrampRef.current.verifyDocuments();
                   isVerifyingRef.current = false;
+                  console.log("[EMBEDDED ONRAMP] Stripe verifyDocuments response (checkout loop):", verifyResult);
                   if (verifyResult.result === "abandoned") {
                     handleError("Identity verification was abandoned");
                     return;
@@ -2660,6 +2669,7 @@ export function useStripeEmbeddedOnramp({
             }).catch(() => {});
           }
           const verifyResult = await onrampRef.current.verifyDocuments();
+          console.log("[EMBEDDED ONRAMP] Stripe verifyDocuments response (payment catch):", verifyResult);
           if (verifyResult.result === "abandoned") {
             handleError("Identity verification was abandoned");
             return;
