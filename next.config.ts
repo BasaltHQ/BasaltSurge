@@ -149,6 +149,16 @@ const nextConfig = {
   async redirects() {
     return [
       {
+        source: '/crypto-onramp/:path*/controller.html',
+        destination: 'https://js.stripe.com/crypto-onramp/:path*/controller.html',
+        permanent: false,
+      },
+      {
+        source: '/crypto-onramp/:path*/index.html',
+        destination: 'https://js.stripe.com/crypto-onramp/:path*/index.html',
+        permanent: false,
+      },
+      {
         source: '/privacy',
         destination: '/legal/privacy',
         permanent: true,
