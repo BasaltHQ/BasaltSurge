@@ -679,10 +679,25 @@ export function useStripeEmbeddedOnramp({
               }
               const kycTiers = kycData.kycTiers || [];
               const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-              const isL1Verified = l1Tier 
-                ? l1Tier.verification_status === "verified"
+              let isL1Verified = l1Tier 
+                ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
                 : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
               
+              if (!isL1Verified && l1Tier?.verification_status === "pending") {
+                console.log("[EMBEDDED ONRAMP] Global KYC check: L1 demographics pending. Polling for L1 approval before L2...");
+                updateStep("checking_kyc");
+                const l1Approved = await pollKycStatus(customerId, "l1");
+                if (!l1Approved) {
+                  console.log("[EMBEDDED ONRAMP] Global KYC check: L1 demographics verification not approved.");
+                  setKycTierRequired("l1");
+                  updateStep("collecting_kyc");
+                  isVerifyingRef.current = false;
+                  isRunningRef.current = false;
+                  return;
+                }
+                isL1Verified = true;
+              }
+
               if (!isL1Verified && l1Tier?.verification_status !== "pending") {
                 console.log("[EMBEDDED ONRAMP] Global KYC check failed: L1 demographics unverified. Directing to L1 input.");
                 setKycTierRequired("l1");
@@ -1288,10 +1303,40 @@ export function useStripeEmbeddedOnramp({
                 
                 const kycTiers = kycData.kycTiers || [];
                 const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-                const isL1Verified = l1Tier 
-                  ? l1Tier.verification_status === "verified"
+                let isL1Verified = l1Tier 
+                  ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
                   : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
                 
+                // If L1 demographics are pending, poll and wait for L1 approval before L2
+                if (!isL1Verified && l1Tier?.verification_status === "pending") {
+                  console.log("[EMBEDDED ONRAMP] L1 demographics pending. Polling for L1 approval before checking L2...");
+                  updateStep("checking_kyc");
+                  const l1Approved = await pollKycStatus(customerId, "l1");
+                  if (!l1Approved) {
+                    throw new Error("L1 demographics verification was not approved.");
+                  }
+                  console.log("[EMBEDDED ONRAMP] L1 demographics approved! Proceeding...");
+                  // Re-fetch customer status after L1 is approved to get updated state
+                  const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
+                    headers: {
+                      "x-stripe-oauth-token": oauthTokenRef.current || "",
+                    },
+                  });
+                  if (checkRes.ok) {
+                    const freshKycData = await checkRes.json();
+                    const freshKycTiers = freshKycData.kycTiers || [];
+                    const freshL1Tier = freshKycTiers.find((t: any) => t.tier === "l1");
+                    isL1Verified = freshL1Tier 
+                      ? (freshL1Tier.verification_status === "verified" || freshL1Tier.verification_status === "not_available")
+                      : (freshKycData.kycStatus === "approved" || freshKycData.kycStatus === "verified" || freshKycData.kycStatus === "completed");
+                    
+                    kycData.idDocStatus = freshKycData.idDocStatus;
+                    kycData.kycStatus = freshKycData.kycStatus;
+                  } else {
+                    isL1Verified = true;
+                  }
+                }
+
                 // If L1 demographics are unverified and not pending, prompt for L1 first
                 if (!isL1Verified && l1Tier?.verification_status !== "pending") {
                   console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Directing to L1 input first.");
@@ -1302,14 +1347,10 @@ export function useStripeEmbeddedOnramp({
                 }
 
                 const idDocStatus = String(kycData.idDocStatus || "").toLowerCase();
-                const kycStatus = String(kycData.kycStatus || "").toLowerCase();
                 if (
                   idDocStatus === "pending" ||
                   idDocStatus === "processing" ||
-                  idDocStatus === "under_review" ||
-                  kycStatus === "pending" ||
-                  kycStatus === "processing" ||
-                  kycStatus === "under_review"
+                  idDocStatus === "under_review"
                 ) {
                   console.log("[EMBEDDED ONRAMP] Stripe verification is already under review. Skipping modal and polling L2...");
                   updateStep("checking_kyc");
@@ -1793,10 +1834,21 @@ export function useStripeEmbeddedOnramp({
                     
                     const kycTiers = kycData.kycTiers || [];
                     const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-                    const isL1Verified = l1Tier 
-                      ? l1Tier.verification_status === "verified"
+                    let isL1Verified = l1Tier 
+                      ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
                       : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
                     
+                    // If L1 demographics are pending, poll and wait for L1 approval before L2
+                    if (!isL1Verified && l1Tier?.verification_status === "pending") {
+                      console.log("[EMBEDDED ONRAMP] L1 demographics pending during checkout. Polling for L1 approval...");
+                      updateStep("checking_kyc");
+                      const l1Approved = await pollKycStatus(customerId, "l1");
+                      if (!l1Approved) {
+                        throw new Error("L1 demographics verification was not approved.");
+                      }
+                      isL1Verified = true;
+                    }
+
                     // If L1 demographics are unverified and not pending, prompt for L1 first
                     if (!isL1Verified && l1Tier?.verification_status !== "pending") {
                       console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Directing to L1 input first.");
@@ -2357,9 +2409,15 @@ export function useStripeEmbeddedOnramp({
                                   kycData.idDocStatus === "verified" ||
                                   kycData.idDocStatus === "completed";
 
-        const isL0Verified = l0Tier ? l0Tier.verification_status === "verified" : isOverallVerified;
-        const isL1Verified = l1Tier ? l1Tier.verification_status === "verified" : isOverallVerified;
-        const isL2Verified = l2Tier ? l2Tier.verification_status === "verified" : isOverallVerified;
+        const isL0Verified = l0Tier 
+          ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available") 
+          : isOverallVerified;
+        const isL1Verified = l1Tier 
+          ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") 
+          : isOverallVerified;
+        const isL2Verified = l2Tier 
+          ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available") 
+          : isOverallVerified;
 
         if (!isL0Verified) {
           if (l0Tier?.verification_status === "pending") {
