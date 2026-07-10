@@ -158,15 +158,14 @@ const nextConfig = {
         destination: '/legal/terms',
         permanent: true,
       },
-      {
-        source: "/crypto-onramp/:path*",
-        destination: "https://crypto-js.stripe.com/crypto-onramp/:path*",
-        permanent: false,
-      },
     ];
   },
   async rewrites() {
     return [
+      {
+        source: "/crypto-onramp/:path*",
+        destination: "https://crypto-js.stripe.com/crypto-onramp/:path*",
+      },
       {
         source: "/.well-known/farcaster.json",
         destination: "/api/farcaster/manifest",
