@@ -4695,8 +4695,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             onChange={(e) => setKycLine2(e.target.value)}
                           />
                         </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          <div>
+                        <div className="grid grid-cols-12 gap-2">
+                          <div className="col-span-6">
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>City</label>
                             <input
                               type="text"
@@ -4709,7 +4709,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               onChange={(e) => setKycCity(e.target.value)}
                             />
                           </div>
-                          <div>
+                          <div className="col-span-2">
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>State/Region</label>
                             <input
                               type="text"
@@ -4722,7 +4722,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               onChange={(e) => setKycState(e.target.value)}
                             />
                           </div>
-                          <div>
+                          <div className="col-span-4">
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Zip/Postal</label>
                             <input
                               type="text"

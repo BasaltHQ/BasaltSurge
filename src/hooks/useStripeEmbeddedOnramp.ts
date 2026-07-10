@@ -332,9 +332,10 @@ function checkIfCardDecline(err: any, lastError?: string): boolean {
   }
 
   // 2. If the thrown error is an active payment failure or decline, prioritize it immediately
-  const isThrownCardDecline = msg.includes("decline") || msg.includes("card") || msg.includes("payment_failed") || msg.includes("card_failed") ||
+  const isThrownCardDecline = msg.includes("decline") || msg.includes("card") || 
+                              msg.includes("payment_failed") || msg.includes("payment failed") || msg.includes("card_failed") ||
                               msg.includes("funds") || msg.includes("cvc") || msg.includes("zip") || msg.includes("expired") || msg.includes("invalid") ||
-                              code.includes("decline") || code.includes("card") || code.includes("payment_failed") || code.includes("card_failed") || code.includes("funds") || code.includes("cvc") || code.includes("zip");
+                              code.includes("decline") || code.includes("card") || code.includes("payment_failed") || code.includes("payment failed") || code.includes("card_failed") || code.includes("funds") || code.includes("cvc") || code.includes("zip");
 
   if (isThrownCardDecline) {
     return true;
