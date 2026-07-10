@@ -2335,12 +2335,20 @@ export function useStripeEmbeddedOnramp({
           }
         }
 
-        // L0 is verified. Check if L1 is pending and poll
-        if (!isL1Verified && l1Tier?.verification_status === "pending") {
-          console.log("[EMBEDDED ONRAMP] L1 verification is pending. Polling for approval status...");
-          updateStep("checking_kyc");
-          const kycApproved = await pollKycStatus(customerId, "l1");
-          if (!kycApproved) {
+        // L0 is verified. Check if L1 is verified
+        if (!isL1Verified) {
+          if (l1Tier?.verification_status === "pending") {
+            console.log("[EMBEDDED ONRAMP] L1 verification is pending. Polling for approval status...");
+            updateStep("checking_kyc");
+            const kycApproved = await pollKycStatus(customerId, "l1");
+            if (!kycApproved) {
+              setKycTierRequired("l1");
+              updateStep("collecting_kyc");
+              isRunningRef.current = false;
+              return;
+            }
+          } else {
+            console.log("[EMBEDDED ONRAMP] L1 KYC required. Transitioning to collecting_kyc (L1).");
             setKycTierRequired("l1");
             updateStep("collecting_kyc");
             isRunningRef.current = false;
