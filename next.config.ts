@@ -164,7 +164,7 @@ const nextConfig = {
     return [
       {
         source: "/crypto-onramp/:path*",
-        destination: "https://crypto-js.stripe.com/crypto-onramp/:path*",
+        destination: "https://js.stripe.com/crypto-onramp/:path*",
       },
       {
         source: "/.well-known/farcaster.json",
