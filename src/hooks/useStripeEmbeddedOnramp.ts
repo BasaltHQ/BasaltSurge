@@ -679,10 +679,9 @@ export function useStripeEmbeddedOnramp({
               }
               const kycTiers = kycData.kycTiers || [];
               const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-              const isL1Verified = kycData.kycStatus === "approved" ||
-                                   kycData.kycStatus === "verified" ||
-                                   kycData.kycStatus === "completed" ||
-                                   l1Tier?.verification_status === "verified";
+              const isL1Verified = l1Tier 
+                ? l1Tier.verification_status === "verified"
+                : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
               
               if (!isL1Verified && l1Tier?.verification_status !== "pending") {
                 console.log("[EMBEDDED ONRAMP] Global KYC check failed: L1 demographics unverified. Directing to L1 input.");
@@ -899,9 +898,9 @@ export function useStripeEmbeddedOnramp({
                                     kycData.idDocStatus === "verified" ||
                                     kycData.idDocStatus === "completed";
 
-          const isL0Verified = isOverallVerified || l0Tier?.verification_status === "verified";
-          const isL1Verified = isOverallVerified || l1Tier?.verification_status === "verified";
-          const isL2Verified = isOverallVerified || l2Tier?.verification_status === "verified";
+          const isL0Verified = l0Tier ? l0Tier.verification_status === "verified" : isOverallVerified;
+          const isL1Verified = l1Tier ? l1Tier.verification_status === "verified" : isOverallVerified;
+          const isL2Verified = l2Tier ? l2Tier.verification_status === "verified" : isOverallVerified;
 
           const isL0Rejected = l0Tier?.verification_status === "rejected";
           const isL1Rejected = l1Tier?.verification_status === "rejected";
@@ -1289,10 +1288,9 @@ export function useStripeEmbeddedOnramp({
                 
                 const kycTiers = kycData.kycTiers || [];
                 const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-                const isL1Verified = kycData.kycStatus === "approved" ||
-                                     kycData.kycStatus === "verified" ||
-                                     kycData.kycStatus === "completed" ||
-                                     l1Tier?.verification_status === "verified";
+                const isL1Verified = l1Tier 
+                  ? l1Tier.verification_status === "verified"
+                  : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
                 
                 // If L1 demographics are unverified and not pending, prompt for L1 first
                 if (!isL1Verified && l1Tier?.verification_status !== "pending") {
@@ -1795,10 +1793,9 @@ export function useStripeEmbeddedOnramp({
                     
                     const kycTiers = kycData.kycTiers || [];
                     const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-                    const isL1Verified = kycData.kycStatus === "approved" ||
-                                         kycData.kycStatus === "verified" ||
-                                         kycData.kycStatus === "completed" ||
-                                         l1Tier?.verification_status === "verified";
+                    const isL1Verified = l1Tier 
+                      ? l1Tier.verification_status === "verified"
+                      : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
                     
                     // If L1 demographics are unverified and not pending, prompt for L1 first
                     if (!isL1Verified && l1Tier?.verification_status !== "pending") {
@@ -2360,9 +2357,9 @@ export function useStripeEmbeddedOnramp({
                                   kycData.idDocStatus === "verified" ||
                                   kycData.idDocStatus === "completed";
 
-        const isL0Verified = isOverallVerified || l0Tier?.verification_status === "verified";
-        const isL1Verified = isOverallVerified || l1Tier?.verification_status === "verified";
-        const isL2Verified = isOverallVerified || l2Tier?.verification_status === "verified";
+        const isL0Verified = l0Tier ? l0Tier.verification_status === "verified" : isOverallVerified;
+        const isL1Verified = l1Tier ? l1Tier.verification_status === "verified" : isOverallVerified;
+        const isL2Verified = l2Tier ? l2Tier.verification_status === "verified" : isOverallVerified;
 
         if (!isL0Verified) {
           if (l0Tier?.verification_status === "pending") {
