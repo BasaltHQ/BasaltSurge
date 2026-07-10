@@ -149,6 +149,16 @@ const nextConfig = {
   async redirects() {
     return [
       {
+        source: '/crypto-onramp/:path*/controller.html',
+        destination: 'https://js.stripe.com/crypto-onramp/:path*/controller.html',
+        permanent: false,
+      },
+      {
+        source: '/crypto-onramp/:path*/index.html',
+        destination: 'https://js.stripe.com/crypto-onramp/:path*/index.html',
+        permanent: false,
+      },
+      {
         source: '/privacy',
         destination: '/legal/privacy',
         permanent: true,
@@ -158,15 +168,14 @@ const nextConfig = {
         destination: '/legal/terms',
         permanent: true,
       },
-      {
-        source: "/crypto-onramp/:path*",
-        destination: "https://crypto-js.stripe.com/crypto-onramp/:path*",
-        permanent: false,
-      },
     ];
   },
   async rewrites() {
     return [
+      {
+        source: "/crypto-onramp/:path*",
+        destination: "https://js.stripe.com/crypto-onramp/:path*",
+      },
       {
         source: "/.well-known/farcaster.json",
         destination: "/api/farcaster/manifest",

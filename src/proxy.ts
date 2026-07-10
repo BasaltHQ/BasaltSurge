@@ -146,7 +146,7 @@ function buildCsp(req: NextRequest): string {
         `default-src ${self}`,
         `img-src ${imgSrc} https://px.ads.linkedin.com https://*.clarity.ms https://c.bing.com`,
         `script-src ${scriptSrc}`,
-        `style-src ${self} 'unsafe-inline' https://use.typekit.net https://p.typekit.net https://*.stripe.com https://stripe.com https://*.stripe.network https://*.js.stripe.com https://js.stripe.com`,
+        `style-src ${self} 'unsafe-inline' ${https} https://use.typekit.net https://p.typekit.net`,
         `connect-src ${connectSrc}`,
         `font-src ${self} ${https} https://use.typekit.net https://p.typekit.net data:`,
         `frame-ancestors ${self} https://warpcast.com https://*.warpcast.com https://*.farcaster.xyz`,
