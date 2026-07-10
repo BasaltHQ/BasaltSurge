@@ -29,6 +29,8 @@ type ClientRequest = {
     website?: string;
     phone?: string;
     email?: string;
+    contactEmail?: string;
+    billingEmail?: string;
     businessAddress?: {
         street: string;
         city: string;
@@ -75,6 +77,8 @@ type ClientRequest = {
     portalGradientStart?: string;
     portalGradientEnd?: string;
     discretePayWithCrypto?: boolean;
+    customDomain?: string;
+    customDomainVerified?: boolean;
 };
 
 // Helper to safely extract a numeric timestamp from Cosmos DB dates which may be numbers, strings, or {$date: string} objects
@@ -238,6 +242,136 @@ function InlineTablesEditor({ merchantWallet, adminWallet, brandKey, initialTabl
                         No tables configured. Add one above.
                     </div>
                 )}
+            </div>
+        </div>
+    );
+}
+
+type MerchantDomainSettingsCardProps = {
+    requestId: string;
+    initialDomain?: string;
+    initialVerified?: boolean;
+    brandKey: string;
+    clientEmail?: string;
+};
+
+function MerchantDomainSettingsCard({ requestId, initialDomain, initialVerified, brandKey, clientEmail }: MerchantDomainSettingsCardProps) {
+    const [customDomain, setCustomDomain] = useState(initialDomain || "");
+    const [verified, setVerified] = useState(!!initialVerified);
+    const [saving, setSaving] = useState(false);
+    const [sending, setSending] = useState(false);
+    const [msg, setMsg] = useState("");
+    const [err, setErr] = useState("");
+
+    const handleSave = async () => {
+        setSaving(true);
+        setMsg("");
+        setErr("");
+        try {
+            const res = await fetch("/api/partner/client-requests/custom-domain", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ requestId, customDomain, customDomainVerified: verified })
+            });
+            const j = await res.json().catch(() => ({}));
+            if (!res.ok || j?.error) {
+                setErr(j?.error || "Failed to save domain settings");
+            } else {
+                setMsg("Domain settings saved successfully.");
+            }
+        } catch (e: any) {
+            setErr(e?.message || "Failed to save domain settings");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleSendEmail = async () => {
+        setSending(true);
+        setMsg("");
+        setErr("");
+        try {
+            const res = await fetch("/api/partner/client-requests/send-dns-email", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ requestId })
+            });
+            const j = await res.json().catch(() => ({}));
+            if (!res.ok || j?.error) {
+                setErr(j?.error || "Failed to send DNS email");
+            } else {
+                setMsg(`DNS instructions email sent to ${clientEmail || "client"}.`);
+            }
+        } catch (e: any) {
+            setErr(e?.message || "Failed to send DNS email");
+        } finally {
+            setSending(false);
+        }
+    };
+
+    return (
+        <div className="mt-4 p-4 rounded-lg bg-black/20 border border-white/5 space-y-4">
+            <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-white">Domain Settings</h4>
+                <p className="text-[10px] text-muted-foreground">Configure custom domain routing details for this shop.</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">Custom Domain</label>
+                    <input
+                        type="text"
+                        value={customDomain}
+                        onChange={(e) => setCustomDomain(e.target.value.toLowerCase().replace(/[^a-z0-9.-]/g, ""))}
+                        placeholder="checkout.my-shop.com"
+                        className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm text-white"
+                    />
+                </div>
+                <div className="space-y-1 flex flex-col justify-end">
+                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Domain Verified</label>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setVerified(!verified)}
+                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                verified ? "bg-emerald-500" : "bg-zinc-700"
+                            }`}
+                        >
+                            <span
+                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                    verified ? "translate-x-4" : "translate-x-0"
+                                }`}
+                            />
+                        </button>
+                        <span className="text-xs text-white">{verified ? "Verified" : "Unverified"}</span>
+                    </div>
+                </div>
+            </div>
+
+            {msg && <div className="text-xs text-emerald-400 font-medium">{msg}</div>}
+            {err && <div className="text-xs text-rose-400 font-medium">{err}</div>}
+
+            <div className="flex justify-between items-center pt-2 border-t border-white/5">
+                <div>
+                    {customDomain && (
+                        <button
+                            type="button"
+                            onClick={handleSendEmail}
+                            disabled={sending}
+                            className="px-3 py-1.5 bg-white/5 hover:bg-white/10 active:scale-95 text-white rounded text-xs font-semibold transition-all flex items-center gap-1.5 disabled:opacity-50"
+                        >
+                            {sending ? "Sending..." : "Send DNS Email"}
+                        </button>
+                    )}
+                </div>
+                <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 text-emerald-500 border border-emerald-500/20 rounded text-xs font-semibold transition-all flex items-center gap-2"
+                >
+                    {saving ? "Saving..." : "Save Domain"}
+                </button>
             </div>
         </div>
     );
@@ -1767,6 +1901,13 @@ export default function ClientRequestsPanel() {
                                                                             discretePayWithCrypto: req.discretePayWithCrypto,
                                                                         }}
                                                                         onSave={async (data) => { await updateStatus(req.id, req.status, undefined, false, data); }}
+                                                                    />
+                                                                    <MerchantDomainSettingsCard
+                                                                        requestId={req.id}
+                                                                        initialDomain={req.customDomain}
+                                                                        initialVerified={req.customDomainVerified}
+                                                                        brandKey={brandKey}
+                                                                        clientEmail={req.email || req.contactEmail || req.billingEmail}
                                                                     />
                                                                 </div>
                                                             </div>
