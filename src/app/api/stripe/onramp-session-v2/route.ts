@@ -209,6 +209,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       id: data.id,
       status: data.status,
+      hostedUrl: data.redirect_url || data.hosted_url || null,
       quoteExpiresAt: data.quote?.expires_at || null,
       transactionDetails: data.transaction_details || null,
       paymentDetails: data.payment_details || null,

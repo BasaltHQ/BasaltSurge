@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
 
     // Store token keyed by crypto_customer_id if provided
     if (cryptoCustomerId) {
-      storeOAuthToken(cryptoCustomerId, accessToken, refreshToken, expiresIn);
+      await storeOAuthToken(cryptoCustomerId, accessToken, refreshToken, expiresIn);
       console.log("[LINK TOKENS] Token stored for customer:", cryptoCustomerId);
     }
 
@@ -215,7 +215,7 @@ export async function refreshOAuthToken(customerId: string): Promise<string | nu
     const refreshToken = data.refresh?.refresh_token || entry.refreshToken;
     const expiresIn = data.expires_in || 3600;
 
-    storeOAuthToken(customerId, accessToken, refreshToken, expiresIn);
+    await storeOAuthToken(customerId, accessToken, refreshToken, expiresIn);
     console.log("[LINK TOKENS] Token refreshed and stored for customer:", customerId);
 
     return accessToken;
