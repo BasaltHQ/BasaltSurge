@@ -4518,7 +4518,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 </button>
               </div>
             ) : headlessStep === "collecting_kyc" ? (
-              <div className="w-full flex flex-col items-stretch p-2 animate-in zoom-in duration-300 max-h-[500px] overflow-y-auto pr-1 text-left">
+              <div className="w-full flex flex-col items-stretch p-2 animate-in zoom-in duration-300 pr-1 text-left">
                 <div className="mb-4">
                   <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>
                     {kycTierRequired === "l0" ? "Billing Information" : "Identity Verification"}
@@ -4695,8 +4695,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             onChange={(e) => setKycLine2(e.target.value)}
                           />
                         </div>
-                        <div className="grid grid-cols-3 gap-2">
-                          <div>
+                        <div className="grid grid-cols-12 gap-2">
+                          <div className="col-span-6">
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>City</label>
                             <input
                               type="text"
@@ -4709,7 +4709,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               onChange={(e) => setKycCity(e.target.value)}
                             />
                           </div>
-                          <div>
+                          <div className="col-span-2">
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>State/Region</label>
                             <input
                               type="text"
@@ -4722,7 +4722,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               onChange={(e) => setKycState(e.target.value)}
                             />
                           </div>
-                          <div>
+                          <div className="col-span-4">
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Zip/Postal</label>
                             <input
                               type="text"
@@ -4890,33 +4890,69 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       {/* DOB Field */}
                       <div>
                         <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Date of Birth</label>
-                        <input
-                          type="date"
-                          max="2026-12-31"
-                          min="1900-01-01"
-                          className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium [color-scheme:light] ${isLightText
-                              ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10 [color-scheme:dark]'
-                              : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                            }`}
-                          value={
-                            kycDobYear && kycDobMonth && kycDobDay
-                              ? `${kycDobYear}-${String(kycDobMonth).padStart(2, '0')}-${String(kycDobDay).padStart(2, '0')}`
-                              : ""
-                          }
-                          onChange={(e) => {
-                            const dateVal = e.target.value;
-                            if (dateVal) {
-                              const [year, month, day] = dateVal.split("-");
-                              setKycDobYear(year || "");
-                              setKycDobMonth(month ? String(Number(month)) : "");
-                              setKycDobDay(day ? String(Number(day)) : "");
-                            } else {
-                              setKycDobYear("");
-                              setKycDobMonth("");
-                              setKycDobDay("");
-                            }
-                          }}
-                        />
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              placeholder="Month (MM)"
+                              maxLength={2}
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                }`}
+                              value={kycDobMonth}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/\D/g, '');
+                                if (val === "" || (Number(val) <= 12)) {
+                                  setKycDobMonth(val);
+                                }
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              placeholder="Day (DD)"
+                              maxLength={2}
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                }`}
+                              value={kycDobDay}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/\D/g, '');
+                                if (val === "" || (Number(val) <= 31)) {
+                                  setKycDobDay(val);
+                                }
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              placeholder="Year (YYYY)"
+                              maxLength={4}
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                }`}
+                              value={kycDobYear}
+                              onChange={(e) => {
+                                const val = e.target.value.replace(/\D/g, '');
+                                const currentYear = new Date().getFullYear();
+                                if (val === "" || (Number(val) <= currentYear)) {
+                                  setKycDobYear(val);
+                                }
+                              }}
+                            />
+                          </div>
+                        </div>
                       </div>
 
                       {/* Conditional KYC identification fields based on region */}
@@ -5048,7 +5084,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           !kycLastName ||
                           !kycDobDay ||
                           !kycDobMonth ||
-                          !kycDobYear ||
+                          kycDobYear.length !== 4 ||
                           !kycLine1 ||
                           !kycCity ||
                           !kycState ||

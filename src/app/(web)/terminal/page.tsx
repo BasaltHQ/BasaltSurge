@@ -186,6 +186,19 @@ function TerminalPanel() {
   const [rates, setRates] = useState<Record<string, number>>({});
   const [usdRates, setUsdRates] = useState<Record<string, number>>({});
 
+  const [customDomain, setCustomDomain] = useState<string>("");
+  const [customDomainVerified, setCustomDomainVerified] = useState<boolean>(false);
+  const [selectedDomain, setSelectedDomain] = useState<string>("");
+
+  useEffect(() => {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    if (customDomain && customDomainVerified) {
+      setSelectedDomain(`https://${customDomain}`);
+    } else {
+      setSelectedDomain(origin);
+    }
+  }, [customDomain, customDomainVerified]);
+
   const pathname = usePathname();
   const isPricing = pathname?.startsWith("/pricing");
 
@@ -199,6 +212,10 @@ function TerminalPanel() {
       .then((j: any) => {
         const cfg = j?.config || {};
         setFeeMinusEnabled(!!cfg?.feeMinusEnabled);
+        if (cfg.customDomain) {
+          setCustomDomain(cfg.customDomain);
+          setCustomDomainVerified(!!cfg.customDomainVerified);
+        }
         if (typeof cfg.processingFeePct === "number") setProcessingFeePct(cfg.processingFeePct);
 
         // basePlatformFeePct (presentedFeeBps > splitConfig platform + partner + agent fees)
@@ -370,7 +387,7 @@ function TerminalPanel() {
   const envRecipient = getEnvRecipient();
   const portalRecipient = /^0x[a-fA-F0-9]{40}$/.test(recipientParam) ? (recipientParam as `0x${string}`) : envRecipient;
   const portalUrl = selected
-    ? `${origin}/portal/${encodeURIComponent(selected.receiptId)}?recipient=${encodeURIComponent(((operatorWallet || portalRecipient) || "").toString())}`
+    ? `${selectedDomain || origin}/portal/${encodeURIComponent(selected.receiptId)}?recipient=${encodeURIComponent(((operatorWallet || portalRecipient) || "").toString())}`
     : "";
 
   const [completeOpen, setCompleteOpen] = useState(false);
@@ -487,10 +504,10 @@ function TerminalPanel() {
 
         <div className="glass-pane rounded-xl border p-6 flex flex-col">
           <div className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-4">Summary</div>
-          <div className="flex-1">
+          <div className="mb-4">
             <label className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-1.5 block">Currency</label>
             <select
-              className="w-full h-10 px-3 border rounded-md bg-background/50 focus:bg-background transition-colors text-sm mb-4"
+              className="w-full h-10 px-3 border rounded-md bg-background/50 focus:bg-background transition-colors text-sm"
               value={terminalCurrency}
               onChange={(e) => setTerminalCurrency(e.target.value)}
             >
@@ -501,6 +518,25 @@ function TerminalPanel() {
               ))}
             </select>
           </div>
+
+          {customDomain && customDomainVerified && (
+            <div className="mb-4">
+              <label className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-1.5 block">Domain</label>
+              <select
+                className="w-full h-10 px-3 border rounded-md bg-background/50 focus:bg-background transition-colors text-sm"
+                value={selectedDomain}
+                onChange={(e) => setSelectedDomain(e.target.value)}
+              >
+                <option value={origin}>
+                  Default ({origin.replace(/^https?:\/\//, "")})
+                </option>
+                <option value={`https://${customDomain}`}>
+                  {customDomain}
+                </option>
+              </select>
+            </div>
+          )}
+
           {!siteMeta.hasDefault && (
             <div className="text-[10px] uppercase font-bold tracking-wider text-amber-600 mb-4">Set a default tax jurisdiction to apply taxes.</div>
           )}

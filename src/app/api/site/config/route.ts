@@ -1288,6 +1288,12 @@ export async function GET(req: NextRequest) {
         // Merge other useful props if missing in site
         if (!out.description && shopConf.description) out.story = shopConf.description;
 
+        // Merge custom domain config fields
+        if (shopConf.customDomain) {
+          out.customDomain = shopConf.customDomain;
+          out.customDomainVerified = !!shopConf.customDomainVerified;
+        }
+
         // Merge touchpointThemes: Shop overrides Site
         const siteTP = out.touchpointThemes || {};
         const shopTP = shopConf.touchpointThemes || {};

@@ -9713,7 +9713,16 @@ function TerminalPanel() {
   const [terminalLogoUrl, setTerminalLogoUrl] = useState<string>("");
 
   // Site meta for tax & fee
-  const [siteMeta, setSiteMeta] = useState<{ processingFeePct: number; basePlatformFeePct: number; taxRate: number; hasDefault: boolean; storeCurrency?: string; feeMinusEnabled?: boolean }>({
+  const [siteMeta, setSiteMeta] = useState<{
+    processingFeePct: number;
+    basePlatformFeePct: number;
+    taxRate: number;
+    hasDefault: boolean;
+    storeCurrency?: string;
+    feeMinusEnabled?: boolean;
+    customDomain?: string;
+    customDomainVerified?: boolean;
+  }>({
     processingFeePct: 0,
     basePlatformFeePct: 0.5,
     taxRate: 0,
@@ -9721,7 +9730,27 @@ function TerminalPanel() {
     feeMinusEnabled: false,
   });
 
-  async function fetchSiteMeta(): Promise<{ processingFeePct: number; basePlatformFeePct: number; taxRate: number; hasDefault: boolean; storeCurrency?: string; feeMinusEnabled?: boolean }> {
+  const [selectedDomain, setSelectedDomain] = useState<string>("");
+
+  useEffect(() => {
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    if (siteMeta.customDomain && siteMeta.customDomainVerified) {
+      setSelectedDomain(`https://${siteMeta.customDomain}`);
+    } else {
+      setSelectedDomain(origin);
+    }
+  }, [siteMeta.customDomain, siteMeta.customDomainVerified]);
+
+  async function fetchSiteMeta(): Promise<{
+    processingFeePct: number;
+    basePlatformFeePct: number;
+    taxRate: number;
+    hasDefault: boolean;
+    storeCurrency?: string;
+    feeMinusEnabled?: boolean;
+    customDomain?: string;
+    customDomainVerified?: boolean;
+  }> {
     try {
       const r = await fetch("/api/site/config", { headers: { "x-wallet": account?.address || "" } });
       const j = await r.json().catch(() => ({}));
@@ -9765,7 +9794,9 @@ function TerminalPanel() {
       const logo = theme?.symbolLogoUrl || theme?.brandLogoUrl || theme?.brandFaviconUrl || "";
       if (logo) setTerminalLogoUrl(logo);
       const feeMinusEnabled = !!cfg?.feeMinusEnabled;
-      return { processingFeePct, basePlatformFeePct, taxRate: rate, hasDefault, storeCurrency, feeMinusEnabled };
+      const customDomain = cfg?.customDomain;
+      const customDomainVerified = !!cfg?.customDomainVerified;
+      return { processingFeePct, basePlatformFeePct, taxRate: rate, hasDefault, storeCurrency, feeMinusEnabled, customDomain, customDomainVerified };
     } catch {
       return { processingFeePct: 0, basePlatformFeePct: 0.5, taxRate: 0, hasDefault: false, feeMinusEnabled: false };
     }
@@ -9934,7 +9965,7 @@ function TerminalPanel() {
   }, []);
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const portalUrl = selected ? `${origin}/portal/${encodeURIComponent(selected.receiptId)}?recipient=${encodeURIComponent(operatorWallet)}` : "";
+  const portalUrl = selected ? `${selectedDomain || origin}/portal/${encodeURIComponent(selected.receiptId)}?recipient=${encodeURIComponent(operatorWallet)}` : "";
 
   // Completion modal
   const [completeOpen, setCompleteOpen] = useState(false);
@@ -10064,6 +10095,24 @@ function TerminalPanel() {
             </select>
           </div>
 
+          {siteMeta.customDomain && siteMeta.customDomainVerified && (
+            <div className="shrink-0 relative z-10 mb-2 md:mb-6">
+              <label className="text-[9px] md:text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-1 md:mb-2 block ml-1">Domain</label>
+              <select
+                className="w-full h-10 md:h-12 px-4 rounded-xl bg-foreground/[0.03] border-none focus:bg-foreground/[0.05] focus:ring-1 focus:ring-[var(--pp-secondary)] focus:outline-none transition-all text-xs md:text-sm appearance-none cursor-pointer text-foreground"
+                value={selectedDomain}
+                onChange={(e) => setSelectedDomain(e.target.value)}
+              >
+                <option value={origin} className="bg-background text-foreground">
+                  Default ({origin.replace(/^https?:\/\//, "")})
+                </option>
+                <option value={`https://${siteMeta.customDomain}`} className="bg-background text-foreground">
+                  {siteMeta.customDomain}
+                </option>
+              </select>
+            </div>
+          )}
+
           {!siteMeta.hasDefault && (
             <div className="text-[8px] md:text-[10px] uppercase font-bold tracking-wider text-amber-500/80 mb-2 md:mb-6 px-2 md:px-4 py-1.5 md:py-3 rounded-lg md:rounded-xl bg-amber-500/10 border border-amber-500/20 text-center relative z-10 shrink-0">
               Set default tax jurisdiction to apply taxes.
@@ -10073,7 +10122,7 @@ function TerminalPanel() {
           <div className="group flex-1 min-h-0 flex flex-col p-4 md:p-8 rounded-xl md:rounded-3xl bg-foreground/[0.01] border border-foreground/[0.03] relative z-10 overflow-hidden">
 
             {/* Generative Interactive Geometric Pattern */}
-            <div className="flex-1 min-h-[60px] w-full relative hidden md:flex items-center justify-center opacity-40 group-hover:opacity-100 transition-all duration-700 mb-4 md:mb-8 pointer-events-none">
+            <div className="flex-1 min-h-[60px] w-full relative hidden md:flex items-center justify-center opacity-40 group-hover:opacity-100 transition-all duration-700 mb-2 md:mb-4 pointer-events-none">
               {/* Background Grid that illuminates on hover */}
               <svg className="absolute inset-0 w-full h-full transition-transform duration-1000 group-hover:scale-[1.02]" xmlns="http://www.w3.org/2000/svg">
                 <defs>
@@ -10095,15 +10144,15 @@ function TerminalPanel() {
               </svg>
 
               {/* Interactive Concentric Rings */}
-              <div className="absolute w-48 h-48 rounded-full flex items-center justify-center transition-all duration-700 group-hover:shadow-[0_0_80px_var(--pp-secondary)]/30">
+              <div className="absolute w-32 h-32 rounded-full flex items-center justify-center transition-all duration-700 group-hover:shadow-[0_0_80px_var(--pp-secondary)]/30">
                 {/* Outer Radar Sweep */}
                 <div className="absolute inset-0 rounded-full border border-foreground/5 bg-gradient-to-tr from-transparent via-transparent to-[var(--pp-secondary)]/10 animate-spin transition-all duration-500 group-hover:to-[var(--pp-secondary)]/40 group-hover:border-[var(--pp-secondary)]/20" style={{ animationDuration: '8s' }} />
 
                 {/* Middle Dashed Ring */}
-                <div className="absolute w-36 h-36 rounded-full border-[2px] border-dashed border-foreground/10 animate-spin transition-all duration-500 group-hover:border-[var(--pp-secondary)]/50 group-hover:scale-110" style={{ animationDuration: '15s', animationDirection: 'reverse' }} />
+                <div className="absolute w-24 h-24 rounded-full border-[2px] border-dashed border-foreground/10 animate-spin transition-all duration-500 group-hover:border-[var(--pp-secondary)]/50 group-hover:scale-110" style={{ animationDuration: '15s', animationDirection: 'reverse' }} />
 
                 {/* Inner Core */}
-                <div className="w-20 h-20 rounded-full border border-[var(--pp-secondary)]/30 flex items-center justify-center relative transition-all duration-700 group-hover:scale-125 bg-background/50 backdrop-blur-md">
+                <div className="w-14 h-14 rounded-full border border-[var(--pp-secondary)]/30 flex items-center justify-center relative transition-all duration-700 group-hover:scale-125 bg-background/50 backdrop-blur-md">
                   <div className="absolute inset-0 bg-[var(--pp-secondary)] opacity-10 rounded-full blur-md group-hover:opacity-40 transition-opacity duration-700" />
 
                   {/* Targeting Reticle */}
@@ -10112,9 +10161,9 @@ function TerminalPanel() {
                     <div className="h-full w-[1px] bg-[var(--pp-secondary)]/30 absolute" />
                   </div>
 
-                  <div className="w-8 h-8 rounded-full border border-foreground/20 bg-[var(--pp-secondary)]/20 flex items-center justify-center transition-all duration-500 group-hover:bg-[var(--pp-secondary)]/50 group-hover:scale-50 shadow-[0_0_15px_var(--pp-secondary)]/50 relative z-10">
-                    <div className="absolute w-2 h-2 rounded-full bg-white opacity-80 animate-ping" />
-                    <div className="w-2 h-2 rounded-full bg-white shadow-[0_0_10px_white]" />
+                  <div className="w-6 h-6 rounded-full border border-foreground/20 bg-[var(--pp-secondary)]/20 flex items-center justify-center transition-all duration-500 group-hover:bg-[var(--pp-secondary)]/50 group-hover:scale-50 shadow-[0_0_15px_var(--pp-secondary)]/50 relative z-10">
+                    <div className="absolute w-1.5 h-1.5 rounded-full bg-white opacity-80 animate-ping" />
+                    <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_10px_white]" />
                   </div>
                 </div>
               </div>
