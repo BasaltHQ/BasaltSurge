@@ -192,10 +192,24 @@ async function handleCheckPayment(params: {
                 console.error("RPC block fetch failed", e);
             }
 
-            if (ts === 0 || ts >= sinceTime) {
-                foundTx = c.transactionHash;
-                break;
+            // Verify timestamp if available
+            if (ts !== 0 && ts < sinceTime) {
+                continue;
             }
+
+            // Check if this transaction hash is already used in the database to prevent duplicate matching
+            const querySpec = {
+                query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.txHash = @txHash OR c.transactionHash = @txHash)",
+                parameters: [{ name: "@txHash", value: c.transactionHash }]
+            };
+            const { resources: existingReceipts } = await container.items.query(querySpec).fetchAll();
+            if (existingReceipts && existingReceipts.length > 0) {
+                console.log(`[CHECK PAYMENT] Transaction hash ${c.transactionHash} already used for receipt: ${existingReceipts[0].id}, skipping.`);
+                continue;
+            }
+
+            foundTx = c.transactionHash;
+            break;
         }
 
     } catch (e) {
