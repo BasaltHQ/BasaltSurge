@@ -4017,7 +4017,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       }
     } : undefined,
     interceptOnly: stripeHeadless, // Block redirect only, don't launch legacy modal
-    enabled: true, // Always enabled to catch crypto.link.com redirects
+    enabled: stripeHeadless, // Only enabled during stripeHeadless mode to catch redirects and route to headless flow
   });
 
   // NOTE: Coinbase Onramp redirectUrl requires domain allowlisting in the CDP portal,
