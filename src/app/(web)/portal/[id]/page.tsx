@@ -152,6 +152,7 @@ type Receipt = {
   onSuccess?: string;
   stripeEmail?: string;
   detectedCardFunding?: string;
+  customerSessions?: any[];
 };
 
 // Helper to determine if receipt is already paid/settled
@@ -3462,7 +3463,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           setPaymentConfirmed({
             txHash: data.txHash || "",
             amount: totalUsd, // Display USD amount 
-            token: token
+            token: token,
+            funding: data.detectedCardFunding || receipt?.detectedCardFunding || (data.status === "paid - ach pending" || data.status === "ach_pending" ? "us_bank_account" : undefined)
           });
           // Also trigger postStatus with paid - this is a confirmed on-chain payment
           await postStatus("paid", { txHash: data.txHash, paymentMethod: "crypto_fallback_poll" });
@@ -7445,7 +7447,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               {formatCurrency(paymentConfirmed.amount, "USD")}
             </div>
             {(() => {
-              const isAch = paymentConfirmed?.funding === "us_bank_account" || stripeDetectedFunding === "us_bank_account" || receipt?.detectedCardFunding === "us_bank_account" || receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending";
+              const isAch = 
+                paymentConfirmed?.funding === "us_bank_account" || 
+                stripeDetectedFunding === "us_bank_account" || 
+                detectedCardFunding === "us_bank_account" ||
+                receipt?.detectedCardFunding === "us_bank_account" || 
+                receipt?.status === "paid - ach pending" || 
+                receipt?.status === "ach_pending" ||
+                (Array.isArray(receipt?.customerSessions) && receipt.customerSessions.some((s: any) => s.paymentMethodDetails?.type === "us_bank_account"));
+
               if (isAch) {
                 return (
                   <div className="text-xs text-amber-400 font-medium px-4 mb-8 max-w-xs mx-auto leading-relaxed animate-pulse">
@@ -7460,17 +7470,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               );
             })()}
 
-            {paymentConfirmed.txHash && (
-              <a
-                href={`https://basescan.org/tx/${paymentConfirmed.txHash}`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-mono transition-colors border border-white/10"
-              >
-                <span>View on Basescan</span>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-              </a>
-            )}
+
 
             {(() => {
               const displayEmail = shipEmail || (receipt as any)?.customerEmail || (receipt as any)?.buyerEmail || receipt?.stripeEmail;
