@@ -96,7 +96,7 @@ export async function GET(req: NextRequest) {
   try {
     const container = await getContainer();
 
-    let query = `SELECT TOP @limit c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.brandName, c.status, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking FROM c WHERE c.type='receipt' AND c.wallet=@wallet`;
+    let query = `SELECT TOP @limit c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.brandName, c.status, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.buyerWallet, c.transactionHash, c.tipAmount, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions FROM c WHERE c.type='receipt' AND c.wallet=@wallet`;
     const parameters: { name: string; value: any }[] = [{ name: "@wallet", value: wallet }, { name: "@limit", value: limit }];
 
     if (startTs > 0) {

@@ -3411,15 +3411,33 @@ function ReceiptsAdmin() {
                                       <span className="text-muted-foreground min-w-[70px]">Tx Hash:</span>
                                       <span className="truncate flex-1 text-right" title={rec.transactionHash}>{rec.transactionHash || "—"}</span>
                                     </div>
-                                    {(rec.detectedCardFunding === "us_bank_account" || rec.cardFunding === "us_bank_account") && (
+                                    {(rec.detectedCardFunding === "us_bank_account" || rec.cardFunding === "us_bank_account" || rec.status === "paid - ach pending" || rec.status === "ach_pending") && (
                                       <div className="border-t border-dashed border-foreground/10 pt-2 mt-2 space-y-2">
+                                        {(() => {
+                                          const session = Array.isArray(rec.customerSessions) 
+                                            ? (rec.customerSessions[0] || rec.customerSessions[rec.customerSessions.length - 1]) 
+                                            : null;
+                                          const pm = session?.paymentMethodDetails;
+                                          if (pm?.type === "us_bank_account" && pm.us_bank_account) {
+                                            const bank = pm.us_bank_account;
+                                            return (
+                                              <div className="flex justify-between items-end gap-2 overflow-hidden">
+                                                <span className="text-muted-foreground min-w-[70px]">Bank:</span>
+                                                <span className="text-right text-white font-medium">
+                                                  {bank.bank_name} (•••• {bank.last4})
+                                                </span>
+                                              </div>
+                                            );
+                                          }
+                                          return null;
+                                        })()}
                                         <div className="flex justify-between items-end gap-2 overflow-hidden">
                                           <span className="text-muted-foreground min-w-[70px]">ACH Status:</span>
                                           <span className="text-right text-amber-500 font-semibold uppercase">{rec.stripeSessionStatus || "Pending"}</span>
                                         </div>
                                         <div className="flex justify-between items-end gap-2 overflow-hidden">
                                           <span className="text-muted-foreground min-w-[70px]">Last Poll:</span>
-                                          <span className="text-right">{rec.lastPolledAt ? new Date(rec.lastPolledAt).toLocaleString() : "Never"}</span>
+                                          <span className="text-right">{rec.lastPolledAt ? new Date(Number(rec.lastPolledAt)).toLocaleString() : "Never"}</span>
                                         </div>
                                       </div>
                                     )}
