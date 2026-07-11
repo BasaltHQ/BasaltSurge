@@ -53,6 +53,13 @@ export type Receipt = {
   shippingCostUsd?: number;
   tracking?: { carrier?: string; trackingNumber?: string; trackingUrl?: string; shippedAt?: number; updatedAt?: number };
   stripeEmail?: string;
+  buyerWallet?: string;
+  transactionHash?: string;
+  tipAmount?: number;
+  detectedCardFunding?: string;
+  lastPolledAt?: number;
+  stripeSessionStatus?: string;
+  customerSessions?: any[];
 };
 
 // ... existing imports
@@ -124,6 +131,13 @@ export async function GET(req: NextRequest) {
         status: typeof row.status === "string" ? row.status : undefined,
         shippingAddress: row?.shippingAddress && typeof row.shippingAddress === "object" ? row.shippingAddress : undefined,
         tracking: row?.tracking && typeof row.tracking === "object" ? row.tracking : undefined,
+        buyerWallet: typeof row.buyerWallet === "string" ? row.buyerWallet : undefined,
+        transactionHash: typeof row.transactionHash === "string" ? row.transactionHash : undefined,
+        tipAmount: typeof row.tipAmount === "number" ? row.tipAmount : undefined,
+        detectedCardFunding: typeof row.detectedCardFunding === "string" ? row.detectedCardFunding : undefined,
+        lastPolledAt: typeof row.lastPolledAt === "number" ? row.lastPolledAt : undefined,
+        stripeSessionStatus: typeof row.stripeSessionStatus === "string" ? row.stripeSessionStatus : undefined,
+        customerSessions: Array.isArray(row.customerSessions) ? row.customerSessions : undefined,
       }))
       : [];
 

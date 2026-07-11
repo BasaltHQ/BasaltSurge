@@ -256,24 +256,26 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // On fulfillment_processing: mark receipt as pending
+    // On fulfillment_processing: mark receipt as pending or paid - ach pending
     if (status === 'fulfillment_processing' && merchantWallet && metadata.receiptId) {
       const baseOrigin = req.nextUrl.origin;
       try {
         const detectedFunding = cardFunding === "us_bank_account" ? "us_bank_account" : (cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined));
+        const isAch = cardFunding === "us_bank_account";
+        const nextStatus = isAch ? "paid - ach pending" : "pending";
         await fetch(`${baseOrigin}/api/receipts/status`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             receiptId: String(metadata.receiptId),
             wallet: merchantWallet,
-            status: 'pending',
+            status: nextStatus,
             detectedCardFunding: detectedFunding,
             isCreditCard: cardFunding === "credit"
           })
         });
       } catch (e) {
-        console.error('[STRIPE WEBHOOK] Error updating receipt to pending:', e);
+        console.error('[STRIPE WEBHOOK] Error updating receipt status:', e);
       }
     }
 

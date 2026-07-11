@@ -101,6 +101,179 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const body = await req.json().catch(() => ({}));
+    const action = body?.action;
+
+    if (action === "poll_single") {
+      const receiptId = String(body.receiptId || "").trim();
+      if (!receiptId) {
+        return NextResponse.json({ error: "Missing receiptId" }, { status: 400 });
+      }
+
+      const containerEvents = await getContainer(undefined, "payportal_events");
+      const querySpec = {
+        query: "SELECT * FROM c WHERE c.type = 'receipt' AND c.receiptId = @receiptId",
+        parameters: [{ name: "@receiptId", value: receiptId }]
+      };
+      const { resources } = await containerEvents.items.query(querySpec).fetchAll();
+      const receipt = resources?.[0];
+      if (!receipt) {
+        return NextResponse.json({ error: "Receipt not found" }, { status: 404 });
+      }
+
+      const sessionId = receipt.stripeSessionId;
+      if (!sessionId) {
+        return NextResponse.json({ error: "Receipt does not have a Stripe session" }, { status: 400 });
+      }
+
+      const stripeKey = process.env.STRIPE_API_KEY;
+      if (!stripeKey) {
+        return NextResponse.json({ error: "Stripe API key not configured" }, { status: 500 });
+      }
+
+      const STRIPE_API_VERSION = "2026-06-24.dahlia";
+      const stripeRes = await fetch(
+        `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
+        {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${stripeKey}`,
+            "Stripe-Version": STRIPE_API_VERSION,
+          },
+        }
+      );
+
+      if (!stripeRes.ok) {
+        const stripeErr = await stripeRes.json().catch(() => ({}));
+        return NextResponse.json({ error: "Stripe error", details: stripeErr }, { status: 502 });
+      }
+
+      const onrampData = await stripeRes.json();
+      const stripeStatus = onrampData.status;
+
+      receipt.lastPolledAt = Date.now();
+      receipt.stripeSessionStatus = stripeStatus;
+      receipt.lastUpdatedAt = Date.now();
+
+      const isExpired = Date.now() - (receipt.createdAt || 0) > 24 * 60 * 60 * 1000;
+      const isRejected = stripeStatus === "rejected" || 
+                         onrampData.transaction_details?.last_error === "transaction_failed" ||
+                         onrampData.transaction_details?.last_error === "location_not_supported" ||
+                         onrampData.transaction_details?.last_error === "transaction_limit_reached";
+
+      let swept = false;
+      let txHash: string | null = null;
+
+      if (stripeStatus === "fulfillment_complete" && receipt.status !== "paid") {
+        const email = receipt.customerEmail || receipt.email || onrampData.customer_information?.email;
+        const merchantWallet = receipt.wallet;
+        const amount = receipt.onrampAmount || receipt.totalUsd;
+        const brandKey = receipt.brandKey || "";
+
+        // Resolve split address
+        const { getSiteConfigForWallet } = await import("@/lib/site-config");
+        const siteConfig = await getSiteConfigForWallet(merchantWallet, brandKey);
+        let splitAddress = receipt.splitAddress;
+        let splitAddressCredit = receipt.splitAddressCredit;
+        if (siteConfig) {
+          splitAddress = siteConfig.splitAddress || siteConfig.split?.address || splitAddress;
+          splitAddressCredit = siteConfig.splitAddressCredit || siteConfig.splitCredit?.address || splitAddressCredit;
+        }
+        if (!splitAddress) {
+          splitAddress = merchantWallet;
+        }
+
+        const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
+        const cardFundingDetail = String(onrampData.payment_details?.card?.funding || "").toLowerCase();
+        let cardFunding = receipt.detectedCardFunding || "";
+        if (paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
+          cardFunding = "us_bank_account";
+        } else if (cardFundingDetail) {
+          cardFunding = cardFundingDetail;
+        }
+        const isCredit = cardFunding === "credit" || receipt.isCreditCard === true;
+
+        let targetSplitAddress = splitAddress;
+        const isCreditCardType = cardFunding === "credit" || isCredit;
+        const isDual = siteConfig?.isDualSplitEnabled || false;
+        if (isDual && !isCreditCardType && splitAddressCredit) {
+          targetSplitAddress = splitAddressCredit;
+        } else {
+          targetSplitAddress = splitAddress || merchantWallet;
+        }
+
+        const { markEmailVerified } = await import("@/app/api/auth/thirdweb-verify/route");
+        const { createThirdwebClient, getContract, readContract } = await import("thirdweb");
+        const { base } = await import("thirdweb/chains");
+        const { inAppWallet } = await import("thirdweb/wallets");
+
+        let clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+        let secretKey = process.env.THIRDWEB_SECRET_KEY || "";
+        let authEndpointSecret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
+
+        if (brandKey) {
+          const bKey = String(brandKey).trim().toUpperCase();
+          const envClientId = process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] || process.env[`THIRDWEB_CLIENT_ID_${bKey}`];
+          const envSecretKey = process.env[`THIRDWEB_SECRET_KEY_${bKey}`];
+          const envAuthSecret = process.env[`THIRDWEB_AUTH_ENDPOINT_SECRET_${bKey}`];
+          if (envClientId) clientId = envClientId;
+          if (envSecretKey) secretKey = envSecretKey;
+          if (envAuthSecret) authEndpointSecret = envAuthSecret;
+        }
+
+        const brandTwClient = createThirdwebClient({ clientId, secretKey });
+        const verificationToken = markEmailVerified(email, authEndpointSecret);
+        const walletInstance = inAppWallet({
+          auth: { options: ["auth_endpoint" as any] },
+          executionMode: { mode: "EIP7702", sponsorGas: true },
+        });
+
+        const account = await walletInstance.connect({
+          client: brandTwClient,
+          chain: base,
+          strategy: "auth_endpoint" as any,
+          payload: JSON.stringify({ email, verificationToken, brandKey }),
+        });
+
+        const guestAddress = account.address;
+        const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+        const usdcContract = getContract({
+          client: brandTwClient,
+          chain: base,
+          address: BASE_USDC_ADDRESS,
+        });
+
+        const balance = await readContract({
+          contract: usdcContract,
+          method: "function balanceOf(address account) view returns (uint256)",
+          params: [guestAddress],
+        });
+
+        if (balance > BigInt(0)) {
+          const { executeGaslessTransferServer } = await import("@/app/api/stripe/background-poll/route");
+          txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey);
+          if (txHash) {
+            receipt.status = "paid";
+            receipt.transactionHash = txHash;
+            receipt.transactionTimestamp = Date.now();
+            receipt.ttl = -1;
+            receipt.statusHistory = Array.isArray(receipt.statusHistory)
+              ? [...receipt.statusHistory, { status: "paid", ts: Date.now(), note: "Manually polled and swept" }]
+              : [{ status: "paid", ts: Date.now(), note: "Manually polled and swept" }];
+            swept = true;
+          }
+        }
+      } else if (stripeStatus !== "fulfillment_complete" && (isRejected || isExpired)) {
+        receipt.status = "failed";
+        receipt.statusHistory = Array.isArray(receipt.statusHistory)
+          ? [...receipt.statusHistory, { status: "failed", ts: Date.now(), note: "Marked failed on manual poll due to timeout/rejection" }]
+          : [{ status: "failed", ts: Date.now(), note: "Marked failed on manual poll due to timeout/rejection" }];
+      }
+
+      await containerEvents.items.upsert(receipt);
+      return NextResponse.json({ ok: true, status: receipt.status, stripeSessionStatus: stripeStatus, swept, txHash });
+    }
+
     // 2. Gate manually triggering to Platform Super Admins only
     if (!isPlatformSuperAdmin(caller.wallet)) {
       return NextResponse.json(

@@ -1654,27 +1654,53 @@ export function useStripeEmbeddedOnramp({
         const brand = sessionResult.paymentDetails?.card?.brand || null;
         const last4 = sessionResult.paymentDetails?.card?.last4 || null;
         const method = sessionResult.paymentMethod || null;
-        
-        const isDebit = method === "debit_card" || funding === "debit" || funding === "prepaid";
-        const fundingType = isDebit ? "debit" : "credit";
-        resolvedFunding = fundingType;
-        setDetectedCardFunding(fundingType);
-        if (brand) setDetectedCardBrand(brand);
-        if (last4) setDetectedCardLast4(last4);
-        onCardDetected?.({ funding: fundingType, brand: brand || "", last4: last4 || "" });
-        
-        console.log(`[EMBEDDED ONRAMP] Card detected: method=${method}, funding=${funding}, brand=${brand} (${last4}). Pausing for fee review.`);
+        const type = sessionResult.paymentDetails?.type || null;
 
-        const targetAmount = getOnrampAmount(fundingType);
-        if (targetAmount !== initialAmount) {
-          console.log(`[EMBEDDED ONRAMP] ${fundingType} card detected. Re-creating session with target amount: ${targetAmount} (was ${initialAmount})`);
-          const newSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount, fundingType);
-          if (!newSessionResult) return;
-          currentSessionId = newSessionResult.sessionId;
-          sessionIdRef.current = currentSessionId;
-          setSessionId(currentSessionId);
-          if (typeof window !== "undefined") {
-            sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+        const isAch = method === "us_bank_account" || type === "us_bank_account" || funding === "us_bank_account";
+        if (isAch) {
+          const bank = sessionResult.paymentDetails?.us_bank_account || sessionResult.paymentDetails?.payment_details?.us_bank_account;
+          const bankName = bank?.bank_name || brand || "Bank Account";
+          const bankLast4 = bank?.last4 || last4 || "";
+          resolvedFunding = "us_bank_account";
+          setDetectedCardFunding("us_bank_account");
+          setDetectedCardBrand(bankName);
+          setDetectedCardLast4(bankLast4);
+          onCardDetected?.({ funding: "us_bank_account", brand: bankName, last4: bankLast4 });
+          console.log(`[EMBEDDED ONRAMP] Bank account detected: method=${method}, brand=${bankName} (${bankLast4}).`);
+
+          const targetAmount = getOnrampAmount("us_bank_account");
+          if (targetAmount !== initialAmount) {
+            console.log(`[EMBEDDED ONRAMP] Bank account detected. Re-creating session with target amount: ${targetAmount} (was ${initialAmount})`);
+            const newSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount, "us_bank_account");
+            if (!newSessionResult) return;
+            currentSessionId = newSessionResult.sessionId;
+            sessionIdRef.current = currentSessionId;
+            setSessionId(currentSessionId);
+            if (typeof window !== "undefined") {
+              sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+            }
+          }
+        } else {
+          const isDebit = method === "debit_card" || funding === "debit" || funding === "prepaid";
+          const fundingType = isDebit ? "debit" : "credit";
+          resolvedFunding = fundingType;
+          setDetectedCardFunding(fundingType);
+          if (brand) setDetectedCardBrand(brand);
+          if (last4) setDetectedCardLast4(last4);
+          onCardDetected?.({ funding: fundingType, brand: brand || "", last4: last4 || "" });
+          console.log(`[EMBEDDED ONRAMP] Card detected: method=${method}, funding=${funding}, brand=${brand} (${last4}). Pausing for fee review.`);
+
+          const targetAmount = getOnrampAmount(fundingType);
+          if (targetAmount !== initialAmount) {
+            console.log(`[EMBEDDED ONRAMP] ${fundingType} card detected. Re-creating session with target amount: ${targetAmount} (was ${initialAmount})`);
+            const newSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount, fundingType);
+            if (!newSessionResult) return;
+            currentSessionId = newSessionResult.sessionId;
+            sessionIdRef.current = currentSessionId;
+            setSessionId(currentSessionId);
+            if (typeof window !== "undefined") {
+              sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+            }
           }
         }
         
@@ -2019,7 +2045,7 @@ export function useStripeEmbeddedOnramp({
               sessionIdRef.current = null;
               setSessionId(null);
               const targetAmount = getOnrampAmount(detectedCardFunding);
-              const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount);
+              const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount, detectedCardFunding);
               if (!sessionResult) return;
               currentSessionId = sessionResult.sessionId;
               sessionIdRef.current = currentSessionId;

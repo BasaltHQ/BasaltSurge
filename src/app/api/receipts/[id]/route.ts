@@ -50,6 +50,10 @@ export type Receipt = {
     zip?: string;
     country?: string;
   };
+  detectedCardFunding?: string;
+  lastPolledAt?: number;
+  stripeSessionStatus?: string;
+  customerSessions?: any[];
 };
 
 function toCents(n: number) {
@@ -166,6 +170,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         tracking: (row as any)?.tracking && typeof (row as any).tracking === "object" ? (row as any).tracking : undefined,
         stripeEmail: typeof (row as any)?.stripeEmail === "string" ? (row as any).stripeEmail : undefined,
         billingAddress: (row as any)?.billingAddress && typeof (row as any).billingAddress === "object" ? (row as any).billingAddress : undefined,
+        detectedCardFunding: typeof (row as any)?.detectedCardFunding === "string" ? (row as any).detectedCardFunding : undefined,
+        lastPolledAt: Number.isFinite(Number((row as any)?.lastPolledAt)) ? Number((row as any).lastPolledAt) : undefined,
+        stripeSessionStatus: typeof (row as any)?.stripeSessionStatus === "string" ? (row as any).stripeSessionStatus : undefined,
+        customerSessions: Array.isArray((row as any)?.customerSessions) ? (row as any).customerSessions : undefined,
       };
       if (!(rec.totalUsd > 0)) {
         const candidate = sumLineItems(rec.lineItems || []);

@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
     let querySpec: any;
     if (isPartner && currentBrandKey) {
       querySpec = {
-        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'reconciled' OR c.status = 'paid') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr) AND c.brandKey = @brandKey",
+        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'reconciled' OR c.status = 'paid' OR c.status = 'paid - ach pending' OR c.status = 'ach_pending') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr) AND c.brandKey = @brandKey",
         parameters: [
           { name: "@minTime", value: minTime },
           { name: "@minTimeStr", value: minTimeStr },
@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
       };
     } else {
       querySpec = {
-        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'reconciled' OR c.status = 'paid') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr)",
+        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'reconciled' OR c.status = 'paid' OR c.status = 'paid - ach pending' OR c.status = 'ach_pending') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr)",
         parameters: [
           { name: "@minTime", value: minTime },
           { name: "@minTimeStr", value: minTimeStr }
@@ -167,7 +167,7 @@ export async function POST(req: NextRequest) {
           receipt = resource;
         } catch {}
 
-        if (receipt && (receipt.status === "failed" || receipt.status === "pending" || receipt.status === "reconciled" || receipt.status === "paid") && (!receipt.transactionHash || receipt.transactionHash === "ecommerce_pending" || receipt.transactionHash === "ach_pending")) {
+        if (receipt && (receipt.status === "failed" || receipt.status === "pending" || receipt.status === "reconciled" || receipt.status === "paid" || receipt.status === "paid - ach pending" || receipt.status === "ach_pending") && (!receipt.transactionHash || receipt.transactionHash === "ecommerce_pending" || receipt.transactionHash === "ach_pending")) {
           // If the receipt doesn't have stripeSessionId, backfill it from the event
           if (!receipt.stripeSessionId) {
             receipt.stripeSessionId = sessionId;

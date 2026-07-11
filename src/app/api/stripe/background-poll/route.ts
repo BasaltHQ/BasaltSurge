@@ -354,7 +354,8 @@ async function runBackgroundPoll(params: {
       const { resource: receipt } = await container.item(docId, merchantWallet).read();
 
       if (receipt) {
-        const nextStatus = isDefinitiveFailure ? "failed" : "pending";
+        const isAch = receipt.detectedCardFunding === "us_bank_account" || detectedCardFunding === "us_bank_account";
+        const nextStatus = isDefinitiveFailure ? "failed" : (isAch ? "paid - ach pending" : "pending");
         receipt.status = nextStatus;
         receipt.lastUpdatedAt = Date.now();
         receipt.statusHistory = Array.isArray(receipt.statusHistory)

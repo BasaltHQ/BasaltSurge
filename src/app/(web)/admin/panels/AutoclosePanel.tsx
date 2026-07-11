@@ -17,7 +17,8 @@ import {
   HelpCircle,
   TrendingUp,
   Activity,
-  Award
+  Award,
+  RefreshCw
 } from "lucide-react";
 import { isPlatformSuperAdmin } from "@/lib/authz";
 import TruncatedAddress from "@/components/truncated-address";
@@ -124,6 +125,29 @@ export default function AutoclosePanel() {
   const [reconcileResult, setReconcileResult] = useState<any>(null);
   const [reconcileError, setReconcileError] = useState("");
   const [reconcileSuccess, setReconcileSuccess] = useState("");
+
+  const [pollingReceiptIds, setPollingReceiptIds] = useState<Record<string, boolean>>({});
+
+  const pollSingleAch = async (receiptId: string) => {
+    try {
+      setPollingReceiptIds(prev => ({ ...prev, [receiptId]: true }));
+      const res = await fetch("/api/admin/autoclose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "poll_single", receiptId })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        await loadRuns();
+      } else {
+        alert(data.error || "Failed to sync transaction status");
+      }
+    } catch (err: any) {
+      alert(err.message || "An unexpected error occurred");
+    } finally {
+      setPollingReceiptIds(prev => ({ ...prev, [receiptId]: false }));
+    }
+  };
 
 
 
@@ -617,13 +641,14 @@ export default function AutoclosePanel() {
                     </span>
                   </th>
                   <th 
-                    className="p-3 pr-4 text-right cursor-pointer hover:text-white select-none transition-colors"
+                    className="p-3 text-right cursor-pointer hover:text-white select-none transition-colors"
                     onClick={() => toggleAchSort("createdAt")}
                   >
                     <span className="flex items-center gap-1 justify-end">
                       Age (Days) {achSortField === "createdAt" && (achSortOrder === "asc" ? "▲" : "▼")}
                     </span>
                   </th>
+                  <th className="p-3 pr-4 text-right font-semibold text-muted-foreground w-[60px]">Sync</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-foreground/5">
@@ -644,8 +669,22 @@ export default function AutoclosePanel() {
                       <td className="p-3 text-muted-foreground">
                         {r.lastPolledAt ? new Date(r.lastPolledAt).toLocaleString() : "Never"}
                       </td>
-                      <td className="p-3 pr-4 text-right text-white font-mono">
+                      <td className="p-3 text-right text-white font-mono">
                         {diffDays}d
+                      </td>
+                      <td className="p-3 pr-4 text-right">
+                        <button
+                          onClick={() => pollSingleAch(r.receiptId)}
+                          disabled={pollingReceiptIds[r.receiptId]}
+                          className="p-1.5 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-muted-foreground hover:text-white border border-foreground/10 transition-all focus:outline-none disabled:opacity-50 inline-flex items-center gap-1 cursor-pointer"
+                          title="Sync status from Stripe"
+                        >
+                          {pollingReceiptIds[r.receiptId] ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          )}
+                        </button>
                       </td>
                     </tr>
                   );
