@@ -115,6 +115,11 @@ export async function POST(req: NextRequest) {
       params.append("wallet_address", walletAddress);
     }
 
+    const settlementSpeed = String(body.settlementSpeed || "").trim().toLowerCase();
+    if (settlementSpeed === "standard" || settlementSpeed === "instant") {
+      params.append("settlement_speed", settlementSpeed);
+    }
+
     // Metadata for reconciliation
     if (receiptId) params.append("metadata[receiptId]", receiptId);
     if (merchantWallet) params.append("metadata[merchantWallet]", merchantWallet);

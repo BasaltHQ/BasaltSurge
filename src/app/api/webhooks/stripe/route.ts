@@ -155,7 +155,16 @@ export async function POST(req: NextRequest) {
     } else if (paymentMethod.includes("credit")) {
       cardFunding = "credit";
     }
-    const useSeparateSplit = isDual && cardFunding === "credit";
+
+    let useSeparateSplit = false;
+    if (isDual) {
+      if (cardFunding === "us_bank_account") {
+        // Flipped definitions: Standard ACH settles in the debit split (resolved via match.splitAddress, which requires useSeparateSplit = true)
+        useSeparateSplit = true;
+      } else {
+        useSeparateSplit = cardFunding === "credit";
+      }
+    }
 
     // Resolve merchant context from metadata
     const context = await resolveMerchantFromMetadata(metadata, container, brandKey, useSeparateSplit);

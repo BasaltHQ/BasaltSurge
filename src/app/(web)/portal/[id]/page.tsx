@@ -1931,6 +1931,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | "us_bank_account" | null>(null);
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
+  const [achSpeed, setAchSpeed] = useState<"standard" | "instant">("standard");
 
   // Fee from admin config
   const [processingFeePct, setProcessingFeePct] = useState<number>(0);
@@ -2616,9 +2617,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [splitConfig, splitConfigCredit, creditPresentedFeeBps, presentedFeeBps, feeMinusEnabled]);
 
   const stripeFeePct = useMemo(() => {
+    if (detectedCardFunding === "us_bank_account") {
+      return achSpeed === "standard" ? 0.6 : 4.0;
+    }
     const isCredit = detectedCardFunding === "credit";
     return isCredit ? creditStripeFeePct : debitStripeFeePct;
-  }, [detectedCardFunding, debitStripeFeePct, creditStripeFeePct]);
+  }, [detectedCardFunding, achSpeed, debitStripeFeePct, creditStripeFeePct]);
 
   const processingFeeUsd = useMemo(() => {
     const stripePct = feeMinusEnabled ? 0 : stripeFeePct;
@@ -3703,6 +3707,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     kycTierRequired,
     onrampLimits: headlessOnrampLimits,
     detectedCardFunding: stripeDetectedFunding,
+    showSpeedSelection: headlessShowSpeedSelection,
+    confirmSpeed: headlessConfirmSpeed,
   } = useStripeEmbeddedOnramp({
     email: shipEmail || headlessEmailInput || undefined,
     fullName: shipName || undefined,

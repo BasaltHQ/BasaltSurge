@@ -144,7 +144,7 @@ export type UseStripeEmbeddedOnrampProps = {
   /** Step change callback */
   onStepChange?: (step: OnrampStep) => void;
   /** Card detected callback */
-  onCardDetected?: (card: { funding: "credit" | "debit"; brand: string; last4: string } | null) => void;
+  onCardDetected?: (card: { funding: "credit" | "debit" | "us_bank_account"; brand: string; last4: string } | null) => void;
   /** eCommerce mode flag */
   isEcommerceMode?: boolean;
   /** Stripe visual theme: 'stripe', 'night', or 'flat' */
@@ -188,6 +188,10 @@ export type UseStripeEmbeddedOnrampReturn = {
   kycTierRequired?: "l0" | "l1" | "l2";
   /** Stripe onramp remaining transaction limits */
   onrampLimits?: any[] | null;
+  /** Expose flag to show delivery speed selection UI for bank accounts */
+  showSpeedSelection: boolean;
+  /** Expose callback to confirm chosen speed and resume checkout */
+  confirmSpeed: (speed: "standard" | "instant") => void;
 };
 
 const STEP_MESSAGES: Record<OnrampStep, string> = {
@@ -406,6 +410,15 @@ export function useStripeEmbeddedOnramp({
   });
   const [kycTierRequired, setKycTierRequired] = useState<"l0" | "l1" | "l2">("l0");
   const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
+  const [showSpeedSelection, setShowSpeedSelection] = useState(false);
+  const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
+
+  const confirmSpeed = useCallback((speed: "standard" | "instant") => {
+    if (speedResolverRef.current) {
+      speedResolverRef.current(speed);
+      speedResolverRef.current = null;
+    }
+  }, []);
 
   const onrampRef = useRef<OnrampCoordinator | null>(null);
   const mountedRef = useRef(true);
@@ -1258,12 +1271,16 @@ export function useStripeEmbeddedOnramp({
     customerId: string,
     pmToken: string,
     buyerWallet: string,
-    overrideAmount?: number
+    overrideAmount?: number,
+    funding?: "credit" | "debit" | "us_bank_account" | null
   ): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
     updateStep("creating_session");
     
     const execute = async (amt?: number): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
       try {
+        const fundingTypeToUse = funding !== undefined ? funding : detectedCardFunding;
+        const settlementSpeed = fundingTypeToUse === "us_bank_account" ? "standard" : "instant";
+
         const sessionRes = await fetch("/api/stripe/onramp-session-v2", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1280,6 +1297,7 @@ export function useStripeEmbeddedOnramp({
             merchantWallet,
             brandKey,
             splitMode: isDualSplitEnabled() ? "dual" : "single",
+            settlementSpeed,
           }),
         });
 
@@ -1474,7 +1492,8 @@ export function useStripeEmbeddedOnramp({
     merchantWallet,
     brandKey,
     updateStep,
-    handleError
+    handleError,
+    detectedCardFunding
   ]);
 
   const postCheckoutHandler = useCallback(async (
@@ -1620,7 +1639,7 @@ export function useStripeEmbeddedOnramp({
     let currentSessionId = sessionIdRef.current;
     if (!currentSessionId) {
       const initialAmount = getOnrampAmount(initialFunding || null);
-      const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount);
+      const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount, initialFunding);
       if (!sessionResult) return;
       currentSessionId = sessionResult.sessionId;
       sessionIdRef.current = currentSessionId;
@@ -1649,7 +1668,7 @@ export function useStripeEmbeddedOnramp({
         const targetAmount = getOnrampAmount(fundingType);
         if (targetAmount !== initialAmount) {
           console.log(`[EMBEDDED ONRAMP] ${fundingType} card detected. Re-creating session with target amount: ${targetAmount} (was ${initialAmount})`);
-          const newSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount);
+          const newSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount, fundingType);
           if (!newSessionResult) return;
           currentSessionId = newSessionResult.sessionId;
           sessionIdRef.current = currentSessionId;
@@ -2548,26 +2567,8 @@ export function useStripeEmbeddedOnramp({
               updateStep("verifying_identity");
               
               try {
-                const isTestMode = !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_");
-                if (isTestMode) {
-                  console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics for L2 during step 6 check...");
-                  await submitKycInfoWithTimeout(onrampRef.current!, {
-                    given_name: "John",
-                    surname: "Verified",
-                    date_of_birth: { day: 1, month: 1, year: 1901 },
-                    address: {
-                      line1: "address_full_match",
-                      city: "Seattle",
-                      state: "WA",
-                      postal_code: "12345",
-                      country: "US"
-                    },
-                    id_number: {
-                      value: "000000000",
-                      type: "us_ssn"
-                    }
-                  });
-                }
+                // Demographics submission is skipped because the user is already L1 verified.
+                // We directly call verifyDocuments() to upload document identity verification.
                 
                 const verifyResult = await onrampRef.current!.verifyDocuments();
                 if (verifyResult.result === "abandoned") {
@@ -2859,105 +2860,97 @@ export function useStripeEmbeddedOnramp({
           setDetectedCardFunding(collectedFunding);
           if (collectedBrand) setDetectedCardBrand(collectedBrand);
           if (collectedLast4) setDetectedCardLast4(collectedLast4);
-          if (collectedFunding !== "us_bank_account") {
-            onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
-          }
+          onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
         }
 
-        // ─── ACH KYC ENFORCEMENT INTERCEPT ───
+        const chosenSpeed: "standard" | "instant" = "standard";
+
+        // ─── ACH KYC & SPEED INTERCEPT ───
         if (collectedFunding === "us_bank_account") {
           isAchEnforcedRef.current = true;
-          console.log("[EMBEDDED ONRAMP] ACH/Bank payment chosen. Checking customer KYC requirements...");
+          console.log("[EMBEDDED ONRAMP] ACH/Bank payment chosen. Using standard speed.");
+
+          console.log("[EMBEDDED ONRAMP] Checking customer KYC requirements...");
           try {
             const customerId = customerIdRef.current;
-            if (customerId) {
-              const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
-                headers: {
-                  "x-stripe-oauth-token": oauthTokenRef.current || "",
-                },
-              });
+            console.log("[EMBEDDED ONRAMP] Active Customer ID for ACH:", customerId);
+            if (!customerId) {
+              throw new Error("Missing Stripe Customer ID. Please authenticate first.");
+            }
 
-              if (checkRes.ok) {
-                const kycData = await checkRes.json();
-                const kycTiers = kycData.kycTiers || [];
-                const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
-                const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-                const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
+            const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
+              headers: {
+                "x-stripe-oauth-token": oauthTokenRef.current || "",
+              },
+            });
 
-                const isL0Verified = l0Tier 
-                  ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
-                  : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+            if (!checkRes.ok) {
+              const errText = await checkRes.text();
+              console.error("[EMBEDDED ONRAMP] Customer query failed:", checkRes.status, errText);
+              throw new Error(`Failed to check verification status: ${checkRes.status}`);
+            }
 
-                const isL1Verified = l1Tier 
-                  ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
-                  : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+            const kycData = await checkRes.json();
+            console.log("[EMBEDDED ONRAMP] Customer KYC Payload:", kycData);
+            const kycTiers = kycData.kycTiers || [];
+            const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
+            const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+            const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
 
-                const isL2Verified = l2Tier
-                  ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
-                  : false;
+            const isL0Verified = l0Tier 
+              ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
+              : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
 
-                if (!isL2Verified) {
-                  console.log("[EMBEDDED ONRAMP] ACH selected but KYC incomplete. Enforcing KYC tiers...");
-                  if (isL1Verified) {
-                    // Do NOT call setPaymentElement(null) here because we need it mounted for verifyDocuments
-                    setKycTierRequired("l2");
-                    updateStep("verifying_identity");
-                    
-                    try {
-                      const isTestMode = !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_");
-                      if (isTestMode) {
-                        console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics for ACH L2...");
-                        await submitKycInfoWithTimeout(onrampRef.current!, {
-                          given_name: "John",
-                          surname: "Verified",
-                          date_of_birth: { day: 1, month: 1, year: 1901 },
-                          address: {
-                            line1: "address_full_match",
-                            city: "Seattle",
-                            state: "WA",
-                            postal_code: "12345",
-                            country: "US"
-                          },
-                          id_number: {
-                            value: "000000000",
-                            type: "us_ssn"
-                          }
-                        });
-                      }
-                      
-                      const verifyResult = await onrampRef.current!.verifyDocuments();
-                      if (verifyResult.result === "abandoned") {
-                        throw new Error("Identity verification was abandoned");
-                      }
-                      
-                      console.log("[EMBEDDED ONRAMP] ACH L2 document verification finished. Polling status...");
-                      updateStep("checking_kyc");
-                      const success = await pollKycStatus(customerId);
-                      if (!success) {
-                        throw new Error("Identity verification not approved");
-                      }
-                    } catch (verifyErr: any) {
-                      setPaymentElement(null); // Clear element on failure
-                      throw verifyErr;
-                    }
-                  } else if (isL0Verified) {
-                    setPaymentElement(null); // Clear element to show demographics forms
-                    setKycTierRequired("l1");
-                    updateStep("collecting_kyc");
-                  } else {
-                    setPaymentElement(null); // Clear element to show demographics forms
-                    setKycTierRequired("l0");
-                    updateStep("collecting_kyc");
+            const isL1Verified = l1Tier 
+              ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
+              : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+
+            const isL2Verified = l2Tier
+              ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
+              : false;
+
+            console.log("[EMBEDDED ONRAMP] Audited tiers:", { isL0Verified, isL1Verified, isL2Verified });
+
+            if (!isL2Verified) {
+              console.log("[EMBEDDED ONRAMP] ACH selected but L2 verification is incomplete. Enforcing KYC...");
+              if (isL1Verified) {
+                // Do NOT call setPaymentElement(null) here because we need it mounted for verifyDocuments
+                setKycTierRequired("l2");
+                updateStep("verifying_identity");
+                
+                try {
+                  console.log("[EMBEDDED ONRAMP] Launching document verification for L2...");
+                  const verifyResult = await onrampRef.current!.verifyDocuments();
+                  if (verifyResult.result === "abandoned") {
+                    throw new Error("Identity verification was abandoned");
                   }
-
-                  setPaymentElement(null); // Clear element after successful KYC checks
-                  isRunningRef.current = false;
-                  if (startOnrampRef.current) {
-                    await startOnrampRef.current(activeEmail, activePhone, activeName);
+                  
+                  console.log("[EMBEDDED ONRAMP] ACH L2 document verification finished. Polling status...");
+                  updateStep("checking_kyc");
+                  const success = await pollKycStatus(customerId);
+                  if (!success) {
+                    throw new Error("Identity verification not approved");
                   }
-                  return;
+                } catch (verifyErr: any) {
+                  setPaymentElement(null); // Clear element on failure
+                  throw verifyErr;
                 }
+              } else if (isL0Verified) {
+                setPaymentElement(null); // Clear element to show demographics forms
+                setKycTierRequired("l1");
+                updateStep("collecting_kyc");
+              } else {
+                setPaymentElement(null); // Clear element to show demographics forms
+                setKycTierRequired("l0");
+                updateStep("collecting_kyc");
               }
+
+              setPaymentElement(null); // Clear element after successful KYC checks
+              isRunningRef.current = false;
+              if (startOnrampRef.current) {
+                await startOnrampRef.current(activeEmail, activePhone, activeName);
+              }
+              return;
             }
           } catch (kycErr: any) {
             console.warn("[EMBEDDED ONRAMP] Failed during ACH KYC enforcement check:", kycErr);
@@ -3056,6 +3049,7 @@ export function useStripeEmbeddedOnramp({
           return;
         }
         
+        let isL1Verified = false;
         console.log("[EMBEDDED ONRAMP] L2 KYC error caught during payment collection. Prechecking customer status...");
         try {
           const customerId = customerIdRef.current;
@@ -3074,7 +3068,7 @@ export function useStripeEmbeddedOnramp({
             }
             const kycTiers = kycData.kycTiers || [];
             const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-            const isL1Verified = l1Tier 
+            isL1Verified = l1Tier 
               ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
               : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
               
@@ -3106,7 +3100,7 @@ export function useStripeEmbeddedOnramp({
           try {
             const isTestMode = !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_");
             
-            if (isTestMode) {
+            if (isTestMode && !isL1Verified) {
               console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics on payment collection catch...");
               await submitKycInfoWithTimeout(onrampRef.current, {
                 given_name: "John",
@@ -3215,5 +3209,7 @@ export function useStripeEmbeddedOnramp({
     sessionId,
     kycTierRequired,
     onrampLimits,
+    showSpeedSelection,
+    confirmSpeed,
   };
 }
