@@ -1203,7 +1203,12 @@ export default function PlatformAnalyticsPanel() {
                                                           <div className="inline-flex flex-col gap-0.5 text-[10px] text-emerald-400 font-mono text-right">
                                                             {session.limits.map((l: any, limitIdx: number) => (
                                                               <div key={limitIdx}>
-                                                                ${(l.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
+                                                                {(() => {
+                                                                  const rawAmount = Number(l.amount || 0);
+                                                                  // Auto-correct legacy limits written before the x100 multiplier fix
+                                                                  const corrected = rawAmount > 1000000 ? rawAmount / 100 : rawAmount;
+                                                                  return `$${(corrected / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+                                                                })()} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
                                                               </div>
                                                             ))}
                                                           </div>

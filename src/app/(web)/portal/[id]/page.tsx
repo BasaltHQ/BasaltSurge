@@ -5348,51 +5348,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     <span>{headlessError}</span>
                   </div>
                 )}
-                {headlessPaymentElement && headlessOnrampLimits && headlessOnrampLimits.length > 0 && (() => {
-                  const usdCardLimit = headlessOnrampLimits.find((l: any) => l.payment_method_type === "card" && l.currency === "usd");
-                  if (!usdCardLimit) return null;
 
-                  const limitAmount = Number(usdCardLimit.amount || 0) / 100;
-                  const currentTxAmount = Number(stripeTotalUsd || 0);
-                  const remainingBalance = limitAmount - currentTxAmount;
-                  const isOverLimit = remainingBalance < 0;
-
-                  return (
-                    <div className="mx-4 mt-4 p-3.5 rounded-2xl bg-black/30 border border-white/5 space-y-2 animate-in slide-in-from-top duration-300">
-                      <div className="flex items-center justify-between text-xs font-semibold">
-                        <span className="text-muted-foreground flex items-center gap-1.5 select-none">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                          Stripe Onramp Limits:
-                        </span>
-                        <span className={isOverLimit ? "text-rose-400" : "text-emerald-400"}>
-                          {isOverLimit ? "Over Limit Warning" : "Verified Limit"}
-                        </span>
-                      </div>
-                      
-                      <div className="grid grid-cols-3 gap-2 pt-1.5 border-t border-white/5 text-center font-mono">
-                        <div className="space-y-0.5">
-                          <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-sans select-none font-medium">Remaining Limit</div>
-                          <div className="text-xs font-bold text-white">${limitAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                        </div>
-                        <div className="space-y-0.5">
-                          <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-sans select-none font-medium">Current Trans.</div>
-                          <div className="text-xs font-bold text-white">${currentTxAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                        </div>
-                        <div className="space-y-0.5">
-                          <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-sans select-none font-medium">Est. Balance</div>
-                          <div className="text-xs font-bold text-white">${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                        </div>
-                      </div>
-
-                      {isOverLimit && (
-                        <div className="text-[10px] text-rose-400 font-medium bg-rose-500/10 border border-rose-500/20 p-2 rounded-lg mt-2 flex items-start gap-1.5 leading-normal">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 mt-0.5"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
-                          <span>This transaction exceeds your remaining Stripe onramp limit. Please reduce your purchase amount or contact support.</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
                 <div
                   className="w-full h-full flex flex-col items-stretch"
                   ref={(el) => {
