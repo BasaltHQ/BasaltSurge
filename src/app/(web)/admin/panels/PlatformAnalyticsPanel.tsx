@@ -1198,8 +1198,10 @@ export default function PlatformAnalyticsPanel() {
                                                   <strong>Primary Session:</strong> {r.email || "anonymous"} • <span className="font-mono text-muted-foreground">{r.stripeSessionId}</span> (Historical record resolved prior to limits/multi-session tracking)
                                                 </div>
                                               )}
-                                          </div>
-                                        )}
+                                           </div>
+                                         )}
+                                       </div>
+                                     )}
 
                                       {/* Tab 2: Items Ordered */}
                                       {activeTab === "items" && (
@@ -1273,6 +1275,7 @@ export default function PlatformAnalyticsPanel() {
                                           </div>
                                         </div>
                                       </div>
+                                    )}
                                   </div>
                                 </td>
                               </tr>
