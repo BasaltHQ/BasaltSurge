@@ -186,6 +186,8 @@ export type UseStripeEmbeddedOnrampReturn = {
   sessionId: string | null;
   /** The dynamic KYC tier required */
   kycTierRequired?: "l0" | "l1" | "l2";
+  /** Stripe onramp remaining transaction limits */
+  onrampLimits?: any[] | null;
 };
 
 const STEP_MESSAGES: Record<OnrampStep, string> = {
@@ -403,6 +405,7 @@ export function useStripeEmbeddedOnramp({
     return null;
   });
   const [kycTierRequired, setKycTierRequired] = useState<"l0" | "l1" | "l2">("l0");
+  const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
 
   const onrampRef = useRef<OnrampCoordinator | null>(null);
   const mountedRef = useRef(true);
@@ -2576,6 +2579,32 @@ export function useStripeEmbeddedOnramp({
         if (!mountedRef.current) return;
         updateStep("collecting_payment");
 
+        // Retrieve transaction limits asynchronously
+        (async () => {
+          try {
+            const limitsRes = await fetch("/api/stripe/onramp-limits", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-stripe-oauth-token": oauthTokenRef.current || ""
+              },
+              body: JSON.stringify({
+                receiptId,
+                walletAddress: buyerWallet,
+                network,
+                email,
+                stripeSessionId: sessionId
+              })
+            });
+            const limitsData = await limitsRes.json();
+            if (limitsData.ok && limitsData.limits) {
+              setOnrampLimits(limitsData.limits);
+            }
+          } catch (limitsErr) {
+            console.warn("[EMBEDDED ONRAMP] Failed to fetch transaction limits:", limitsErr);
+          }
+        })();
+
         const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | null; brand: string; last4: string }>((resolve, reject) => {
           paymentRejectRef.current = reject;
 
@@ -2930,5 +2959,6 @@ export function useStripeEmbeddedOnramp({
     detectedCardLast4,
     sessionId,
     kycTierRequired,
+    onrampLimits,
   };
 }

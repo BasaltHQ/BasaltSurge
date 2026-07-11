@@ -3304,6 +3304,7 @@ function MerchantSettingsTab({
         feeMinusEnabled: false,
         currencySelectionEnabled: true,
         discretePayWithCrypto: false,
+        trackTransactionLimits: true,
         tipConfig: { enabled: false, allowCustom: true, presets: [15, 18, 20], defaultTip: null }
     });
 
@@ -3321,6 +3322,7 @@ function MerchantSettingsTab({
                     feeMinusEnabled: !!cfg.feeMinusEnabled,
                     currencySelectionEnabled: cfg.currencySelectionEnabled !== false,
                     discretePayWithCrypto: cfg.discretePayWithCrypto !== undefined ? !!cfg.discretePayWithCrypto : !!cfg.theme?.discretePayWithCrypto,
+                    trackTransactionLimits: cfg.trackTransactionLimits !== false,
                     tipConfig: cfg.tipConfig || { enabled: false, allowCustom: true, presets: [15, 18, 20], defaultTip: null }
                 });
             } catch (e) {
@@ -3350,6 +3352,7 @@ function MerchantSettingsTab({
                     currencySelectionEnabled: nextConfig.currencySelectionEnabled,
                     tipConfig: nextConfig.tipConfig,
                     discretePayWithCrypto: nextConfig.discretePayWithCrypto,
+                    trackTransactionLimits: nextConfig.trackTransactionLimits,
                     theme: {
                         discretePayWithCrypto: nextConfig.discretePayWithCrypto
                     }
@@ -3481,6 +3484,29 @@ function MerchantSettingsTab({
                             <span
                                 className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
                                     config.discretePayWithCrypto ? "translate-x-4" : "translate-x-0"
+                                }`}
+                            />
+                        </button>
+                    </div>
+
+                    {/* Track Transaction Limits switch */}
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-white/5">
+                        <div>
+                            <div className="text-xs font-semibold">Track Transaction Limits</div>
+                            <div className="text-[11px] text-muted-foreground">Retrieve and log Stripe transaction limits for customers.</div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                saveSettings({ trackTransactionLimits: !config.trackTransactionLimits });
+                            }}
+                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                config.trackTransactionLimits ? "bg-emerald-500" : "bg-zinc-700"
+                            }`}
+                        >
+                            <span
+                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                    config.trackTransactionLimits ? "translate-x-4" : "translate-x-0"
                                 }`}
                             />
                         </button>

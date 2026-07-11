@@ -18,7 +18,8 @@ import {
   Building2,
   Activity,
   ArrowUpDown,
-  FileText
+  FileText,
+  Users
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 
@@ -76,6 +77,7 @@ interface ReceiptInfo {
   parentUrl?: string | null;
   splitAddress?: string | null;
   splitAddressCredit?: string | null;
+  customerSessions?: any[];
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -922,7 +924,8 @@ export default function PlatformAnalyticsPanel() {
                                         { id: "overview", label: "Overview", icon: Sliders },
                                         { id: "items", label: "Items Ordered", icon: FileText },
                                         { id: "origin", label: "Initialization & Origin", icon: Chrome },
-                                        { id: "logs", label: "Client Logs", icon: Activity }
+                                        { id: "logs", label: "Client Logs", icon: Activity },
+                                        { id: "customers", label: "Customer Metadata", icon: Users }
                                       ].map(tab => {
                                         const Icon = tab.icon;
                                         const isActive = activeTab === tab.id;
@@ -1083,14 +1086,129 @@ export default function PlatformAnalyticsPanel() {
                                       </div>
                                     )}
 
-                                    {/* Tab 2: Items Ordered */}
-                                    {activeTab === "items" && (
-                                      <div className="space-y-2 animate-in fade-in duration-200 mt-1">
-                                        <div className="bg-black/20 border border-white/5 rounded-lg overflow-hidden">
-                                          <table className="w-full text-left text-xs">
-                                            <thead className="bg-white/5 text-muted-foreground text-[10px] uppercase font-semibold border-b border-white/5">
-                                              <tr>
-                                                <th className="py-2 px-3">Item Description</th>
+                                      {/* Tab 4: Client Logs */}
+                                      {activeTab === "logs" && (
+                                        <div className="space-y-2 animate-in fade-in duration-200 mt-1">
+                                          {loadingLogs[r.receiptId] ? (
+                                            <div className="text-xs text-muted-foreground p-4 text-center flex items-center justify-center gap-2">
+                                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+                                              <span>Fetching logs from database...</span>
+                                            </div>
+                                          ) : (expandedLogs[r.receiptId] && expandedLogs[r.receiptId].length > 0) ? (
+                                            <div className="bg-black/25 border border-white/5 rounded-lg divide-y divide-white/5 max-h-[220px] overflow-y-auto font-mono text-[11px] leading-relaxed">
+                                              {expandedLogs[r.receiptId].map((log, idx) => (
+                                                <div key={idx} className="p-2.5 space-y-1">
+                                                  <div className="flex items-center justify-between text-muted-foreground text-[10px]">
+                                                    <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
+                                                    <span className={`px-1 rounded text-[9px] uppercase font-semibold ${
+                                                      log.level === "error" ? "bg-red-500/15 text-red-400" :
+                                                      log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
+                                                      "bg-blue-500/15 text-blue-400"
+                                                    }`}>
+                                                      {log.level}
+                                                    </span>
+                                                  </div>
+                                                  <div className="text-white/80 whitespace-pre-wrap">{log.message}</div>
+                                                  {log.userAgent && (
+                                                    <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                                                      <Smartphone className="w-3 h-3" />
+                                                      <span>UA: {parseUserAgent(log.userAgent)}</span>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <div className="text-xs text-muted-foreground p-3 border border-white/5 border-dashed rounded-lg text-center">
+                                              No Client logs matched for this transaction. (Indicates they either completed seamlessly without errors or left early).
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* Tab 5: Customer Metadata */}
+                                      {activeTab === "customers" && (
+                                        <div className="space-y-4 animate-in fade-in duration-200 mt-1">
+                                          {(r.customerSessions && r.customerSessions.length > 0) ? (
+                                            <div className="bg-black/25 border border-white/5 rounded-lg overflow-hidden">
+                                              <table className="w-full text-left border-collapse text-xs">
+                                                <thead>
+                                                  <tr className="bg-white/5 border-b border-white/5 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
+                                                    <th className="py-2.5 px-4">Date/Time</th>
+                                                    <th className="py-2.5 px-4">Customer Email</th>
+                                                    <th className="py-2.5 px-4">Wallet Address</th>
+                                                    <th className="py-2.5 px-4">Stripe Session ID</th>
+                                                    <th className="py-2.5 px-4 text-right">Limits Metadata</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-white/5">
+                                                  {r.customerSessions.map((session: any, idx: number) => (
+                                                    <tr key={idx} className="hover:bg-white/[0.02]">
+                                                      <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
+                                                        {session.createdAt ? new Date(session.createdAt).toLocaleString() : "N/A"}
+                                                      </td>
+                                                      <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
+                                                      <td className="py-3 px-4 font-mono text-[11px] text-white/80 select-all" title={session.walletAddress}>
+                                                        {session.walletAddress ? (
+                                                          <span className="flex items-center gap-1">
+                                                            <span>{session.walletAddress.slice(0, 8)}...{session.walletAddress.slice(-6)}</span>
+                                                          </span>
+                                                        ) : (
+                                                          "N/A"
+                                                        )}
+                                                      </td>
+                                                      <td className="py-3 px-4 font-mono text-[11px] text-muted-foreground select-all" title={session.stripeSessionId}>
+                                                        {session.stripeSessionId ? (
+                                                          <a
+                                                            href={`https://dashboard.stripe.com/crypto/onramp_sessions/${session.stripeSessionId}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="hover:text-primary hover:underline inline-flex items-center gap-1"
+                                                          >
+                                                            <span>{session.stripeSessionId.slice(0, 12)}...</span>
+                                                            <ExternalLink className="w-2.5 h-2.5" />
+                                                          </a>
+                                                        ) : (
+                                                          "N/A"
+                                                        )}
+                                                      </td>
+                                                      <td className="py-3 px-4 text-right">
+                                                        {Array.isArray(session.limits) && session.limits.length > 0 ? (
+                                                          <div className="inline-flex flex-col gap-0.5 text-[10px] text-emerald-400 font-mono text-right">
+                                                            {session.limits.map((l: any, limitIdx: number) => (
+                                                              <div key={limitIdx}>
+                                                                ${(l.amount / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
+                                                              </div>
+                                                            ))}
+                                                          </div>
+                                                        ) : (
+                                                          <span className="text-muted-foreground italic text-[11px]">No limits tracked</span>
+                                                        )}
+                                                      </td>
+                                                    </tr>
+                                                  ))}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          ) : (
+                                            <div className="text-xs text-muted-foreground p-4 border border-white/5 border-dashed rounded-lg space-y-2">
+                                              <p>No customer sessions or transaction limits tracked for this receipt yet.</p>
+                                              {r.stripeSessionId && (
+                                                <div className="pt-2 border-t border-white/5 text-[11px]">
+                                                  <strong>Primary Session:</strong> {r.email || "anonymous"} • <span className="font-mono text-muted-foreground">{r.stripeSessionId}</span> (Historical record resolved prior to limits/multi-session tracking)
+                                                </div>
+                                              )}
+                                          </div>
+                                        )}
+
+                                      {/* Tab 2: Items Ordered */}
+                                      {activeTab === "items" && (
+                                        <div className="space-y-2 animate-in fade-in duration-200 mt-1">
+                                          <div className="bg-black/20 border border-white/5 rounded-lg overflow-hidden">
+                                            <table className="w-full text-left text-xs">
+                                              <thead className="bg-white/5 text-muted-foreground text-[10px] uppercase font-semibold border-b border-white/5">
+                                                <tr>
+                                                  <th className="py-2 px-3">Item Description</th>
                                                 <th className="py-2 px-3 text-right">Price</th>
                                                 <th className="py-2 px-3 text-center">Qty</th>
                                                 <th className="py-2 px-3 text-right">Total</th>
@@ -1155,48 +1273,6 @@ export default function PlatformAnalyticsPanel() {
                                           </div>
                                         </div>
                                       </div>
-                                    )}
-
-                                    {/* Tab 4: Client Logs */}
-                                    {activeTab === "logs" && (
-                                      <div className="space-y-2 animate-in fade-in duration-200 mt-1">
-                                        {loadingLogs[r.receiptId] ? (
-                                          <div className="text-xs text-muted-foreground p-4 text-center flex items-center justify-center gap-2">
-                                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
-                                            <span>Fetching logs from database...</span>
-                                          </div>
-                                        ) : (expandedLogs[r.receiptId] && expandedLogs[r.receiptId].length > 0) ? (
-                                          <div className="bg-black/25 border border-white/5 rounded-lg divide-y divide-white/5 max-h-[220px] overflow-y-auto font-mono text-[11px] leading-relaxed">
-                                            {expandedLogs[r.receiptId].map((log, idx) => (
-                                              <div key={idx} className="p-2.5 space-y-1">
-                                                <div className="flex items-center justify-between text-muted-foreground text-[10px]">
-                                                  <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
-                                                  <span className={`px-1 rounded text-[9px] uppercase font-semibold ${
-                                                    log.level === "error" ? "bg-red-500/15 text-red-400" :
-                                                    log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
-                                                    "bg-blue-500/15 text-blue-400"
-                                                  }`}>
-                                                    {log.level}
-                                                  </span>
-                                                </div>
-                                                <div className="text-white/80 whitespace-pre-wrap">{log.message}</div>
-                                                {log.userAgent && (
-                                                  <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                                                    <Smartphone className="w-3 h-3" />
-                                                    <span>UA: {parseUserAgent(log.userAgent)}</span>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            ))}
-                                          </div>
-                                        ) : (
-                                          <div className="text-xs text-muted-foreground p-3 border border-white/5 border-dashed rounded-lg text-center">
-                                            No Client logs matched for this transaction. (Indicates they either completed seamlessly without errors or left early).
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-
                                   </div>
                                 </td>
                               </tr>

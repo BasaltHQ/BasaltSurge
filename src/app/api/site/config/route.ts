@@ -1041,6 +1041,7 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
   config.feeMinusEnabled = typeof config.feeMinusEnabled === "boolean" ? config.feeMinusEnabled : false;
   config.currencySelectionEnabled = typeof config.currencySelectionEnabled === "boolean" ? config.currencySelectionEnabled : true;
   config.discretePayWithCrypto = typeof config.discretePayWithCrypto === "boolean" ? config.discretePayWithCrypto : (typeof config.theme?.discretePayWithCrypto === "boolean" ? config.theme.discretePayWithCrypto : false);
+  config.trackTransactionLimits = typeof config.trackTransactionLimits === "boolean" ? config.trackTransactionLimits : true;
 
   // Do not apply environment defaults; rely solely on live brand config or persisted config
   try { /* no-op */ } catch { }
@@ -1840,6 +1841,11 @@ export async function POST(req: NextRequest) {
     // Optional discretePayWithCrypto update
     if (typeof body.discretePayWithCrypto === "boolean") {
       candidate.discretePayWithCrypto = body.discretePayWithCrypto;
+    }
+
+    // Optional trackTransactionLimits update
+    if (typeof body.trackTransactionLimits === "boolean") {
+      candidate.trackTransactionLimits = body.trackTransactionLimits;
     }
 
     // Optional split config update
