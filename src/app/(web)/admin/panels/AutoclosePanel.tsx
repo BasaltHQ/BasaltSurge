@@ -60,6 +60,54 @@ export default function AutoclosePanel() {
 
   const [loading, setLoading] = useState(true);
   const [runs, setRuns] = useState<Run[]>([]);
+  const [pendingAch, setPendingAch] = useState<any[]>([]);
+
+  // Pending ACH Search & Sorting
+  const [achSearch, setAchSearch] = useState("");
+  const [achSortField, setAchSortField] = useState<string>("createdAt");
+  const [achSortOrder, setAchSortOrder] = useState<"asc" | "desc">("desc");
+
+  const toggleAchSort = (field: string) => {
+    if (achSortField === field) {
+      setAchSortOrder(achSortOrder === "asc" ? "desc" : "asc");
+    } else {
+      setAchSortField(field);
+      setAchSortOrder("desc");
+    }
+  };
+
+  const filteredAndSortedAch = React.useMemo(() => {
+    let items = pendingAch;
+    if (achSearch.trim()) {
+      const q = achSearch.toLowerCase();
+      items = items.filter(
+        (r) =>
+          r.receiptId.toLowerCase().includes(q) ||
+          String(r.brandName || "").toLowerCase().includes(q) ||
+          String(r.brandKey || "").toLowerCase().includes(q)
+      );
+    }
+    return [...items].sort((a, b) => {
+      let valA = a[achSortField];
+      let valB = b[achSortField];
+
+      if (achSortField === "createdAt" || achSortField === "lastPolledAt") {
+        valA = valA ? new Date(valA).getTime() : 0;
+        valB = valB ? new Date(valB).getTime() : 0;
+      } else if (achSortField === "totalUsd") {
+        valA = Number(valA || 0);
+        valB = Number(valB || 0);
+      } else {
+        valA = String(valA || "").toLowerCase();
+        valB = String(valB || "").toLowerCase();
+      }
+
+      if (valA < valB) return achSortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return achSortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [pendingAch, achSearch, achSortField, achSortOrder]);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [triggering, setTriggering] = useState(false);
@@ -144,6 +192,7 @@ export default function AutoclosePanel() {
       }
       const data = await res.json();
       setRuns(data.runs || []);
+      setPendingAch(data.pendingAch || []);
     } catch (err: any) {
       setError(err?.message || "Failed to load autoclose runs");
     } finally {
@@ -486,6 +535,125 @@ export default function AutoclosePanel() {
         )}
 
 
+      </div>
+
+      {/* Pending ACH Transfers Section */}
+      <div className="glass-pane rounded-xl border p-6 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+              <Clock className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">Pending ACH Bank Transfers</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                USDC value is temporarily locked in onramp transit and will clear to the merchant's resolved split address within 2-3 business days.
+              </p>
+            </div>
+          </div>
+          {pendingAch.length > 0 && (
+            <div className="relative max-w-xs w-full">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search receipt or brand..."
+                value={achSearch}
+                onChange={(e) => setAchSearch(e.target.value)}
+                className="bg-background border border-foreground/10 rounded-lg pl-9 pr-4 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary w-full"
+              />
+            </div>
+          )}
+        </div>
+
+        {filteredAndSortedAch.length === 0 ? (
+          <div className="text-xs text-muted-foreground p-4 border border-foreground/5 border-dashed rounded-lg">
+            {pendingAch.length === 0 
+              ? "No pending ACH bank transfers currently in transit."
+              : "No pending ACH bank transfers match your search query."}
+          </div>
+        ) : (
+          <div className="border border-foreground/10 rounded-xl overflow-hidden bg-background/5">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-foreground/5 bg-foreground/[0.02] text-muted-foreground font-semibold">
+                  <th 
+                    className="p-3 pl-4 cursor-pointer hover:text-white select-none transition-colors"
+                    onClick={() => toggleAchSort("receiptId")}
+                  >
+                    <span className="flex items-center gap-1">
+                      Receipt ID {achSortField === "receiptId" && (achSortOrder === "asc" ? "▲" : "▼")}
+                    </span>
+                  </th>
+                  <th 
+                    className="p-3 cursor-pointer hover:text-white select-none transition-colors"
+                    onClick={() => toggleAchSort("brandName")}
+                  >
+                    <span className="flex items-center gap-1">
+                      Merchant / Brand {achSortField === "brandName" && (achSortOrder === "asc" ? "▲" : "▼")}
+                    </span>
+                  </th>
+                  <th 
+                    className="p-3 cursor-pointer hover:text-white select-none transition-colors"
+                    onClick={() => toggleAchSort("totalUsd")}
+                  >
+                    <span className="flex items-center gap-1">
+                      Amount {achSortField === "totalUsd" && (achSortOrder === "asc" ? "▲" : "▼")}
+                    </span>
+                  </th>
+                  <th 
+                    className="p-3 cursor-pointer hover:text-white select-none transition-colors"
+                    onClick={() => toggleAchSort("stripeSessionStatus")}
+                  >
+                    <span className="flex items-center gap-1">
+                      Stripe Status {achSortField === "stripeSessionStatus" && (achSortOrder === "asc" ? "▲" : "▼")}
+                    </span>
+                  </th>
+                  <th 
+                    className="p-3 cursor-pointer hover:text-white select-none transition-colors"
+                    onClick={() => toggleAchSort("lastPolledAt")}
+                  >
+                    <span className="flex items-center gap-1">
+                      Last Polled {achSortField === "lastPolledAt" && (achSortOrder === "asc" ? "▲" : "▼")}
+                    </span>
+                  </th>
+                  <th 
+                    className="p-3 pr-4 text-right cursor-pointer hover:text-white select-none transition-colors"
+                    onClick={() => toggleAchSort("createdAt")}
+                  >
+                    <span className="flex items-center gap-1 justify-end">
+                      Age (Days) {achSortField === "createdAt" && (achSortOrder === "asc" ? "▲" : "▼")}
+                    </span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-foreground/5">
+                {filteredAndSortedAch.map((r) => {
+                  const createdDate = new Date(r.createdAt);
+                  const diffDays = Math.max(0, Math.floor((Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24)));
+                  return (
+                    <tr key={r.receiptId} className="hover:bg-foreground/[0.01] transition-all">
+                      <td className="p-3 pl-4 font-semibold text-white">#{r.receiptId}</td>
+                      <td className="p-3 text-muted-foreground">{r.brandName || r.brandKey}</td>
+                      <td className="p-3 font-semibold text-white">${Number(r.totalUsd || 0).toFixed(2)}</td>
+                      <td className="p-3">
+                        <span className="flex items-center gap-1.5 text-amber-500 font-semibold uppercase text-[10px]">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                          {r.stripeSessionStatus || "Pending"}
+                        </span>
+                      </td>
+                      <td className="p-3 text-muted-foreground">
+                        {r.lastPolledAt ? new Date(r.lastPolledAt).toLocaleString() : "Never"}
+                      </td>
+                      <td className="p-3 pr-4 text-right text-white font-mono">
+                        {diffDays}d
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Closes Log */}

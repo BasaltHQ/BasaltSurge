@@ -32,7 +32,27 @@ export async function GET(req: NextRequest) {
     const { resources: allRuns } = await container.items.query(querySpec).fetchAll();
     const runsList = allRuns || [];
 
-    // 4. Map and filter runs depending on partner or platform context
+    // 4. Query pending ACH transactions
+    let pendingAch: any[] = [];
+    try {
+      const containerEvents = await getContainer(undefined, "payportal_events");
+      const achQuery = {
+        query: `SELECT c.receiptId, c.wallet, c.totalUsd, c.status, c.createdAt, c.lastPolledAt, c.stripeSessionStatus, c.brandName, c.brandKey FROM c WHERE c.type = 'receipt' AND (c.status = 'paid - ach pending' OR c.status = 'ach_pending') ORDER BY c.createdAt DESC`
+      };
+      const { resources } = await containerEvents.items.query(achQuery).fetchAll();
+      pendingAch = resources || [];
+      
+      // Filter by brandKey if not platform
+      if (!isPlatform) {
+        pendingAch = pendingAch.filter(
+          (r: any) => String(r.brandKey || "").toLowerCase() === brandKey.toLowerCase()
+        );
+      }
+    } catch (achErr) {
+      console.error("[api/admin/autoclose] Failed to query pending ACH:", achErr);
+    }
+
+    // 5. Map and filter runs depending on partner or platform context
     const filteredRuns = runsList.map((run: any) => {
       if (isPlatform) {
         // Platform views see all details
@@ -66,7 +86,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ ok: true, runs: filteredRuns });
+    return NextResponse.json({ ok: true, runs: filteredRuns, pendingAch });
   } catch (e: any) {
     console.error("[api/admin/autoclose] GET error:", e);
     return NextResponse.json({ error: e.message || "Failed to retrieve runs" }, { status: 500 });
