@@ -1138,6 +1138,7 @@ export default function PlatformAnalyticsPanel() {
                                                     <th className="py-2.5 px-4">Customer Email</th>
                                                     <th className="py-2.5 px-4">Wallet Address</th>
                                                     <th className="py-2.5 px-4">Stripe Session ID</th>
+                                                    <th className="py-2.5 px-4">Payment Method</th>
                                                     <th className="py-2.5 px-4 text-right">Limits Metadata</th>
                                                   </tr>
                                                 </thead>
@@ -1171,6 +1172,31 @@ export default function PlatformAnalyticsPanel() {
                                                         ) : (
                                                           "N/A"
                                                         )}
+                                                      </td>
+                                                      <td className="py-3 px-4 text-white/95 text-[11px]">
+                                                        {(() => {
+                                                          const pm = session.paymentMethodDetails;
+                                                          if (!pm) return <span className="text-muted-foreground/50">N/A</span>;
+                                                          if (pm.type === "card") {
+                                                            const card = pm.card || pm.payment_details?.card || pm.paymentDetails?.card;
+                                                            if (!card) return <span>Card</span>;
+                                                            return (
+                                                              <span className="capitalize">
+                                                                {card.brand} •••• {card.last4} ({card.funding})
+                                                                {card.wallet && ` via ${card.wallet}`}
+                                                              </span>
+                                                            );
+                                                          } else if (pm.type === "us_bank_account") {
+                                                            const bank = pm.us_bank_account || pm.payment_details?.us_bank_account || pm.paymentDetails?.us_bank_account;
+                                                            if (!bank) return <span>ACH</span>;
+                                                            return (
+                                                              <span>
+                                                                Bank ({bank.bank_name || "ACH"}) •••• {bank.last4 || "bank"}
+                                                              </span>
+                                                            );
+                                                          }
+                                                          return <span className="capitalize">{pm.type || "Unknown"}</span>;
+                                                        })()}
                                                       </td>
                                                       <td className="py-3 px-4 text-right">
                                                         {Array.isArray(session.limits) && session.limits.length > 0 ? (

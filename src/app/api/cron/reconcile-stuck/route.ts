@@ -211,6 +211,23 @@ export async function POST(req: NextRequest) {
       const amount = receipt.onrampAmount || receipt.totalUsd;
       const brandKey = receipt.brandKey || "";
 
+      // ACH Cooldown: Only poll ACH bank transfers once per hour
+      const isAch = receipt.detectedCardFunding === "us_bank_account" || 
+                    (Array.isArray(receipt.customerSessions) && receipt.customerSessions.some((s: any) => 
+                      s.paymentMethodDetails?.type === "us_bank_account" || 
+                      s.paymentMethodDetails?.paymentMethod === "us_bank_account"
+                    ));
+
+      if (isAch) {
+        const lastUpdated = receipt.lastUpdatedAt || receipt.createdAt || 0;
+        const timeSinceUpdate = Date.now() - lastUpdated;
+        if (timeSinceUpdate < 60 * 60 * 1000) {
+          console.log(`[cron/reconcile-stuck] Skipping ACH receipt ${receiptId} - inside 1 hour cooldown (${Math.round(timeSinceUpdate / 1000 / 60)}m elapsed)`);
+          skipped++;
+          continue;
+        }
+      }
+
       // Resolve site configuration dynamically to get the latest splits
       const siteConfig = await getSiteConfigForWallet(merchantWallet, brandKey);
       let splitAddress = receipt.splitAddress;

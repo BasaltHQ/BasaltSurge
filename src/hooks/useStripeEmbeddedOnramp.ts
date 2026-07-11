@@ -177,7 +177,7 @@ export type UseStripeEmbeddedOnrampReturn = {
   /** The buyer's smart wallet address (deterministic from email) */
   buyerWalletAddress: string | null;
   /** Expose detected card funding type (credit vs. debit) */
-  detectedCardFunding: "credit" | "debit" | null;
+  detectedCardFunding: "credit" | "debit" | "us_bank_account" | null;
   /** Expose detected card brand */
   detectedCardBrand: string | null;
   /** Expose detected card last 4 digits */
@@ -397,7 +397,7 @@ export function useStripeEmbeddedOnramp({
     return null;
   });
   const [localPhone, setLocalPhone] = useState<string>("");
-  const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | null>(null);
+  const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | "us_bank_account" | null>(null);
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(() => {
@@ -1241,10 +1241,10 @@ export function useStripeEmbeddedOnramp({
     }
   }, []);
 
-  const getOnrampAmount = useCallback((funding: "credit" | "debit" | null): number => {
+  const getOnrampAmount = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
     if (totalUsd !== undefined) {
       if (feeMinusEnabled) {
-        const rate = funding === "credit" ? 3.5 : 2.25;
+        const rate = funding === "credit" ? 3.5 : (funding === "us_bank_account" ? 1.5 : 2.25);
         return +(totalUsd / (1 + rate / 100)).toFixed(2);
       }
       return totalUsd;
@@ -1478,7 +1478,7 @@ export function useStripeEmbeddedOnramp({
   const postCheckoutHandler = useCallback(async (
     sessionId: string,
     activeEmail: string,
-    overrideFunding?: "credit" | "debit" | null
+    overrideFunding?: "credit" | "debit" | "us_bank_account" | null
   ) => {
     const fundingTypeToUse = overrideFunding !== undefined ? overrideFunding : detectedCardFunding;
     console.log("[EMBEDDED ONRAMP] Checking eCommerce mode before Step 11. isEcommerceMode:", isEcommerceMode, "fundingTypeToUse:", fundingTypeToUse);
@@ -1503,8 +1503,14 @@ export function useStripeEmbeddedOnramp({
       });
 
       isRunningRef.current = false;
-      updateStep("completed");
-      onSuccess?.({ sessionId, txHash: "ecommerce_pending" });
+      const isAch = fundingTypeToUse === "us_bank_account";
+      if (isAch) {
+        updateStep("awaiting_funds");
+        onSuccess?.({ sessionId, txHash: "ach_pending" });
+      } else {
+        updateStep("completed");
+        onSuccess?.({ sessionId, txHash: "ecommerce_pending" });
+      }
       return;
     }
 
@@ -1600,7 +1606,7 @@ export function useStripeEmbeddedOnramp({
     customerId: string,
     pmToken: string,
     buyerWallet: string,
-    initialFunding?: "credit" | "debit" | null
+    initialFunding?: "credit" | "debit" | "us_bank_account" | null
   ) => {
     updateStep("checking_out");
     isRunningRef.current = true;
@@ -2592,8 +2598,8 @@ export function useStripeEmbeddedOnramp({
                 receiptId,
                 walletAddress: buyerWallet,
                 network,
-                email,
-                stripeSessionId: sessionId
+                email: activeEmail,
+                stripeSessionId: sessionIdRef.current
               })
             });
             const limitsData = await limitsRes.json();
@@ -2605,12 +2611,12 @@ export function useStripeEmbeddedOnramp({
           }
         })();
 
-        const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | null; brand: string; last4: string }>((resolve, reject) => {
+        const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | "us_bank_account" | null; brand: string; last4: string; paymentMethodDetails?: any }>((resolve, reject) => {
           paymentRejectRef.current = reject;
 
           onramp.collectPaymentMethod(
             {
-              payment_method_types: ["card"],
+              payment_method_types: ["card", "us_bank_account"],
               wallets: { applePay: "auto", googlePay: "auto" },
             },
             (result: any) => {
@@ -2633,24 +2639,85 @@ export function useStripeEmbeddedOnramp({
                 }
               }
               if (result.cryptoPaymentToken) {
-                let fundingType: "credit" | "debit" | null = null;
+                const pmDetails = result.paymentMethodDetails || result.payment_method_details || result.paymentDetails || result.payment_details || result;
+                let fundingType: "credit" | "debit" | "us_bank_account" | null = null;
                 let brandStr = "";
                 let last4Str = "";
-                
-                const details = result.paymentDetails || result.payment_details || result;
-                const card = details?.card || details?.payment_method_details?.card;
-                if (card) {
-                  const isDebit = card.funding === "debit" || card.funding === "prepaid";
-                  fundingType = isDebit ? "debit" : "credit";
-                  brandStr = card.brand || "";
-                  last4Str = card.last4 || "";
-                } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
-                  fundingType = "debit";
-                } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
-                  fundingType = "credit";
+
+                if (pmDetails) {
+                  if (pmDetails.type === "card") {
+                    const card = pmDetails.card || pmDetails.payment_details?.card || pmDetails.paymentDetails?.card;
+                    if (card) {
+                      const isDebit = card.funding === "debit" || card.funding === "prepaid";
+                      fundingType = isDebit ? "debit" : "credit";
+                      brandStr = card.brand || "";
+                      last4Str = card.last4 || "";
+                    }
+                  } else if (pmDetails.type === "us_bank_account" || pmDetails.paymentMethod === "us_bank_account" || pmDetails.payment_method === "us_bank_account") {
+                    const bank = pmDetails.us_bank_account || pmDetails.payment_details?.us_bank_account || pmDetails.paymentDetails?.us_bank_account;
+                    fundingType = "us_bank_account";
+                    brandStr = bank?.bank_name || "";
+                    last4Str = bank?.last4 || "";
+                  }
                 }
+
+                // Fallbacks
+                if (!fundingType) {
+                  const card = result.card || result.paymentDetails?.card || result.payment_details?.card;
+                  if (card) {
+                    const isDebit = card.funding === "debit" || card.funding === "prepaid";
+                    fundingType = isDebit ? "debit" : "credit";
+                    brandStr = card.brand || "";
+                    last4Str = card.last4 || "";
+                  } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
+                    fundingType = "debit";
+                  } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
+                    fundingType = "credit";
+                  }
+                }
+
+                // Format paymentMethodDetails to send
+                const pmDetailsToSend = pmDetails?.type ? pmDetails : {
+                  type: fundingType === "us_bank_account" ? "us_bank_account" : "card",
+                  ...(fundingType === "us_bank_account" ? {
+                    us_bank_account: { bank_name: brandStr, last4: last4Str, account_type: null }
+                  } : {
+                    card: { brand: brandStr, funding: fundingType, last4: last4Str, exp_month: null, exp_year: null, wallet: null }
+                  })
+                };
+
+                // Asynchronously save payment method details
+                (async () => {
+                  try {
+                    await fetch("/api/stripe/onramp-limits", {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        "x-stripe-oauth-token": oauthTokenRef.current || ""
+                      },
+                      body: JSON.stringify({
+                        receiptId,
+                        walletAddress: buyerWallet,
+                        network,
+                        email: activeEmail,
+                        stripeSessionId: sessionIdRef.current,
+                        paymentMethodDetails: pmDetailsToSend
+                      })
+                    });
+                    console.log("[EMBEDDED ONRAMP] Successfully requested payment method logging");
+                  } catch (saveErr) {
+                    console.warn("[EMBEDDED ONRAMP] Failed to save payment method details:", saveErr);
+                  }
+                })();
+
                 paymentRejectRef.current = null;
-                resolve({ token: result.cryptoPaymentToken, funding: fundingType, brand: brandStr, last4: last4Str });
+                resolve({ 
+                  token: result.cryptoPaymentToken, 
+                  funding: fundingType, 
+                  brand: brandStr, 
+                  last4: last4Str,
+                  paymentMethodDetails: pmDetailsToSend
+                });
               } else {
                 paymentRejectRef.current = null;
                 reject(new Error("Payment method collection failed"));
@@ -2667,7 +2734,7 @@ export function useStripeEmbeddedOnramp({
         });
 
         let pmToken: string;
-        let collectedFunding: "credit" | "debit" | null = null;
+        let collectedFunding: "credit" | "debit" | "us_bank_account" | null = null;
         let collectedBrand: string | null = null;
         let collectedLast4: string | null = null;
 
@@ -2716,7 +2783,9 @@ export function useStripeEmbeddedOnramp({
           setDetectedCardFunding(collectedFunding);
           if (collectedBrand) setDetectedCardBrand(collectedBrand);
           if (collectedLast4) setDetectedCardLast4(collectedLast4);
-          onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
+          if (collectedFunding !== "us_bank_account") {
+            onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
+          }
         }
 
         // Save state in refs for KYC/error recovery

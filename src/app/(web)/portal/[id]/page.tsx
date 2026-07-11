@@ -1928,7 +1928,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const effectiveNavbarMode: "symbol" | "logo" = (navbarMode === "logo" && canUseFullLogo) ? "logo" : "symbol";
   // Card Detection & Countdown States
   const [awaitingFundsSeconds, setAwaitingFundsSeconds] = useState(40);
-  const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | null>(null);
+  const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | "us_bank_account" | null>(null);
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
 
@@ -2088,11 +2088,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           const rec: Receipt | undefined = j?.receipt;
           if (rec && typeof rec.totalUsd === "number") {
             setReceipt(rec);
-            // Prepopulate stripeEmail if returned from receipt API
+            // Prepopulate stripeEmail if returned from receipt API (making it device-specific)
             const emailVal = rec.stripeEmail || (rec as any).customerEmail || (rec as any).buyerEmail || rec.shippingAddress?.email || "";
             if (emailVal) {
-              setShipEmail((prev) => prev || emailVal);
-              setHeadlessEmailInput((prev) => prev || emailVal);
+              const storedEmail = typeof window !== "undefined" ? sessionStorage.getItem("stripe_onramp_email") : null;
+              const isFresh = rec.status === "generated" || rec.status === "link_opened";
+              const isSameDevice = storedEmail && storedEmail.toLowerCase() === emailVal.toLowerCase();
+
+              if (isFresh || isSameDevice) {
+                setShipEmail((prev) => prev || emailVal);
+                setHeadlessEmailInput((prev) => prev || emailVal);
+              }
             }
             if (rec.billingAddress) {
               const b = rec.billingAddress;
@@ -3696,6 +3702,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     reset: resetHeadlessOnramp,
     kycTierRequired,
     onrampLimits: headlessOnrampLimits,
+    detectedCardFunding: stripeDetectedFunding,
   } = useStripeEmbeddedOnramp({
     email: shipEmail || headlessEmailInput || undefined,
     fullName: shipName || undefined,
@@ -4334,6 +4341,65 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       clearTimeout(t3);
     };
   }, [tpThemeApplied, currency]);
+
+  // ─── ACH PENDING STATE ───
+  const isAchPending = receipt?.status === "pending" || (stripeDetectedFunding === "us_bank_account" && headlessStep === "awaiting_funds");
+
+  const renderAchPendingState = () => (
+    <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
+      <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-500 border border-amber-500/20 mb-2">
+        <svg className="w-8 h-8 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </div>
+      <div className="space-y-1.5 px-4">
+        <div className={`text-xl font-bold ${isLightText ? 'text-white' : 'text-black'}`}>ACH Transfer Settling</div>
+        <p className={`text-xs max-w-xs mx-auto leading-relaxed ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+          Your bank transfer has been initiated. Stripe typically takes 2–4 business days to settle ACH debits. Your order will resolve automatically when funds clear.
+        </p>
+      </div>
+      
+      <div className={`p-4 rounded-xl border w-full max-w-[320px] mt-2 text-left ${isLightText ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/10'}`}>
+        <div className="space-y-2 text-xs">
+          <div className="flex justify-between">
+            <span className={isLightText ? 'text-white/40' : 'text-black/40'}>Receipt ID</span>
+            <span className={`font-mono font-medium ${isLightText ? 'text-white/90' : 'text-black/90'}`}>{receiptId}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className={isLightText ? 'text-white/40' : 'text-black/40'}>Amount</span>
+            <span className={`font-bold ${isLightText ? 'text-white/90' : 'text-black/90'}`}>{formatCurrency(totalUsd, "USD")}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className={isLightText ? 'text-white/40' : 'text-black/40'}>Status</span>
+            <span className="text-amber-400 font-semibold uppercase tracking-wider text-[10px]">Processing (2-4 Days)</span>
+          </div>
+        </div>
+      </div>
+      
+      <div className="mt-4 flex flex-col items-center gap-3 w-full max-w-[280px]">
+        <button 
+          className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 shadow-md ${isColorLight(theme.primaryColor || '#10b981') ? 'text-neutral-900' : 'text-white'}`} 
+          style={{ backgroundColor: theme.primaryColor || '#10b981' }} 
+          onClick={() => window.location.reload()}
+        >
+          Check Latest Status
+        </button>
+        {!shipEmail && (
+          <button 
+            className={`w-full py-2 rounded-xl text-xs font-bold transition-all border ${isLightText ? 'border-white/10 text-white hover:bg-white/5' : 'border-black/10 text-black hover:bg-black/5'}`} 
+            onClick={() => setEmailModalOpen(true)}
+          >
+            Email Pending Receipt
+          </button>
+        )}
+        {shipEmail && (
+          <p className="text-[11px] text-emerald-400 font-medium animate-pulse mt-1">
+            ✓ Pending receipt auto-sent to <span className="underline">{shipEmail}</span>
+          </p>
+        )}
+      </div>
+    </div>
+  );
 
   // ─── STRIPE HEADLESS INLINE UI ───
   const stripeHeadlessUI = (headlessEmailPrompt || headlessActive || headlessInitiated) ? (
@@ -6206,8 +6272,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       <div ref={widgetRootRef} className={isEmbedded ? "mt-0 rounded-2xl p-3" : "mt-0 rounded-2xl p-3"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                         {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                           <>
-                            {/* Payment Complete State - Blocks Double Payment */}
-                            {(paymentConfirmed || isSettled(receipt.status)) ? (
+                            {isAchPending ? renderAchPendingState() : (paymentConfirmed || isSettled(receipt.status)) ? (
                               <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
                                 <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
                                   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6896,7 +6961,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <div ref={widgetRootRef} className={isEmbedded ? "mt-1 flex-1 rounded-2xl p-3" : "mt-2 rounded-2xl p-3 flex-1"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                     {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                       <>
-                        {(paymentConfirmed || isSettled(receipt.status)) ? (
+                        {isAchPending ? renderAchPendingState() : (paymentConfirmed || isSettled(receipt.status)) ? (
                           <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
                             <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
                               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">

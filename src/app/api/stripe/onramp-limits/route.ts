@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { receiptId, walletAddress, network, email, stripeSessionId } = body;
+    const { receiptId, walletAddress, network, email, stripeSessionId, paymentMethodDetails } = body;
 
     if (!receiptId || !walletAddress || !network || !email) {
       return NextResponse.json({ ok: false, error: "missing_required_parameters" }, { status: 400 });
@@ -90,6 +90,7 @@ export async function POST(req: NextRequest) {
       walletAddress,
       stripeSessionId: stripeSessionId || null,
       limits: limitsData.onramp_limits || [],
+      paymentMethodDetails: paymentMethodDetails || null,
       createdAt: Date.now()
     };
 
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
         ...sessions[existingIndex],
         stripeSessionId: stripeSessionId || sessions[existingIndex].stripeSessionId,
         limits: limitsData.onramp_limits || sessions[existingIndex].limits || [],
+        paymentMethodDetails: paymentMethodDetails || sessions[existingIndex].paymentMethodDetails || null,
         updatedAt: Date.now()
       };
     } else {
