@@ -585,7 +585,14 @@ export default function AutoclosePanel() {
                             ) : (
                               <ChevronDown className="w-4 h-4 text-muted-foreground" />
                             )}
-                            <span>{run.date}</span>
+                            <span className="flex items-center gap-1.5">
+                              {run.date}
+                              {(run as any).trigger === "manual" && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/25 font-mono uppercase tracking-wider select-none leading-none">
+                                  Manual
+                                </span>
+                              )}
+                            </span>
                           </button>
                         </td>
                         <td className="p-4">

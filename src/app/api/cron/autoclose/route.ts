@@ -65,6 +65,19 @@ export async function POST(req: NextRequest) {
   let releaseLock = async () => {};
 
   try {
+    let isForce = false;
+    let triggerSource = "cron";
+
+    const currentBrandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").trim().toLowerCase();
+    const containerType = String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").trim().toLowerCase();
+    const isPlatformContainer = containerType === "platform" || !currentBrandKey || currentBrandKey === "portalpay" || currentBrandKey === "basaltsurge";
+
+    // Read body parameters robustly
+    let body: any = {};
+    if (req.method === "POST") {
+      body = await req.json().catch(() => ({}));
+    }
+
     // 1. Authenticate with CRON_SECRET (accepts x-cron-secret header, Bearer token, query param, or POST body)
     const envSecret = process.env.CRON_SECRET;
     const authHeader = req.headers.get("authorization");
@@ -76,11 +89,19 @@ export async function POST(req: NextRequest) {
       try {
         const url = new URL(req.url);
         cronSecret = url.searchParams.get("cronSecret") || url.searchParams.get("cron_secret") || "";
+        isForce = url.searchParams.get("force") === "true" || url.searchParams.get("manual") === "true";
+        if (url.searchParams.get("manual") === "true") {
+          triggerSource = "manual";
+        }
       } catch {}
     }
-    if (!cronSecret && req.method === "POST") {
-      const body = await req.json().catch(() => ({}));
+    if (!cronSecret) {
       cronSecret = body.cronSecret;
+    }
+
+    if (body.manual === true || body.force === true) {
+      isForce = true;
+      triggerSource = "manual";
     }
 
     if (!envSecret || cronSecret !== envSecret) {
@@ -93,6 +114,32 @@ export async function POST(req: NextRequest) {
 
     // Concurrency Lock: Check if another cron run is already in progress
     const runsContainer = await getContainer(undefined, "autoclose_runs");
+
+    // Check if it already ran today for this specific brandKey
+    const todayStr = new Date(startTime).toISOString().split("T")[0];
+    const runBrandKey = currentBrandKey || "basaltsurge";
+    if (!isForce) {
+      try {
+        const { resources: dailyRuns } = await runsContainer.items.query({
+          query: "SELECT * FROM c WHERE c.type = 'autoclose_run' AND c.date = @date AND c.brandKey = @brand",
+          parameters: [
+            { name: "@date", value: todayStr },
+            { name: "@brand", value: runBrandKey }
+          ]
+        }).fetchAll();
+
+        if (dailyRuns && dailyRuns.length > 0) {
+          console.log(`[cron/autoclose] Autoclose already ran today (${todayStr}) for brand: ${runBrandKey}. Skipping execution.`);
+          return NextResponse.json(
+            { success: true, message: "already_executed_today", date: todayStr, brandKey: runBrandKey, processed: 0 },
+            { headers: { "x-correlation-id": correlationId } }
+          );
+        }
+      } catch (dbQueryErr) {
+        console.warn("[cron/autoclose] Failed checking for daily run:", dbQueryErr);
+      }
+    }
+
     const lockId = "cron_lock_autoclose";
     const lockPartition = "cron_lock";
     let isLocked = false;
@@ -145,9 +192,6 @@ export async function POST(req: NextRequest) {
       }
     };
 
-    const currentBrandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").trim().toLowerCase();
-    const containerType = String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").trim().toLowerCase();
-    const isPlatformContainer = containerType === "platform" || !currentBrandKey || currentBrandKey === "portalpay" || currentBrandKey === "basaltsurge";
 
     console.log(`[cron/autoclose] Container Context: type=${containerType}, brand=${currentBrandKey || 'none'} (isPlatform=${isPlatformContainer})`);
 
@@ -500,6 +544,7 @@ export async function POST(req: NextRequest) {
         failed,
         totals,
         distributions,
+        trigger: triggerSource,
       });
       console.log(`[cron/autoclose] Saved run document ${runDocId} to autoclose_runs`);
     } catch (dbErr) {

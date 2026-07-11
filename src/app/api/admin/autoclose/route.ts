@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
         "x-cron-secret": cronSecret,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ manual: true }),
     });
 
     if (!res.ok) {
