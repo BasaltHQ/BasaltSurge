@@ -171,26 +171,25 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Pre-fetch merchant configurations for split addresses resolution
-    const uniquePairs = Array.from(new Set(receipts.map(r => `${r.wallet || ""}:${r.brandKey || ""}`)));
+    // Pre-fetch merchant configurations for split addresses resolution in a single query
     const configMap: Record<string, { splitAddress?: string; splitAddressCredit?: string }> = {};
     try {
-      const { getSiteConfigForWallet } = await import("@/lib/site-config");
-      for (const pair of uniquePairs) {
-        const [w, bk] = pair.split(":");
-        if (w) {
-          try {
-            const cfg = await getSiteConfigForWallet(w, bk || undefined);
-            if (cfg) {
-              configMap[pair] = {
-                splitAddress: (cfg as any).splitAddress || (cfg as any).split?.address || undefined,
-                splitAddressCredit: (cfg as any).splitAddressCredit || (cfg as any).splitCredit?.address || undefined
-              };
-            }
-          } catch {}
+      const configQuery = {
+        query: "SELECT c.wallet, c.brandKey, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit FROM c WHERE c.type = 'wallet_config'"
+      };
+      const { resources: configs } = await container.items.query(configQuery).fetchAll();
+      for (const cfg of configs || []) {
+        if (cfg.wallet) {
+          const pair = `${cfg.wallet}:${cfg.brandKey || ""}`;
+          configMap[pair] = {
+            splitAddress: cfg.splitAddress || cfg.split?.address || undefined,
+            splitAddressCredit: cfg.splitAddressCredit || cfg.splitCredit?.address || undefined
+          };
         }
       }
-    } catch {}
+    } catch (err) {
+      console.error("[PLATFORM ANALYTICS API] Failed to pre-fetch wallet configs:", err);
+    }
 
     const processedReceipts = receipts.map((r: any) => {
       const rId = r.receiptId || r.id;
