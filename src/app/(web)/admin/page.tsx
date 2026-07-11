@@ -2865,6 +2865,8 @@ function ReceiptsAdmin() {
   function statusLabel(s?: string) {
     const v = (s || "").toLowerCase();
     switch (v) {
+      case "paid - ach pending":
+        return "Paid - ACH Pending";
       case "generated":
         return "Generated";
       case "link_opened":
@@ -2903,6 +2905,7 @@ function ReceiptsAdmin() {
     if (v === "buyer_logged_in") return base + " bg-indigo-500/10 text-indigo-400 border-indigo-500/20";
 
     // Success States
+    if (v === "paid - ach pending" || v === "ach_pending") return base + " bg-amber-500/10 text-amber-500 border-amber-500/20";
     if (v === "checkout_success" || v === "paid") return base + " bg-green-500/10 text-green-500 border-green-500/20";
     if (v === "tx_mined") return base + " bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
     if (v === "recipient_validated") return base + " bg-teal-500/10 text-teal-500 border-teal-500/20";
@@ -2919,6 +2922,8 @@ function ReceiptsAdmin() {
     const v = String(s || "").toLowerCase();
     return (
       v === "paid" ||
+      v === "paid - ach pending" ||
+      v === "ach_pending" ||
       v === "partial_refund" ||
       v.includes("refund") ||
       v === "checkout_success" ||
@@ -3406,6 +3411,18 @@ function ReceiptsAdmin() {
                                       <span className="text-muted-foreground min-w-[70px]">Tx Hash:</span>
                                       <span className="truncate flex-1 text-right" title={rec.transactionHash}>{rec.transactionHash || "—"}</span>
                                     </div>
+                                    {(rec.detectedCardFunding === "us_bank_account" || rec.cardFunding === "us_bank_account") && (
+                                      <div className="border-t border-dashed border-foreground/10 pt-2 mt-2 space-y-2">
+                                        <div className="flex justify-between items-end gap-2 overflow-hidden">
+                                          <span className="text-muted-foreground min-w-[70px]">ACH Status:</span>
+                                          <span className="text-right text-amber-500 font-semibold uppercase">{rec.stripeSessionStatus || "Pending"}</span>
+                                        </div>
+                                        <div className="flex justify-between items-end gap-2 overflow-hidden">
+                                          <span className="text-muted-foreground min-w-[70px]">Last Poll:</span>
+                                          <span className="text-right">{rec.lastPolledAt ? new Date(rec.lastPolledAt).toLocaleString() : "Never"}</span>
+                                        </div>
+                                      </div>
+                                    )}
                                     <div className="flex flex-wrap justify-between items-end gap-2 pt-1 border-t mt-1">
                                       <span className="text-muted-foreground min-w-[70px]">Tip:</span>
                                       <span className="text-right">${Number(rec.tipAmount || 0).toFixed(2)}</span>

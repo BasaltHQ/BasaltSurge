@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
     let querySpec: any;
     if (isPartner && currentBrandKey) {
       querySpec = {
-        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'reconciled' OR c.status = 'paid') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr) AND c.brandKey = @brandKey",
+        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'reconciled' OR c.status = 'paid') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr) AND c.brandKey = @brandKey",
         parameters: [
           { name: "@minTime", value: minTime },
           { name: "@minTimeStr", value: minTimeStr },
@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
       };
     } else {
       querySpec = {
-        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'reconciled' OR c.status = 'paid') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr)",
+        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'reconciled' OR c.status = 'paid') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr)",
         parameters: [
           { name: "@minTime", value: minTime },
           { name: "@minTimeStr", value: minTimeStr }
@@ -167,7 +167,7 @@ export async function POST(req: NextRequest) {
           receipt = resource;
         } catch {}
 
-        if (receipt && (receipt.status === "failed" || receipt.status === "pending" || receipt.status === "reconciled" || receipt.status === "paid") && (!receipt.transactionHash || receipt.transactionHash === "ecommerce_pending")) {
+        if (receipt && (receipt.status === "failed" || receipt.status === "pending" || receipt.status === "reconciled" || receipt.status === "paid") && (!receipt.transactionHash || receipt.transactionHash === "ecommerce_pending" || receipt.transactionHash === "ach_pending")) {
           // If the receipt doesn't have stripeSessionId, backfill it from the event
           if (!receipt.stripeSessionId) {
             receipt.stripeSessionId = sessionId;
@@ -337,6 +337,10 @@ export async function POST(req: NextRequest) {
         const onrampData = await stripeRes.json();
         const stripeStatus = onrampData.status;
 
+        // Record last poll time and raw status from Stripe on the receipt
+        receipt.lastPolledAt = Date.now();
+        receipt.stripeSessionStatus = stripeStatus;
+
         const isExpired = Date.now() - (receipt.createdAt || 0) > 24 * 60 * 60 * 1000;
         const isRejected = stripeStatus === "rejected" || 
                            onrampData.transaction_details?.last_error === "transaction_failed" ||
@@ -344,11 +348,12 @@ export async function POST(req: NextRequest) {
                            onrampData.transaction_details?.last_error === "transaction_limit_reached";
 
         if (stripeStatus !== "fulfillment_complete") {
+          receipt.lastUpdatedAt = Date.now(); // Register the 1 hour polling cooldown
+
           if (isRejected || isExpired) {
             console.warn(`[cron/reconcile-stuck] Definitively failing receipt ${receiptId}. Status: ${stripeStatus}, Expired: ${isExpired}`);
             
             receipt.status = "failed";
-            receipt.lastUpdatedAt = Date.now();
             receipt.statusHistory = Array.isArray(receipt.statusHistory)
               ? [...receipt.statusHistory, { status: "failed", ts: Date.now() }]
               : [{ status: "failed", ts: Date.now() }];
@@ -401,6 +406,9 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
+          // Persist the polling details to database (lastPolledAt and stripeSessionStatus)
+          await container.items.upsert(receipt);
+
           skipped++;
           results.push({ receiptId, status: "skipped", reason: `stripe_status_${stripeStatus}` });
           continue;
@@ -410,7 +418,9 @@ export async function POST(req: NextRequest) {
         const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
         const cardFundingDetail = String(onrampData.payment_details?.card?.funding || "").toLowerCase();
         let cardFunding = receipt.detectedCardFunding || "";
-        if (cardFundingDetail) {
+        if (paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
+          cardFunding = "us_bank_account";
+        } else if (cardFundingDetail) {
           cardFunding = cardFundingDetail;
         } else if (paymentMethod.includes("debit")) {
           cardFunding = "debit";
@@ -570,8 +580,24 @@ export async function POST(req: NextRequest) {
               );
               if (response.ok) {
                 const data = await response.json();
-                isCreditCard = data.payment_details?.card?.funding === "credit";
-                detectedCardFunding = isCreditCard ? "credit" : "debit";
+                const paymentMethod = String(data.payment_method || "").toLowerCase();
+                const cardFundingDetail = String(data.payment_details?.card?.funding || "").toLowerCase();
+                if (paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
+                  detectedCardFunding = "us_bank_account";
+                  isCreditCard = false;
+                } else if (cardFundingDetail) {
+                  isCreditCard = cardFundingDetail === "credit";
+                  detectedCardFunding = cardFundingDetail;
+                } else if (paymentMethod.includes("debit")) {
+                  detectedCardFunding = "debit";
+                  isCreditCard = false;
+                } else if (paymentMethod.includes("credit")) {
+                  detectedCardFunding = "credit";
+                  isCreditCard = true;
+                } else {
+                  isCreditCard = false;
+                  detectedCardFunding = "debit";
+                }
                 receipt.isCreditCard = isCreditCard;
                 receipt.detectedCardFunding = detectedCardFunding;
               }
@@ -581,7 +607,9 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        const funding = (detectedCardFunding === "credit" || isCreditCard === true) ? "credit" : "debit";
+        const funding = (detectedCardFunding === "credit" || isCreditCard === true)
+          ? "credit"
+          : (detectedCardFunding === "us_bank_account" ? "us_bank_account" : "debit");
         
         let finalReceipt = receipt;
         try {

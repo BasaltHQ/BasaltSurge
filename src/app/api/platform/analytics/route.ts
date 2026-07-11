@@ -43,7 +43,9 @@ export async function GET(req: NextRequest) {
             parentUrl: 1,
             splitAddress: 1,
             splitAddressCredit: 1,
-            customerSessions: 1
+            customerSessions: 1,
+            lastPolledAt: 1,
+            stripeSessionStatus: 1
           }
         }
       ).sort({ createdAt: -1 }).toArray();
@@ -65,7 +67,7 @@ export async function GET(req: NextRequest) {
     } else {
       // Fallback for Cosmos DB
       const querySpec = {
-        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.detectedCardFunding, c.isCreditCard, c.transactionHash, c.stripeSessionId, c.statusHistory, c.customerEmail, c.stripeEmail, c.lineItems, c.parentUrl, c.splitAddress, c.splitAddressCredit, c.customerSessions FROM c WHERE c.type = 'receipt'"
+        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.detectedCardFunding, c.isCreditCard, c.transactionHash, c.stripeSessionId, c.statusHistory, c.customerEmail, c.stripeEmail, c.lineItems, c.parentUrl, c.splitAddress, c.splitAddressCredit, c.customerSessions, c.lastPolledAt, c.stripeSessionStatus FROM c WHERE c.type = 'receipt'"
       };
       const { resources } = await container.items.query(querySpec).fetchAll();
       receipts = resources || [];
@@ -90,7 +92,7 @@ export async function GET(req: NextRequest) {
       fees: number;
     }> = {};
 
-    const cardTypeMap = { credit: 0, debit: 0, unknown: 0 };
+    const cardTypeMap = { credit: 0, debit: 0, bank: 0, unknown: 0 };
     const failureReasonCounts: Record<string, number> = {};
 
     // Helper to extract decline or error reasons from status history
@@ -215,7 +217,8 @@ export async function GET(req: NextRequest) {
         brandMap[bKey].fees += Number(r.amountPlatformMinor || 0) / 100;
 
         const funding = r.detectedCardFunding || (r.isCreditCard ? "credit" : "debit");
-        if (funding === "credit") cardTypeMap.credit++;
+        if (funding === "us_bank_account") cardTypeMap.bank++;
+        else if (funding === "credit") cardTypeMap.credit++;
         else if (funding === "debit") cardTypeMap.debit++;
         else cardTypeMap.unknown++;
       } else if (status === "failed") {
@@ -247,7 +250,9 @@ export async function GET(req: NextRequest) {
         parentUrl: r.parentUrl || null,
         splitAddress: r.splitAddress || resolvedConfig.splitAddress || null,
         splitAddressCredit: r.splitAddressCredit || resolvedConfig.splitAddressCredit || null,
-        customerSessions: r.customerSessions || []
+        customerSessions: r.customerSessions || [],
+        lastPolledAt: r.lastPolledAt || null,
+        stripeSessionStatus: r.stripeSessionStatus || null
       };
     });
 

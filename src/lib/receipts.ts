@@ -57,7 +57,7 @@ export function buildPortalUrlForTest(recipient?: string): string {
  */
 export function recalculateReceiptForCardFunding(
   receipt: any,
-  detectedCardFunding: "credit" | "debit",
+  detectedCardFunding: "credit" | "debit" | "us_bank_account",
   siteConfig: any,
   brandConfigDoc?: any
 ): any {
@@ -93,7 +93,9 @@ export function recalculateReceiptForCardFunding(
 
   // Stripe fee percent: presented fee - platform - agent (from splitConfig)
   let stripeFeePct = 0;
-  if (!isFeeMinus) {
+  if (detectedCardFunding === "us_bank_account") {
+    stripeFeePct = 0.6;
+  } else if (!isFeeMinus) {
     stripeFeePct = isCredit ? 3.5 : 2.25;
   } else if (basePresentedBps !== undefined) {
     const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;

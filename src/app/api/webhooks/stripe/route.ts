@@ -159,8 +159,8 @@ export async function POST(req: NextRequest) {
     let useSeparateSplit = false;
     if (isDual) {
       if (cardFunding === "us_bank_account") {
-        // Flipped definitions: Standard ACH settles in the debit split (resolved via match.splitAddress, which requires useSeparateSplit = true)
-        useSeparateSplit = true;
+        // Flipped definitions: Standard ACH settles in the debit split (resolved via match.splitAddressCredit, which is useSeparateSplit = false)
+        useSeparateSplit = false;
       } else {
         useSeparateSplit = cardFunding === "credit";
       }

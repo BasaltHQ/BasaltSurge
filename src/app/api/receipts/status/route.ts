@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
 
     // AuthZ: Allow unauthenticated status updates for tracking (link_opened, buyer_logged_in, checkout_initialized, receipt_claimed, checkout_success, paid)
     // Require JWT auth only for sensitive status updates (refund, etc.)
-    const trackingStatuses = ["link_opened", "buyer_logged_in", "checkout_initialized", "receipt_claimed", "checkout_success", "paid", "error", "failed", "pending"];
+    const trackingStatuses = ["link_opened", "buyer_logged_in", "checkout_initialized", "receipt_claimed", "checkout_success", "paid", "paid - ach pending", "ach_pending", "error", "failed", "pending"];
     const isTrackingStatus = trackingStatuses.includes(status);
 
     let caller: any = null;
@@ -190,6 +190,8 @@ export async function POST(req: NextRequest) {
       const currentStatus = String(resource?.status || "").toLowerCase();
       const isSettled =
         currentStatus === "paid" ||
+        currentStatus === "paid - ach pending" ||
+        currentStatus === "ach_pending" ||
         currentStatus === "checkout_success" ||
         currentStatus === "confirmed" ||
         currentStatus === "reconciled" ||
@@ -284,8 +286,10 @@ export async function POST(req: NextRequest) {
           ...(parentUrl ? { parentUrl } : {}),
         };
 
-      if (["paid", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
-        const funding = (detectedCardFunding === "credit" || isCreditCard === true || next.detectedCardFunding === "credit" || next.isCreditCard === true) ? "credit" : "debit";
+      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
+        const isCreditFunding = detectedCardFunding === "credit" || isCreditCard === true || next.detectedCardFunding === "credit" || next.isCreditCard === true;
+        const isAchFunding = detectedCardFunding === "us_bank_account" || next.detectedCardFunding === "us_bank_account";
+        const funding = isCreditFunding ? "credit" : (isAchFunding ? "us_bank_account" : "debit");
         const brandKeyToUse = brandKey || next.brandKey || resource?.brandKey;
         try {
           const { getSiteConfigForWallet } = await import("@/lib/site-config");

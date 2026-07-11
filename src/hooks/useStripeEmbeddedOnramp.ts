@@ -1259,7 +1259,7 @@ export function useStripeEmbeddedOnramp({
   const getOnrampAmount = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
     if (totalUsd !== undefined) {
       if (feeMinusEnabled) {
-        const rate = funding === "credit" ? 3.5 : (funding === "us_bank_account" ? 1.5 : 2.25);
+        const rate = funding === "credit" ? 3.5 : (funding === "us_bank_account" ? 0.6 : 2.25);
         return +(totalUsd / (1 + rate / 100)).toFixed(2);
       }
       return totalUsd;

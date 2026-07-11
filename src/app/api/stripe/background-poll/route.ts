@@ -311,7 +311,9 @@ async function runBackgroundPoll(params: {
             const siteConfig = await getSiteConfigForWallet(merchantWallet);
             const brandConfigDoc = brandKey ? await readBrandOverridesCached(brandKey) : null;
             if (siteConfig) {
-              const funding = receipt.detectedCardFunding === "credit" ? "credit" : "debit";
+              const funding = receipt.detectedCardFunding === "credit"
+                ? "credit"
+                : (receipt.detectedCardFunding === "us_bank_account" ? "us_bank_account" : "debit");
               finalReceipt = recalculateReceiptForCardFunding(receipt, funding, siteConfig, brandConfigDoc);
             }
           } catch (recalcErr) {

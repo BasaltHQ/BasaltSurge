@@ -151,6 +151,7 @@ type Receipt = {
   returnUrl?: string;
   onSuccess?: string;
   stripeEmail?: string;
+  detectedCardFunding?: string;
 };
 
 // Helper to determine if receipt is already paid/settled
@@ -159,6 +160,8 @@ function isSettled(status?: string): boolean {
   const s = status.toLowerCase();
   return (
     s === "paid" ||
+    s === "paid - ach pending" ||
+    s === "ach_pending" ||
     s === "checkout_success" ||
     s === "confirmed" ||
     s === "reconciled" ||
@@ -3068,7 +3071,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [STATIC_TOKEN_ICONS]);
 
   // Payment Confirmation State & Polling
-  const [paymentConfirmed, setPaymentConfirmed] = useState<{ txHash: string; amount: number; token: string } | null>(null);
+  const [paymentConfirmed, setPaymentConfirmed] = useState<{ txHash: string; amount: number; token: string; funding?: string } | null>(null);
 
   // Developer-configured redirect URL — passed through to Stripe onramp session only.
   // Not used for portal-level redirect (other providers open in new tabs making portal redirect unreliable).
@@ -3743,16 +3746,20 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       console.log("[STRIPE HEADLESS SUCCESS] Checkout completed with no issues. Session:", result.sessionId, "Tx:", result.txHash);
       // Funds are now in the split contract — receipt can be marked paid
       const txHash = result.txHash || "";
+      const isAch = txHash === "ach_pending" || stripeDetectedFunding === "us_bank_account";
+      const statusToPost = isAch ? "paid - ach pending" : "paid";
       setPaymentConfirmed({
         txHash,
         amount: totalUsd,
         token: "USDC",
+        funding: isAch ? "us_bank_account" : undefined,
       });
-      postStatus("paid", {
+      postStatus(statusToPost, {
         txHash,
         paymentMethod: "stripe_headless",
         stripeSessionId: result.sessionId,
         customerEmail: shipEmail || headlessEmailInput || undefined,
+        detectedCardFunding: isAch ? "us_bank_account" : undefined,
       });
     },
     onError: (error) => {
@@ -4349,63 +4356,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [tpThemeApplied, currency]);
 
   // ─── ACH PENDING STATE ───
-  const isAchPending = receipt?.status === "pending" || (stripeDetectedFunding === "us_bank_account" && headlessStep === "awaiting_funds");
-
-  const renderAchPendingState = () => (
-    <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
-      <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-500 border border-amber-500/20 mb-2">
-        <svg className="w-8 h-8 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      </div>
-      <div className="space-y-1.5 px-4">
-        <div className={`text-xl font-bold ${isLightText ? 'text-white' : 'text-black'}`}>ACH Transfer Settling</div>
-        <p className={`text-xs max-w-xs mx-auto leading-relaxed ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
-          Your bank transfer has been initiated. Stripe typically takes 2–4 business days to settle ACH debits. Your order will resolve automatically when funds clear.
-        </p>
-      </div>
-      
-      <div className={`p-4 rounded-xl border w-full max-w-[320px] mt-2 text-left ${isLightText ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/10'}`}>
-        <div className="space-y-2 text-xs">
-          <div className="flex justify-between">
-            <span className={isLightText ? 'text-white/40' : 'text-black/40'}>Receipt ID</span>
-            <span className={`font-mono font-medium ${isLightText ? 'text-white/90' : 'text-black/90'}`}>{receiptId}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className={isLightText ? 'text-white/40' : 'text-black/40'}>Amount</span>
-            <span className={`font-bold ${isLightText ? 'text-white/90' : 'text-black/90'}`}>{formatCurrency(totalUsd, "USD")}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className={isLightText ? 'text-white/40' : 'text-black/40'}>Status</span>
-            <span className="text-amber-400 font-semibold uppercase tracking-wider text-[10px]">Processing (2-4 Days)</span>
-          </div>
-        </div>
-      </div>
-      
-      <div className="mt-4 flex flex-col items-center gap-3 w-full max-w-[280px]">
-        <button 
-          className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 shadow-md ${isColorLight(theme.primaryColor || '#10b981') ? 'text-neutral-900' : 'text-white'}`} 
-          style={{ backgroundColor: theme.primaryColor || '#10b981' }} 
-          onClick={() => window.location.reload()}
-        >
-          Check Latest Status
-        </button>
-        {!shipEmail && (
-          <button 
-            className={`w-full py-2 rounded-xl text-xs font-bold transition-all border ${isLightText ? 'border-white/10 text-white hover:bg-white/5' : 'border-black/10 text-black hover:bg-black/5'}`} 
-            onClick={() => setEmailModalOpen(true)}
-          >
-            Email Pending Receipt
-          </button>
-        )}
-        {shipEmail && (
-          <p className="text-[11px] text-emerald-400 font-medium animate-pulse mt-1">
-            ✓ Pending receipt auto-sent to <span className="underline">{shipEmail}</span>
-          </p>
-        )}
-      </div>
-    </div>
-  );
+  const isAchPending = receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending" || receipt?.status === "pending" || (stripeDetectedFunding === "us_bank_account" && headlessStep === "awaiting_funds");
 
   // ─── STRIPE HEADLESS INLINE UI ───
   const stripeHeadlessUI = (headlessEmailPrompt || headlessActive || headlessInitiated) ? (
@@ -4561,7 +4512,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
                 </div>
                 <h3 className={`text-base font-bold mb-1.5 ${isLightText ? 'text-white' : 'text-black'}`}>Payment Complete</h3>
-                <p className={`text-xs ${shipEmail ? 'mb-2' : 'mb-6'} max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>USDC has been transferred successfully.</p>
+                <p className={`text-xs ${shipEmail ? 'mb-2' : 'mb-6'} max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+                  {stripeDetectedFunding === "us_bank_account"
+                    ? "Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance."
+                    : "USDC has been transferred successfully."}
+                </p>
                 {shipEmail && (
                   <p className="text-[11px] text-emerald-400 font-medium animate-pulse mb-6">
                     ✓ Receipt automatically sent to <span className="underline">{shipEmail}</span>
@@ -6234,7 +6189,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       <div ref={widgetRootRef} className={isEmbedded ? "mt-0 rounded-2xl p-3" : "mt-0 rounded-2xl p-3"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                         {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                           <>
-                            {isAchPending ? renderAchPendingState() : (paymentConfirmed || isSettled(receipt.status)) ? (
+                            {(paymentConfirmed || isSettled(receipt.status) || isAchPending) ? (
                               <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
                                 <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
                                   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6246,6 +6201,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   <div className={`text-sm ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
                                     {formatCurrency(totalUsd, "USD")} • {receiptId}
                                   </div>
+                                  {isAchPending && (
+                                    <div className="text-[11px] text-amber-400 font-medium px-4 mt-2 max-w-xs mx-auto leading-relaxed animate-pulse">
+                                      Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance.
+                                    </div>
+                                  )}
                                 </div>
                                 <div className={`p-4 rounded-xl border w-full max-w-[280px] mt-2 ${isLightText ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/10'}`}>
                                   <div className={`text-xs uppercase tracking-wider font-semibold mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
@@ -6923,7 +6883,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <div ref={widgetRootRef} className={isEmbedded ? "mt-1 flex-1 rounded-2xl p-3" : "mt-2 rounded-2xl p-3 flex-1"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                     {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                       <>
-                        {isAchPending ? renderAchPendingState() : (paymentConfirmed || isSettled(receipt.status)) ? (
+                        {(paymentConfirmed || isSettled(receipt.status) || isAchPending) ? (
                           <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
                             <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
                               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6935,6 +6895,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               <div className="text-sm text-foreground/80">
                                 {formatCurrency(totalUsd, "USD")} • {receiptId}
                               </div>
+                              {isAchPending && (
+                                <div className="text-[11px] text-amber-400 font-medium px-4 mt-2 max-w-xs mx-auto leading-relaxed animate-pulse">
+                                  Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance.
+                                </div>
+                              )}
                             </div>
                             <div className="p-4 rounded-xl bg-white/5 border border-white/10 w-full max-w-[280px] mt-2">
                               <div className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-1">
@@ -7479,9 +7444,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             <div className="text-5xl font-mono font-bold mb-2 text-white tracking-tight">
               {formatCurrency(paymentConfirmed.amount, "USD")}
             </div>
-            <div className="text-sm text-gray-400 mb-8">
-              Transaction Confirmed
-            </div>
+            {(() => {
+              const isAch = paymentConfirmed?.funding === "us_bank_account" || stripeDetectedFunding === "us_bank_account" || receipt?.detectedCardFunding === "us_bank_account" || receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending";
+              if (isAch) {
+                return (
+                  <div className="text-xs text-amber-400 font-medium px-4 mb-8 max-w-xs mx-auto leading-relaxed animate-pulse">
+                    Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance.
+                  </div>
+                );
+              }
+              return (
+                <div className="text-sm text-gray-400 mb-8">
+                  Transaction Confirmed
+                </div>
+              );
+            })()}
 
             {paymentConfirmed.txHash && (
               <a
