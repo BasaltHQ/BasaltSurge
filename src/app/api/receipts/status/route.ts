@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
     const detectedCardFunding = typeof body.detectedCardFunding === "string" ? String(body.detectedCardFunding).trim().toLowerCase() : undefined;
     const isCreditCard = typeof body.isCreditCard === "boolean" ? body.isCreditCard : undefined;
     const parentUrl = typeof body.parentUrl === "string" ? String(body.parentUrl).trim() : undefined;
+    const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "127.0.0.1";
     let brandKey: string | undefined = undefined;
     try { brandKey = getBrandKey(); } catch { brandKey = undefined; }
 
@@ -224,6 +225,7 @@ export async function POST(req: NextRequest) {
             : [{ status, ts }],
           lastUpdatedAt: ts,
           brandKey,
+          ipAddress: resource.ipAddress || ipAddress,
           // Record buyer on settlement statuses
           ...(buyerWallet && ["checkout_success", "paid", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
             ? { buyerWallet }
@@ -261,6 +263,7 @@ export async function POST(req: NextRequest) {
           createdAt: ts,
           lastUpdatedAt: ts,
           brandKey,
+          ipAddress,
           ...(buyerWallet && ["checkout_success", "paid", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
             ? { buyerWallet }
             : {}),

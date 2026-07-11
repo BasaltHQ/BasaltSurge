@@ -79,6 +79,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       : /^0x[a-f0-9]{40}$/i.test(headerWallet)
         ? headerWallet
         : defaultRecipient;
+  const clientCountry = (
+    req.headers.get("cf-ipcountry") ||
+    req.headers.get("x-vercel-ip-country") ||
+    req.headers.get("x-country-code") ||
+    "US"
+  ).toUpperCase();
+
   function sumLineItems(items: any[]): number {
     try {
       const base = Array.isArray(items) ? items : [];
@@ -201,7 +208,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         const brand = await resolveBrandName(container, wallet);
         if (brand) rec.brandName = brand;
       }
-      return NextResponse.json({ receipt: rec }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
+      return NextResponse.json({ receipt: rec, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
     }
 
     // Subscription correlation fallback: if receipt not found, recover amount from apim_subscription_* by correlationId
@@ -236,7 +243,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           status: typeof (sub2 as any).status === "string" ? (sub2 as any).status : "pending",
         };
         if (rec.totalUsd > 0) {
-          return NextResponse.json({ receipt: rec }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
+          return NextResponse.json({ receipt: rec, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
         }
       }
     } catch { }
@@ -273,7 +280,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           if (brand) rec.brandName = brand;
         } catch { }
       }
-      return NextResponse.json({ receipt: rec }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
+      return NextResponse.json({ receipt: rec, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
     }
 
     // Fallback: demo $5 receipt (Chicken Bowl $4 + Tax $1)
@@ -287,7 +294,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       brandName: brand || "PortalPay",
       recipientWallet: wallet,
     };
-    return NextResponse.json({ receipt: demo }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
+    return NextResponse.json({ receipt: demo, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
   } catch (e: any) {
     // Graceful degrade when Cosmos isn't configured/available — try in-memory store
     const mem = getReceipts();
@@ -324,7 +331,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         } catch { }
       }
       return NextResponse.json(
-        { receipt: rec },
+        { receipt: rec, clientCountry },
         { status: 200, headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } }
       );
     }
@@ -345,7 +352,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       recipientWallet: wallet,
     };
     return NextResponse.json(
-      { receipt: demo },
+      { receipt: demo, clientCountry },
       { status: 200, headers: { "x-correlation-id": crypto.randomUUID(), "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } }
     );
   }

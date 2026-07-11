@@ -19,7 +19,8 @@ import {
   Activity,
   ArrowUpDown,
   FileText,
-  Users
+  Users,
+  Globe
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 
@@ -80,6 +81,7 @@ interface ReceiptInfo {
   customerSessions?: any[];
   lastPolledAt?: number | null;
   stripeSessionStatus?: string | null;
+  ipAddress?: string | null;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -950,7 +952,7 @@ export default function PlatformAnalyticsPanel() {
                                     {/* Tab 1: Overview & Meta */}
                                     {activeTab === "overview" && (
                                       <div className="space-y-4 animate-in fade-in duration-200">
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs mt-1">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 text-xs mt-1">
                                           <div className="space-y-1">
                                             <div className="text-muted-foreground text-[10px] uppercase font-medium">Stripe Session ID</div>
                                             <div className="flex items-center gap-1">
@@ -994,7 +996,7 @@ export default function PlatformAnalyticsPanel() {
                                                     <Copy className="w-3 h-3" />
                                                   </button>
                                                   <a
-                                                    href={`https://polygonscan.com/tx/${r.transactionHash}`}
+                                                    href={`https://basescan.org/tx/${r.transactionHash}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     className="text-muted-foreground hover:text-white transition-colors"
@@ -1018,6 +1020,13 @@ export default function PlatformAnalyticsPanel() {
                                             <div className="text-muted-foreground text-[10px] uppercase font-medium">Card Funding</div>
                                             <div className="text-white/90 capitalize">
                                               {r.cardFunding === "us_bank_account" ? "Bank Transfer (ACH)" : (r.cardFunding || "unknown / N/A")}
+                                            </div>
+                                          </div>
+
+                                          <div className="space-y-1">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Client IP</div>
+                                            <div className="text-white/90 font-mono">
+                                              {r.ipAddress || "N/A"}
                                             </div>
                                           </div>
                                         </div>

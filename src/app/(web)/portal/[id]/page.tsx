@@ -2045,6 +2045,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Dynamic receipt
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [clientCountry, setClientCountry] = useState<string>("US");
   const [loadingReceipt, setLoadingReceipt] = useState(false);
   const [currencySelectionEnabled, setCurrencySelectionEnabled] = useState<boolean>(true);
   useEffect(() => {
@@ -2093,6 +2094,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           const rec: Receipt | undefined = j?.receipt;
           if (rec && typeof rec.totalUsd === "number") {
             setReceipt(rec);
+            if (typeof j?.clientCountry === "string" && j.clientCountry) {
+              setClientCountry(j.clientCountry);
+            }
             // Prepopulate stripeEmail if returned from receipt API (making it device-specific)
             const emailVal = rec.stripeEmail || (rec as any).customerEmail || (rec as any).buyerEmail || rec.shippingAddress?.email || "";
             if (emailVal) {
@@ -3677,7 +3681,25 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // ── Stripe Onramp Mode Toggle ──
   // NEXT_PUBLIC_STRIPE_HEADLESS=TRUE → New Embedded Components headless flow (Smart Wallet Bridge)
   // Otherwise → Legacy iframe-based Stripe Crypto Onramp interceptor
-  const stripeHeadless = String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE";
+  const isExplicitlyNonUs = (() => {
+    // 1. Explicit billing address country takes highest priority
+    const billingCountry = receipt?.billingAddress?.country?.trim().toUpperCase();
+    if (billingCountry) {
+      return billingCountry !== "US";
+    }
+
+    // 2. Explicit shipping address country takes second priority
+    const shippingCountry = receipt?.shippingAddress?.country?.trim().toUpperCase();
+    if (shippingCountry) {
+      return shippingCountry !== "US";
+    }
+
+    // 3. Fallback to IP-based country code
+    const country = clientCountry.toUpperCase();
+    return country !== "US" && country !== "UNKNOWN" && country !== "XX" && country !== "";
+  })();
+
+  const stripeHeadless = (String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE") && !isExplicitlyNonUs;
 
   // eCommerce mode check: default is true (e=1 behavior). Can be disabled/forced to full flow with ?f=1 or ?f
   const isEcommerceMode = (() => {

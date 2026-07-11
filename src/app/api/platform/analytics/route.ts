@@ -45,7 +45,8 @@ export async function GET(req: NextRequest) {
             splitAddressCredit: 1,
             customerSessions: 1,
             lastPolledAt: 1,
-            stripeSessionStatus: 1
+            stripeSessionStatus: 1,
+            ipAddress: 1
           }
         }
       ).sort({ createdAt: -1 }).toArray();
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest) {
     } else {
       // Fallback for Cosmos DB
       const querySpec = {
-        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.detectedCardFunding, c.isCreditCard, c.transactionHash, c.stripeSessionId, c.statusHistory, c.customerEmail, c.stripeEmail, c.lineItems, c.parentUrl, c.splitAddress, c.splitAddressCredit, c.customerSessions, c.lastPolledAt, c.stripeSessionStatus FROM c WHERE c.type = 'receipt'"
+        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.detectedCardFunding, c.isCreditCard, c.transactionHash, c.stripeSessionId, c.statusHistory, c.customerEmail, c.stripeEmail, c.lineItems, c.parentUrl, c.splitAddress, c.splitAddressCredit, c.customerSessions, c.lastPolledAt, c.stripeSessionStatus, c.ipAddress FROM c WHERE c.type = 'receipt'"
       };
       const { resources } = await container.items.query(querySpec).fetchAll();
       receipts = resources || [];
@@ -252,7 +253,8 @@ export async function GET(req: NextRequest) {
         splitAddressCredit: r.splitAddressCredit || resolvedConfig.splitAddressCredit || null,
         customerSessions: r.customerSessions || [],
         lastPolledAt: r.lastPolledAt || null,
-        stripeSessionStatus: r.stripeSessionStatus || null
+        stripeSessionStatus: r.stripeSessionStatus || null,
+        ipAddress: r.ipAddress || null
       };
     });
 
