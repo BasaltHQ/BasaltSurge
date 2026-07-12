@@ -500,6 +500,7 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
 
     // Fetch and apply brand config options (with fallback for merchant-level settings)
     try {
+      const isPlatformBrand = !brandKeyForFees || brandKeyForFees === "portalpay" || brandKeyForFees === "basaltsurge";
       if (brandKeyForFees) {
         const { brand: fetchedBrand } = await getBrandConfigFromCosmos(brandKeyForFees);
         if (fetchedBrand) {
@@ -510,6 +511,14 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
           cfg.coinbaseOnrampEnabled = fetchedBrand.coinbaseOnrampEnabled ?? false;
           cfg.transakOnrampEnabled = fetchedBrand.transakOnrampEnabled ?? false;
           cfg.rampnowOnrampEnabled = fetchedBrand.rampnowOnrampEnabled ?? false;
+
+          if (isPlatformBrand) {
+            cfg.achEnabled = cfg.achEnabled !== undefined ? !!cfg.achEnabled : true;
+          } else {
+            cfg.achEnabled = fetchedBrand.achEnabled ? (cfg.achEnabled !== undefined ? !!cfg.achEnabled : false) : false;
+          }
+        } else {
+          cfg.achEnabled = isPlatformBrand ? (cfg.achEnabled !== undefined ? !!cfg.achEnabled : true) : false;
         }
       } else {
         if (cfg.stripeOnrampEnabled === undefined || cfg.stripeOnrampEnabled === null) {
@@ -521,6 +530,7 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
         cfg.coinbaseOnrampEnabled = false;
         cfg.transakOnrampEnabled = false;
         cfg.rampnowOnrampEnabled = false;
+        cfg.achEnabled = isPlatformBrand ? (cfg.achEnabled !== undefined ? !!cfg.achEnabled : true) : false;
       }
     } catch {
       if (cfg.stripeOnrampEnabled === undefined || cfg.stripeOnrampEnabled === null) {
@@ -532,6 +542,8 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
       cfg.coinbaseOnrampEnabled = false;
       cfg.transakOnrampEnabled = false;
       cfg.rampnowOnrampEnabled = false;
+      const isPlatformBrand = !brandKeyForFees || brandKeyForFees === "portalpay" || brandKeyForFees === "basaltsurge";
+      cfg.achEnabled = isPlatformBrand ? (cfg.achEnabled !== undefined ? !!cfg.achEnabled : true) : false;
     }
 
     const cookieHeader = req.headers.get("cookie") || "";
@@ -1042,6 +1054,7 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
   config.currencySelectionEnabled = typeof config.currencySelectionEnabled === "boolean" ? config.currencySelectionEnabled : true;
   config.discretePayWithCrypto = typeof config.discretePayWithCrypto === "boolean" ? config.discretePayWithCrypto : (typeof config.theme?.discretePayWithCrypto === "boolean" ? config.theme.discretePayWithCrypto : false);
   config.trackTransactionLimits = typeof config.trackTransactionLimits === "boolean" ? config.trackTransactionLimits : true;
+  config.achEnabled = typeof config.achEnabled === "boolean" ? config.achEnabled : false;
 
   // Do not apply environment defaults; rely solely on live brand config or persisted config
   try { /* no-op */ } catch { }
@@ -1846,6 +1859,11 @@ export async function POST(req: NextRequest) {
     // Optional trackTransactionLimits update
     if (typeof body.trackTransactionLimits === "boolean") {
       candidate.trackTransactionLimits = body.trackTransactionLimits;
+    }
+
+    // Optional achEnabled update
+    if (typeof body.achEnabled === "boolean") {
+      candidate.achEnabled = body.achEnabled;
     }
 
     // Optional split config update

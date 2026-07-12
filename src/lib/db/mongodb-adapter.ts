@@ -201,6 +201,7 @@ class MongoItemsReference {
         return {
             fetchAll: async (): Promise<FeedResponse<T>> => {
                 const parsed = parseCosmosSql(spec.query, spec.parameters);
+                convertFilterTimestamps(parsed.filter);
 
                 // Debug logging (only when DEBUG=true)
                 if (_isDebug && spec.query.includes("type='receipt'")) {
@@ -421,4 +422,43 @@ function mongoDocToCosmos(doc: Document): Record<string, any> {
         }
     }
     return rest;
+}
+
+/**
+ * Recursively walk the parsed MongoDB query filter and convert number/string values
+ * associated with known timestamp fields into actual Date objects.
+ * This ensures they match the Date objects stored in the MongoDB collections.
+ */
+function convertFilterTimestamps(filter: Document): void {
+    if (!filter || typeof filter !== "object") return;
+
+    for (const [key, val] of Object.entries(filter)) {
+        if (key === "$and" || key === "$or" || key === "$nor") {
+            if (Array.isArray(val)) {
+                for (const subFilter of val) {
+                    convertFilterTimestamps(subFilter);
+                }
+            }
+        } else if (TIMESTAMP_FIELDS.includes(key)) {
+            if (val && typeof val === "object" && !(val instanceof Date)) {
+                for (const [op, opVal] of Object.entries(val)) {
+                    if (op.startsWith("$")) {
+                        if (typeof opVal === "number" || typeof opVal === "string") {
+                            const d = new Date(opVal);
+                            if (!isNaN(d.getTime())) {
+                                (val as any)[op] = d;
+                            }
+                        }
+                    }
+                }
+            } else if (typeof val === "number" || typeof val === "string") {
+                const d = new Date(val);
+                if (!isNaN(d.getTime())) {
+                    filter[key] = d;
+                }
+            }
+        } else if (typeof val === "object" && val !== null) {
+            convertFilterTimestamps(val);
+        }
+    }
 }

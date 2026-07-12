@@ -67,6 +67,7 @@ type SiteConfigResponse = {
     rampnowOnrampEnabled?: boolean;
     feeMinusEnabled?: boolean;
     currencySelectionEnabled?: boolean;
+    achEnabled?: boolean;
   };
   degraded?: boolean;
   reason?: string;
@@ -537,6 +538,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [partnerLogoSymbol, setPartnerLogoSymbol] = useState<string>("");
   const [partnerLogoFavicon, setPartnerLogoFavicon] = useState<string>("");
   const [partnerBrandName, setPartnerBrandName] = useState<string>("");
+  const [partnerAchEnabled, setPartnerAchEnabled] = useState<boolean>(true);
 
 
 
@@ -1322,6 +1324,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             setPartnerLogoSymbol(logoSymbol);
             setPartnerLogoFavicon(logoFavicon);
             setPartnerBrandName(partnerName);
+            setPartnerAchEnabled(pj?.brand?.achEnabled !== undefined ? !!pj?.brand?.achEnabled : false);
 
             // If no merchant theme is expected, apply partner colors and brand name
             if (!hasMerchantForTheme && !forcePortalTheme) {
@@ -2867,6 +2870,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [coinbaseOnrampEnabled, setCoinbaseOnrampEnabled] = useState<boolean>(false);
   const [transakOnrampEnabled, setTransakOnrampEnabled] = useState<boolean>(false);
   const [rampnowOnrampEnabled, setRampnowOnrampEnabled] = useState<boolean>(false);
+  const [merchantAchEnabled, setMerchantAchEnabled] = useState<boolean>(true);
   const [userOptedOutOfStripeBypass, setUserOptedOutOfStripeBypass] = useState<boolean>(false);
   const [configLoaded, setConfigLoaded] = useState<boolean>(false);
 
@@ -2929,6 +2933,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           if (typeof cfg.transakOnrampEnabled === "boolean") setTransakOnrampEnabled(cfg.transakOnrampEnabled);
           if (typeof cfg.rampnowOnrampEnabled === "boolean") setRampnowOnrampEnabled(cfg.rampnowOnrampEnabled);
         }
+        setMerchantAchEnabled(cfg.achEnabled !== undefined ? !!cfg.achEnabled : true);
 
         // basePlatformFeePct (platform + partner + agent fees)
         const splitCfg = (cfg as any)?.splitConfig;
@@ -3770,6 +3775,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     creditFeePct: creditStripeFeePct,
     totalUsd,
     getAmountForFunding,
+    achEnabled: (() => {
+      const isPlatform = !theme.brandKey || theme.brandKey === "portalpay" || theme.brandKey === "basaltsurge";
+      return isPlatform ? true : (partnerAchEnabled && merchantAchEnabled);
+    })(),
     onCardDetected: (card) => {
       if (card) {
         setDetectedCardFunding(card.funding);

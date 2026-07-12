@@ -129,6 +129,8 @@ export type UseStripeEmbeddedOnrampProps = {
   brandKey?: string;
   /** Enable/disable */
   enabled?: boolean;
+  /** Whether ACH bank transfers are enabled */
+  achEnabled?: boolean;
   /**
    * If the buyer is already connected with a Thirdweb wallet, pass their address here.
    * This skips the auth_endpoint wallet creation entirely — no extra OTP, no new wallet.
@@ -390,6 +392,7 @@ export function useStripeEmbeddedOnramp({
   totalUsd,
   getAmountForFunding,
   theme = "night",
+  achEnabled = true,
 }: UseStripeEmbeddedOnrampProps): UseStripeEmbeddedOnrampReturn {
   const [step, setStep] = useState<OnrampStep>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -2748,7 +2751,7 @@ export function useStripeEmbeddedOnramp({
 
           onramp.collectPaymentMethod(
             {
-              payment_method_types: ["card", "us_bank_account"],
+              payment_method_types: achEnabled ? ["card", "us_bank_account"] : ["card"],
               wallets: { applePay: "auto", googlePay: "auto" },
             },
             (result: any) => {

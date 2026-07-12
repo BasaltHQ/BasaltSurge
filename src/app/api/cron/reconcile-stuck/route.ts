@@ -95,8 +95,23 @@ export async function POST(req: NextRequest) {
     // Resolve brand context to support isolated partner containers cleanly
     const { getBrandKey } = await import("@/config/brands");
     const { isPartnerContext } = await import("@/lib/env");
-    const currentBrandKey = getBrandKey(req).toLowerCase();
-    const isPartner = isPartnerContext() || (currentBrandKey !== "portalpay" && currentBrandKey !== "basaltsurge");
+
+    const envBrandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").trim().toLowerCase();
+    const containerType = String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").trim().toLowerCase();
+    const isPartnerContainer = containerType === "partner" || (!!envBrandKey && envBrandKey !== "portalpay" && envBrandKey !== "basaltsurge");
+
+    let currentBrandKey: string;
+    let isPartner: boolean;
+
+    if (isPartnerContainer) {
+      // For dedicated partner containers, strictly enforce the configured brand key from the environment
+      currentBrandKey = envBrandKey || getBrandKey(req).toLowerCase();
+      isPartner = true;
+    } else {
+      // For shared platform containers, resolve dynamically from request host/headers
+      currentBrandKey = getBrandKey(req).toLowerCase();
+      isPartner = isPartnerContext() || (currentBrandKey !== "portalpay" && currentBrandKey !== "basaltsurge");
+    }
 
     // 2. Fetch pending/failed receipts from Cosmos DB within the last 7 days that have a stripeSessionId
     const minTime = Date.now() - 7 * 24 * 60 * 60 * 1000;

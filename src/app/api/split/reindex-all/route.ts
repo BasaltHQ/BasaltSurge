@@ -77,14 +77,33 @@ export async function POST(req: NextRequest) {
 
     const container = await getContainer();
 
-    // Query ALL site_config documents with split addresses — also fetch splitHistory for versioning
-    const spec = {
-      query: `
-        SELECT c.wallet, c.splitAddress, c.split, c.splitAddressCredit, c.splitCredit, c.splitHistory, c.partnerWallet, c.splitConfig, c.splitConfigCredit, c.createdAt, c.updatedAt
-        FROM c
-        WHERE c.type='site_config' AND (IS_DEFINED(c.splitAddress) OR IS_DEFINED(c.split.address) OR IS_DEFINED(c.splitAddressCredit) OR IS_DEFINED(c.splitCredit.address))
-      `,
-    };
+    // Resolve brand key from container settings
+    const envBrandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").trim().toLowerCase();
+    const containerType = String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").trim().toLowerCase();
+    const isPartnerContainer = containerType === "partner" || (!!envBrandKey && envBrandKey !== "portalpay" && envBrandKey !== "basaltsurge");
+
+    // Query site_config documents with split addresses
+    let spec: any;
+    if (isPartnerContainer && envBrandKey) {
+      spec = {
+        query: `
+          SELECT c.wallet, c.splitAddress, c.split, c.splitAddressCredit, c.splitCredit, c.splitHistory, c.partnerWallet, c.splitConfig, c.splitConfigCredit, c.createdAt, c.updatedAt
+          FROM c
+          WHERE c.type='site_config' 
+            AND (IS_DEFINED(c.splitAddress) OR IS_DEFINED(c.split.address) OR IS_DEFINED(c.splitAddressCredit) OR IS_DEFINED(c.splitCredit.address))
+            AND (c.brandKey = @brandKey OR c.config.brandKey = @brandKey)
+        `,
+        parameters: [{ name: "@brandKey", value: envBrandKey }]
+      };
+    } else {
+      spec = {
+        query: `
+          SELECT c.wallet, c.splitAddress, c.split, c.splitAddressCredit, c.splitCredit, c.splitHistory, c.partnerWallet, c.splitConfig, c.splitConfigCredit, c.createdAt, c.updatedAt
+          FROM c
+          WHERE c.type='site_config' AND (IS_DEFINED(c.splitAddress) OR IS_DEFINED(c.split.address) OR IS_DEFINED(c.splitAddressCredit) OR IS_DEFINED(c.splitCredit.address))
+        `,
+      };
+    }
 
     const { resources } = await container.items.query(spec as any).fetchAll();
     const configs = Array.isArray(resources) ? resources as any[] : [];
