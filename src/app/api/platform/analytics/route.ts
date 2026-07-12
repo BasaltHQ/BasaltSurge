@@ -15,11 +15,37 @@ export async function GET(req: NextRequest) {
 
     const container = await getContainer();
     let receipts: any[] = [];
+    let allReceiptsLight: any[] = [];
     let logs: any[] = [];
 
     // 2. Fetch receipts and logs using MongoDB projection for performance if available
     if ((container as any).getCollection) {
       const collection = (container as any).getCollection();
+      
+      // Query 1: Fetch lightweight projected records for ALL receipts for total metrics/aggregation
+      allReceiptsLight = await collection.find(
+        { type: "receipt" },
+        {
+          projection: {
+            id: 1,
+            receiptId: 1,
+            brandKey: 1,
+            brandName: 1,
+            status: 1,
+            totalUsd: 1,
+            createdAt: 1,
+            amountPlatformMinor: 1,
+            detectedCardFunding: 1,
+            isCreditCard: 1,
+            statusHistory: 1,
+            customerEmail: 1,
+            stripeEmail: 1,
+            wallet: 1
+          }
+        }
+      ).sort({ createdAt: -1 }).toArray();
+
+      // Query 2: Fetch detailed records ONLY for the most recent 500 receipts for table listing
       receipts = await collection.find(
         { type: "receipt" },
         {
@@ -46,10 +72,11 @@ export async function GET(req: NextRequest) {
             customerSessions: 1,
             lastPolledAt: 1,
             stripeSessionStatus: 1,
-            ipAddress: 1
+            ipAddress: 1,
+            wallet: 1
           }
         }
-      ).sort({ createdAt: -1 }).toArray();
+      ).sort({ createdAt: -1 }).limit(500).toArray();
 
       // Query portal logs to find failure reasons
       const db = collection.db;
@@ -68,12 +95,13 @@ export async function GET(req: NextRequest) {
     } else {
       // Fallback for Cosmos DB
       const querySpec = {
-        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.detectedCardFunding, c.isCreditCard, c.transactionHash, c.stripeSessionId, c.statusHistory, c.customerEmail, c.stripeEmail, c.lineItems, c.parentUrl, c.splitAddress, c.splitAddressCredit, c.customerSessions, c.lastPolledAt, c.stripeSessionStatus, c.ipAddress FROM c WHERE c.type = 'receipt'"
+        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet FROM c WHERE c.type = 'receipt'"
       };
       const { resources } = await container.items.query(querySpec).fetchAll();
-      receipts = resources || [];
+      allReceiptsLight = resources || [];
       // Sort by date manually as Cosmos SQL ordering can be complex depending on indexing
-      receipts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      allReceiptsLight.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      receipts = allReceiptsLight.slice(0, 500);
     }
 
     // 3. Aggregate metrics
@@ -194,11 +222,9 @@ export async function GET(req: NextRequest) {
       console.error("[PLATFORM ANALYTICS API] Failed to pre-fetch wallet configs:", err);
     }
 
-    const processedReceipts = receipts.map((r: any) => {
-      const rId = r.receiptId || r.id;
-      const rLogs = logsByReceipt[rId] || [];
+    // Aggregate metrics over all historical lightweight records
+    for (const r of allReceiptsLight) {
       const status = r.status || "pending";
-
       totalCreated++;
       
       const bKey = r.brandKey || "unknown";
@@ -226,17 +252,25 @@ export async function GET(req: NextRequest) {
         totalFailed++;
         brandMap[bKey].failed++;
         
+        const rId = r.receiptId || r.id;
+        const rLogs = logsByReceipt[rId] || [];
         const reason = getFailureReason(r, rLogs);
         failureReasonCounts[reason] = (failureReasonCounts[reason] || 0) + 1;
       }
+    }
 
+    // Process detailed data only for the top 500 recent transactions to keep payload small
+    const processedReceipts = receipts.map((r: any) => {
+      const rId = r.receiptId || r.id;
+      const rLogs = logsByReceipt[rId] || [];
+      const status = r.status || "pending";
       const pairKey = `${r.wallet || ""}:${r.brandKey || ""}`;
       const resolvedConfig = configMap[pairKey] || {};
 
       return {
         receiptId: rId,
-        brandKey: bKey,
-        brandName: bName,
+        brandKey: r.brandKey || "unknown",
+        brandName: r.brandName || r.brandKey || "unknown",
         status,
         totalUsd: r.totalUsd || 0,
         createdAt: r.createdAt,
