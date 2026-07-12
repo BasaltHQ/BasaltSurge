@@ -306,7 +306,7 @@ export default function PlatformAnalyticsPanel() {
     const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
 
     filteredReceipts.forEach(r => {
-      if (r.status === "paid") {
+      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
         totalPaid++;
         totalGmv += r.totalUsd;
         totalFees += r.platformFee || 0;
@@ -394,7 +394,7 @@ export default function PlatformAnalyticsPanel() {
 
       const g = dateGroups[dateStr];
       g.allTotal++;
-      if (r.status === "paid") {
+      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
         g.allPaid++;
       }
 
@@ -403,7 +403,7 @@ export default function PlatformAnalyticsPanel() {
           g.brands[r.brandKey] = { paid: 0, total: 0 };
         }
         g.brands[r.brandKey].total++;
-        if (r.status === "paid") {
+        if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
           g.brands[r.brandKey].paid++;
         }
       }
@@ -442,7 +442,7 @@ export default function PlatformAnalyticsPanel() {
     let pendingCount = 0;
 
     filteredReceipts.forEach(r => {
-      if (r.status === "paid") paidCount++;
+      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) paidCount++;
       else if (r.status === "failed") failedCount++;
       else pendingCount++;
     });
@@ -884,11 +884,11 @@ export default function PlatformAnalyticsPanel() {
                               )}
                             </td>
                             <td className="py-3 px-3">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold inline-flex items-center gap-1 ${r.status === "paid" ? "bg-emerald-500/10 text-emerald-400" :
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold inline-flex items-center gap-1 ${["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) ? "bg-emerald-500/10 text-emerald-400" :
                                   r.status === "failed" ? "bg-red-500/10 text-red-400" :
                                     "bg-amber-500/10 text-amber-400"
                                 }`}>
-                                {r.status === "paid" && <CheckCircle2 className="w-2.5 h-2.5" />}
+                                {["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) && <CheckCircle2 className="w-2.5 h-2.5" />}
                                 {r.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
                                 <span>{r.status}</span>
                               </span>

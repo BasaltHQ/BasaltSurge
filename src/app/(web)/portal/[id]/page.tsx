@@ -6537,7 +6537,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                               }}
                                               onSuccess={(result: any) => {
                                                 console.log("[CHECKOUT] Success:", result);
-                                                const txHash = result?.transactionHash || result?.hash;
+                                                const txHash = result?.transactionHash || result?.hash || result?.receipt?.transactionHash || result?.receipt?.hash || result?.transaction?.transactionHash || result?.transaction?.hash;
                                                 const buyer = (account?.address || "").toLowerCase();
                                                 setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
                                                 if (txHash && receiptId) {
@@ -6607,7 +6607,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         }}
                                         onSuccess={(result: any) => {
                                           console.log("[CHECKOUT] Success:", result);
-                                          const txHash = result?.transactionHash || result?.hash;
+                                          const txHash = result?.transactionHash || result?.hash || result?.receipt?.transactionHash || result?.receipt?.hash || result?.transaction?.transactionHash || result?.transaction?.hash;
                                           const buyer = (account?.address || "").toLowerCase();
                                           setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
                                           if (txHash && receiptId) {

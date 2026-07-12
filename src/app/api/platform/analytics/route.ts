@@ -125,7 +125,7 @@ export async function GET(req: NextRequest) {
     // Helper to compute KYC Level
     const getKycLevel = (receipt: any, rLogs: any[]) => {
       if (rLogs.length === 0) {
-        if (receipt.status === "paid") {
+        if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(receipt.status)) {
           if (receipt.totalUsd >= 100) return "L2";
           if (receipt.totalUsd >= 15) return "L1";
         }
@@ -157,7 +157,7 @@ export async function GET(req: NextRequest) {
       });
       if (hasL1Log) return "L1";
 
-      if (receipt.status === "paid") {
+      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(receipt.status)) {
         if (receipt.totalUsd >= 100) return "L2";
         if (receipt.totalUsd >= 15) return "L1";
       }
@@ -208,7 +208,7 @@ export async function GET(req: NextRequest) {
       }
       brandMap[bKey].total++;
 
-      if (status === "paid") {
+      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
         totalPaid++;
         totalGmv += Number(r.totalUsd || 0);
         totalFees += Number(r.amountPlatformMinor || 0) / 100;
