@@ -146,14 +146,25 @@ export async function POST(req: NextRequest) {
     const paymentMethod = String(session?.payment_method || "").toLowerCase();
     const cardFundingDetail = String(session?.payment_details?.card?.funding || "").toLowerCase();
     let cardFunding = "";
-    if (cardFundingDetail) {
+    if (paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
+      cardFunding = "us_bank_account";
+    } else if (cardFundingDetail) {
       cardFunding = cardFundingDetail;
     } else if (paymentMethod.includes("debit")) {
       cardFunding = "debit";
     } else if (paymentMethod.includes("credit")) {
       cardFunding = "credit";
     }
-    const useSeparateSplit = isDual && cardFunding === "credit";
+
+    let useSeparateSplit = false;
+    if (isDual) {
+      if (cardFunding === "us_bank_account") {
+        // Flipped definitions: Standard ACH settles in the debit split (resolved via match.splitAddressCredit, which is useSeparateSplit = false)
+        useSeparateSplit = false;
+      } else {
+        useSeparateSplit = cardFunding === "credit";
+      }
+    }
 
     // Resolve merchant context from metadata
     const context = await resolveMerchantFromMetadata(metadata, container, brandKey, useSeparateSplit);
@@ -215,7 +226,18 @@ export async function POST(req: NextRequest) {
         // Update receipt status if we have a receiptId
         const receiptId = metadata.receiptId;
         if (receiptId) {
-          const detectedFunding = cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined);
+          const detectedFunding = cardFunding === "us_bank_account" ? "us_bank_account" : (cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined));
+          await fetch(`${baseOrigin}/api/split/webhook`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              splitAddress,
+              merchantWallet,
+              trigger: 'stripe_onramp',
+              correlationId
+            })
+          });
+
           await fetch(`${baseOrigin}/api/receipts/status`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -234,24 +256,45 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // On fulfillment_processing: mark receipt as pending
+    // On fulfillment_processing: mark receipt as pending or paid - ach pending
     if (status === 'fulfillment_processing' && merchantWallet && metadata.receiptId) {
       const baseOrigin = req.nextUrl.origin;
       try {
-        const detectedFunding = cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined);
+        const detectedFunding = cardFunding === "us_bank_account" ? "us_bank_account" : (cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined));
+        const isAch = cardFunding === "us_bank_account";
+        const nextStatus = isAch ? "paid - ach pending" : "pending";
         await fetch(`${baseOrigin}/api/receipts/status`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             receiptId: String(metadata.receiptId),
             wallet: merchantWallet,
-            status: 'pending',
+            status: nextStatus,
             detectedCardFunding: detectedFunding,
             isCreditCard: cardFunding === "credit"
           })
         });
       } catch (e) {
-        console.error('[STRIPE WEBHOOK] Error updating receipt to pending:', e);
+        console.error('[STRIPE WEBHOOK] Error updating receipt status:', e);
+      }
+    }
+
+    // On rejected: mark receipt as failed
+    if (status === 'rejected' && merchantWallet && metadata.receiptId) {
+      const baseOrigin = req.nextUrl.origin;
+      try {
+        await fetch(`${baseOrigin}/api/receipts/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            receiptId: String(metadata.receiptId),
+            wallet: merchantWallet,
+            status: 'failed'
+          })
+        });
+        console.log(`[STRIPE WEBHOOK] Updated receipt ${metadata.receiptId} to failed due to rejection`);
+      } catch (e) {
+        console.error('[STRIPE WEBHOOK] Error updating receipt to failed:', e);
       }
     }
 

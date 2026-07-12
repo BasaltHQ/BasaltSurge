@@ -57,7 +57,7 @@ export function buildPortalUrlForTest(recipient?: string): string {
  */
 export function recalculateReceiptForCardFunding(
   receipt: any,
-  detectedCardFunding: "credit" | "debit",
+  detectedCardFunding: "credit" | "debit" | "us_bank_account",
   siteConfig: any,
   brandConfigDoc?: any
 ): any {
@@ -93,15 +93,21 @@ export function recalculateReceiptForCardFunding(
 
   // Stripe fee percent: presented fee - platform - agent (from splitConfig)
   let stripeFeePct = 0;
-  if (!isFeeMinus) {
-    stripeFeePct = isCredit ? 3.5 : 2.25;
-  } else if (basePresentedBps !== undefined) {
-    const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
-    const agentBps = splitCfg && Array.isArray(splitCfg.agents)
-      ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-      : 0;
+  const isStripeHeadless = !!(receipt.detectedCardFunding && (receipt.detectedCardFunding === "credit" || receipt.detectedCardFunding === "debit" || receipt.detectedCardFunding === "us_bank_account"));
 
-    stripeFeePct = Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
+  if (isStripeHeadless) {
+    if (detectedCardFunding === "us_bank_account") {
+      stripeFeePct = 0.6;
+    } else if (!isFeeMinus) {
+      stripeFeePct = isCredit ? 3.5 : 2.25;
+    } else if (basePresentedBps !== undefined) {
+      const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
+      const agentBps = splitCfg && Array.isArray(splitCfg.agents)
+        ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+        : 0;
+
+      stripeFeePct = Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
+    }
   }
   const totalFeePct = Math.max(0, basePlatformFeePct + processingFeePct + stripeFeePct);
   const feePct = totalFeePct / 100;
@@ -194,5 +200,91 @@ export function recalculateReceiptForCardFunding(
       lineItems: finalLineItems,
       totalUsd: fromCents(baseWithoutFeeCents + finalFeeCents + tipCents)
     };
+  }
+}
+
+export function enrichReceiptFromStripeData(receipt: any, onrampData: any) {
+  // 1. Backfill buyerWallet if missing
+  const walletAddress = onrampData.transaction_details?.wallet_address;
+  if (walletAddress && (!receipt.buyerWallet || receipt.buyerWallet === "—")) {
+    receipt.buyerWallet = walletAddress.toLowerCase();
+    console.log(`[enrichReceipt] Backfilled buyerWallet: ${receipt.buyerWallet}`);
+  }
+
+  // 2. Resolve email
+  const email = receipt.customerEmail || receipt.email || onrampData.customer_information?.email || "";
+  if (email && !receipt.customerEmail) {
+    receipt.customerEmail = email;
+  }
+
+  // 3. Resolve payment details / bank info
+  const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
+  const cardFundingDetail = String(onrampData.payment_details?.card?.funding || "").toLowerCase();
+  
+  let detectedFunding = receipt.detectedCardFunding;
+  if (paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
+    detectedFunding = "us_bank_account";
+  } else if (cardFundingDetail) {
+    detectedFunding = cardFundingDetail;
+  }
+
+  if (detectedFunding) {
+    receipt.detectedCardFunding = detectedFunding;
+    receipt.isCreditCard = detectedFunding === "credit";
+  }
+
+  // 4. Backfill customerSessions
+  const pmDetails = onrampData.payment_method_details || onrampData.payment_details || {};
+  let bankName = "";
+  let last4 = "";
+
+  if (paymentMethod === "us_bank_account" || detectedFunding === "us_bank_account") {
+    const bank = pmDetails.us_bank_account || onrampData.payment_details?.us_bank_account;
+    bankName = bank?.bank_name || "Bank Account";
+    last4 = bank?.last4 || "";
+  } else {
+    const card = pmDetails.card || onrampData.payment_details?.card;
+    bankName = card?.brand || "";
+    last4 = card?.last4 || "";
+  }
+
+  const defaultSession = {
+    id: onrampData.id || "reconciled_session",
+    object: "crypto.onramp_session",
+    status: onrampData.status,
+    email,
+    walletAddress: walletAddress || receipt.buyerWallet || "",
+    paymentMethodDetails: {
+      type: detectedFunding === "us_bank_account" ? "us_bank_account" : "card",
+      ...(detectedFunding === "us_bank_account" ? {
+        us_bank_account: { bank_name: bankName, last4, account_type: null }
+      } : {
+        card: { brand: bankName, funding: detectedFunding, last4, exp_month: null, exp_year: null, wallet: null }
+      })
+    },
+    createdAt: onrampData.created || Date.now(),
+    updatedAt: Date.now()
+  };
+
+  if (!Array.isArray(receipt.customerSessions) || receipt.customerSessions.length === 0) {
+    receipt.customerSessions = [defaultSession];
+    console.log("[enrichReceipt] Initialized customerSessions array.");
+  } else {
+    // If the session exists, update it, otherwise push
+    const index = receipt.customerSessions.findIndex((s: any) => s.id === onrampData.id || s.stripeSessionId === onrampData.id);
+    if (index >= 0) {
+      receipt.customerSessions[index] = {
+        ...receipt.customerSessions[index],
+        status: onrampData.status,
+        email: email || receipt.customerSessions[index].email,
+        walletAddress: walletAddress || receipt.customerSessions[index].walletAddress,
+        paymentMethodDetails: defaultSession.paymentMethodDetails,
+        updatedAt: Date.now()
+      };
+      console.log(`[enrichReceipt] Updated existing customerSession details.`);
+    } else {
+      receipt.customerSessions.push(defaultSession);
+      console.log(`[enrichReceipt] Pushed new customerSession details.`);
+    }
   }
 }

@@ -31,7 +31,30 @@ export async function POST(req: NextRequest) {
         }
 
         // Get all due subscriptions
-        const dueSubs = await getDueSubscriptions();
+        let dueSubs = await getDueSubscriptions();
+
+        // Brand Isolation: Filter subscriptions by brand if running in a dedicated partner container
+        const envBrandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").trim().toLowerCase();
+        const containerType = String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").trim().toLowerCase();
+        const isPartnerContainer = containerType === "partner" || (!!envBrandKey && envBrandKey !== "portalpay" && envBrandKey !== "basaltsurge");
+
+        if (isPartnerContainer && envBrandKey) {
+            try {
+                const { getContainer } = await import("@/lib/cosmos");
+                const container = await getContainer();
+                const siteConfigsQuery = {
+                    query: "SELECT c.wallet FROM c WHERE c.type = 'site_config' AND (c.brandKey = @brand OR c.config.brandKey = @brand)",
+                    parameters: [{ name: "@brand", value: envBrandKey }]
+                };
+                const { resources: configs } = await container.items.query(siteConfigsQuery).fetchAll();
+                const partnerWallets = new Set((configs || []).map(c => String(c.wallet || "").trim().toLowerCase()).filter(Boolean));
+                
+                dueSubs = dueSubs.filter(sub => partnerWallets.has(String(sub.merchantWallet || "").trim().toLowerCase()));
+                console.log(`[cron/charge-subscriptions] Scoped due subscriptions to brand ${envBrandKey}. Found ${dueSubs.length} matching subscriptions.`);
+            } catch (err) {
+                console.error("[cron/charge-subscriptions] Failed scoping subscriptions to brand:", err);
+            }
+        }
 
         if (dueSubs.length === 0) {
             return NextResponse.json(

@@ -18,7 +18,9 @@ import {
   Building2,
   Activity,
   ArrowUpDown,
-  FileText
+  FileText,
+  Users,
+  Globe
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 
@@ -30,7 +32,7 @@ interface Stat {
   totalGmv: number;
   totalFees: number;
   aov: number;
-  cardTypes: { credit: number; debit: number; unknown: number };
+  cardTypes: { credit: number; debit: number; bank: number; unknown: number };
 }
 
 interface FailureReason {
@@ -76,6 +78,10 @@ interface ReceiptInfo {
   parentUrl?: string | null;
   splitAddress?: string | null;
   splitAddressCredit?: string | null;
+  customerSessions?: any[];
+  lastPolledAt?: number | null;
+  stripeSessionStatus?: string | null;
+  ipAddress?: string | null;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -112,7 +118,7 @@ export default function PlatformAnalyticsPanel() {
       setSortDirection("asc");
     }
   };
-  
+
   // Investigation target / Expanded receipt ID
   const [expandedReceiptId, setExpandedReceiptId] = useState<string | null>(null);
   const [expandedLogs, setExpandedLogs] = useState<Record<string, ReceiptLog[]>>({});
@@ -209,7 +215,7 @@ export default function PlatformAnalyticsPanel() {
     return recentReceipts.filter(r => {
       const matchesBrand = selectedBrand === "all" || r.brandKey === selectedBrand;
       const matchesStatus = statusFilter === "all" || r.status === statusFilter;
-      
+
       let matchesTime = true;
       if (r.createdAt && timeRange !== "all") {
         const itemTime = new Date(r.createdAt).getTime();
@@ -297,19 +303,20 @@ export default function PlatformAnalyticsPanel() {
     let totalFailed = 0;
     let totalGmv = 0;
     let totalFees = 0;
-    const cardTypes = { credit: 0, debit: 0, unknown: 0 };
+    const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
 
     filteredReceipts.forEach(r => {
-      if (r.status === "paid") {
+      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
         totalPaid++;
         totalGmv += r.totalUsd;
         totalFees += r.platformFee || 0;
       } else if (r.status === "failed") {
         totalFailed++;
       }
-      
+
       const funding = r.cardFunding;
-      if (funding === "credit") cardTypes.credit++;
+      if (funding === "us_bank_account") cardTypes.bank++;
+      else if (funding === "credit") cardTypes.credit++;
       else if (funding === "debit") cardTypes.debit++;
       else cardTypes.unknown++;
     });
@@ -359,7 +366,7 @@ export default function PlatformAnalyticsPanel() {
   // Daily Success Rate Time Series dataset including separate brands
   const successRateTimeSeries = useMemo(() => {
     // Group by date, and within each date, group by brandKey
-    const dateGroups: Record<string, { 
+    const dateGroups: Record<string, {
       dateLabel: string;
       allPaid: number;
       allTotal: number;
@@ -375,7 +382,7 @@ export default function PlatformAnalyticsPanel() {
       if (!r.createdAt) return;
       const d = new Date(r.createdAt);
       const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-      
+
       if (!dateGroups[dateStr]) {
         dateGroups[dateStr] = {
           dateLabel: dateStr,
@@ -387,7 +394,7 @@ export default function PlatformAnalyticsPanel() {
 
       const g = dateGroups[dateStr];
       g.allTotal++;
-      if (r.status === "paid") {
+      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
         g.allPaid++;
       }
 
@@ -396,7 +403,7 @@ export default function PlatformAnalyticsPanel() {
           g.brands[r.brandKey] = { paid: 0, total: 0 };
         }
         g.brands[r.brandKey].total++;
-        if (r.status === "paid") {
+        if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
           g.brands[r.brandKey].paid++;
         }
       }
@@ -408,7 +415,7 @@ export default function PlatformAnalyticsPanel() {
         aggregate: g.allTotal > 0 ? +((g.allPaid / g.allTotal) * 100).toFixed(1) : 0,
         aggregateDetails: { paid: g.allPaid, total: g.allTotal }
       };
-      
+
       activeBrandKeys.forEach(bk => {
         const bData = g.brands[bk];
         if (bData && bData.total > 0) {
@@ -435,7 +442,7 @@ export default function PlatformAnalyticsPanel() {
     let pendingCount = 0;
 
     filteredReceipts.forEach(r => {
-      if (r.status === "paid") paidCount++;
+      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) paidCount++;
       else if (r.status === "failed") failedCount++;
       else pendingCount++;
     });
@@ -497,7 +504,7 @@ export default function PlatformAnalyticsPanel() {
 
   return (
     <div className="w-full space-y-6 pb-24 admin-panel-enter">
-      
+
       {/* Title Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -522,17 +529,16 @@ export default function PlatformAnalyticsPanel() {
       {/* Analytics Grid HUD */}
       {displayStats && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          
+
           <div className="glass-pane rounded-xl border border-white/5 p-4 flex flex-col justify-between">
             <div>
               <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Platform Success Rate</span>
               <div className="text-2xl font-bold mt-1 text-white tracking-tight flex items-baseline gap-2">
                 <span>{displayStats.successRate}%</span>
-                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                  displayStats.successRate >= 85 ? "bg-emerald-500/10 text-emerald-400" :
-                  displayStats.successRate >= 70 ? "bg-amber-500/10 text-amber-400" :
-                  "bg-red-500/10 text-red-400"
-                }`}>
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${displayStats.successRate >= 85 ? "bg-emerald-500/10 text-emerald-400" :
+                    displayStats.successRate >= 70 ? "bg-amber-500/10 text-amber-400" :
+                      "bg-red-500/10 text-red-400"
+                  }`}>
                   {displayStats.successRate >= 85 ? "Optimal" : displayStats.successRate >= 70 ? "Warning" : "Critical"}
                 </span>
               </div>
@@ -570,7 +576,7 @@ export default function PlatformAnalyticsPanel() {
           <div className="glass-pane rounded-xl border border-white/5 p-4 flex flex-col justify-between">
             <div>
               <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Card Funding Profile</span>
-              <div className="grid grid-cols-2 gap-2 mt-2">
+              <div className="grid grid-cols-3 gap-2 mt-2">
                 <div className="bg-white/5 rounded-lg p-1.5 text-center">
                   <div className="text-xs text-muted-foreground">Credit</div>
                   <div className="text-sm font-bold text-white">{displayStats.cardTypes.credit}</div>
@@ -578,6 +584,10 @@ export default function PlatformAnalyticsPanel() {
                 <div className="bg-white/5 rounded-lg p-1.5 text-center">
                   <div className="text-xs text-muted-foreground">Debit</div>
                   <div className="text-sm font-bold text-white">{displayStats.cardTypes.debit}</div>
+                </div>
+                <div className="bg-white/5 rounded-lg p-1.5 text-center">
+                  <div className="text-xs text-muted-foreground">Bank</div>
+                  <div className="text-sm font-bold text-white">{displayStats.cardTypes.bank || 0}</div>
                 </div>
               </div>
             </div>
@@ -588,7 +598,7 @@ export default function PlatformAnalyticsPanel() {
 
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* Success Rate Over Time - Line Chart */}
         <div className="lg:col-span-2 glass-pane rounded-xl border border-white/5 p-5 flex flex-col min-h-0">
           <div className="flex items-center justify-between mb-4 shrink-0">
@@ -613,11 +623,10 @@ export default function PlatformAnalyticsPanel() {
                 <button
                   key={opt.value}
                   onClick={() => setTimeRange(opt.value)}
-                  className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${
-                    timeRange === opt.value
+                  className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${timeRange === opt.value
                       ? "bg-primary text-white shadow-sm"
                       : "text-muted-foreground hover:text-white"
-                  }`}
+                    }`}
                 >
                   {opt.label}
                 </button>
@@ -657,17 +666,17 @@ export default function PlatformAnalyticsPanel() {
 
       {/* Main Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* Left: Brand performance statistics & top failures */}
         <div className="lg:col-span-1 space-y-6">
-          
+
           {/* Brand Breakdown */}
           <div className="glass-pane rounded-xl border border-white/5 p-4">
             <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-1.5">
               <Building2 className="w-4 h-4 text-primary" />
               <span>Brand Performance</span>
             </h3>
-            
+
             <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
               {brandStats.map(b => (
                 <div key={b.brandKey} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
@@ -679,11 +688,10 @@ export default function PlatformAnalyticsPanel() {
                   </div>
                   <div className="text-right">
                     <div className="font-bold text-white">${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-                    <div className={`text-[10px] font-medium mt-0.5 ${
-                      b.successRate >= 80 ? "text-emerald-400" :
-                      b.successRate >= 60 ? "text-amber-400" :
-                      "text-red-400"
-                    }`}>
+                    <div className={`text-[10px] font-medium mt-0.5 ${b.successRate >= 80 ? "text-emerald-400" :
+                        b.successRate >= 60 ? "text-amber-400" :
+                          "text-red-400"
+                      }`}>
                       {b.successRate}% SR
                     </div>
                   </div>
@@ -723,12 +731,12 @@ export default function PlatformAnalyticsPanel() {
 
         {/* Right: Searchable and Detailed Diagnostics Investigation Feed */}
         <div className="lg:col-span-2 space-y-4">
-          
+
           <div className="glass-pane rounded-xl border border-white/5 p-4 space-y-4">
-            
+
             {/* Filter Toolbar */}
             <div className="flex flex-col sm:flex-row items-center gap-3">
-              
+
               {/* Search Bar */}
               <div className="relative flex-1 w-full">
                 <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
@@ -876,22 +884,20 @@ export default function PlatformAnalyticsPanel() {
                               )}
                             </td>
                             <td className="py-3 px-3">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold inline-flex items-center gap-1 ${
-                                r.status === "paid" ? "bg-emerald-500/10 text-emerald-400" :
-                                r.status === "failed" ? "bg-red-500/10 text-red-400" :
-                                "bg-amber-500/10 text-amber-400"
-                              }`}>
-                                {r.status === "paid" && <CheckCircle2 className="w-2.5 h-2.5" />}
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold inline-flex items-center gap-1 ${["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) ? "bg-emerald-500/10 text-emerald-400" :
+                                  r.status === "failed" ? "bg-red-500/10 text-red-400" :
+                                    "bg-amber-500/10 text-amber-400"
+                                }`}>
+                                {["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) && <CheckCircle2 className="w-2.5 h-2.5" />}
                                 {r.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
                                 <span>{r.status}</span>
                               </span>
                             </td>
                             <td className="py-3 px-3">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${
-                                r.kycLevel === "L2" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" :
-                                r.kycLevel === "L1" ? "bg-blue-500/10 text-blue-400 border-blue-500/20" :
-                                "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
-                              }`}>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${r.kycLevel === "L2" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" :
+                                  r.kycLevel === "L1" ? "bg-blue-500/10 text-blue-400 border-blue-500/20" :
+                                    "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
+                                }`}>
                                 {r.kycLevel}
                               </span>
                             </td>
@@ -915,14 +921,15 @@ export default function PlatformAnalyticsPanel() {
                               <tr>
                                 <td colSpan={9} className="bg-neutral-900/60 p-4 border-t border-b border-white/5">
                                   <div className="space-y-4">
-                                    
+
                                     {/* Tabs Navigation */}
                                     <div className="flex items-center gap-1 border-b border-white/5 pb-2">
                                       {[
                                         { id: "overview", label: "Overview", icon: Sliders },
                                         { id: "items", label: "Items Ordered", icon: FileText },
                                         { id: "origin", label: "Initialization & Origin", icon: Chrome },
-                                        { id: "logs", label: "Client Logs", icon: Activity }
+                                        { id: "logs", label: "Client Logs", icon: Activity },
+                                        { id: "customers", label: "Customer Metadata", icon: Users }
                                       ].map(tab => {
                                         const Icon = tab.icon;
                                         const isActive = activeTab === tab.id;
@@ -930,11 +937,10 @@ export default function PlatformAnalyticsPanel() {
                                           <button
                                             key={tab.id}
                                             onClick={() => setActiveTab(tab.id)}
-                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                                              isActive
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isActive
                                                 ? "bg-primary text-white shadow-sm"
                                                 : "text-muted-foreground hover:text-white hover:bg-white/5"
-                                            }`}
+                                              }`}
                                           >
                                             <Icon className="w-3.5 h-3.5" />
                                             <span>{tab.label}</span>
@@ -946,7 +952,7 @@ export default function PlatformAnalyticsPanel() {
                                     {/* Tab 1: Overview & Meta */}
                                     {activeTab === "overview" && (
                                       <div className="space-y-4 animate-in fade-in duration-200">
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-xs mt-1">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 text-xs mt-1">
                                           <div className="space-y-1">
                                             <div className="text-muted-foreground text-[10px] uppercase font-medium">Stripe Session ID</div>
                                             <div className="flex items-center gap-1">
@@ -990,7 +996,7 @@ export default function PlatformAnalyticsPanel() {
                                                     <Copy className="w-3 h-3" />
                                                   </button>
                                                   <a
-                                                    href={`https://polygonscan.com/tx/${r.transactionHash}`}
+                                                    href={`https://basescan.org/tx/${r.transactionHash}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     className="text-muted-foreground hover:text-white transition-colors"
@@ -1013,10 +1019,37 @@ export default function PlatformAnalyticsPanel() {
                                           <div className="space-y-1">
                                             <div className="text-muted-foreground text-[10px] uppercase font-medium">Card Funding</div>
                                             <div className="text-white/90 capitalize">
-                                              {r.cardFunding || "unknown / N/A"}
+                                              {r.cardFunding === "us_bank_account" ? "Bank Transfer (ACH)" : (r.cardFunding || "unknown / N/A")}
+                                            </div>
+                                          </div>
+
+                                          <div className="space-y-1">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Client IP</div>
+                                            <div className="text-white/90 font-mono">
+                                              {r.ipAddress || "N/A"}
                                             </div>
                                           </div>
                                         </div>
+
+                                        {r.cardFunding === "us_bank_account" && (
+                                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 mt-2 bg-white/[0.01] border border-white/5 rounded-xl p-3">
+                                            <div className="space-y-1">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Last ACH Poll</div>
+                                              <div className="text-white/90 text-xs">
+                                                {r.lastPolledAt ? new Date(r.lastPolledAt).toLocaleString() : "Never"}
+                                              </div>
+                                            </div>
+                                            <div className="space-y-1">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">ACH Status</div>
+                                              <div className="flex items-center gap-1.5 mt-0.5">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                                                <span className="text-amber-400 font-semibold uppercase tracking-wider text-[10px]">
+                                                  {r.stripeSessionStatus || "Pending"}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
 
                                         {/* Intended / Actual Split Address */}
                                         <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3">
@@ -1083,80 +1116,6 @@ export default function PlatformAnalyticsPanel() {
                                       </div>
                                     )}
 
-                                    {/* Tab 2: Items Ordered */}
-                                    {activeTab === "items" && (
-                                      <div className="space-y-2 animate-in fade-in duration-200 mt-1">
-                                        <div className="bg-black/20 border border-white/5 rounded-lg overflow-hidden">
-                                          <table className="w-full text-left text-xs">
-                                            <thead className="bg-white/5 text-muted-foreground text-[10px] uppercase font-semibold border-b border-white/5">
-                                              <tr>
-                                                <th className="py-2 px-3">Item Description</th>
-                                                <th className="py-2 px-3 text-right">Price</th>
-                                                <th className="py-2 px-3 text-center">Qty</th>
-                                                <th className="py-2 px-3 text-right">Total</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-white/5 text-white/90">
-                                              {r.lineItems && r.lineItems.length > 0 ? (
-                                                r.lineItems.map((item, idx) => {
-                                                  const qty = item.qty || 1;
-                                                  const price = item.priceUsd || 0;
-                                                  return (
-                                                    <tr key={idx}>
-                                                      <td className="py-2.5 px-3 font-medium">{item.label}</td>
-                                                      <td className="py-2.5 px-3 text-right">${price.toFixed(2)}</td>
-                                                      <td className="py-2.5 px-3 text-center">{qty}</td>
-                                                      <td className="py-2.5 px-3 text-right font-semibold">${(price * qty).toFixed(2)}</td>
-                                                    </tr>
-                                                  );
-                                                })
-                                              ) : (
-                                                <tr>
-                                                  <td colSpan={4} className="py-6 text-center text-muted-foreground">
-                                                    No line items recorded for this receipt.
-                                                  </td>
-                                                </tr>
-                                              )}
-                                            </tbody>
-                                          </table>
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Tab 3: Initialization & Origin */}
-                                    {activeTab === "origin" && (
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs animate-in fade-in duration-200 mt-1">
-                                        <div className="space-y-2">
-                                          <div className="text-muted-foreground text-[10px] uppercase font-medium">Site Initialized On</div>
-                                          <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
-                                            <Chrome className="w-4 h-4 text-primary flex-shrink-0" />
-                                            {r.parentUrl ? (
-                                              <a
-                                                href={r.parentUrl}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="font-mono text-white hover:underline hover:text-primary truncate max-w-[280px]"
-                                              >
-                                                {r.parentUrl}
-                                              </a>
-                                            ) : (
-                                              <span className="text-muted-foreground">Direct Access / Parent URL unavailable</span>
-                                            )}
-                                          </div>
-                                        </div>
-
-                                        <div className="space-y-2">
-                                          <div className="text-muted-foreground text-[10px] uppercase font-medium">Integration Mode</div>
-                                          <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
-                                            <Activity className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                                            <span className="font-semibold text-white/90">
-                                              {r.parentUrl ? "Embedded Checkout (Iframe)" : "Direct Checkout Link"}
-                                            </span>
-                                          </div>
-                                        </div>
-                                      </div>
-                                    )}
-
                                     {/* Tab 4: Client Logs */}
                                     {activeTab === "logs" && (
                                       <div className="space-y-2 animate-in fade-in duration-200 mt-1">
@@ -1171,11 +1130,10 @@ export default function PlatformAnalyticsPanel() {
                                               <div key={idx} className="p-2.5 space-y-1">
                                                 <div className="flex items-center justify-between text-muted-foreground text-[10px]">
                                                   <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
-                                                  <span className={`px-1 rounded text-[9px] uppercase font-semibold ${
-                                                    log.level === "error" ? "bg-red-500/15 text-red-400" :
-                                                    log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
-                                                    "bg-blue-500/15 text-blue-400"
-                                                  }`}>
+                                                  <span className={`px-1 rounded text-[9px] uppercase font-semibold ${log.level === "error" ? "bg-red-500/15 text-red-400" :
+                                                      log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
+                                                        "bg-blue-500/15 text-blue-400"
+                                                    }`}>
                                                     {log.level}
                                                   </span>
                                                 </div>
@@ -1197,7 +1155,188 @@ export default function PlatformAnalyticsPanel() {
                                       </div>
                                     )}
 
-                                  </div>
+                                    {/* Tab 5: Customer Metadata */}
+                                    {activeTab === "customers" && (
+                                      <div className="space-y-4 animate-in fade-in duration-200 mt-1">
+                                        {(r.customerSessions && r.customerSessions.length > 0) ? (
+                                          <div className="bg-black/25 border border-white/5 rounded-lg overflow-hidden">
+                                            <table className="w-full text-left border-collapse text-xs">
+                                              <thead>
+                                                <tr className="bg-white/5 border-b border-white/5 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
+                                                  <th className="py-2.5 px-4">Date/Time</th>
+                                                  <th className="py-2.5 px-4">Customer Email</th>
+                                                  <th className="py-2.5 px-4">Wallet Address</th>
+                                                  <th className="py-2.5 px-4">Stripe Session ID</th>
+                                                  <th className="py-2.5 px-4">Payment Method</th>
+                                                  <th className="py-2.5 px-4 text-right">Limits Metadata</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody className="divide-y divide-white/5">
+                                                {r.customerSessions.map((session: any, idx: number) => (
+                                                  <tr key={idx} className="hover:bg-white/[0.02]">
+                                                    <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
+                                                      {session.createdAt ? new Date(session.createdAt).toLocaleString() : "N/A"}
+                                                    </td>
+                                                    <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
+                                                    <td className="py-3 px-4 font-mono text-[11px] text-white/80 select-all" title={session.walletAddress}>
+                                                      {session.walletAddress ? (
+                                                        <span className="flex items-center gap-1">
+                                                          <span>{session.walletAddress.slice(0, 8)}...{session.walletAddress.slice(-6)}</span>
+                                                        </span>
+                                                      ) : (
+                                                        "N/A"
+                                                      )}
+                                                    </td>
+                                                    <td className="py-3 px-4 font-mono text-[11px] text-muted-foreground select-all" title={session.stripeSessionId}>
+                                                      {session.stripeSessionId ? (
+                                                        <a
+                                                          href={`https://dashboard.stripe.com/crypto/onramp_sessions/${session.stripeSessionId}`}
+                                                          target="_blank"
+                                                          rel="noopener noreferrer"
+                                                          className="hover:text-primary hover:underline inline-flex items-center gap-1"
+                                                        >
+                                                          <span>{session.stripeSessionId.slice(0, 12)}...</span>
+                                                          <ExternalLink className="w-2.5 h-2.5" />
+                                                        </a>
+                                                      ) : (
+                                                        "N/A"
+                                                      )}
+                                                    </td>
+                                                    <td className="py-3 px-4 text-white/95 text-[11px]">
+                                                      {(() => {
+                                                        const pm = session.paymentMethodDetails;
+                                                        if (!pm) return <span className="text-muted-foreground/50">N/A</span>;
+                                                        if (pm.type === "card") {
+                                                          const card = pm.card || pm.payment_details?.card || pm.paymentDetails?.card;
+                                                          if (!card) return <span>Card</span>;
+                                                          return (
+                                                            <span className="capitalize">
+                                                              {card.brand} •••• {card.last4} ({card.funding})
+                                                              {card.wallet && ` via ${card.wallet}`}
+                                                            </span>
+                                                          );
+                                                        } else if (pm.type === "us_bank_account") {
+                                                          const bank = pm.us_bank_account || pm.payment_details?.us_bank_account || pm.paymentDetails?.us_bank_account;
+                                                          if (!bank) return <span>ACH</span>;
+                                                          return (
+                                                            <span>
+                                                              Bank ({bank.bank_name || "ACH"}) •••• {bank.last4 || "bank"}
+                                                            </span>
+                                                          );
+                                                        }
+                                                        return <span className="capitalize">{pm.type || "Unknown"}</span>;
+                                                      })()}
+                                                    </td>
+                                                    <td className="py-3 px-4 text-right">
+                                                      {Array.isArray(session.limits) && session.limits.length > 0 ? (
+                                                        <div className="inline-flex flex-col gap-0.5 text-[10px] text-emerald-400 font-mono text-right">
+                                                          {session.limits.map((l: any, limitIdx: number) => (
+                                                            <div key={limitIdx}>
+                                                              {(() => {
+                                                                const rawAmount = Number(l.amount || 0);
+                                                                // Auto-correct legacy limits written before the x100 multiplier fix
+                                                                const corrected = rawAmount > 1000000 ? rawAmount / 100 : rawAmount;
+                                                                return `$${(corrected / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+                                                              })()} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
+                                                            </div>
+                                                          ))}
+                                                        </div>
+                                                      ) : (
+                                                        <span className="text-muted-foreground italic text-[11px]">No limits tracked</span>
+                                                      )}
+                                                    </td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        ) : (
+                                          <div className="text-xs text-muted-foreground p-4 border border-white/5 border-dashed rounded-lg space-y-2">
+                                            <p>No customer sessions or transaction limits tracked for this receipt yet.</p>
+                                            {r.stripeSessionId && (
+                                              <div className="pt-2 border-t border-white/5 text-[11px]">
+                                                <strong>Primary Session:</strong> {r.email || "anonymous"} • <span className="font-mono text-muted-foreground">{r.stripeSessionId}</span> (Historical record resolved prior to limits/multi-session tracking)
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
+                                        </div>
+                                      )}
+
+                                        {/* Tab 2: Items Ordered */}
+                                        {activeTab === "items" && (
+                                          <div className="space-y-2 animate-in fade-in duration-200 mt-1">
+                                            <div className="bg-black/20 border border-white/5 rounded-lg overflow-hidden">
+                                              <table className="w-full text-left text-xs">
+                                                <thead className="bg-white/5 text-muted-foreground text-[10px] uppercase font-semibold border-b border-white/5">
+                                                  <tr>
+                                                    <th className="py-2 px-3">Item Description</th>
+                                                    <th className="py-2 px-3 text-right">Price</th>
+                                                    <th className="py-2 px-3 text-center">Qty</th>
+                                                    <th className="py-2 px-3 text-right">Total</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-white/5 text-white/90">
+                                                  {r.lineItems && r.lineItems.length > 0 ? (
+                                                    r.lineItems.map((item, idx) => {
+                                                      const qty = item.qty || 1;
+                                                      const price = item.priceUsd || 0;
+                                                      return (
+                                                        <tr key={idx}>
+                                                          <td className="py-2.5 px-3 font-medium">{item.label}</td>
+                                                          <td className="py-2.5 px-3 text-right">${price.toFixed(2)}</td>
+                                                          <td className="py-2.5 px-3 text-center">{qty}</td>
+                                                          <td className="py-2.5 px-3 text-right font-semibold">${(price * qty).toFixed(2)}</td>
+                                                        </tr>
+                                                      );
+                                                    })
+                                                  ) : (
+                                                    <tr>
+                                                      <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                                                        No line items recorded for this receipt.
+                                                      </td>
+                                                    </tr>
+                                                  )}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        {/* Tab 3: Initialization & Origin */}
+                                        {activeTab === "origin" && (
+                                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs animate-in fade-in duration-200 mt-1">
+                                            <div className="space-y-2">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Site Initialized On</div>
+                                              <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                                                <Chrome className="w-4 h-4 text-primary flex-shrink-0" />
+                                                {r.parentUrl ? (
+                                                  <a
+                                                    href={r.parentUrl}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="font-mono text-white hover:underline hover:text-primary truncate max-w-[280px]"
+                                                  >
+                                                    {r.parentUrl}
+                                                  </a>
+                                                ) : (
+                                                  <span className="text-muted-foreground">Direct Access / Parent URL unavailable</span>
+                                                )}
+                                              </div>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Integration Mode</div>
+                                              <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                                                <Activity className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                                                <span className="font-semibold text-white/90">
+                                                  {r.parentUrl ? "Embedded Checkout (Iframe)" : "Direct Checkout Link"}
+                                                </span>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
                                 </td>
                               </tr>
                             );
@@ -1274,14 +1413,13 @@ export default function PlatformAnalyticsPanel() {
                           <button
                             key={p}
                             onClick={() => setCurrentPage(p)}
-                            className={`h-8 w-8 rounded text-xs transition-colors ${
-                              currentPage === p
+                            className={`h-8 w-8 rounded text-xs transition-colors ${currentPage === p
                                 ? "bg-primary text-white font-semibold"
                                 : "border border-white/5 hover:bg-white/5 text-muted-foreground hover:text-white"
-                            }`}
+                              }`}
                           >
                             {p}
-                        </button>
+                          </button>
                         );
                       }
                       return pages;
@@ -1339,17 +1477,17 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
     if (points.length === 0) return "";
     if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
     if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
-    
+
     let path = `M ${points[0].x} ${points[0].y}`;
     for (let i = 0; i < points.length - 1; i++) {
       const p0 = points[i];
       const p1 = points[i + 1];
-      
+
       const cp1x = p0.x + (p1.x - p0.x) / 3;
       const cp1y = p0.y;
       const cp2x = p1.x - (p1.x - p0.x) / 3;
       const cp2y = p1.y;
-      
+
       path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p1.x} ${p1.y}`;
     }
     return path;
@@ -1389,10 +1527,10 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
     const parentEl = e.currentTarget.closest(".chart-container-card");
     if (!parentEl) return;
     const parentRect = parentEl.getBoundingClientRect();
-    
+
     const x = rect.left - parentRect.left + rect.width / 2;
     const y = rect.top - parentRect.top;
-    
+
     setHoveredNode({
       bk,
       date,
@@ -1412,10 +1550,9 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
         <div
           onMouseEnter={() => setHoveredKey("aggregate")}
           onMouseLeave={() => setHoveredKey(null)}
-          className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${
-            hoveredKey === "aggregate" ? "bg-white/10 scale-[1.03] text-white" :
-            hoveredKey !== null ? "opacity-30" : "text-white/80 hover:text-white"
-          }`}
+          className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${hoveredKey === "aggregate" ? "bg-white/10 scale-[1.03] text-white" :
+              hoveredKey !== null ? "opacity-30" : "text-white/80 hover:text-white"
+            }`}
         >
           <div className="h-2.5 w-2.5 rounded-full bg-[#c084fc] shadow-[0_0_8px_rgba(192,132,252,0.6)]" />
           <span className="font-semibold font-sans">Platform Aggregate</span>
@@ -1432,10 +1569,9 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
               key={bk}
               onMouseEnter={() => setHoveredKey(bk)}
               onMouseLeave={() => setHoveredKey(null)}
-              className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${
-                isHovered ? "bg-white/10 scale-[1.03] text-white" :
-                isDimmed ? "opacity-30" : "text-white/80 hover:text-white"
-              }`}
+              className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${isHovered ? "bg-white/10 scale-[1.03] text-white" :
+                  isDimmed ? "opacity-30" : "text-white/80 hover:text-white"
+                }`}
             >
               <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }} />
               <span className="font-sans">{bk}</span>
@@ -1446,10 +1582,10 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
 
       {/* SVG Plot card */}
       <div className="relative flex-1 min-h-0 w-full bg-black/30 border border-white/5 rounded-xl p-4 flex flex-col gap-3">
-        
+
         {/* The Grid/Chart Area wrapper */}
         <div className="relative flex-1 min-h-0 w-full pl-12 pr-2">
-          
+
           {/* Left vertical Y-axis labels (HTML absolute, never stretched, aligned perfectly with the top/bottom of the chart container) */}
           <div className="absolute top-[4.4%] bottom-[4.4%] left-2 flex flex-col justify-between text-[10px] text-white/40 font-sans font-medium pointer-events-none select-none z-10 py-0.5">
             <span>100%</span>
@@ -1480,7 +1616,7 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
             {/* 1. Draw individual Brand Lines */}
             {brandKeys.map((bk, bIdx) => {
               const color = getBrandColor(bk, bIdx);
-              
+
               const pts = data
                 .map((d, i) => ({
                   val: d[bk],
@@ -1652,7 +1788,7 @@ interface CustomDonutChartProps {
 
 function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
   const total = data.reduce((s, d) => s + d.value, 0) || 1;
-  
+
   // Highly contrasting, clear dashboard indicator colors:
   // Successful (Paid) = Emerald Green
   // Failed = Vibrant Red

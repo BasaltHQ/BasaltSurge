@@ -50,6 +50,10 @@ export type Receipt = {
     zip?: string;
     country?: string;
   };
+  detectedCardFunding?: string;
+  lastPolledAt?: number;
+  stripeSessionStatus?: string;
+  customerSessions?: any[];
 };
 
 function toCents(n: number) {
@@ -79,6 +83,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       : /^0x[a-f0-9]{40}$/i.test(headerWallet)
         ? headerWallet
         : defaultRecipient;
+  const clientCountry = (
+    req.headers.get("cf-ipcountry") ||
+    req.headers.get("x-vercel-ip-country") ||
+    req.headers.get("x-country-code") ||
+    "US"
+  ).toUpperCase();
+
   function sumLineItems(items: any[]): number {
     try {
       const base = Array.isArray(items) ? items : [];
@@ -127,7 +138,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     const spec = {
       query:
-        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
+        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
       parameters: [{ name: "@id", value: id }],
     } as { query: string; parameters: { name: string; value: any }[] };
 
@@ -159,6 +170,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         tracking: (row as any)?.tracking && typeof (row as any).tracking === "object" ? (row as any).tracking : undefined,
         stripeEmail: typeof (row as any)?.stripeEmail === "string" ? (row as any).stripeEmail : undefined,
         billingAddress: (row as any)?.billingAddress && typeof (row as any).billingAddress === "object" ? (row as any).billingAddress : undefined,
+        detectedCardFunding: typeof (row as any)?.detectedCardFunding === "string" ? (row as any).detectedCardFunding : undefined,
+        lastPolledAt: Number.isFinite(Number((row as any)?.lastPolledAt)) ? Number((row as any).lastPolledAt) : undefined,
+        stripeSessionStatus: typeof (row as any)?.stripeSessionStatus === "string" ? (row as any).stripeSessionStatus : undefined,
+        customerSessions: Array.isArray((row as any)?.customerSessions) ? (row as any).customerSessions : undefined,
       };
       if (!(rec.totalUsd > 0)) {
         const candidate = sumLineItems(rec.lineItems || []);
@@ -201,7 +216,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         const brand = await resolveBrandName(container, wallet);
         if (brand) rec.brandName = brand;
       }
-      return NextResponse.json({ receipt: rec }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
+      return NextResponse.json({ receipt: rec, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
     }
 
     // Subscription correlation fallback: if receipt not found, recover amount from apim_subscription_* by correlationId
@@ -236,7 +251,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           status: typeof (sub2 as any).status === "string" ? (sub2 as any).status : "pending",
         };
         if (rec.totalUsd > 0) {
-          return NextResponse.json({ receipt: rec }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
+          return NextResponse.json({ receipt: rec, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
         }
       }
     } catch { }
@@ -273,7 +288,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           if (brand) rec.brandName = brand;
         } catch { }
       }
-      return NextResponse.json({ receipt: rec }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
+      return NextResponse.json({ receipt: rec, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
     }
 
     // Fallback: demo $5 receipt (Chicken Bowl $4 + Tax $1)
@@ -287,7 +302,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       brandName: brand || "PortalPay",
       recipientWallet: wallet,
     };
-    return NextResponse.json({ receipt: demo }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
+    return NextResponse.json({ receipt: demo, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
   } catch (e: any) {
     // Graceful degrade when Cosmos isn't configured/available — try in-memory store
     const mem = getReceipts();
@@ -324,7 +339,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         } catch { }
       }
       return NextResponse.json(
-        { receipt: rec },
+        { receipt: rec, clientCountry },
         { status: 200, headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } }
       );
     }
@@ -345,7 +360,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       recipientWallet: wallet,
     };
     return NextResponse.json(
-      { receipt: demo },
+      { receipt: demo, clientCountry },
       { status: 200, headers: { "x-correlation-id": crypto.randomUUID(), "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } }
     );
   }

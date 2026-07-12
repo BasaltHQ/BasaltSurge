@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useSearchParams } from "next/navigation";
 import { applyThemeVars, getTheme } from "@/lib/themes";
@@ -67,6 +67,7 @@ type SiteConfigResponse = {
     rampnowOnrampEnabled?: boolean;
     feeMinusEnabled?: boolean;
     currencySelectionEnabled?: boolean;
+    achEnabled?: boolean;
   };
   degraded?: boolean;
   reason?: string;
@@ -93,6 +94,11 @@ function formatPhoneAsYouType(value: string): string {
   if (digits.length <= 3) return `(${digits}`;
   if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+}
+
+function isValidEmail(email: string): boolean {
+  if (!email) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 
@@ -151,6 +157,8 @@ type Receipt = {
   returnUrl?: string;
   onSuccess?: string;
   stripeEmail?: string;
+  detectedCardFunding?: string;
+  customerSessions?: any[];
 };
 
 // Helper to determine if receipt is already paid/settled
@@ -159,6 +167,8 @@ function isSettled(status?: string): boolean {
   const s = status.toLowerCase();
   return (
     s === "paid" ||
+    s === "paid - ach pending" ||
+    s === "ach_pending" ||
     s === "checkout_success" ||
     s === "confirmed" ||
     s === "reconciled" ||
@@ -533,6 +543,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [partnerLogoSymbol, setPartnerLogoSymbol] = useState<string>("");
   const [partnerLogoFavicon, setPartnerLogoFavicon] = useState<string>("");
   const [partnerBrandName, setPartnerBrandName] = useState<string>("");
+  const [partnerAchEnabled, setPartnerAchEnabled] = useState<boolean>(true);
 
 
 
@@ -1318,6 +1329,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             setPartnerLogoSymbol(logoSymbol);
             setPartnerLogoFavicon(logoFavicon);
             setPartnerBrandName(partnerName);
+            setPartnerAchEnabled(pj?.brand?.achEnabled !== undefined ? !!pj?.brand?.achEnabled : false);
 
             // If no merchant theme is expected, apply partner colors and brand name
             if (!hasMerchantForTheme && !forcePortalTheme) {
@@ -1928,9 +1940,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const effectiveNavbarMode: "symbol" | "logo" = (navbarMode === "logo" && canUseFullLogo) ? "logo" : "symbol";
   // Card Detection & Countdown States
   const [awaitingFundsSeconds, setAwaitingFundsSeconds] = useState(40);
-  const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | null>(null);
+  const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | "us_bank_account" | null>(null);
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
+  const [achSpeed, setAchSpeed] = useState<"standard" | "instant">("standard");
 
   // Fee from admin config
   const [processingFeePct, setProcessingFeePct] = useState<number>(0);
@@ -2040,6 +2053,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Dynamic receipt
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [clientCountry, setClientCountry] = useState<string>("US");
   const [loadingReceipt, setLoadingReceipt] = useState(false);
   const [currencySelectionEnabled, setCurrencySelectionEnabled] = useState<boolean>(true);
   useEffect(() => {
@@ -2088,11 +2102,20 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           const rec: Receipt | undefined = j?.receipt;
           if (rec && typeof rec.totalUsd === "number") {
             setReceipt(rec);
-            // Prepopulate stripeEmail if returned from receipt API
+            if (typeof j?.clientCountry === "string" && j.clientCountry) {
+              setClientCountry(j.clientCountry);
+            }
+            // Prepopulate stripeEmail if returned from receipt API (making it device-specific)
             const emailVal = rec.stripeEmail || (rec as any).customerEmail || (rec as any).buyerEmail || rec.shippingAddress?.email || "";
             if (emailVal) {
-              setShipEmail((prev) => prev || emailVal);
-              setHeadlessEmailInput((prev) => prev || emailVal);
+              const storedEmail = typeof window !== "undefined" ? sessionStorage.getItem("stripe_onramp_email") : null;
+              const isFresh = rec.status === "generated" || rec.status === "link_opened";
+              const isSameDevice = storedEmail && storedEmail.toLowerCase() === emailVal.toLowerCase();
+
+              if (isFresh || isSameDevice) {
+                setShipEmail((prev) => prev || emailVal);
+                setHeadlessEmailInput((prev) => prev || emailVal);
+              }
             }
             if (rec.billingAddress) {
               const b = rec.billingAddress;
@@ -2610,9 +2633,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [splitConfig, splitConfigCredit, creditPresentedFeeBps, presentedFeeBps, feeMinusEnabled]);
 
   const stripeFeePct = useMemo(() => {
+    if (detectedCardFunding === "us_bank_account") {
+      return achSpeed === "standard" ? 0.6 : 4.0;
+    }
     const isCredit = detectedCardFunding === "credit";
     return isCredit ? creditStripeFeePct : debitStripeFeePct;
-  }, [detectedCardFunding, debitStripeFeePct, creditStripeFeePct]);
+  }, [detectedCardFunding, achSpeed, debitStripeFeePct, creditStripeFeePct]);
 
   const processingFeeUsd = useMemo(() => {
     const stripePct = feeMinusEnabled ? 0 : stripeFeePct;
@@ -2644,6 +2670,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
     return totalUsd;
   }, [receipt, totalUsd, detectedCardFunding, feeMinusEnabled]);
+
+  const getAmountForFunding = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
+    if (!receipt) return 0;
+    const stripePct = funding === "us_bank_account"
+      ? (achSpeed === "standard" ? 0.6 : 4.0)
+      : (funding === "credit" ? creditStripeFeePct : debitStripeFeePct);
+      
+    if (feeMinusEnabled) {
+      return +(totalUsd / (1 + stripePct / 100)).toFixed(2);
+    }
+    
+    const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct) / 100);
+    const feeUsd = +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
+    return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + feeUsd).toFixed(2);
+  }, [receipt, achSpeed, creditStripeFeePct, debitStripeFeePct, feeMinusEnabled, totalUsd, effectiveBasePlatformFeePct, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd]);
 
   const stripeProcessingFeeUsd = useMemo(() => {
     if (feeMinusEnabled) {
@@ -2834,6 +2875,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [coinbaseOnrampEnabled, setCoinbaseOnrampEnabled] = useState<boolean>(false);
   const [transakOnrampEnabled, setTransakOnrampEnabled] = useState<boolean>(false);
   const [rampnowOnrampEnabled, setRampnowOnrampEnabled] = useState<boolean>(false);
+  const [merchantAchEnabled, setMerchantAchEnabled] = useState<boolean>(true);
   const [userOptedOutOfStripeBypass, setUserOptedOutOfStripeBypass] = useState<boolean>(false);
   const [configLoaded, setConfigLoaded] = useState<boolean>(false);
 
@@ -2896,6 +2938,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           if (typeof cfg.transakOnrampEnabled === "boolean") setTransakOnrampEnabled(cfg.transakOnrampEnabled);
           if (typeof cfg.rampnowOnrampEnabled === "boolean") setRampnowOnrampEnabled(cfg.rampnowOnrampEnabled);
         }
+        setMerchantAchEnabled(cfg.achEnabled !== undefined ? !!cfg.achEnabled : true);
 
         // basePlatformFeePct (platform + partner + agent fees)
         const splitCfg = (cfg as any)?.splitConfig;
@@ -3058,7 +3101,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [STATIC_TOKEN_ICONS]);
 
   // Payment Confirmation State & Polling
-  const [paymentConfirmed, setPaymentConfirmed] = useState<{ txHash: string; amount: number; token: string } | null>(null);
+  const [paymentConfirmed, setPaymentConfirmed] = useState<{ txHash: string; amount: number; token: string; funding?: string } | null>(null);
 
   // Developer-configured redirect URL — passed through to Stripe onramp session only.
   // Not used for portal-level redirect (other providers open in new tabs making portal redirect unreliable).
@@ -3449,7 +3492,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           setPaymentConfirmed({
             txHash: data.txHash || "",
             amount: totalUsd, // Display USD amount 
-            token: token
+            token: token,
+            funding: data.detectedCardFunding || receipt?.detectedCardFunding || (data.status === "paid - ach pending" || data.status === "ach_pending" ? "us_bank_account" : undefined)
           });
           // Also trigger postStatus with paid - this is a confirmed on-chain payment
           await postStatus("paid", { txHash: data.txHash, paymentMethod: "crypto_fallback_poll" });
@@ -3662,7 +3706,25 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // ── Stripe Onramp Mode Toggle ──
   // NEXT_PUBLIC_STRIPE_HEADLESS=TRUE → New Embedded Components headless flow (Smart Wallet Bridge)
   // Otherwise → Legacy iframe-based Stripe Crypto Onramp interceptor
-  const stripeHeadless = String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE";
+  const isExplicitlyNonUs = (() => {
+    // 1. Explicit billing address country takes highest priority
+    const billingCountry = receipt?.billingAddress?.country?.trim().toUpperCase();
+    if (billingCountry) {
+      return billingCountry !== "US";
+    }
+
+    // 2. Explicit shipping address country takes second priority
+    const shippingCountry = receipt?.shippingAddress?.country?.trim().toUpperCase();
+    if (shippingCountry) {
+      return shippingCountry !== "US";
+    }
+
+    // 3. Fallback to IP-based country code
+    const country = clientCountry.toUpperCase();
+    return country !== "US" && country !== "UNKNOWN" && country !== "XX" && country !== "";
+  })();
+
+  const stripeHeadless = (String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE") && !isExplicitlyNonUs;
 
   // eCommerce mode check: default is true (e=1 behavior). Can be disabled/forced to full flow with ?f=1 or ?f
   const isEcommerceMode = (() => {
@@ -3695,6 +3757,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     submitKycInfo,
     reset: resetHeadlessOnramp,
     kycTierRequired,
+    onrampLimits: headlessOnrampLimits,
+    detectedCardFunding: stripeDetectedFunding,
+    showSpeedSelection: headlessShowSpeedSelection,
+    confirmSpeed: headlessConfirmSpeed,
   } = useStripeEmbeddedOnramp({
     email: shipEmail || headlessEmailInput || undefined,
     fullName: shipName || undefined,
@@ -3713,6 +3779,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     debitFeePct: debitStripeFeePct,
     creditFeePct: creditStripeFeePct,
     totalUsd,
+    getAmountForFunding,
+    achEnabled: (() => {
+      const isPlatform = !theme.brandKey || theme.brandKey === "portalpay" || theme.brandKey === "basaltsurge";
+      return isPlatform ? true : (partnerAchEnabled && merchantAchEnabled);
+    })(),
     onCardDetected: (card) => {
       if (card) {
         setDetectedCardFunding(card.funding);
@@ -3729,16 +3800,20 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       console.log("[STRIPE HEADLESS SUCCESS] Checkout completed with no issues. Session:", result.sessionId, "Tx:", result.txHash);
       // Funds are now in the split contract — receipt can be marked paid
       const txHash = result.txHash || "";
+      const isAch = txHash === "ach_pending" || stripeDetectedFunding === "us_bank_account";
+      const statusToPost = isAch ? "paid - ach pending" : "paid";
       setPaymentConfirmed({
         txHash,
         amount: totalUsd,
         token: "USDC",
+        funding: isAch ? "us_bank_account" : undefined,
       });
-      postStatus("paid", {
+      postStatus(statusToPost, {
         txHash,
         paymentMethod: "stripe_headless",
         stripeSessionId: result.sessionId,
         customerEmail: shipEmail || headlessEmailInput || undefined,
+        detectedCardFunding: isAch ? "us_bank_account" : undefined,
       });
     },
     onError: (error) => {
@@ -3920,7 +3995,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         setHeadlessEmailPrompt(true);
       } else {
         console.log("[PORTAL PAGE] Stripe is the only active onramp. Autostarting direct flow.");
-        if (!shipEmail) {
+        if (!shipEmail || !isValidEmail(shipEmail)) {
           setHeadlessEmailPrompt(true);
         } else {
           setHeadlessInitiated(true);
@@ -3964,7 +4039,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     },
     onIntercept: stripeHeadless ? () => {
       console.log("[STRIPE ONRAMP] Intercepted → deferring to headless onramp");
-      if (!shipEmail) {
+      if (!shipEmail || !isValidEmail(shipEmail)) {
         setHeadlessEmailPrompt(true);
       } else {
         setHeadlessInitiated(true);
@@ -3972,7 +4047,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       }
     } : undefined,
     interceptOnly: stripeHeadless, // Block redirect only, don't launch legacy modal
-    enabled: true, // Always enabled to catch crypto.link.com redirects
+    enabled: stripeHeadless, // Only enabled during stripeHeadless mode to catch redirects and route to headless flow
   });
 
   // NOTE: Coinbase Onramp redirectUrl requires domain allowlisting in the CDP portal,
@@ -4334,6 +4409,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     };
   }, [tpThemeApplied, currency]);
 
+  // ─── ACH PENDING STATE ───
+  const isAchPending = receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending" || receipt?.status === "pending" || (stripeDetectedFunding === "us_bank_account" && headlessStep === "awaiting_funds");
+
   // ─── STRIPE HEADLESS INLINE UI ───
   const stripeHeadlessUI = (headlessEmailPrompt || headlessActive || headlessInitiated) ? (
     <div className="w-full flex flex-col items-stretch justify-start animate-in fade-in duration-300">
@@ -4359,8 +4437,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               }`}
             value={headlessEmailInput}
             onChange={(e) => setHeadlessEmailInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && isValidEmail(headlessEmailInput)) {
+                setShipEmail(headlessEmailInput);
+                setHeadlessInitiated(true);
+                setHeadlessEmailPrompt(false);
+                startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
+              }
+            }}
             autoFocus
           />
+          {headlessEmailInput && !isValidEmail(headlessEmailInput) && (
+            <p className="text-[11px] text-red-500/90 font-medium mb-3.5 -mt-1 ml-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
+              Please enter a valid email address.
+            </p>
+          )}
           {theme.discretePayWithCrypto ? (
             <div className="flex flex-col items-stretch">
               <button
@@ -4369,7 +4460,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 style={{
                   backgroundColor: theme.primaryColor || "#635BFF",
                 }}
-                disabled={!headlessEmailInput.includes('@')}
+                disabled={!isValidEmail(headlessEmailInput)}
                 onClick={() => {
                   setShipEmail(headlessEmailInput);
                   setHeadlessInitiated(true);
@@ -4416,7 +4507,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 style={{
                   backgroundColor: theme.primaryColor || "#635BFF",
                 }}
-                disabled={!headlessEmailInput.includes('@')}
+                disabled={!isValidEmail(headlessEmailInput)}
                 onClick={() => {
                   setShipEmail(headlessEmailInput);
                   setHeadlessInitiated(true);
@@ -4488,7 +4579,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
                 </div>
                 <h3 className={`text-base font-bold mb-1.5 ${isLightText ? 'text-white' : 'text-black'}`}>Payment Complete</h3>
-                <p className={`text-xs ${shipEmail ? 'mb-2' : 'mb-6'} max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>USDC has been transferred successfully.</p>
+                <p className={`text-xs ${shipEmail ? 'mb-2' : 'mb-6'} max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+                  {stripeDetectedFunding === "us_bank_account"
+                    ? "Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance."
+                    : "USDC has been transferred successfully."}
+                </p>
                 {shipEmail && (
                   <p className="text-[11px] text-emerald-400 font-medium animate-pulse mb-6">
                     ✓ Receipt automatically sent to <span className="underline">{shipEmail}</span>
@@ -5077,7 +5172,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           !kycCity ||
                           !kycState ||
                           !kycZip ||
-                          !(shipEmail || headlessEmailInput) ||
+                          !(shipEmail ? isValidEmail(shipEmail) : isValidEmail(headlessEmailInput)) ||
                           !headlessPhoneInput
                         ) : (
                           !kycFirstName ||
@@ -5281,6 +5376,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     <span>{headlessError}</span>
                   </div>
                 )}
+
                 <div
                   className="w-full h-full flex flex-col items-stretch"
                   ref={(el) => {
@@ -6160,8 +6256,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       <div ref={widgetRootRef} className={isEmbedded ? "mt-0 rounded-2xl p-3" : "mt-0 rounded-2xl p-3"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                         {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                           <>
-                            {/* Payment Complete State - Blocks Double Payment */}
-                            {(paymentConfirmed || isSettled(receipt.status)) ? (
+                            {(paymentConfirmed || isSettled(receipt.status) || isAchPending) ? (
                               <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
                                 <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
                                   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6173,6 +6268,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   <div className={`text-sm ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
                                     {formatCurrency(totalUsd, "USD")} • {receiptId}
                                   </div>
+                                  {isAchPending && (
+                                    <div className="text-[11px] text-amber-400 font-medium px-4 mt-2 max-w-xs mx-auto leading-relaxed animate-pulse">
+                                      Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance.
+                                    </div>
+                                  )}
                                 </div>
                                 <div className={`p-4 rounded-xl border w-full max-w-[280px] mt-2 ${isLightText ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/10'}`}>
                                   <div className={`text-xs uppercase tracking-wider font-semibold mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
@@ -6464,7 +6564,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                               }}
                                               onSuccess={(result: any) => {
                                                 console.log("[CHECKOUT] Success:", result);
-                                                const txHash = result?.transactionHash || result?.hash;
+                                                const txHash = result?.transactionHash || result?.hash || result?.receipt?.transactionHash || result?.receipt?.hash || result?.transaction?.transactionHash || result?.transaction?.hash;
                                                 const buyer = (account?.address || "").toLowerCase();
                                                 setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
                                                 if (txHash && receiptId) {
@@ -6534,7 +6634,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         }}
                                         onSuccess={(result: any) => {
                                           console.log("[CHECKOUT] Success:", result);
-                                          const txHash = result?.transactionHash || result?.hash;
+                                          const txHash = result?.transactionHash || result?.hash || result?.receipt?.transactionHash || result?.receipt?.hash || result?.transaction?.transactionHash || result?.transaction?.hash;
                                           const buyer = (account?.address || "").toLowerCase();
                                           setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
                                           if (txHash && receiptId) {
@@ -6850,7 +6950,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <div ref={widgetRootRef} className={isEmbedded ? "mt-1 flex-1 rounded-2xl p-3" : "mt-2 rounded-2xl p-3 flex-1"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                     {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                       <>
-                        {(paymentConfirmed || isSettled(receipt.status)) ? (
+                        {(paymentConfirmed || isSettled(receipt.status) || isAchPending) ? (
                           <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
                             <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
                               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6862,6 +6962,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               <div className="text-sm text-foreground/80">
                                 {formatCurrency(totalUsd, "USD")} • {receiptId}
                               </div>
+                              {isAchPending && (
+                                <div className="text-[11px] text-amber-400 font-medium px-4 mt-2 max-w-xs mx-auto leading-relaxed animate-pulse">
+                                  Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance.
+                                </div>
+                              )}
                             </div>
                             <div className="p-4 rounded-xl bg-white/5 border border-white/10 w-full max-w-[280px] mt-2">
                               <div className="text-xs text-muted-foreground uppercase tracking-wider font-semibold mb-1">
@@ -7406,21 +7511,31 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             <div className="text-5xl font-mono font-bold mb-2 text-white tracking-tight">
               {formatCurrency(paymentConfirmed.amount, "USD")}
             </div>
-            <div className="text-sm text-gray-400 mb-8">
-              Transaction Confirmed
-            </div>
+            {(() => {
+              const isAch = 
+                paymentConfirmed?.funding === "us_bank_account" || 
+                stripeDetectedFunding === "us_bank_account" || 
+                detectedCardFunding === "us_bank_account" ||
+                receipt?.detectedCardFunding === "us_bank_account" || 
+                receipt?.status === "paid - ach pending" || 
+                receipt?.status === "ach_pending" ||
+                (Array.isArray(receipt?.customerSessions) && receipt.customerSessions.some((s: any) => s.paymentMethodDetails?.type === "us_bank_account"));
 
-            {paymentConfirmed.txHash && (
-              <a
-                href={`https://basescan.org/tx/${paymentConfirmed.txHash}`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-mono transition-colors border border-white/10"
-              >
-                <span>View on Basescan</span>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-              </a>
-            )}
+              if (isAch) {
+                return (
+                  <div className="text-xs text-amber-400 font-medium px-4 mb-8 max-w-xs mx-auto leading-relaxed animate-pulse">
+                    Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance.
+                  </div>
+                );
+              }
+              return (
+                <div className="text-sm text-gray-400 mb-8">
+                  Transaction Confirmed
+                </div>
+              );
+            })()}
+
+
 
             {(() => {
               const displayEmail = shipEmail || (receipt as any)?.customerEmail || (receipt as any)?.buyerEmail || receipt?.stripeEmail;

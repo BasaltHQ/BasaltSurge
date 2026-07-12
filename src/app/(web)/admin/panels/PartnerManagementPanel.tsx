@@ -2090,6 +2090,27 @@ export default function PartnerManagementPanel() {
                   />
                 </button>
               </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-white/5 mt-5 w-full">
+                <div>
+                  <div className="text-xs font-semibold">Enable ACH Option</div>
+                  <div className="text-[10px] text-muted-foreground">Enable ACH bank transfer capabilities for this partner container.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setConfig((prev: any) => ({ ...prev, achEnabled: !prev?.achEnabled }))
+                  }
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    config?.achEnabled ? "bg-emerald-500" : "bg-zinc-700"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      config?.achEnabled ? "translate-x-4" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">Thirdweb Client ID</label>
                 <input

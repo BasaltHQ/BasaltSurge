@@ -745,6 +745,9 @@ export async function PATCH(req: NextRequest) {
             if (shopConfigUpdate.theme?.portalGradientEnd !== undefined) {
                 updatedDoc.portalGradientEnd = shopConfigUpdate.theme.portalGradientEnd;
             }
+            if (shopConfigUpdate.achEnabled !== undefined) {
+                updatedDoc.achEnabled = !!shopConfigUpdate.achEnabled;
+            }
             // Also preserve touchpointThemes if passed (though client_request doc doesn't explicitly type it, it's flexible)
             if (shopConfigUpdate.touchpointThemes) updatedDoc.touchpointThemes = shopConfigUpdate.touchpointThemes;
         }
@@ -890,6 +893,10 @@ export async function PATCH(req: NextRequest) {
 
                         if (shopConfigUpdate.slug) newConfig.slug = shopConfigUpdate.slug;
 
+                        if (shopConfigUpdate.achEnabled !== undefined) {
+                            newConfig.achEnabled = !!shopConfigUpdate.achEnabled;
+                        }
+
                         if (shopConfigUpdate.touchpointThemes) {
                             newConfig.touchpointThemes = { ...(newConfig.touchpointThemes || {}), ...shopConfigUpdate.touchpointThemes };
                         }
@@ -921,6 +928,7 @@ export async function PATCH(req: NextRequest) {
                         ...(shopConfigUpdate?.theme || {})
                     },
                     touchpointThemes: shopConfigUpdate?.touchpointThemes || undefined,
+                    achEnabled: shopConfigUpdate?.achEnabled !== undefined ? !!shopConfigUpdate.achEnabled : false,
                     status: newStatus === "approved" ? "approved" : "pending",
                     approvedBy: caller.wallet,
                     approvedAt: Date.now(),

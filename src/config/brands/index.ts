@@ -60,11 +60,12 @@ export type BrandConfig = {
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
 
-  stripeOnrampEnabled?: boolean;
+   stripeOnrampEnabled?: boolean;
   coinbaseOnrampEnabled?: boolean;
   transakOnrampEnabled?: boolean;
   rampnowOnrampEnabled?: boolean;
   feeMinusEnabled?: boolean;
+  achEnabled?: boolean;
 
   // Thirdweb Keys
   thirdwebClientId?: string;
@@ -338,6 +339,7 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     coinbaseOnrampEnabled: typeof raw.coinbaseOnrampEnabled === "boolean" ? raw.coinbaseOnrampEnabled : false,
     transakOnrampEnabled: typeof raw.transakOnrampEnabled === "boolean" ? raw.transakOnrampEnabled : false,
     rampnowOnrampEnabled: typeof raw.rampnowOnrampEnabled === "boolean" ? raw.rampnowOnrampEnabled : false,
+    achEnabled: typeof raw.achEnabled === "boolean" ? raw.achEnabled : (!raw.key || raw.key === "portalpay" || raw.key === "basaltsurge"),
   };
 }
 

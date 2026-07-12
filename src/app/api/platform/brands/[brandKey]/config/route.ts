@@ -46,6 +46,7 @@ type BrandConfigDoc = {
   transakOnrampEnabled?: boolean;
   rampnowOnrampEnabled?: boolean;
   feeMinusEnabled?: boolean;
+  achEnabled?: boolean;
   // Email Configuration
   email?: {
     senderName?: string;
@@ -321,6 +322,9 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
   }
   if (typeof raw?.feeMinusEnabled === "boolean") {
     out.feeMinusEnabled = raw.feeMinusEnabled;
+  }
+  if (typeof raw?.achEnabled === "boolean") {
+    out.achEnabled = raw.achEnabled;
   }
 
   // Thirdweb Keys

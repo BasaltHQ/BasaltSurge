@@ -53,6 +53,13 @@ export type Receipt = {
   shippingCostUsd?: number;
   tracking?: { carrier?: string; trackingNumber?: string; trackingUrl?: string; shippedAt?: number; updatedAt?: number };
   stripeEmail?: string;
+  buyerWallet?: string;
+  transactionHash?: string;
+  tipAmount?: number;
+  detectedCardFunding?: string;
+  lastPolledAt?: number;
+  stripeSessionStatus?: string;
+  customerSessions?: any[];
 };
 
 // ... existing imports
@@ -96,7 +103,7 @@ export async function GET(req: NextRequest) {
   try {
     const container = await getContainer();
 
-    let query = `SELECT TOP @limit c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.brandName, c.status, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking FROM c WHERE c.type='receipt' AND c.wallet=@wallet`;
+    let query = `SELECT TOP @limit c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.brandName, c.status, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.buyerWallet, c.transactionHash, c.tipAmount, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions FROM c WHERE c.type='receipt' AND c.wallet=@wallet`;
     const parameters: { name: string; value: any }[] = [{ name: "@wallet", value: wallet }, { name: "@limit", value: limit }];
 
     if (startTs > 0) {
@@ -124,6 +131,13 @@ export async function GET(req: NextRequest) {
         status: typeof row.status === "string" ? row.status : undefined,
         shippingAddress: row?.shippingAddress && typeof row.shippingAddress === "object" ? row.shippingAddress : undefined,
         tracking: row?.tracking && typeof row.tracking === "object" ? row.tracking : undefined,
+        buyerWallet: typeof row.buyerWallet === "string" ? row.buyerWallet : undefined,
+        transactionHash: typeof row.transactionHash === "string" ? row.transactionHash : undefined,
+        tipAmount: typeof row.tipAmount === "number" ? row.tipAmount : undefined,
+        detectedCardFunding: typeof row.detectedCardFunding === "string" ? row.detectedCardFunding : undefined,
+        lastPolledAt: typeof row.lastPolledAt === "number" ? row.lastPolledAt : undefined,
+        stripeSessionStatus: typeof row.stripeSessionStatus === "string" ? row.stripeSessionStatus : undefined,
+        customerSessions: Array.isArray(row.customerSessions) ? row.customerSessions : undefined,
       }))
       : [];
 

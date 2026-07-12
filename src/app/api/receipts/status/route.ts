@@ -107,6 +107,7 @@ export async function POST(req: NextRequest) {
     const detectedCardFunding = typeof body.detectedCardFunding === "string" ? String(body.detectedCardFunding).trim().toLowerCase() : undefined;
     const isCreditCard = typeof body.isCreditCard === "boolean" ? body.isCreditCard : undefined;
     const parentUrl = typeof body.parentUrl === "string" ? String(body.parentUrl).trim() : undefined;
+    const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "127.0.0.1";
     let brandKey: string | undefined = undefined;
     try { brandKey = getBrandKey(); } catch { brandKey = undefined; }
 
@@ -131,7 +132,7 @@ export async function POST(req: NextRequest) {
 
     // AuthZ: Allow unauthenticated status updates for tracking (link_opened, buyer_logged_in, checkout_initialized, receipt_claimed, checkout_success, paid)
     // Require JWT auth only for sensitive status updates (refund, etc.)
-    const trackingStatuses = ["link_opened", "buyer_logged_in", "checkout_initialized", "receipt_claimed", "checkout_success", "paid", "error", "failed"];
+    const trackingStatuses = ["link_opened", "buyer_logged_in", "checkout_initialized", "receipt_claimed", "checkout_success", "paid", "paid - ach pending", "ach_pending", "error", "failed", "pending"];
     const isTrackingStatus = trackingStatuses.includes(status);
 
     let caller: any = null;
@@ -190,6 +191,8 @@ export async function POST(req: NextRequest) {
       const currentStatus = String(resource?.status || "").toLowerCase();
       const isSettled =
         currentStatus === "paid" ||
+        currentStatus === "paid - ach pending" ||
+        currentStatus === "ach_pending" ||
         currentStatus === "checkout_success" ||
         currentStatus === "confirmed" ||
         currentStatus === "reconciled" ||
@@ -222,6 +225,7 @@ export async function POST(req: NextRequest) {
             : [{ status, ts }],
           lastUpdatedAt: ts,
           brandKey,
+          ipAddress: resource.ipAddress || ipAddress,
           // Record buyer on settlement statuses
           ...(buyerWallet && ["checkout_success", "paid", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
             ? { buyerWallet }
@@ -259,6 +263,7 @@ export async function POST(req: NextRequest) {
           createdAt: ts,
           lastUpdatedAt: ts,
           brandKey,
+          ipAddress,
           ...(buyerWallet && ["checkout_success", "paid", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
             ? { buyerWallet }
             : {}),
@@ -284,8 +289,10 @@ export async function POST(req: NextRequest) {
           ...(parentUrl ? { parentUrl } : {}),
         };
 
-      if (["paid", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
-        const funding = (detectedCardFunding === "credit" || isCreditCard === true || next.detectedCardFunding === "credit" || next.isCreditCard === true) ? "credit" : "debit";
+      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
+        const reqFunding = detectedCardFunding || (isCreditCard === true ? "credit" : undefined);
+        const nextFunding = next.detectedCardFunding || (next.isCreditCard === true ? "credit" : undefined);
+        const funding = reqFunding || nextFunding || "debit";
         const brandKeyToUse = brandKey || next.brandKey || resource?.brandKey;
         try {
           const { getSiteConfigForWallet } = await import("@/lib/site-config");

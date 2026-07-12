@@ -119,6 +119,8 @@ export type UseStripeEmbeddedOnrampProps = {
   network?: string;
   /** Destination currency */
   destinationCurrency?: string;
+  /** Callback to get accurate USD total amount for specific funding types dynamically */
+  getAmountForFunding?: (funding: "credit" | "debit" | "us_bank_account" | null) => number;
   /** Receipt ID for metadata */
   receiptId?: string;
   /** Merchant wallet for metadata */
@@ -127,6 +129,8 @@ export type UseStripeEmbeddedOnrampProps = {
   brandKey?: string;
   /** Enable/disable */
   enabled?: boolean;
+  /** Whether ACH bank transfers are enabled */
+  achEnabled?: boolean;
   /**
    * If the buyer is already connected with a Thirdweb wallet, pass their address here.
    * This skips the auth_endpoint wallet creation entirely — no extra OTP, no new wallet.
@@ -144,7 +148,7 @@ export type UseStripeEmbeddedOnrampProps = {
   /** Step change callback */
   onStepChange?: (step: OnrampStep) => void;
   /** Card detected callback */
-  onCardDetected?: (card: { funding: "credit" | "debit"; brand: string; last4: string } | null) => void;
+  onCardDetected?: (card: { funding: "credit" | "debit" | "us_bank_account"; brand: string; last4: string } | null) => void;
   /** eCommerce mode flag */
   isEcommerceMode?: boolean;
   /** Stripe visual theme: 'stripe', 'night', or 'flat' */
@@ -177,7 +181,7 @@ export type UseStripeEmbeddedOnrampReturn = {
   /** The buyer's smart wallet address (deterministic from email) */
   buyerWalletAddress: string | null;
   /** Expose detected card funding type (credit vs. debit) */
-  detectedCardFunding: "credit" | "debit" | null;
+  detectedCardFunding: "credit" | "debit" | "us_bank_account" | null;
   /** Expose detected card brand */
   detectedCardBrand: string | null;
   /** Expose detected card last 4 digits */
@@ -186,6 +190,12 @@ export type UseStripeEmbeddedOnrampReturn = {
   sessionId: string | null;
   /** The dynamic KYC tier required */
   kycTierRequired?: "l0" | "l1" | "l2";
+  /** Stripe onramp remaining transaction limits */
+  onrampLimits?: any[] | null;
+  /** Expose flag to show delivery speed selection UI for bank accounts */
+  showSpeedSelection: boolean;
+  /** Expose callback to confirm chosen speed and resume checkout */
+  confirmSpeed: (speed: "standard" | "instant") => void;
 };
 
 const STEP_MESSAGES: Record<OnrampStep, string> = {
@@ -380,7 +390,9 @@ export function useStripeEmbeddedOnramp({
   debitFeePct = 0,
   creditFeePct = 0,
   totalUsd,
+  getAmountForFunding,
   theme = "night",
+  achEnabled = true,
 }: UseStripeEmbeddedOnrampProps): UseStripeEmbeddedOnrampReturn {
   const [step, setStep] = useState<OnrampStep>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -395,7 +407,7 @@ export function useStripeEmbeddedOnramp({
     return null;
   });
   const [localPhone, setLocalPhone] = useState<string>("");
-  const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | null>(null);
+  const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | "us_bank_account" | null>(null);
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(() => {
@@ -403,6 +415,16 @@ export function useStripeEmbeddedOnramp({
     return null;
   });
   const [kycTierRequired, setKycTierRequired] = useState<"l0" | "l1" | "l2">("l0");
+  const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
+  const [showSpeedSelection, setShowSpeedSelection] = useState(false);
+  const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
+
+  const confirmSpeed = useCallback((speed: "standard" | "instant") => {
+    if (speedResolverRef.current) {
+      speedResolverRef.current(speed);
+      speedResolverRef.current = null;
+    }
+  }, []);
 
   const onrampRef = useRef<OnrampCoordinator | null>(null);
   const mountedRef = useRef(true);
@@ -419,6 +441,8 @@ export function useStripeEmbeddedOnramp({
   const isVerifyingRef = useRef(false);
   const startOnrampRef = useRef<any>(null);
   const paymentRejectRef = useRef<any>(null);
+  const isAchEnforcedRef = useRef(false);
+  const sessionFundingRef = useRef<"credit" | "debit" | "us_bank_account" | null>(null);
 
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
 
@@ -457,11 +481,13 @@ export function useStripeEmbeddedOnramp({
         sessionStorage.removeItem("stripe_onramp_buyer_wallet");
         sessionStorage.removeItem("stripe_onramp_session_id");
         sessionStorage.removeItem("stripe_onramp_email");
+        sessionStorage.removeItem("stripe_onramp_session_funding");
 
         customerIdRef.current = null;
         oauthTokenRef.current = null;
         buyerWalletRef.current = null;
         sessionIdRef.current = null;
+        sessionFundingRef.current = null;
 
         setCryptoCustomerId(null);
         setBuyerWalletAddress(null);
@@ -471,11 +497,13 @@ export function useStripeEmbeddedOnramp({
         const storedToken = sessionStorage.getItem("stripe_onramp_oauth_token");
         const storedWallet = sessionStorage.getItem("stripe_onramp_buyer_wallet");
         const storedSessionId = sessionStorage.getItem("stripe_onramp_session_id");
+        const storedFunding = sessionStorage.getItem("stripe_onramp_session_funding") as any;
 
         if (storedCustId) customerIdRef.current = storedCustId;
         if (storedToken) oauthTokenRef.current = storedToken;
         if (storedWallet) buyerWalletRef.current = storedWallet;
         if (storedSessionId) sessionIdRef.current = storedSessionId;
+        if (storedFunding) sessionFundingRef.current = storedFunding;
       }
 
       if (currentEmail && stepRef.current === "idle") {
@@ -1053,6 +1081,7 @@ export function useStripeEmbeddedOnramp({
     activeEmailRef.current = null;
     customerIdRef.current = null;
     buyerWalletRef.current = null;
+    isAchEnforcedRef.current = false;
     setLocalPhone("");
     buyerAccountRef.current = null;
     setDetectedCardFunding(null);
@@ -1238,27 +1267,34 @@ export function useStripeEmbeddedOnramp({
     }
   }, []);
 
-  const getOnrampAmount = useCallback((funding: "credit" | "debit" | null): number => {
+  const getOnrampAmount = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
+    if (getAmountForFunding) {
+      return getAmountForFunding(funding);
+    }
     if (totalUsd !== undefined) {
       if (feeMinusEnabled) {
-        const rate = funding === "credit" ? 3.5 : 2.25;
+        const rate = funding === "credit" ? 3.5 : (funding === "us_bank_account" ? 0.6 : 2.25);
         return +(totalUsd / (1 + rate / 100)).toFixed(2);
       }
       return totalUsd;
     }
     return amount || 0;
-  }, [totalUsd, amount, feeMinusEnabled]);
+  }, [totalUsd, amount, feeMinusEnabled, getAmountForFunding]);
 
   const createSessionHelper = useCallback(async (
     customerId: string,
     pmToken: string,
     buyerWallet: string,
-    overrideAmount?: number
+    overrideAmount?: number,
+    funding?: "credit" | "debit" | "us_bank_account" | null
   ): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
     updateStep("creating_session");
     
     const execute = async (amt?: number): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
       try {
+        const fundingTypeToUse = funding !== undefined ? funding : detectedCardFunding;
+        const settlementSpeed = fundingTypeToUse === "us_bank_account" ? "standard" : "instant";
+
         const sessionRes = await fetch("/api/stripe/onramp-session-v2", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1275,6 +1311,7 @@ export function useStripeEmbeddedOnramp({
             merchantWallet,
             brandKey,
             splitMode: isDualSplitEnabled() ? "dual" : "single",
+            settlementSpeed,
           }),
         });
 
@@ -1444,6 +1481,10 @@ export function useStripeEmbeddedOnramp({
         if (!successData.id) {
           throw new Error("No session ID returned");
         }
+        sessionFundingRef.current = fundingTypeToUse;
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("stripe_onramp_session_funding", fundingTypeToUse || "");
+        }
         return {
           sessionId: successData.id,
           paymentDetails: successData.paymentDetails,
@@ -1469,13 +1510,14 @@ export function useStripeEmbeddedOnramp({
     merchantWallet,
     brandKey,
     updateStep,
-    handleError
+    handleError,
+    detectedCardFunding
   ]);
 
   const postCheckoutHandler = useCallback(async (
     sessionId: string,
     activeEmail: string,
-    overrideFunding?: "credit" | "debit" | null
+    overrideFunding?: "credit" | "debit" | "us_bank_account" | null
   ) => {
     const fundingTypeToUse = overrideFunding !== undefined ? overrideFunding : detectedCardFunding;
     console.log("[EMBEDDED ONRAMP] Checking eCommerce mode before Step 11. isEcommerceMode:", isEcommerceMode, "fundingTypeToUse:", fundingTypeToUse);
@@ -1500,8 +1542,23 @@ export function useStripeEmbeddedOnramp({
       });
 
       isRunningRef.current = false;
-      updateStep("completed");
-      onSuccess?.({ sessionId, txHash: "ecommerce_pending" });
+      const isAch = fundingTypeToUse === "us_bank_account";
+      if (isAch) {
+        updateStep("awaiting_funds");
+        onSuccess?.({ sessionId, txHash: "ach_pending" });
+      } else {
+        updateStep("completed");
+        onSuccess?.({ sessionId, txHash: "ecommerce_pending" });
+      }
+      return;
+    }
+
+    const isAch = fundingTypeToUse === "us_bank_account";
+    if (isAch) {
+      console.log("[EMBEDDED ONRAMP] ACH/Bank payment chosen in standard mode. Redirecting to awaiting_funds and completing client flow.");
+      isRunningRef.current = false;
+      updateStep("awaiting_funds");
+      onSuccess?.({ sessionId, txHash: "ach_pending" });
       return;
     }
 
@@ -1597,7 +1654,7 @@ export function useStripeEmbeddedOnramp({
     customerId: string,
     pmToken: string,
     buyerWallet: string,
-    initialFunding?: "credit" | "debit" | null
+    initialFunding?: "credit" | "debit" | "us_bank_account" | null
   ) => {
     updateStep("checking_out");
     isRunningRef.current = true;
@@ -1607,9 +1664,13 @@ export function useStripeEmbeddedOnramp({
     let resolvedFunding = initialFunding || detectedCardFunding || null;
 
     let currentSessionId = sessionIdRef.current;
-    if (!currentSessionId) {
-      const initialAmount = getOnrampAmount(initialFunding || null);
-      const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount);
+    const sessionFunding = sessionFundingRef.current;
+    const needsRecreate = !currentSessionId || (sessionFunding !== resolvedFunding);
+
+    if (needsRecreate) {
+      console.log(`[EMBEDDED ONRAMP] Creating/Re-creating session. Reason: !sessionId=${!currentSessionId}, fundingChanged=${sessionFunding} -> ${resolvedFunding}`);
+      const initialAmount = getOnrampAmount(resolvedFunding || null);
+      const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount, resolvedFunding);
       if (!sessionResult) return;
       currentSessionId = sessionResult.sessionId;
       sessionIdRef.current = currentSessionId;
@@ -1624,27 +1685,53 @@ export function useStripeEmbeddedOnramp({
         const brand = sessionResult.paymentDetails?.card?.brand || null;
         const last4 = sessionResult.paymentDetails?.card?.last4 || null;
         const method = sessionResult.paymentMethod || null;
-        
-        const isDebit = method === "debit_card" || funding === "debit" || funding === "prepaid";
-        const fundingType = isDebit ? "debit" : "credit";
-        resolvedFunding = fundingType;
-        setDetectedCardFunding(fundingType);
-        if (brand) setDetectedCardBrand(brand);
-        if (last4) setDetectedCardLast4(last4);
-        onCardDetected?.({ funding: fundingType, brand: brand || "", last4: last4 || "" });
-        
-        console.log(`[EMBEDDED ONRAMP] Card detected: method=${method}, funding=${funding}, brand=${brand} (${last4}). Pausing for fee review.`);
+        const type = sessionResult.paymentDetails?.type || null;
 
-        const targetAmount = getOnrampAmount(fundingType);
-        if (targetAmount !== initialAmount) {
-          console.log(`[EMBEDDED ONRAMP] ${fundingType} card detected. Re-creating session with target amount: ${targetAmount} (was ${initialAmount})`);
-          const newSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount);
-          if (!newSessionResult) return;
-          currentSessionId = newSessionResult.sessionId;
-          sessionIdRef.current = currentSessionId;
-          setSessionId(currentSessionId);
-          if (typeof window !== "undefined") {
-            sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+        const isAch = method === "us_bank_account" || type === "us_bank_account" || funding === "us_bank_account";
+        if (isAch) {
+          const bank = sessionResult.paymentDetails?.us_bank_account || sessionResult.paymentDetails?.payment_details?.us_bank_account;
+          const bankName = bank?.bank_name || brand || "Bank Account";
+          const bankLast4 = bank?.last4 || last4 || "";
+          resolvedFunding = "us_bank_account";
+          setDetectedCardFunding("us_bank_account");
+          setDetectedCardBrand(bankName);
+          setDetectedCardLast4(bankLast4);
+          onCardDetected?.({ funding: "us_bank_account", brand: bankName, last4: bankLast4 });
+          console.log(`[EMBEDDED ONRAMP] Bank account detected: method=${method}, brand=${bankName} (${bankLast4}).`);
+
+          const targetAmount = getOnrampAmount("us_bank_account");
+          if (targetAmount !== initialAmount) {
+            console.log(`[EMBEDDED ONRAMP] Bank account detected. Re-creating session with target amount: ${targetAmount} (was ${initialAmount})`);
+            const newSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount, "us_bank_account");
+            if (!newSessionResult) return;
+            currentSessionId = newSessionResult.sessionId;
+            sessionIdRef.current = currentSessionId;
+            setSessionId(currentSessionId);
+            if (typeof window !== "undefined") {
+              sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+            }
+          }
+        } else {
+          const isDebit = method === "debit_card" || funding === "debit" || funding === "prepaid";
+          const fundingType = isDebit ? "debit" : "credit";
+          resolvedFunding = fundingType;
+          setDetectedCardFunding(fundingType);
+          if (brand) setDetectedCardBrand(brand);
+          if (last4) setDetectedCardLast4(last4);
+          onCardDetected?.({ funding: fundingType, brand: brand || "", last4: last4 || "" });
+          console.log(`[EMBEDDED ONRAMP] Card detected: method=${method}, funding=${funding}, brand=${brand} (${last4}). Pausing for fee review.`);
+
+          const targetAmount = getOnrampAmount(fundingType);
+          if (targetAmount !== initialAmount) {
+            console.log(`[EMBEDDED ONRAMP] ${fundingType} card detected. Re-creating session with target amount: ${targetAmount} (was ${initialAmount})`);
+            const newSessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount, fundingType);
+            if (!newSessionResult) return;
+            currentSessionId = newSessionResult.sessionId;
+            sessionIdRef.current = currentSessionId;
+            setSessionId(currentSessionId);
+            if (typeof window !== "undefined") {
+              sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+            }
           }
         }
         
@@ -1663,7 +1750,7 @@ export function useStripeEmbeddedOnramp({
       if (customerId) {
         statusHeaders["x-crypto-customer-id"] = customerId;
       }
-      const checkRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId)}`, {
+      const checkRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId || "")}`, {
         headers: statusHeaders
       });
       if (checkRes.ok) {
@@ -1684,7 +1771,7 @@ export function useStripeEmbeddedOnramp({
       try {
         if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
 
-        const result = await onrampRef.current.performCheckout(currentSessionId, async (onrampSessionId: string) => {
+        const result = await onrampRef.current.performCheckout(currentSessionId || "", async (onrampSessionId: string) => {
           const checkoutRes = await fetch(`/api/stripe/onramp-checkout/${encodeURIComponent(onrampSessionId)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1735,7 +1822,7 @@ export function useStripeEmbeddedOnramp({
           if (customerId) {
             statusHeaders["x-crypto-customer-id"] = customerId;
           }
-          const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId)}`, {
+          const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId || "")}`, {
             headers: statusHeaders
           });
           const statusData = await statusRes.json().catch(() => ({}));
@@ -1989,7 +2076,7 @@ export function useStripeEmbeddedOnramp({
               sessionIdRef.current = null;
               setSessionId(null);
               const targetAmount = getOnrampAmount(detectedCardFunding);
-              const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount);
+              const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, targetAmount, detectedCardFunding);
               if (!sessionResult) return;
               currentSessionId = sessionResult.sessionId;
               sessionIdRef.current = currentSessionId;
@@ -2032,7 +2119,7 @@ export function useStripeEmbeddedOnramp({
       return;
     }
 
-    await postCheckoutHandler(currentSessionId, activeEmail, resolvedFunding);
+    await postCheckoutHandler(currentSessionId || "", activeEmail, resolvedFunding);
   }, [
     createSessionHelper,
     postCheckoutHandler,
@@ -2449,9 +2536,10 @@ export function useStripeEmbeddedOnramp({
           ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available") 
           : isOverallVerified;
 
-        // L1 and L2 verification supersede L0.
-        // If the customer is already verified at L1 or L2, they are good.
-        const isCustomerVerified = isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected");
+        // If ACH payment is chosen, we strictly enforce verification through L2.
+        const isCustomerVerified = isAchEnforcedRef.current 
+          ? isL2Verified 
+          : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected"));
 
         // 1. First, check if there is any pending verification.
         // Stripe returns a 400 error if we try to create a session while verification is pending.
@@ -2500,11 +2588,25 @@ export function useStripeEmbeddedOnramp({
             const isFreshL1Verified = freshL1 ? (freshL1.verification_status === "verified" || freshL1.verification_status === "not_available") : isOverallVerified;
             const isFreshL2Verified = freshL2 ? (freshL2.verification_status === "verified" || freshL2.verification_status === "not_available") : isOverallVerified;
             
-            if (!(isFreshL2Verified || isFreshL1Verified || (isFreshL0Verified && freshL0?.verification_status !== "rejected"))) {
-              if (freshL0?.verification_status === "rejected") {
-                setKycTierRequired("l1");
+            const isFreshVerified = isAchEnforcedRef.current
+              ? isFreshL2Verified
+              : (isFreshL2Verified || isFreshL1Verified || (isFreshL0Verified && freshL0?.verification_status !== "rejected"));
+
+            if (!isFreshVerified) {
+              if (isAchEnforcedRef.current) {
+                if (isFreshL1Verified) {
+                  setKycTierRequired("l2");
+                } else if (isFreshL0Verified) {
+                  setKycTierRequired("l1");
+                } else {
+                  setKycTierRequired("l0");
+                }
               } else {
-                setKycTierRequired("l0");
+                if (freshL0?.verification_status === "rejected") {
+                  setKycTierRequired("l1");
+                } else {
+                  setKycTierRequired("l0");
+                }
               }
               updateStep("collecting_kyc");
               isRunningRef.current = false;
@@ -2512,17 +2614,59 @@ export function useStripeEmbeddedOnramp({
             }
           }
         } else if (!isCustomerVerified) {
-          // 2. If not pending and not verified at any tier, they need to submit KYC.
-          if (l0Tier?.verification_status === "rejected") {
-            // L0 is rejected. Customer must complete L1 verification to use the onramp.
-            console.log("[EMBEDDED ONRAMP] L0 KYC was rejected. Customer must complete L1 verification to proceed.");
-            setKycTierRequired("l1");
+          // 2. If not pending and not verified, progressive check based on payment method
+          if (isAchEnforcedRef.current) {
+            if (isL2Verified) {
+              // Should not happen here as !isCustomerVerified is true, but safe fallback
+            } else if (isL1Verified) {
+              console.log("[EMBEDDED ONRAMP] ACH KYC check: L1 is verified, stepping up to L2...");
+              setKycTierRequired("l2");
+              updateStep("verifying_identity");
+              
+              try {
+                // Demographics submission is skipped because the user is already L1 verified.
+                // We directly call verifyDocuments() to upload document identity verification.
+                
+                const verifyResult = await onrampRef.current!.verifyDocuments();
+                if (verifyResult.result === "abandoned") {
+                  throw new Error("Identity verification was abandoned");
+                }
+                
+                console.log("[EMBEDDED ONRAMP] L2 document verification finished. Polling status...");
+                updateStep("checking_kyc");
+                const success = await pollKycStatus(customerId);
+                if (!success) {
+                  throw new Error("Identity verification not approved");
+                }
+                
+                // Restart check after success
+                isRunningRef.current = false;
+                setTimeout(() => startOnramp(activeEmail, activePhone, activeName), 0);
+                return;
+              } catch (verifyErr: any) {
+                handleError(verifyErr?.message || "Identity verification failed");
+                return;
+              }
+            } else if (isL0Verified) {
+              console.log("[EMBEDDED ONRAMP] ACH KYC check: L0 is verified, prompting L1...");
+              setKycTierRequired("l1");
+              updateStep("collecting_kyc");
+            } else {
+              console.log("[EMBEDDED ONRAMP] ACH KYC check: L0 is unverified, prompting L0...");
+              setKycTierRequired("l0");
+              updateStep("collecting_kyc");
+            }
           } else {
-            // L0 is not started or not available. Prompt for minimum information (L0).
-            console.log("[EMBEDDED ONRAMP] No active KYC verification found. Transitioning to collecting L0 KYC.");
-            setKycTierRequired("l0");
+            // Standard card/loose KYC flow
+            if (l0Tier?.verification_status === "rejected") {
+              console.log("[EMBEDDED ONRAMP] L0 KYC was rejected. Customer must complete L1 verification to proceed.");
+              setKycTierRequired("l1");
+            } else {
+              console.log("[EMBEDDED ONRAMP] No active KYC verification found. Transitioning to collecting L0 KYC.");
+              setKycTierRequired("l0");
+            }
+            updateStep("collecting_kyc");
           }
-          updateStep("collecting_kyc");
           isRunningRef.current = false;
           return;
         }
@@ -2576,12 +2720,38 @@ export function useStripeEmbeddedOnramp({
         if (!mountedRef.current) return;
         updateStep("collecting_payment");
 
-        const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | null; brand: string; last4: string }>((resolve, reject) => {
+        // Retrieve transaction limits asynchronously
+        (async () => {
+          try {
+            const limitsRes = await fetch("/api/stripe/onramp-limits", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-stripe-oauth-token": oauthTokenRef.current || ""
+              },
+              body: JSON.stringify({
+                receiptId,
+                walletAddress: buyerWallet,
+                network,
+                email: activeEmail,
+                stripeSessionId: sessionIdRef.current
+              })
+            });
+            const limitsData = await limitsRes.json();
+            if (limitsData.ok && limitsData.limits) {
+              setOnrampLimits(limitsData.limits);
+            }
+          } catch (limitsErr) {
+            console.warn("[EMBEDDED ONRAMP] Failed to fetch transaction limits:", limitsErr);
+          }
+        })();
+
+        const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | "us_bank_account" | null; brand: string; last4: string; paymentMethodDetails?: any }>((resolve, reject) => {
           paymentRejectRef.current = reject;
 
           onramp.collectPaymentMethod(
             {
-              payment_method_types: ["card"],
+              payment_method_types: achEnabled ? ["card", "us_bank_account"] : ["card"],
               wallets: { applePay: "auto", googlePay: "auto" },
             },
             (result: any) => {
@@ -2604,24 +2774,85 @@ export function useStripeEmbeddedOnramp({
                 }
               }
               if (result.cryptoPaymentToken) {
-                let fundingType: "credit" | "debit" | null = null;
+                const pmDetails = result.paymentMethodDetails || result.payment_method_details || result.paymentDetails || result.payment_details || result;
+                let fundingType: "credit" | "debit" | "us_bank_account" | null = null;
                 let brandStr = "";
                 let last4Str = "";
-                
-                const details = result.paymentDetails || result.payment_details || result;
-                const card = details?.card || details?.payment_method_details?.card;
-                if (card) {
-                  const isDebit = card.funding === "debit" || card.funding === "prepaid";
-                  fundingType = isDebit ? "debit" : "credit";
-                  brandStr = card.brand || "";
-                  last4Str = card.last4 || "";
-                } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
-                  fundingType = "debit";
-                } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
-                  fundingType = "credit";
+
+                if (pmDetails) {
+                  if (pmDetails.type === "card") {
+                    const card = pmDetails.card || pmDetails.payment_details?.card || pmDetails.paymentDetails?.card;
+                    if (card) {
+                      const isDebit = card.funding === "debit" || card.funding === "prepaid";
+                      fundingType = isDebit ? "debit" : "credit";
+                      brandStr = card.brand || "";
+                      last4Str = card.last4 || "";
+                    }
+                  } else if (pmDetails.type === "us_bank_account" || pmDetails.paymentMethod === "us_bank_account" || pmDetails.payment_method === "us_bank_account") {
+                    const bank = pmDetails.us_bank_account || pmDetails.payment_details?.us_bank_account || pmDetails.paymentDetails?.us_bank_account;
+                    fundingType = "us_bank_account";
+                    brandStr = bank?.bank_name || "";
+                    last4Str = bank?.last4 || "";
+                  }
                 }
+
+                // Fallbacks
+                if (!fundingType) {
+                  const card = result.card || result.paymentDetails?.card || result.payment_details?.card;
+                  if (card) {
+                    const isDebit = card.funding === "debit" || card.funding === "prepaid";
+                    fundingType = isDebit ? "debit" : "credit";
+                    brandStr = card.brand || "";
+                    last4Str = card.last4 || "";
+                  } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
+                    fundingType = "debit";
+                  } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
+                    fundingType = "credit";
+                  }
+                }
+
+                // Format paymentMethodDetails to send
+                const pmDetailsToSend = pmDetails?.type ? pmDetails : {
+                  type: fundingType === "us_bank_account" ? "us_bank_account" : "card",
+                  ...(fundingType === "us_bank_account" ? {
+                    us_bank_account: { bank_name: brandStr, last4: last4Str, account_type: null }
+                  } : {
+                    card: { brand: brandStr, funding: fundingType, last4: last4Str, exp_month: null, exp_year: null, wallet: null }
+                  })
+                };
+
+                // Asynchronously save payment method details
+                (async () => {
+                  try {
+                    await fetch("/api/stripe/onramp-limits", {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        "x-stripe-oauth-token": oauthTokenRef.current || ""
+                      },
+                      body: JSON.stringify({
+                        receiptId,
+                        walletAddress: buyerWallet,
+                        network,
+                        email: activeEmail,
+                        stripeSessionId: sessionIdRef.current,
+                        paymentMethodDetails: pmDetailsToSend
+                      })
+                    });
+                    console.log("[EMBEDDED ONRAMP] Successfully requested payment method logging");
+                  } catch (saveErr) {
+                    console.warn("[EMBEDDED ONRAMP] Failed to save payment method details:", saveErr);
+                  }
+                })();
+
                 paymentRejectRef.current = null;
-                resolve({ token: result.cryptoPaymentToken, funding: fundingType, brand: brandStr, last4: last4Str });
+                resolve({ 
+                  token: result.cryptoPaymentToken, 
+                  funding: fundingType, 
+                  brand: brandStr, 
+                  last4: last4Str,
+                  paymentMethodDetails: pmDetailsToSend
+                });
               } else {
                 paymentRejectRef.current = null;
                 reject(new Error("Payment method collection failed"));
@@ -2638,7 +2869,7 @@ export function useStripeEmbeddedOnramp({
         });
 
         let pmToken: string;
-        let collectedFunding: "credit" | "debit" | null = null;
+        let collectedFunding: "credit" | "debit" | "us_bank_account" | null = null;
         let collectedBrand: string | null = null;
         let collectedLast4: string | null = null;
 
@@ -2681,7 +2912,6 @@ export function useStripeEmbeddedOnramp({
         if (!mountedRef.current) return;
 
         paymentTokenRef.current = pmToken;
-        setPaymentElement(null);
 
         if (collectedFunding) {
           setDetectedCardFunding(collectedFunding);
@@ -2689,6 +2919,110 @@ export function useStripeEmbeddedOnramp({
           if (collectedLast4) setDetectedCardLast4(collectedLast4);
           onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
         }
+
+        const chosenSpeed: "standard" | "instant" = "standard";
+
+        // ─── ACH KYC & SPEED INTERCEPT ───
+        if (collectedFunding === "us_bank_account") {
+          isAchEnforcedRef.current = true;
+          console.log("[EMBEDDED ONRAMP] ACH/Bank payment chosen. Using standard speed.");
+
+          console.log("[EMBEDDED ONRAMP] Checking customer KYC requirements...");
+          try {
+            const customerId = customerIdRef.current;
+            console.log("[EMBEDDED ONRAMP] Active Customer ID for ACH:", customerId);
+            if (!customerId) {
+              throw new Error("Missing Stripe Customer ID. Please authenticate first.");
+            }
+
+            const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
+              headers: {
+                "x-stripe-oauth-token": oauthTokenRef.current || "",
+              },
+            });
+
+            if (!checkRes.ok) {
+              const errText = await checkRes.text();
+              console.error("[EMBEDDED ONRAMP] Customer query failed:", checkRes.status, errText);
+              throw new Error(`Failed to check verification status: ${checkRes.status}`);
+            }
+
+            const kycData = await checkRes.json();
+            console.log("[EMBEDDED ONRAMP] Customer KYC Payload:", kycData);
+            const kycTiers = kycData.kycTiers || [];
+            const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
+            const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+            const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
+
+            const isL0Verified = l0Tier 
+              ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
+              : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+
+            const isL1Verified = l1Tier 
+              ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
+              : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+
+            const isL2Verified = l2Tier
+              ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
+              : false;
+
+            console.log("[EMBEDDED ONRAMP] Audited tiers:", { isL0Verified, isL1Verified, isL2Verified });
+
+            if (!isL2Verified) {
+              console.log("[EMBEDDED ONRAMP] ACH selected but L2 verification is incomplete. Enforcing KYC...");
+              if (isL1Verified) {
+                // Do NOT call setPaymentElement(null) here because we need it mounted for verifyDocuments
+                setKycTierRequired("l2");
+                updateStep("verifying_identity");
+                
+                try {
+                  console.log("[EMBEDDED ONRAMP] Launching document verification for L2...");
+                  const verifyResult = await onrampRef.current!.verifyDocuments();
+                  if (verifyResult.result === "abandoned") {
+                    throw new Error("Identity verification was abandoned");
+                  }
+                  
+                  console.log("[EMBEDDED ONRAMP] ACH L2 document verification finished. Polling status...");
+                  updateStep("checking_kyc");
+                  const success = await pollKycStatus(customerId);
+                  if (!success) {
+                    throw new Error("Identity verification not approved");
+                  }
+                } catch (verifyErr: any) {
+                  setPaymentElement(null); // Clear element on failure
+                  throw verifyErr;
+                }
+              } else if (isL0Verified) {
+                setPaymentElement(null); // Clear element to show demographics forms
+                setKycTierRequired("l1");
+                updateStep("collecting_kyc");
+              } else {
+                setPaymentElement(null); // Clear element to show demographics forms
+                setKycTierRequired("l0");
+                updateStep("collecting_kyc");
+              }
+
+              setPaymentElement(null); // Clear element after successful KYC checks
+              isRunningRef.current = false;
+              if (startOnrampRef.current) {
+                await startOnrampRef.current(activeEmail, activePhone, activeName);
+              }
+              return;
+            }
+          } catch (kycErr: any) {
+            console.warn("[EMBEDDED ONRAMP] Failed during ACH KYC enforcement check:", kycErr);
+            setError(kycErr?.message || "Identity verification required for ACH payments.");
+            setPaymentElement(null);
+            isRunningRef.current = false;
+            if (startOnrampRef.current) {
+              await startOnrampRef.current(activeEmail, activePhone, activeName);
+            }
+            return;
+          }
+        }
+
+        // Now clear element if we are proceeding to checkout
+        setPaymentElement(null);
 
         // Save state in refs for KYC/error recovery
         activeEmailRef.current = activeEmail;
@@ -2772,6 +3106,7 @@ export function useStripeEmbeddedOnramp({
           return;
         }
         
+        let isL1Verified = false;
         console.log("[EMBEDDED ONRAMP] L2 KYC error caught during payment collection. Prechecking customer status...");
         try {
           const customerId = customerIdRef.current;
@@ -2790,7 +3125,7 @@ export function useStripeEmbeddedOnramp({
             }
             const kycTiers = kycData.kycTiers || [];
             const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-            const isL1Verified = l1Tier 
+            isL1Verified = l1Tier 
               ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
               : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
               
@@ -2822,7 +3157,7 @@ export function useStripeEmbeddedOnramp({
           try {
             const isTestMode = !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_");
             
-            if (isTestMode) {
+            if (isTestMode && !isL1Verified) {
               console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics on payment collection catch...");
               await submitKycInfoWithTimeout(onrampRef.current, {
                 given_name: "John",
@@ -2930,5 +3265,8 @@ export function useStripeEmbeddedOnramp({
     detectedCardLast4,
     sessionId,
     kycTierRequired,
+    onrampLimits,
+    showSpeedSelection,
+    confirmSpeed,
   };
 }
