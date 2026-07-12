@@ -96,6 +96,11 @@ function formatPhoneAsYouType(value: string): string {
   return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
 }
 
+function isValidEmail(email: string): boolean {
+  if (!email) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 
 const CURRENCIES = SUPPORTED_CURRENCIES;
 
@@ -3990,7 +3995,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         setHeadlessEmailPrompt(true);
       } else {
         console.log("[PORTAL PAGE] Stripe is the only active onramp. Autostarting direct flow.");
-        if (!shipEmail) {
+        if (!shipEmail || !isValidEmail(shipEmail)) {
           setHeadlessEmailPrompt(true);
         } else {
           setHeadlessInitiated(true);
@@ -4034,7 +4039,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     },
     onIntercept: stripeHeadless ? () => {
       console.log("[STRIPE ONRAMP] Intercepted → deferring to headless onramp");
-      if (!shipEmail) {
+      if (!shipEmail || !isValidEmail(shipEmail)) {
         setHeadlessEmailPrompt(true);
       } else {
         setHeadlessInitiated(true);
@@ -4432,8 +4437,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               }`}
             value={headlessEmailInput}
             onChange={(e) => setHeadlessEmailInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && isValidEmail(headlessEmailInput)) {
+                setShipEmail(headlessEmailInput);
+                setHeadlessInitiated(true);
+                setHeadlessEmailPrompt(false);
+                startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
+              }
+            }}
             autoFocus
           />
+          {headlessEmailInput && !isValidEmail(headlessEmailInput) && (
+            <p className="text-[11px] text-red-500/90 font-medium mb-3.5 -mt-1 ml-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
+              Please enter a valid email address.
+            </p>
+          )}
           {theme.discretePayWithCrypto ? (
             <div className="flex flex-col items-stretch">
               <button
@@ -4442,7 +4460,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 style={{
                   backgroundColor: theme.primaryColor || "#635BFF",
                 }}
-                disabled={!headlessEmailInput.includes('@')}
+                disabled={!isValidEmail(headlessEmailInput)}
                 onClick={() => {
                   setShipEmail(headlessEmailInput);
                   setHeadlessInitiated(true);
@@ -4489,7 +4507,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 style={{
                   backgroundColor: theme.primaryColor || "#635BFF",
                 }}
-                disabled={!headlessEmailInput.includes('@')}
+                disabled={!isValidEmail(headlessEmailInput)}
                 onClick={() => {
                   setShipEmail(headlessEmailInput);
                   setHeadlessInitiated(true);
@@ -5154,7 +5172,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           !kycCity ||
                           !kycState ||
                           !kycZip ||
-                          !(shipEmail || headlessEmailInput) ||
+                          !(shipEmail ? isValidEmail(shipEmail) : isValidEmail(headlessEmailInput)) ||
                           !headlessPhoneInput
                         ) : (
                           !kycFirstName ||
