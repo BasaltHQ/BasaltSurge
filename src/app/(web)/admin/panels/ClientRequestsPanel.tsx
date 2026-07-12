@@ -476,6 +476,7 @@ export default function ClientRequestsPanel() {
     const [error, setError] = useState("");
     const [info, setInfo] = useState("");
     const [brandKey, setBrandKey] = useState(brand?.key || "");
+    const [fetchedBrand, setFetchedBrand] = useState<any>(null);
     const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
     // Split Config State
@@ -524,10 +525,12 @@ export default function ClientRequestsPanel() {
                 }
 
                 if (b) {
+                    setFetchedBrand(b);
                     setUnifiedFeeEnabled(!!b.unifiedFeeEnabled);
                     setPresentedFeeBps(b.presentedFeeBps);
                     setCreditPresentedFeeBps(b.creditPresentedFeeBps);
                 } else {
+                    setFetchedBrand(brand);
                     setUnifiedFeeEnabled(!!(brand as any)?.unifiedFeeEnabled);
                     setPresentedFeeBps((brand as any)?.presentedFeeBps);
                     setCreditPresentedFeeBps((brand as any)?.creditPresentedFeeBps);
@@ -1859,8 +1862,8 @@ export default function ClientRequestsPanel() {
                                                                 merchantWallet={req.wallet}
                                                                 adminWallet={account?.address || ""}
                                                                 brandKey={brandKey}
-                                                                partnerFeeMinusEnabled={!!brand?.feeMinusEnabled}
-                                                                partnerAchEnabled={(!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge") ? true : !!brand?.achEnabled}
+                                                                partnerFeeMinusEnabled={fetchedBrand ? !!fetchedBrand.feeMinusEnabled : !!brand?.feeMinusEnabled}
+                                                                partnerAchEnabled={(!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge") ? true : (fetchedBrand ? !!fetchedBrand.achEnabled : !!brand?.achEnabled)}
                                                             />
                                                         ) : (activeTabs[req.id] === "themes") ? (
                                                             <TouchpointThemesTab
