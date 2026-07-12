@@ -159,6 +159,7 @@ export default function PartnerManagementPanel() {
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
       if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
       if (config?.feeMinusEnabled !== undefined) body.feeMinusEnabled = Boolean(config.feeMinusEnabled);
+      if (config?.achEnabled !== undefined) body.achEnabled = Boolean(config.achEnabled);
       if (typeof config?.presentedFeeBps === "number") {
         body.presentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.presentedFeeBps))));
       }
@@ -176,7 +177,7 @@ export default function PartnerManagementPanel() {
       }
 
       // If nothing to persist, skip
-      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined && body.presentedFeeBps === undefined && body.creditPresentedFeeBps === undefined && body.feeMinusEnabled === undefined) {
+      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined && body.presentedFeeBps === undefined && body.creditPresentedFeeBps === undefined && body.feeMinusEnabled === undefined && body.achEnabled === undefined) {
         return true;
       }
 
@@ -884,6 +885,7 @@ export default function PartnerManagementPanel() {
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
       if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
       if (config?.feeMinusEnabled !== undefined) body.feeMinusEnabled = Boolean(config.feeMinusEnabled);
+      if (config?.achEnabled !== undefined) body.achEnabled = Boolean(config.achEnabled);
       if (typeof config?.presentedFeeBps === "number")
         body.presentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.presentedFeeBps))));
       if (typeof config?.creditPresentedFeeBps === "number")
