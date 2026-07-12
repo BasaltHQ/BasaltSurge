@@ -151,6 +151,13 @@ export async function POST(req: NextRequest) {
       const onrampData = await stripeRes.json();
       const stripeStatus = onrampData.status;
 
+      try {
+        const { enrichReceiptFromStripeData } = await import("@/lib/receipts");
+        enrichReceiptFromStripeData(receipt, onrampData);
+      } catch (enrichErr) {
+        console.warn("[poll_single] Failed to enrich receipt details from Stripe session payload:", enrichErr);
+      }
+
       receipt.lastPolledAt = Date.now();
       receipt.stripeSessionStatus = stripeStatus;
       receipt.lastUpdatedAt = Date.now();

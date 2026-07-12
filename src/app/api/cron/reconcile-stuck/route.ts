@@ -337,6 +337,13 @@ export async function POST(req: NextRequest) {
         const onrampData = await stripeRes.json();
         const stripeStatus = onrampData.status;
 
+        try {
+          const { enrichReceiptFromStripeData } = await import("@/lib/receipts");
+          enrichReceiptFromStripeData(receipt, onrampData);
+        } catch (enrichErr) {
+          console.warn(`[cron/reconcile-stuck] Failed to enrich receipt ${receiptId} with Stripe details:`, enrichErr);
+        }
+
         // Record last poll time and raw status from Stripe on the receipt
         receipt.lastPolledAt = Date.now();
         receipt.stripeSessionStatus = stripeStatus;

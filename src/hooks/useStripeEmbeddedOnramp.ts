@@ -436,6 +436,7 @@ export function useStripeEmbeddedOnramp({
   const startOnrampRef = useRef<any>(null);
   const paymentRejectRef = useRef<any>(null);
   const isAchEnforcedRef = useRef(false);
+  const sessionFundingRef = useRef<"credit" | "debit" | "us_bank_account" | null>(null);
 
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
 
@@ -474,11 +475,13 @@ export function useStripeEmbeddedOnramp({
         sessionStorage.removeItem("stripe_onramp_buyer_wallet");
         sessionStorage.removeItem("stripe_onramp_session_id");
         sessionStorage.removeItem("stripe_onramp_email");
+        sessionStorage.removeItem("stripe_onramp_session_funding");
 
         customerIdRef.current = null;
         oauthTokenRef.current = null;
         buyerWalletRef.current = null;
         sessionIdRef.current = null;
+        sessionFundingRef.current = null;
 
         setCryptoCustomerId(null);
         setBuyerWalletAddress(null);
@@ -488,11 +491,13 @@ export function useStripeEmbeddedOnramp({
         const storedToken = sessionStorage.getItem("stripe_onramp_oauth_token");
         const storedWallet = sessionStorage.getItem("stripe_onramp_buyer_wallet");
         const storedSessionId = sessionStorage.getItem("stripe_onramp_session_id");
+        const storedFunding = sessionStorage.getItem("stripe_onramp_session_funding") as any;
 
         if (storedCustId) customerIdRef.current = storedCustId;
         if (storedToken) oauthTokenRef.current = storedToken;
         if (storedWallet) buyerWalletRef.current = storedWallet;
         if (storedSessionId) sessionIdRef.current = storedSessionId;
+        if (storedFunding) sessionFundingRef.current = storedFunding;
       }
 
       if (currentEmail && stepRef.current === "idle") {
@@ -1467,6 +1472,10 @@ export function useStripeEmbeddedOnramp({
         if (!successData.id) {
           throw new Error("No session ID returned");
         }
+        sessionFundingRef.current = fundingTypeToUse;
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("stripe_onramp_session_funding", fundingTypeToUse || "");
+        }
         return {
           sessionId: successData.id,
           paymentDetails: successData.paymentDetails,
@@ -1532,6 +1541,15 @@ export function useStripeEmbeddedOnramp({
         updateStep("completed");
         onSuccess?.({ sessionId, txHash: "ecommerce_pending" });
       }
+      return;
+    }
+
+    const isAch = fundingTypeToUse === "us_bank_account";
+    if (isAch) {
+      console.log("[EMBEDDED ONRAMP] ACH/Bank payment chosen in standard mode. Redirecting to awaiting_funds and completing client flow.");
+      isRunningRef.current = false;
+      updateStep("awaiting_funds");
+      onSuccess?.({ sessionId, txHash: "ach_pending" });
       return;
     }
 
@@ -1637,9 +1655,13 @@ export function useStripeEmbeddedOnramp({
     let resolvedFunding = initialFunding || detectedCardFunding || null;
 
     let currentSessionId = sessionIdRef.current;
-    if (!currentSessionId) {
-      const initialAmount = getOnrampAmount(initialFunding || null);
-      const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount, initialFunding);
+    const sessionFunding = sessionFundingRef.current;
+    const needsRecreate = !currentSessionId || (sessionFunding !== resolvedFunding);
+
+    if (needsRecreate) {
+      console.log(`[EMBEDDED ONRAMP] Creating/Re-creating session. Reason: !sessionId=${!currentSessionId}, fundingChanged=${sessionFunding} -> ${resolvedFunding}`);
+      const initialAmount = getOnrampAmount(resolvedFunding || null);
+      const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount, resolvedFunding);
       if (!sessionResult) return;
       currentSessionId = sessionResult.sessionId;
       sessionIdRef.current = currentSessionId;
@@ -1719,7 +1741,7 @@ export function useStripeEmbeddedOnramp({
       if (customerId) {
         statusHeaders["x-crypto-customer-id"] = customerId;
       }
-      const checkRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId)}`, {
+      const checkRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId || "")}`, {
         headers: statusHeaders
       });
       if (checkRes.ok) {
@@ -1740,7 +1762,7 @@ export function useStripeEmbeddedOnramp({
       try {
         if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
 
-        const result = await onrampRef.current.performCheckout(currentSessionId, async (onrampSessionId: string) => {
+        const result = await onrampRef.current.performCheckout(currentSessionId || "", async (onrampSessionId: string) => {
           const checkoutRes = await fetch(`/api/stripe/onramp-checkout/${encodeURIComponent(onrampSessionId)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1791,7 +1813,7 @@ export function useStripeEmbeddedOnramp({
           if (customerId) {
             statusHeaders["x-crypto-customer-id"] = customerId;
           }
-          const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId)}`, {
+          const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId || "")}`, {
             headers: statusHeaders
           });
           const statusData = await statusRes.json().catch(() => ({}));
@@ -2088,7 +2110,7 @@ export function useStripeEmbeddedOnramp({
       return;
     }
 
-    await postCheckoutHandler(currentSessionId, activeEmail, resolvedFunding);
+    await postCheckoutHandler(currentSessionId || "", activeEmail, resolvedFunding);
   }, [
     createSessionHelper,
     postCheckoutHandler,

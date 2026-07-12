@@ -3405,7 +3405,9 @@ function ReceiptsAdmin() {
                                   <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.01] p-4 text-xs space-y-2 font-mono">
                                     <div className="flex justify-between items-end gap-2 overflow-hidden">
                                       <span className="text-muted-foreground min-w-[70px]">Wallet:</span>
-                                      <span className="truncate flex-1 text-right" title={rec.buyerWallet}>{rec.buyerWallet || "—"}</span>
+                                      <span className="truncate flex-1 text-right" title={rec.buyerWallet || (Array.isArray(rec.customerSessions) && rec.customerSessions[0]?.walletAddress) || ""}>
+                                        {rec.buyerWallet || (Array.isArray(rec.customerSessions) && rec.customerSessions[0]?.walletAddress) || "—"}
+                                      </span>
                                     </div>
                                     <div className="flex justify-between items-end gap-2 overflow-hidden">
                                       <span className="text-muted-foreground min-w-[70px]">Tx Hash:</span>
@@ -3417,9 +3419,9 @@ function ReceiptsAdmin() {
                                           const session = Array.isArray(rec.customerSessions) 
                                             ? (rec.customerSessions[0] || rec.customerSessions[rec.customerSessions.length - 1]) 
                                             : null;
-                                          const pm = session?.paymentMethodDetails;
-                                          if (pm?.type === "us_bank_account" && pm.us_bank_account) {
-                                            const bank = pm.us_bank_account;
+                                          const pm = session?.paymentMethodDetails || session?.paymentDetails || session?.payment_details || session;
+                                          const bank = pm?.us_bank_account || pm?.paymentDetails?.us_bank_account || pm?.payment_details?.us_bank_account;
+                                          if (bank && bank.bank_name) {
                                             return (
                                               <div className="flex justify-between items-end gap-2 overflow-hidden">
                                                 <span className="text-muted-foreground min-w-[70px]">Bank:</span>
