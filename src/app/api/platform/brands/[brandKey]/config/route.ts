@@ -106,6 +106,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     presentedFeeBps: undefined,
     creditPresentedFeeBps: undefined,
     feeMinusEnabled: false,
+    achEnabled: true,
   };
 
   const withDefaults = applyBrandDefaults(baseRaw);
@@ -159,6 +160,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     transakOnrampEnabled: typeof overrides.transakOnrampEnabled === "boolean" ? overrides.transakOnrampEnabled : withDefaults.transakOnrampEnabled,
     rampnowOnrampEnabled: typeof overrides.rampnowOnrampEnabled === "boolean" ? overrides.rampnowOnrampEnabled : withDefaults.rampnowOnrampEnabled,
     feeMinusEnabled: typeof overrides.feeMinusEnabled === "boolean" ? overrides.feeMinusEnabled : withDefaults.feeMinusEnabled,
+    achEnabled: typeof overrides.achEnabled === "boolean" ? overrides.achEnabled : withDefaults.achEnabled,
     thirdwebClientId: typeof overrides.thirdwebClientId === "string" ? overrides.thirdwebClientId.trim() : undefined,
   });
 
