@@ -1860,6 +1860,7 @@ export default function ClientRequestsPanel() {
                                                                 adminWallet={account?.address || ""}
                                                                 brandKey={brandKey}
                                                                 partnerFeeMinusEnabled={!!brand?.feeMinusEnabled}
+                                                                partnerAchEnabled={(!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge") ? true : !!brand?.achEnabled}
                                                             />
                                                         ) : (activeTabs[req.id] === "themes") ? (
                                                             <TouchpointThemesTab
@@ -3290,12 +3291,14 @@ function MerchantSettingsTab({
     merchantWallet,
     adminWallet,
     brandKey,
-    partnerFeeMinusEnabled
+    partnerFeeMinusEnabled,
+    partnerAchEnabled
 }: {
     merchantWallet: string;
     adminWallet: string;
     brandKey: string;
     partnerFeeMinusEnabled: boolean;
+    partnerAchEnabled: boolean;
 }) {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -3519,14 +3522,20 @@ function MerchantSettingsTab({
                     <div className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-white/5">
                         <div>
                             <div className="text-xs font-semibold">Enable ACH Payments</div>
-                            <div className="text-[11px] text-muted-foreground">Allow customers to check out using bank accounts (ACH / us_bank_account).</div>
+                            <div className="text-[11px] text-muted-foreground">
+                                {partnerAchEnabled 
+                                    ? "Allow customers to check out using bank accounts (ACH / us_bank_account)." 
+                                    : "This option is disabled because your partner brand has not enabled ACH payments."
+                                }
+                            </div>
                         </div>
                         <button
                             type="button"
+                            disabled={!partnerAchEnabled}
                             onClick={() => {
                                 saveSettings({ achEnabled: !config.achEnabled });
                             }}
-                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed ${
                                 config.achEnabled ? "bg-emerald-500" : "bg-zinc-700"
                             }`}
                         >
