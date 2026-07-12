@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useSearchParams } from "next/navigation";
 import { applyThemeVars, getTheme } from "@/lib/themes";
@@ -2663,6 +2663,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return totalUsd;
   }, [receipt, totalUsd, detectedCardFunding, feeMinusEnabled]);
 
+  const getAmountForFunding = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
+    if (!receipt) return 0;
+    const stripePct = funding === "us_bank_account"
+      ? (achSpeed === "standard" ? 0.6 : 4.0)
+      : (funding === "credit" ? creditStripeFeePct : debitStripeFeePct);
+      
+    if (feeMinusEnabled) {
+      return +(totalUsd / (1 + stripePct / 100)).toFixed(2);
+    }
+    
+    const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct) / 100);
+    const feeUsd = +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
+    return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + feeUsd).toFixed(2);
+  }, [receipt, achSpeed, creditStripeFeePct, debitStripeFeePct, feeMinusEnabled, totalUsd, effectiveBasePlatformFeePct, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd]);
+
   const stripeProcessingFeeUsd = useMemo(() => {
     if (feeMinusEnabled) {
       return +(totalUsd - stripeTotalUsd).toFixed(2);
@@ -3754,6 +3769,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     debitFeePct: debitStripeFeePct,
     creditFeePct: creditStripeFeePct,
     totalUsd,
+    getAmountForFunding,
     onCardDetected: (card) => {
       if (card) {
         setDetectedCardFunding(card.funding);

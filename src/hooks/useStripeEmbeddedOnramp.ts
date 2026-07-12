@@ -119,6 +119,8 @@ export type UseStripeEmbeddedOnrampProps = {
   network?: string;
   /** Destination currency */
   destinationCurrency?: string;
+  /** Callback to get accurate USD total amount for specific funding types dynamically */
+  getAmountForFunding?: (funding: "credit" | "debit" | "us_bank_account" | null) => number;
   /** Receipt ID for metadata */
   receiptId?: string;
   /** Merchant wallet for metadata */
@@ -386,6 +388,7 @@ export function useStripeEmbeddedOnramp({
   debitFeePct = 0,
   creditFeePct = 0,
   totalUsd,
+  getAmountForFunding,
   theme = "night",
 }: UseStripeEmbeddedOnrampProps): UseStripeEmbeddedOnrampReturn {
   const [step, setStep] = useState<OnrampStep>("idle");
@@ -1262,6 +1265,9 @@ export function useStripeEmbeddedOnramp({
   }, []);
 
   const getOnrampAmount = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
+    if (getAmountForFunding) {
+      return getAmountForFunding(funding);
+    }
     if (totalUsd !== undefined) {
       if (feeMinusEnabled) {
         const rate = funding === "credit" ? 3.5 : (funding === "us_bank_account" ? 0.6 : 2.25);
@@ -1270,7 +1276,7 @@ export function useStripeEmbeddedOnramp({
       return totalUsd;
     }
     return amount || 0;
-  }, [totalUsd, amount, feeMinusEnabled]);
+  }, [totalUsd, amount, feeMinusEnabled, getAmountForFunding]);
 
   const createSessionHelper = useCallback(async (
     customerId: string,

@@ -290,9 +290,9 @@ export async function POST(req: NextRequest) {
         };
 
       if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
-        const isCreditFunding = detectedCardFunding === "credit" || isCreditCard === true || next.detectedCardFunding === "credit" || next.isCreditCard === true;
-        const isAchFunding = detectedCardFunding === "us_bank_account" || next.detectedCardFunding === "us_bank_account";
-        const funding = isCreditFunding ? "credit" : (isAchFunding ? "us_bank_account" : "debit");
+        const reqFunding = detectedCardFunding || (isCreditCard === true ? "credit" : undefined);
+        const nextFunding = next.detectedCardFunding || (next.isCreditCard === true ? "credit" : undefined);
+        const funding = reqFunding || nextFunding || "debit";
         const brandKeyToUse = brandKey || next.brandKey || resource?.brandKey;
         try {
           const { getSiteConfigForWallet } = await import("@/lib/site-config");
