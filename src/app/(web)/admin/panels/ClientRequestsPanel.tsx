@@ -505,7 +505,7 @@ export default function ClientRequestsPanel() {
         (async () => {
             try {
                 // Fetch authoritative brand config
-                const r = await fetch(`/api/platform/brands/${encodeURIComponent(brandKey)}/config`);
+                const r = await fetch(`/api/platform/brands/${encodeURIComponent(brandKey)}/config`, { cache: "no-store" });
                 const j = await r.json().catch(() => ({}));
                 const b = j?.brand as any;
 
@@ -799,7 +799,7 @@ export default function ClientRequestsPanel() {
         let targetBrand = brand;
         if (reqBrandKey && reqBrandKey !== brand?.key) {
             try {
-                const r = await fetch(`/api/platform/brands/${encodeURIComponent(reqBrandKey)}/config`);
+                const r = await fetch(`/api/platform/brands/${encodeURIComponent(reqBrandKey)}/config`, { cache: "no-store" });
                 const j = await r.json();
                 if (j?.brand) {
                     targetBrand = j.brand;
