@@ -43,6 +43,12 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
     if (!brandKeyForFees) {
       try { brandKeyForFees = getBrandKey(req); } catch { brandKeyForFees = ""; }
     }
+    if (!brandKeyForFees && cfg) {
+      const resolvedKey = cfg.theme?.brandKey || cfg.brandKey || "";
+      if (resolvedKey) {
+        brandKeyForFees = String(resolvedKey).toLowerCase();
+      }
+    }
     // NOTE: basaltsurge is now its own platform brand, no longer aliased to portalpay
 
     // Pre-fetch brand config for fees (will be used at the end regardless of merchant vs global config)

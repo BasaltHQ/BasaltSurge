@@ -2939,6 +2939,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           if (typeof cfg.rampnowOnrampEnabled === "boolean") setRampnowOnrampEnabled(cfg.rampnowOnrampEnabled);
         }
         setMerchantAchEnabled(cfg.achEnabled !== undefined ? !!cfg.achEnabled : true);
+        if ((cfg as any).partnerAchEnabled !== undefined) {
+          setPartnerAchEnabled(!!(cfg as any).partnerAchEnabled);
+        }
 
         // basePlatformFeePct (platform + partner + agent fees)
         const splitCfg = (cfg as any)?.splitConfig;
@@ -3780,10 +3783,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     creditFeePct: creditStripeFeePct,
     totalUsd,
     getAmountForFunding,
-    achEnabled: (() => {
-      const isPlatform = !theme.brandKey || theme.brandKey === "portalpay" || theme.brandKey === "basaltsurge";
-      return isPlatform ? true : (partnerAchEnabled && merchantAchEnabled);
-    })(),
+    achEnabled: !!(partnerAchEnabled && merchantAchEnabled),
     onCardDetected: (card) => {
       if (card) {
         setDetectedCardFunding(card.funding);
