@@ -1209,10 +1209,16 @@ export default function PlatformAnalyticsPanel() {
                                                         if (pm.type === "card") {
                                                           const card = pm.card || pm.payment_details?.card || pm.paymentDetails?.card;
                                                           if (!card) return <span>Card</span>;
+                                                          const walletType = card.wallet && (typeof card.wallet === "object" ? card.wallet.type : card.wallet);
+                                                          const formattedWallet = walletType
+                                                            ? String(walletType)
+                                                                .replace(/_/g, " ")
+                                                                .replace(/\b\w/g, (c) => c.toUpperCase())
+                                                            : "";
                                                           return (
                                                             <span className="capitalize">
                                                               {card.brand} •••• {card.last4} ({card.funding})
-                                                              {card.wallet && ` via ${card.wallet}`}
+                                                              {formattedWallet && ` via ${formattedWallet}`}
                                                             </span>
                                                           );
                                                         } else if (pm.type === "us_bank_account") {
