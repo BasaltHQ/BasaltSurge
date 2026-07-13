@@ -4410,7 +4410,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [tpThemeApplied, currency]);
 
   // ─── ACH PENDING STATE ───
-  const isAchPending = receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending" || receipt?.status === "pending" || (stripeDetectedFunding === "us_bank_account" && headlessStep === "awaiting_funds");
+  const isAchPending = receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending" || (stripeDetectedFunding === "us_bank_account" && headlessStep === "awaiting_funds");
 
   // ─── STRIPE HEADLESS INLINE UI ───
   const stripeHeadlessUI = (headlessEmailPrompt || headlessActive || headlessInitiated) ? (
