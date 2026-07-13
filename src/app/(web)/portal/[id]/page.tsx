@@ -3536,7 +3536,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         !!receipt &&
         !isSettled(receipt.status)
       ) {
-        postStatus("checkout_initialized", { token, amount: widgetAmount });
+        postStatus("checkout_initialized", {
+          token,
+          amount: widgetAmount,
+          customerEmail: shipEmail || undefined,
+        });
       }
     } catch { }
   }, [
@@ -3550,6 +3554,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     receipt,
     token,
     widgetAmount,
+    shipEmail,
   ]);
 
   const displayTotalRounded = useMemo(() => {
@@ -4442,6 +4447,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 setShipEmail(headlessEmailInput);
                 setHeadlessInitiated(true);
                 setHeadlessEmailPrompt(false);
+                postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
                 startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
               }
             }}
@@ -4465,6 +4471,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   setShipEmail(headlessEmailInput);
                   setHeadlessInitiated(true);
                   setHeadlessEmailPrompt(false);
+                  postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
                   startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
                 }}
               >
@@ -4512,6 +4519,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   setShipEmail(headlessEmailInput);
                   setHeadlessInitiated(true);
                   setHeadlessEmailPrompt(false);
+                  postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
                   startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
                 }}
               >

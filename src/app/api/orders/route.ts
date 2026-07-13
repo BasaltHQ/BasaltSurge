@@ -270,6 +270,12 @@ export async function POST(req: NextRequest) {
 
     const onSuccess = typeof body?.onSuccess === "string" ? String(body.onSuccess).trim() : undefined;
     const stripeEmail = typeof body?.stripeEmail === "string" ? body.stripeEmail.trim() : "";
+    if (stripeEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(stripeEmail)) {
+      return NextResponse.json(
+        { error: "invalid_request", message: "stripeEmail_invalid" },
+        { status: 400, headers: { "x-correlation-id": correlationId } }
+      );
+    }
 
     const billingAddress = {
       firstName: typeof body?.billingFirstName === "string" ? body.billingFirstName.trim() : (typeof body?.customerFirstName === "string" ? body.customerFirstName.trim() : ""),
@@ -283,6 +289,13 @@ export async function POST(req: NextRequest) {
       zip: typeof body?.billingAddressPostalCode === "string" ? body.billingAddressPostalCode.trim() : (typeof body?.billingAddressZip === "string" ? body.billingAddressZip.trim() : (typeof body?.customerAddressPostalCode === "string" ? body.customerAddressPostalCode.trim() : "")),
       country: typeof body?.billingAddressCountry === "string" ? body.billingAddressCountry.trim() : (typeof body?.customerAddressCountry === "string" ? body.customerAddressCountry.trim() : "US"),
     };
+
+    if (billingAddress.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(billingAddress.email)) {
+      return NextResponse.json(
+        { error: "invalid_request", message: "email_invalid" },
+        { status: 400, headers: { "x-correlation-id": correlationId } }
+      );
+    }
 
     // Fetch site config for brand, processing fee, tax presets, and fallback default token (prefer per-wallet, fallback global)
     const cfg = await getSiteConfigForWallet(wallet, effectiveBrandKey, req).catch(() => null as any);
