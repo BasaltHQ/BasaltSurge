@@ -1687,7 +1687,7 @@ export function useStripeEmbeddedOnramp({
         const method = sessionResult.paymentMethod || null;
         const type = sessionResult.paymentDetails?.type || null;
 
-        const isAch = method === "us_bank_account" || type === "us_bank_account" || funding === "us_bank_account" || !!sessionResult.paymentDetails?.us_bank_account;
+        const isAch = resolvedFunding === "us_bank_account" || method === "us_bank_account" || type === "us_bank_account" || funding === "us_bank_account" || !!sessionResult.paymentDetails?.us_bank_account;
         if (isAch) {
           const bank = sessionResult.paymentDetails?.us_bank_account || sessionResult.paymentDetails?.payment_details?.us_bank_account;
           const bankName = bank?.bank_name || brand || "Bank Account";

@@ -3806,7 +3806,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       console.log("[STRIPE HEADLESS SUCCESS] Checkout completed with no issues. Session:", result.sessionId, "Tx:", result.txHash);
       // Funds are now in the split contract — receipt can be marked paid
       const txHash = result.txHash || "";
-      const isAch = txHash === "ach_pending" || stripeDetectedFunding === "us_bank_account";
+      const isAch = txHash === "ach_pending" || stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account" || receipt?.detectedCardFunding === "us_bank_account";
       const statusToPost = isAch ? "paid - ach pending" : "paid";
       setPaymentConfirmed({
         txHash,
@@ -4416,7 +4416,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [tpThemeApplied, currency]);
 
   // ─── ACH PENDING STATE ───
-  const isAchPending = receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending" || (stripeDetectedFunding === "us_bank_account" && headlessStep === "awaiting_funds");
+  const isAchPending = receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending" || ((stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account") && headlessStep === "awaiting_funds");
 
   // ─── STRIPE HEADLESS INLINE UI ───
   const stripeHeadlessUI = (headlessEmailPrompt || headlessActive || headlessInitiated) ? (
@@ -4589,7 +4589,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 </div>
                 <h3 className={`text-base font-bold mb-1.5 ${isLightText ? 'text-white' : 'text-black'}`}>Payment Complete</h3>
                 <p className={`text-xs ${shipEmail ? 'mb-2' : 'mb-6'} max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
-                  {stripeDetectedFunding === "us_bank_account"
+                  {stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account"
                     ? "Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance."
                     : "USDC has been transferred successfully."}
                 </p>
