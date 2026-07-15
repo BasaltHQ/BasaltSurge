@@ -254,6 +254,12 @@ export async function POST(req: NextRequest) {
     const employeeName = typeof body?.employeeName === "string" ? body.employeeName : undefined;
     const sessionId = typeof body?.sessionId === "string" ? body.sessionId : undefined;
     const stripeEmail = typeof body?.stripeEmail === "string" ? body.stripeEmail.trim() : "";
+    if (stripeEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(stripeEmail)) {
+      return NextResponse.json(
+        { error: "invalid_request", message: "stripeEmail_invalid" },
+        { status: 400, headers: { "x-correlation-id": correlationId } }
+      );
+    }
 
     // Optional redirect_url — buyer is navigated here after successful payment
     const rawRedirectUrl = String(body?.redirect_url || body?.redirectUrl || "").trim();

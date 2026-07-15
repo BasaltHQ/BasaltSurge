@@ -363,7 +363,8 @@ export async function POST(req: NextRequest) {
         receipt.lastPolledAt = Date.now();
         receipt.stripeSessionStatus = stripeStatus;
 
-        const isExpired = Date.now() - (receipt.createdAt || 0) > 24 * 60 * 60 * 1000;
+        const expirationLimit = isAch ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+        const isExpired = Date.now() - (receipt.createdAt || 0) > expirationLimit;
         const isRejected = stripeStatus === "rejected" || 
                            onrampData.transaction_details?.last_error === "transaction_failed" ||
                            onrampData.transaction_details?.last_error === "location_not_supported" ||
