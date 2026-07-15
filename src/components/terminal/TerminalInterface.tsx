@@ -384,7 +384,92 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
     const isManagerOrKeyholder = employeeRole === 'manager' || employeeRole === 'keyholder';
 
     return (
-        <div className="h-screen h-[var(--pp-vh)] flex flex-col overflow-hidden p-2 space-y-2 md:h-auto md:overflow-visible md:max-w-4xl md:mx-auto md:p-4 md:p-6 md:space-y-6 md:gap-0" style={{ backgroundColor: 'var(--tp-bg-primary)', color: 'var(--tp-text-primary)', fontFamily: tpTheme.fontFamily || undefined, paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}>
+        <div className="h-screen h-[var(--pp-vh)] flex flex-col overflow-hidden p-2 space-y-2 md:h-auto md:overflow-visible md:max-w-4xl md:mx-auto md:p-4 md:p-6 md:space-y-6 md:gap-0 tp-page-wrapper" style={{ backgroundColor: 'var(--tp-bg-primary)', color: 'var(--tp-text-primary)', fontFamily: tpTheme.fontFamily || undefined, paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}>
+            <style dangerouslySetInnerHTML={{ __html: `
+                /* Scale down heights and text on low height screens */
+                @media (max-height: 720px) {
+                    .tp-page-wrapper {
+                        padding: 0.5rem !important;
+                        margin-top: 0 !important;
+                        height: 100vh !important;
+                        height: var(--pp-vh, 100vh) !important;
+                        overflow: hidden !important;
+                    }
+                    .tp-grid-container {
+                        gap: 0.5rem !important;
+                        margin-top: 0.25rem !important;
+                    }
+                    .tp-btn-calc {
+                        height: 3.25rem !important;
+                        font-size: 1.15rem !important;
+                    }
+                    .tp-btn-row-item {
+                        height: 2.25rem !important;
+                        font-size: 0.75rem !important;
+                    }
+                    .tp-glass-amount {
+                        padding: 0.5rem !important;
+                    }
+                    .tp-glass-amount > div:first-child {
+                        font-size: 0.75rem !important;
+                    }
+                    .tp-glass-amount > div:last-child {
+                        font-size: 1.5rem !important;
+                        line-height: 2rem !important;
+                    }
+                    .tp-glass-details {
+                        padding: 0.75rem !important;
+                        gap: 0.5rem !important;
+                    }
+                    .tp-summary-list {
+                        margin-top: auto !important;
+                        padding-top: 0.25rem !important;
+                        font-size: 0.75rem !important;
+                    }
+                    .tp-desktop-generate-btn {
+                        height: 3rem !important;
+                        font-size: 0.875rem !important;
+                    }
+                }
+                @media (max-height: 600px) {
+                    .tp-page-wrapper {
+                        padding: 0.25rem !important;
+                    }
+                    .tp-grid-container {
+                        gap: 0.25rem !important;
+                    }
+                    .tp-btn-calc {
+                        height: 2.5rem !important;
+                        font-size: 1rem !important;
+                    }
+                    .tp-btn-row-item {
+                        height: 2rem !important;
+                        font-size: 0.7rem !important;
+                    }
+                    .tp-glass-amount {
+                        padding: 0.25rem !important;
+                    }
+                    .tp-glass-amount > div:first-child {
+                        font-size: 0.7rem !important;
+                    }
+                    .tp-glass-amount > div:last-child {
+                        font-size: 1.25rem !important;
+                        line-height: 1.5rem !important;
+                    }
+                    .tp-glass-details {
+                        padding: 0.5rem !important;
+                        gap: 0.25rem !important;
+                    }
+                    .tp-summary-list {
+                        padding-top: 0.125rem !important;
+                        font-size: 0.7rem !important;
+                    }
+                    .tp-desktop-generate-btn {
+                        height: 2.5rem !important;
+                        font-size: 0.8rem !important;
+                    }
+                }
+            `}} />
             <div className="tp-ambient" />
 
             {/* Dedicated Invisible Canvases strictly formatted for Native Hardware Image Buffers */}
@@ -446,10 +531,10 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                 </div>
             </div>
 
-            <div className="flex-1 min-h-0 flex flex-col space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-6 md:space-x-0 md:mt-0">
+            <div className="flex-1 min-h-0 flex flex-col space-y-2 md:space-y-0 md:grid md:grid-cols-2 md:gap-6 md:space-x-0 md:mt-0 tp-grid-container">
                 {/* Keypad */}
                 <div className="space-y-1 md:space-y-4">
-                    <div className="tp-glass p-3 md:p-6 text-center space-y-2">
+                    <div className="tp-glass p-3 md:p-6 text-center space-y-2 tp-glass-amount">
                         <div className="text-sm uppercase tracking-wider" style={{ color: 'var(--tp-text-secondary)' }}>Amount</div>
                         <div className="text-2xl md:text-4xl font-mono font-bold" style={{ color: 'var(--tp-text-primary)' }}>{formatCurrency(baseUsd, storeCurrency || "USD")}</div>
                     </div>
@@ -459,7 +544,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                             <button
                                 key={btn}
                                 onClick={() => { if (btn === "⌫") backspace(); else if (btn === ".") appendDigit("."); else appendDigit(String(btn)); }}
-                                className="h-16 md:h-24 text-2xl md:text-3xl font-semibold active:scale-95 transition-all tp-btn"
+                                className="h-16 md:h-24 text-2xl md:text-3xl font-semibold active:scale-95 transition-all tp-btn tp-btn-calc"
                                 style={{ background: 'var(--tp-bg-surface)', border: '1px solid var(--tp-border)', color: 'var(--tp-text-primary)' }}
                             >
                                 {btn}
@@ -467,14 +552,14 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                         ))}
                         <div className="col-span-3 flex space-x-2">
                             <select
-                                className="h-10 md:h-12 px-2 text-xs md:text-sm font-semibold tp-btn min-w-0 flex-shrink-0"
+                                className="h-10 md:h-12 px-2 text-xs md:text-sm font-semibold tp-btn min-w-0 flex-shrink-0 tp-btn-row-item"
                                 style={{ background: 'var(--tp-bg-surface)', border: '1px solid var(--tp-border)', color: 'var(--tp-text-primary)', maxWidth: '45%' }}
                                 value={terminalCurrency}
                                 onChange={e => setTerminalCurrency(e.target.value)}
                             >
                                 {SUPPORTED_CURRENCIES.map(c => <option key={c.code} value={c.code} style={{ background: 'var(--tp-bg-surface)', color: 'var(--tp-text-primary)' }}>{c.code} – {c.name}</option>)}
                             </select>
-                            <button onClick={clearAmount} className="flex-1 h-10 md:h-12 text-sm tp-btn hover:bg-red-900/20 hover:text-red-400 transition-colors" style={{ border: '1px solid var(--tp-border)', color: 'var(--tp-text-secondary)' }}>
+                            <button onClick={clearAmount} className="flex-1 h-10 md:h-12 text-sm tp-btn hover:bg-red-900/20 hover:text-red-400 transition-colors tp-btn-row-item" style={{ border: '1px solid var(--tp-border)', color: 'var(--tp-text-secondary)' }}>
                                 Clear
                             </button>
                         </div>
@@ -483,7 +568,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
 
                 {/* Details & Action */}
                 <div className="space-y-1 md:space-y-4 flex flex-col mt-2 md:mt-0">
-                    <div className="tp-glass p-3 md:p-4 space-y-2 md:space-y-4 md:flex-1">
+                    <div className="tp-glass p-3 md:p-4 space-y-2 md:space-y-4 md:flex-1 tp-glass-details">
                         <div>
                             <label className="text-xs font-semibold uppercase" style={{ color: 'var(--tp-text-secondary)' }}>Note / Label</label>
                             <input
@@ -495,7 +580,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                             />
                         </div>
 
-                        <div className="pt-2 md:pt-4 border-t mt-auto space-y-1">
+                        <div className="pt-2 md:pt-4 border-t mt-auto space-y-1 tp-summary-list">
                             <div className="flex justify-between items-center text-sm">
                                 <span className="text-muted-foreground">Base</span>
                                 <span>{formatCurrency(baseConverted, terminalCurrency)}</span>
@@ -526,7 +611,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                     <button
                         onClick={generateReceipt}
                         disabled={loading || baseUsd <= 0}
-                        className="hidden md:block w-full h-14 bg-primary text-primary-foreground rounded-xl font-bold text-lg shadow-lg hover:brightness-110 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none"
+                        className="hidden md:block w-full h-14 bg-primary text-primary-foreground rounded-xl font-bold text-lg shadow-lg hover:brightness-110 active:scale-95 transition-all disabled:opacity-50 disabled:pointer-events-none tp-desktop-generate-btn"
                     >
                         {loading ? "Creating..." : "Generate Payment QR"}
                     </button>
