@@ -197,10 +197,11 @@ export async function POST(req: NextRequest) {
           splitAddress = merchantWallet;
         }
 
+        const paymentDetailsType = String(onrampData.payment_details?.type || onrampData.payment_method_details?.type || "").toLowerCase();
         const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
         const cardFundingDetail = String(onrampData.payment_details?.card?.funding || "").toLowerCase();
         let cardFunding = receipt.detectedCardFunding || "";
-        if (paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
+        if (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
           cardFunding = "us_bank_account";
         } else if (cardFundingDetail) {
           cardFunding = cardFundingDetail;

@@ -1679,7 +1679,7 @@ export function useStripeEmbeddedOnramp({
         sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
       }
 
-      const hasCardInfo = !!(sessionResult.paymentDetails?.card || sessionResult.paymentMethod);
+      const hasCardInfo = !!(sessionResult.paymentDetails?.card || sessionResult.paymentDetails?.us_bank_account || sessionResult.paymentMethod || sessionResult.paymentDetails?.type);
       if (hasCardInfo) {
         const funding = sessionResult.paymentDetails?.card?.funding || null;
         const brand = sessionResult.paymentDetails?.card?.brand || null;
@@ -1687,7 +1687,7 @@ export function useStripeEmbeddedOnramp({
         const method = sessionResult.paymentMethod || null;
         const type = sessionResult.paymentDetails?.type || null;
 
-        const isAch = method === "us_bank_account" || type === "us_bank_account" || funding === "us_bank_account";
+        const isAch = method === "us_bank_account" || type === "us_bank_account" || funding === "us_bank_account" || !!sessionResult.paymentDetails?.us_bank_account;
         if (isAch) {
           const bank = sessionResult.paymentDetails?.us_bank_account || sessionResult.paymentDetails?.payment_details?.us_bank_account;
           const bankName = bank?.bank_name || brand || "Bank Account";

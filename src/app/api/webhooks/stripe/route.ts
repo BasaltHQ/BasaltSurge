@@ -143,10 +143,11 @@ export async function POST(req: NextRequest) {
     const { isDualSplitEnabled } = await import("@/lib/env");
     const splitModeFromMetadata = String(metadata?.splitMode || "").toLowerCase();
     const isDual = splitModeFromMetadata === "dual" ? true : (splitModeFromMetadata === "single" ? false : isDualSplitEnabled());
+    const paymentDetailsType = String(session?.payment_details?.type || session?.payment_method_details?.type || "").toLowerCase();
     const paymentMethod = String(session?.payment_method || "").toLowerCase();
     const cardFundingDetail = String(session?.payment_details?.card?.funding || "").toLowerCase();
     let cardFunding = "";
-    if (paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
+    if (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
       cardFunding = "us_bank_account";
     } else if (cardFundingDetail) {
       cardFunding = cardFundingDetail;

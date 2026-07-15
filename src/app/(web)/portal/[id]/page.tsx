@@ -2664,12 +2664,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
     if (feeMinusEnabled) {
+      const isAch = detectedCardFunding === "us_bank_account";
       const isCredit = detectedCardFunding === "credit";
-      const rate = isCredit ? 3.5 : 2.25;
+      const rate = isAch ? (achSpeed === "standard" ? 0.6 : 4.0) : (isCredit ? 3.5 : 2.25);
       return +(totalUsd / (1 + rate / 100)).toFixed(2);
     }
     return totalUsd;
-  }, [receipt, totalUsd, detectedCardFunding, feeMinusEnabled]);
+  }, [receipt, totalUsd, detectedCardFunding, feeMinusEnabled, achSpeed]);
 
   const getAmountForFunding = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
     if (!receipt) return 0;
