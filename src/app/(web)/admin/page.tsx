@@ -10049,7 +10049,72 @@ function TerminalPanel() {
   }
 
   return (
-    <div className="-mt-6 w-full h-[calc(100vh-116px)] p-4 md:p-8 flex flex-col gap-2 md:gap-6 overflow-hidden relative z-20">
+    <div className="-mt-6 w-full h-[calc(100vh-116px)] p-4 md:p-8 flex flex-col gap-2 md:gap-6 overflow-hidden relative z-20 adm-terminal-wrapper">
+      <style dangerouslySetInnerHTML={{ __html: `
+        /* Scale down heights and text on low height screens / 200% zoom levels */
+        @media (max-height: 800px) {
+          .adm-terminal-wrapper {
+            padding: 0.5rem !important;
+            gap: 0.5rem !important;
+            height: auto !important;
+            min-height: auto !important;
+            overflow-y: auto !important;
+          }
+          .adm-terminal-wrapper h1 {
+            font-size: 1.5rem !important;
+          }
+          .adm-terminal-grid-container {
+            min-height: auto !important;
+            height: auto !important;
+            flex: 1 1 auto !important;
+          }
+          .adm-terminal-pane-left {
+            padding: 0.75rem !important;
+            height: auto !important;
+            min-height: auto !important;
+          }
+          .adm-terminal-pane-right {
+            padding: 0.75rem !important;
+            height: auto !important;
+            min-height: auto !important;
+          }
+          .adm-terminal-amount-box {
+            padding: 0.5rem !important;
+          }
+          .adm-terminal-amount-text {
+            font-size: 1.75rem !important;
+            margin-bottom: 0.5rem !important;
+          }
+          .adm-terminal-btn-calc {
+            height: 2.75rem !important;
+            min-height: 2.75rem !important;
+            font-size: 1.15rem !important;
+          }
+          .adm-terminal-btn-clear {
+            height: 2.25rem !important;
+            margin-top: 0.5rem !important;
+          }
+          .adm-terminal-summary-container {
+            padding: 0.75rem !important;
+          }
+          .adm-terminal-summary-title {
+            margin-bottom: 0.5rem !important;
+          }
+          .adm-terminal-summary-totals {
+            font-size: 1.25rem !important;
+          }
+        }
+        @media (max-height: 600px) {
+          .adm-terminal-btn-calc {
+            height: 2.25rem !important;
+            min-height: 2.25rem !important;
+            font-size: 1rem !important;
+          }
+          .adm-terminal-amount-text {
+            font-size: 1.25rem !important;
+          }
+        }
+      `}} />
       {/* Sleek background glow */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-32 bg-[var(--pp-secondary)] opacity-10 blur-[100px] pointer-events-none" />
 
@@ -10065,8 +10130,8 @@ function TerminalPanel() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 md:gap-8 relative z-10 flex-1 min-h-0">
-        <div className="lg:col-span-7 rounded-2xl md:rounded-3xl bg-foreground/[0.02] border border-foreground/[0.04] p-3 md:p-8 backdrop-blur-sm shadow-2xl flex flex-col min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 md:gap-8 relative z-10 flex-1 min-h-0 adm-terminal-grid-container">
+        <div className="lg:col-span-7 rounded-2xl md:rounded-3xl bg-foreground/[0.02] border border-foreground/[0.04] p-3 md:p-8 backdrop-blur-sm shadow-2xl flex flex-col min-h-0 adm-terminal-pane-left">
           <div className="text-[9px] md:text-[10px] uppercase font-bold tracking-[0.2em] text-muted-foreground mb-2 md:mb-6 flex items-center gap-2 md:gap-3 shrink-0">
             <div className="w-1.5 h-1.5 rounded-full bg-[var(--pp-secondary)]" />
             Enter Details
@@ -10083,14 +10148,14 @@ function TerminalPanel() {
             </div>
             <div className="flex flex-col flex-1 min-h-0">
               <label className="text-[9px] md:text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-1 md:mb-2 block ml-1 shrink-0">Amount ({terminalCurrency})</label>
-              <div className="rounded-xl md:rounded-2xl p-2 md:p-6 bg-gradient-to-b from-foreground/[0.01] to-transparent border border-foreground/[0.03] flex flex-col flex-1 min-h-0">
-                <div className="text-4xl md:text-5xl font-extrabold text-center mb-2 md:mb-6 text-[var(--pp-secondary)] tracking-tighter drop-shadow-sm shrink-0">{formatCurrency(parseAmount(), terminalCurrency)}</div>
+              <div className="rounded-xl md:rounded-2xl p-2 md:p-6 bg-gradient-to-b from-foreground/[0.01] to-transparent border border-foreground/[0.03] flex flex-col flex-1 min-h-0 adm-terminal-amount-box">
+                <div className="text-4xl md:text-5xl font-extrabold text-center mb-2 md:mb-6 text-[var(--pp-secondary)] tracking-tighter drop-shadow-sm shrink-0 adm-terminal-amount-text">{formatCurrency(parseAmount(), terminalCurrency)}</div>
                 <div className="grid grid-cols-3 gap-1 md:gap-3 flex-1 min-h-0">
                   {["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ".", "⌫"].map((d, idx) => (
                     <button
                       key={idx}
                       type="button"
-                      className="h-full min-h-[2.5rem] md:min-h-[3.5rem] rounded-lg md:rounded-xl border-none text-lg md:text-xl font-medium bg-foreground/[0.03] hover:bg-foreground/[0.06] active:bg-foreground/[0.1] active:scale-95 transition-all text-foreground/90 shadow-sm flex items-center justify-center"
+                      className="h-full min-h-[2.5rem] md:min-h-[3.5rem] rounded-lg md:rounded-xl border-none text-lg md:text-xl font-medium bg-foreground/[0.03] hover:bg-foreground/[0.06] active:bg-foreground/[0.1] active:scale-95 transition-all text-foreground/90 shadow-sm flex items-center justify-center adm-terminal-btn-calc"
                       onClick={() => {
                         if (d === "⌫") backspace();
                         else if (d === ".") appendDigit(".");
@@ -10100,7 +10165,7 @@ function TerminalPanel() {
                       {d}
                     </button>
                   ))}
-                  <button type="button" className="col-span-3 h-8 md:h-12 shrink-0 rounded-lg md:rounded-xl border-none text-[9px] md:text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground bg-foreground/[0.02] hover:bg-foreground/[0.05] hover:text-foreground active:scale-[0.98] transition-all mt-1 md:mt-2" onClick={clearAmount}>
+                  <button type="button" className="col-span-3 h-8 md:h-12 shrink-0 rounded-lg md:rounded-xl border-none text-[9px] md:text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground bg-foreground/[0.02] hover:bg-foreground/[0.05] hover:text-foreground active:scale-[0.98] transition-all mt-1 md:mt-2 adm-terminal-btn-clear" onClick={clearAmount}>
                     Clear Amount
                   </button>
                 </div>
@@ -10109,7 +10174,7 @@ function TerminalPanel() {
           </div>
         </div>
 
-        <div className="lg:col-span-5 rounded-2xl md:rounded-3xl bg-foreground/[0.02] border border-foreground/[0.04] p-3 md:p-8 backdrop-blur-sm shadow-2xl flex flex-col relative overflow-hidden min-h-0">
+        <div className="lg:col-span-5 rounded-2xl md:rounded-3xl bg-foreground/[0.02] border border-foreground/[0.04] p-3 md:p-8 backdrop-blur-sm shadow-2xl flex flex-col relative overflow-hidden min-h-0 adm-terminal-pane-right">
           <div className="absolute top-0 right-0 w-32 h-32 bg-[var(--pp-secondary)] opacity-5 blur-[80px] pointer-events-none" />
 
           <div className="text-[9px] md:text-[10px] uppercase font-bold tracking-[0.2em] text-muted-foreground mb-4 md:mb-6 flex items-center gap-2 md:gap-3 relative z-10 shrink-0">
@@ -10220,9 +10285,9 @@ function TerminalPanel() {
                 <span className="text-[10px] md:text-2xl font-medium">{formatCurrency(processingFeeConverted, terminalCurrency)}</span>
               </div>
               <div className="h-px bg-foreground/5 my-1 md:my-6" />
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] md:text-lg font-extrabold uppercase tracking-[0.2em] text-foreground">Total</span>
-                <span className="text-base md:text-5xl lg:text-6xl font-extrabold tracking-tight text-[var(--pp-secondary)]">{formatCurrency(totalConverted, terminalCurrency)}</span>
+              <div className="flex items-center justify-between gap-4 min-w-0">
+                <span className="text-[9px] md:text-lg font-extrabold uppercase tracking-[0.2em] text-foreground shrink-0">Total</span>
+                <span className="text-base md:text-4xl lg:text-5xl font-extrabold tracking-tight text-[var(--pp-secondary)] truncate text-right adm-terminal-summary-totals" title={formatCurrency(totalConverted, terminalCurrency)}>{formatCurrency(totalConverted, terminalCurrency)}</span>
               </div>
               {terminalCurrency !== "USD" && (
                 <div className="flex items-center justify-between mt-1 pt-1 border-t border-foreground/5">

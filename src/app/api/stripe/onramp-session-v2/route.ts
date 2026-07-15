@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
       params.append("wallet_address", walletAddress);
     }
 
-    const settlementSpeed = String(body.settlementSpeed || "").trim().toLowerCase();
+    const settlementSpeed = String(body.settlementSpeed || "standard").trim().toLowerCase();
     if (settlementSpeed === "standard" || settlementSpeed === "instant") {
       params.append("settlement_speed", settlementSpeed);
     }

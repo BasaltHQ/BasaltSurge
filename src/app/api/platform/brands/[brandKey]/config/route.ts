@@ -378,53 +378,80 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ brandKey: s
     // Check in-memory cache first
     const now = Date.now();
     const cached = brandConfigGetCache[key];
+    let responseData: any = null;
+
     if (cached && (now - cached.ts) < BRAND_CONFIG_GET_TTL) {
-      return headerJson(cached.data);
-    }
+      responseData = cached.data;
+    } else {
+      let overrides = await readBrandOverrides(key);
 
-    let overrides = await readBrandOverrides(key);
-
-    // Auto-correct favicon to proper .ico format - ONLY when explicitly requested via ?autoFavicon=1
-    // This prevents cascading HTTP calls on every brand config fetch
-    const autoFavicon = req.nextUrl.searchParams.get("autoFavicon") === "1";
-    if (autoFavicon) {
-      try {
-        const currentFav = String(overrides?.logos?.favicon || "").trim();
-        const currentApp = String(overrides?.logos?.app || "").trim();
-        const needsIco = !!currentFav && !/\.ico($|\?)/i.test(currentFav);
-        if (needsIco || (!currentFav && currentApp)) {
-          const sourceUrl = needsIco ? currentFav : currentApp;
-          const base = new URL(req.url).origin;
-          const favRes = await fetch(`${base}/api/media/favicon`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: sourceUrl, shape: (overrides?.colors ? "square" : "square") }),
-          });
-          const favJson = await favRes.json().catch(() => ({}));
-          const icoUrl = String((favJson as any)?.faviconIco || "");
-          if (favRes.ok && icoUrl) {
-            // Persist favicon ICO URL back to brand overrides doc
-            const c = await getContainer();
-            const existing = overrides || (await readBrandOverrides(key)) || { id: "brand:config", wallet: key, type: "brand_config" } as any;
-            const nextDoc = {
-              ...existing,
-              logos: { ...(existing?.logos || {}), favicon: icoUrl },
-              updatedAt: Date.now(),
-            } as any;
-            await c.items.upsert(nextDoc);
-            overrides = nextDoc;
+      // Auto-correct favicon to proper .ico format - ONLY when explicitly requested via ?autoFavicon=1
+      // This prevents cascading HTTP calls on every brand config fetch
+      const autoFavicon = req.nextUrl.searchParams.get("autoFavicon") === "1";
+      if (autoFavicon) {
+        try {
+          const currentFav = String(overrides?.logos?.favicon || "").trim();
+          const currentApp = String(overrides?.logos?.app || "").trim();
+          const needsIco = !!currentFav && !/\.ico($|\?)/i.test(currentFav);
+          if (needsIco || (!currentFav && currentApp)) {
+            const sourceUrl = needsIco ? currentFav : currentApp;
+            const base = new URL(req.url).origin;
+            const favRes = await fetch(`${base}/api/media/favicon`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url: sourceUrl, shape: (overrides?.colors ? "square" : "square") }),
+            });
+            const favJson = await favRes.json().catch(() => ({}));
+            const icoUrl = String((favJson as any)?.faviconIco || "");
+            if (favRes.ok && icoUrl) {
+              // Persist favicon ICO URL back to brand overrides doc
+              const c = await getContainer();
+              const existing = overrides || (await readBrandOverrides(key)) || { id: "brand:config", wallet: key, type: "brand_config" } as any;
+              const nextDoc = {
+                ...existing,
+                logos: { ...(existing?.logos || {}), favicon: icoUrl },
+                updatedAt: Date.now(),
+              } as any;
+              await c.items.upsert(nextDoc);
+              overrides = nextDoc;
+            }
           }
-        }
-      } catch { }
+        } catch { }
+      }
+
+      const effective = toEffectiveBrand(key, overrides || undefined);
+      responseData = { brandKey: key, brand: effective, overrides: overrides || undefined };
+
+      // Cache the raw, full response
+      brandConfigGetCache[key] = { data: responseData, ts: Date.now() };
     }
 
-    const effective = toEffectiveBrand(key, overrides || undefined);
-    const responseData = { brandKey: key, brand: effective, overrides: overrides || undefined };
+    // Determine authorization per request (uncached dynamic check)
+    let showSecrets = false;
+    try {
+      const auth = await requireThirdwebAuth(req);
+      const roles = Array.isArray(auth.roles) ? auth.roles : [];
+      if (roles.includes("admin")) {
+        showSecrets = true;
+      }
+    } catch {
+      // ignore auth error
+    }
 
-    // Cache the successful response
-    brandConfigGetCache[key] = { data: responseData, ts: Date.now() };
+    // Build the final response, cloning overrides to strip secrets if unauthenticated
+    let finalOverrides = responseData.overrides ? { ...responseData.overrides } : undefined;
+    if (finalOverrides && !showSecrets) {
+      finalOverrides = { ...finalOverrides };
+      delete finalOverrides.thirdwebSecretKey;
+      delete finalOverrides.thirdwebAuthEndpointSecret;
+    }
 
-    return headerJson(responseData);
+    const finalResponse = {
+      ...responseData,
+      overrides: finalOverrides
+    };
+
+    return headerJson(finalResponse);
   } catch (e: any) {
     const effective = toEffectiveBrand(key, undefined);
     const degradedData = { brandKey: key, brand: effective, degraded: true, reason: e?.message || "cosmos_unavailable" };

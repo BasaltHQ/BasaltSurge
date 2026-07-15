@@ -438,10 +438,11 @@ export async function POST(req: NextRequest) {
         }
 
         // Verify card funding type
+        const paymentDetailsType = String(onrampData.payment_details?.type || onrampData.payment_method_details?.type || "").toLowerCase();
         const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
         const cardFundingDetail = String(onrampData.payment_details?.card?.funding || "").toLowerCase();
         let cardFunding = receipt.detectedCardFunding || "";
-        if (paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
+        if (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
           cardFunding = "us_bank_account";
         } else if (cardFundingDetail) {
           cardFunding = cardFundingDetail;
@@ -603,9 +604,10 @@ export async function POST(req: NextRequest) {
               );
               if (response.ok) {
                 const data = await response.json();
+                const paymentDetailsType = String(data.payment_details?.type || data.payment_method_details?.type || "").toLowerCase();
                 const paymentMethod = String(data.payment_method || "").toLowerCase();
                 const cardFundingDetail = String(data.payment_details?.card?.funding || "").toLowerCase();
-                if (paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
+                if (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
                   detectedCardFunding = "us_bank_account";
                   isCreditCard = false;
                 } else if (cardFundingDetail) {

@@ -245,7 +245,11 @@ async function runBackgroundPoll(params: {
 
       if (status === "fulfillment_complete") {
         resolvedStatus = "success";
-        const stripeFunding = data.payment_details?.card?.funding || data.payment_method_details?.card?.funding;
+        const paymentDetailsType = String(data.payment_details?.type || data.payment_method_details?.type || "").toLowerCase();
+        const paymentMethod = String(data.payment_method || "").toLowerCase();
+        const stripeFunding = (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach"))
+          ? "us_bank_account"
+          : (data.payment_details?.card?.funding || data.payment_method_details?.card?.funding);
         const resolvedFunding = stripeFunding || detectedCardFunding;
         isCreditCard = resolvedFunding === "credit" || resolvedFunding === null || resolvedFunding === undefined;
         break;

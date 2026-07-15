@@ -104,8 +104,12 @@ export async function POST(req: NextRequest) {
     const expectedUsd = typeof body.expectedUsd === "number" ? Number(body.expectedUsd) : undefined;
     const stripeSessionId = typeof body.stripeSessionId === "string" ? String(body.stripeSessionId).trim() : undefined;
     const customerEmail = typeof body.customerEmail === "string" ? String(body.customerEmail).trim().toLowerCase() : undefined;
-    const detectedCardFunding = typeof body.detectedCardFunding === "string" ? String(body.detectedCardFunding).trim().toLowerCase() : undefined;
-    const isCreditCard = typeof body.isCreditCard === "boolean" ? body.isCreditCard : undefined;
+    let detectedCardFunding = typeof body.detectedCardFunding === "string" ? String(body.detectedCardFunding).trim().toLowerCase() : undefined;
+    let isCreditCard = typeof body.isCreditCard === "boolean" ? body.isCreditCard : undefined;
+    if (status === "paid - ach pending" || status === "ach_pending") {
+      detectedCardFunding = "us_bank_account";
+      isCreditCard = false;
+    }
     const parentUrl = typeof body.parentUrl === "string" ? String(body.parentUrl).trim() : undefined;
     const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "127.0.0.1";
     let brandKey: string | undefined = undefined;
