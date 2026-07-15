@@ -162,7 +162,14 @@ export async function POST(req: NextRequest) {
       receipt.stripeSessionStatus = stripeStatus;
       receipt.lastUpdatedAt = Date.now();
 
-      const isExpired = Date.now() - (receipt.createdAt || 0) > 24 * 60 * 60 * 1000;
+      const isAch = receipt.detectedCardFunding === "us_bank_account" || 
+                    (Array.isArray(receipt.customerSessions) && receipt.customerSessions.some((s: any) => 
+                      s.paymentMethodDetails?.type === "us_bank_account" || 
+                      s.paymentMethodDetails?.paymentMethod === "us_bank_account"
+                    ));
+
+      const expirationLimit = isAch ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+      const isExpired = Date.now() - (receipt.createdAt || 0) > expirationLimit;
       const isRejected = stripeStatus === "rejected" || 
                          onrampData.transaction_details?.last_error === "transaction_failed" ||
                          onrampData.transaction_details?.last_error === "location_not_supported" ||
