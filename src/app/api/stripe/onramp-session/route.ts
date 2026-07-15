@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
     params.append("destination_currency", destinationCurrency);
     params.append("destination_network", "base");
     params.append("lock_wallet_address", "true");
+    params.append("settlement_speed", "standard");
 
     // Pre-populate source amount if provided (USD)
     if (amount && Number(amount) > 0) {

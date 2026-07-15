@@ -1293,7 +1293,7 @@ export function useStripeEmbeddedOnramp({
     const execute = async (amt?: number): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
       try {
         const fundingTypeToUse = funding !== undefined ? funding : detectedCardFunding;
-        const settlementSpeed = fundingTypeToUse === "us_bank_account" ? "standard" : "instant";
+        const settlementSpeed = "standard";
 
         const sessionRes = await fetch("/api/stripe/onramp-session-v2", {
           method: "POST",
