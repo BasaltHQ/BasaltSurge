@@ -10285,9 +10285,9 @@ function TerminalPanel() {
                 <span className="text-[10px] md:text-2xl font-medium">{formatCurrency(processingFeeConverted, terminalCurrency)}</span>
               </div>
               <div className="h-px bg-foreground/5 my-1 md:my-6" />
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] md:text-lg font-extrabold uppercase tracking-[0.2em] text-foreground">Total</span>
-                <span className="text-base md:text-5xl lg:text-6xl font-extrabold tracking-tight text-[var(--pp-secondary)]">{formatCurrency(totalConverted, terminalCurrency)}</span>
+              <div className="flex items-center justify-between gap-4 min-w-0">
+                <span className="text-[9px] md:text-lg font-extrabold uppercase tracking-[0.2em] text-foreground shrink-0">Total</span>
+                <span className="text-base md:text-4xl lg:text-5xl font-extrabold tracking-tight text-[var(--pp-secondary)] truncate text-right adm-terminal-summary-totals" title={formatCurrency(totalConverted, terminalCurrency)}>{formatCurrency(totalConverted, terminalCurrency)}</span>
               </div>
               {terminalCurrency !== "USD" && (
                 <div className="flex items-center justify-between mt-1 pt-1 border-t border-foreground/5">
