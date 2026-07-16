@@ -217,7 +217,9 @@ export async function POST(req: NextRequest) {
     let failed = 0;
     let skipped = 0;
     const results: any[] = [];
+    const eligibleReceipts: any[] = [];
 
+    // Phase 1: Stripe Polling & Failure handling (filters out receipts that aren't completed yet)
     for (const receipt of stuckReceipts) {
       const receiptId = receipt.receiptId || receipt.id;
       const sessionId = receipt.stripeSessionId;
@@ -453,10 +455,8 @@ export async function POST(req: NextRequest) {
         }
         const isCredit = cardFunding === "credit" || receipt.isCreditCard === true;
 
-        // Resolve target split address with support for both checkout and webhook strategies
+        // Resolve target split address
         let targetSplitAddress = splitAddress;
-
-        // 1. Try to find the resolved split address from the Stripe webhook event in Cosmos DB
         try {
           const eventQuery = {
             query: "SELECT * FROM c WHERE c.type = 'payment_event_stripe_onramp' AND c.sessionId = @sessionId AND c.status = 'fulfillment_complete'",
@@ -472,7 +472,6 @@ export async function POST(req: NextRequest) {
           console.warn(`[cron/reconcile-stuck] Failed to query webhook event for split address:`, eventErr);
         }
 
-        // 2. If not resolved from webhook event, fallback to standard card-type checks
         if (!targetSplitAddress || targetSplitAddress === merchantWallet) {
           const isCreditCardType = cardFunding === "credit" || isCredit;
           const isDual = siteConfig?.isDualSplitEnabled || false;
@@ -484,227 +483,410 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Connect to guest EOA to check balance
+        // Add to eligible candidates list for Phase 2 processing
+        eligibleReceipts.push({
+          receipt,
+          receiptId,
+          sessionId,
+          email,
+          merchantWallet,
+          amount,
+          brandKey,
+          targetSplitAddress,
+          brandTwClient,
+          authEndpointSecret,
+          onrampData,
+          cardFunding,
+          isCredit
+        });
+
+      } catch (err: any) {
+        failed++;
+        console.error(`[cron/reconcile-stuck] Error querying Stripe status for receipt ${receiptId}:`, err);
+        await logCronError({
+          receiptId,
+          action: "check_stripe_status",
+          message: err.message || "Unknown error",
+          stack: err.stack,
+        });
+        results.push({ receiptId, status: "failed", error: err.message || "Unknown error" });
+      }
+    }
+
+    // Group eligible candidates by guest wallet credentials (email + brandKey)
+    const eoaGroups: Record<string, typeof eligibleReceipts> = {};
+    for (const er of eligibleReceipts) {
+      const groupKey = `${er.email.trim().toLowerCase()}:${(er.brandKey || "").trim().toLowerCase()}`;
+      if (!eoaGroups[groupKey]) {
+        eoaGroups[groupKey] = [];
+      }
+      eoaGroups[groupKey].push(er);
+    }
+
+    // Phase 2: Connect, group by target split, execute batched sweeps & self-healing
+    for (const groupKey of Object.keys(eoaGroups)) {
+      const groupReceipts = eoaGroups[groupKey];
+      const first = groupReceipts[0];
+      const email = first.email;
+      const brandKey = first.brandKey;
+      const brandTwClient = first.brandTwClient;
+      const authEndpointSecret = first.authEndpointSecret;
+
+      let guestAddress = "";
+      let balance = BigInt(0);
+
+      try {
         const verificationToken = markEmailVerified(email, authEndpointSecret);
         const wallet = inAppWallet({
           auth: { options: ["auth_endpoint" as any] },
           executionMode: { mode: "EIP7702", sponsorGas: true },
         });
 
-        const account = await wallet.connect({
+        const brandTwAccount = await wallet.connect({
           client: brandTwClient,
           chain: base,
           strategy: "auth_endpoint" as any,
           payload: JSON.stringify({ email, verificationToken, brandKey: brandKey || "" }),
         });
 
-        const guestAddress = account.address;
+        guestAddress = brandTwAccount.address;
+
         const usdcContract = getContract({
           client: brandTwClient,
           chain: base,
           address: BASE_USDC_ADDRESS,
         });
 
-        let balance = await readContract({
+        balance = await readContract({
           contract: usdcContract,
           method: "function balanceOf(address account) view returns (uint256)",
           params: [guestAddress],
         });
 
-        console.log(`[cron/reconcile-stuck] Receipt ${receiptId}: Guest EOA ${guestAddress} balance: ${balance.toString()} units.`);
+        console.log(`[cron/reconcile-stuck] EOA Group ${groupKey} (${guestAddress}) balance: ${balance.toString()} units.`);
+      } catch (eoaErr: any) {
+        console.error(`[cron/reconcile-stuck] Failed to resolve EOA address/balance for group ${groupKey}:`, eoaErr);
+        for (const er of groupReceipts) {
+          failed++;
+          results.push({ receiptId: er.receiptId, status: "failed", reason: "eoa_connection_failed", details: eoaErr.message });
+        }
+        continue;
+      }
 
-        let emailToSweep = email;
-        let guestAddressToSweep = guestAddress;
+      // Group groupReceipts further by targetSplitAddress to execute batched transfers
+      const splitGroups: Record<string, typeof eligibleReceipts> = {};
+      for (const er of groupReceipts) {
+        const splitAddr = er.targetSplitAddress.toLowerCase();
+        if (!splitGroups[splitAddr]) {
+          splitGroups[splitAddr] = [];
+        }
+        splitGroups[splitAddr].push(er);
+      }
 
-        // Self-Healing: Check if the Stripe session's verified customer email is different and has a balance
-        const stripeEmail = onrampData.customer_information?.email || "";
-        if (balance === BigInt(0) && stripeEmail && stripeEmail.trim().toLowerCase() !== email.trim().toLowerCase()) {
-          console.log(`[cron/reconcile-stuck] Receipt ${receiptId}: Balance is 0 for receipt email ${email}. Checking Stripe session email ${stripeEmail}...`);
+      const splitAddresses = Object.keys(splitGroups);
+
+      for (let i = 0; i < splitAddresses.length; i++) {
+        const targetSplitAddress = splitAddresses[i];
+        const subGroupReceipts = splitGroups[targetSplitAddress];
+        const totalAmount = subGroupReceipts.reduce((sum, er) => sum + er.amount, 0);
+
+        const isLastSplit = (i === splitAddresses.length - 1);
+        const sweepAll = isLastSplit;
+
+        if (balance > BigInt(0)) {
+          // Trigger precise sweep
           try {
-            const stripeVerificationToken = markEmailVerified(stripeEmail, authEndpointSecret);
-            const stripeWallet = inAppWallet({
-              auth: { options: ["auth_endpoint" as any] },
-              executionMode: { mode: "EIP7702", sponsorGas: true },
-            });
+            console.log(`[cron/reconcile-stuck] Triggering batched gasless sweep of $${totalAmount} to ${targetSplitAddress} (sweepAll: ${sweepAll})`);
+            const txHash = await executeGaslessTransferServer(
+              email,
+              targetSplitAddress,
+              totalAmount,
+              brandKey,
+              sweepAll
+            );
 
-            const stripeAccount = await stripeWallet.connect({
-              client: brandTwClient,
-              chain: base,
-              strategy: "auth_endpoint" as any,
-              payload: JSON.stringify({ email: stripeEmail, verificationToken: stripeVerificationToken, brandKey: brandKey || "" }),
-            });
-
-            const stripeGuestAddress = stripeAccount.address;
-            const stripeBalance = await readContract({
-              contract: usdcContract,
-              method: "function balanceOf(address account) view returns (uint256)",
-              params: [stripeGuestAddress],
-            });
-
-            console.log(`[cron/reconcile-stuck] Receipt ${receiptId}: Stripe email EOA ${stripeGuestAddress} balance: ${stripeBalance.toString()} units.`);
-            if (stripeBalance > BigInt(0)) {
-              emailToSweep = stripeEmail;
-              guestAddressToSweep = stripeGuestAddress;
-              balance = stripeBalance;
-              console.log(`[cron/reconcile-stuck] Mismatch resolved: Sweeping from Stripe email ${stripeEmail} instead of receipt email ${email}`);
+            if (!txHash) {
+              throw new Error("Gasless transfer failed to return a transaction hash");
             }
-          } catch (stripeCheckErr: any) {
-            console.error(`[cron/reconcile-stuck] Failed to check Stripe email wallet for ${receiptId}:`, stripeCheckErr.message);
+
+            // Update balance dynamically for subsequent target splits in this EOA group
+            const transferredUnits = BigInt(Math.floor(totalAmount * 1_000_000));
+            if (sweepAll) {
+              balance = BigInt(0);
+            } else if (balance > transferredUnits) {
+              balance -= transferredUnits;
+            } else {
+              balance = BigInt(0);
+            }
+
+            // Update all receipts in this sub-group to paid
+            for (const er of subGroupReceipts) {
+              const r = er.receipt;
+              r.status = "paid";
+              r.transactionHash = txHash;
+              r.transactionTimestamp = Date.now();
+              r.lastUpdatedAt = Date.now();
+              r.statusHistory = Array.isArray(r.statusHistory)
+                ? [...r.statusHistory, { status: "paid", ts: Date.now() }]
+                : [{ status: "paid", ts: Date.now() }];
+              r.ttl = -1;
+
+              let finalReceipt = r;
+              try {
+                const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
+                const { readBrandOverridesCached } = await import("@/lib/brand-config");
+                const siteConfig = await getSiteConfigForWallet(er.merchantWallet, er.brandKey);
+                const brandConfigDoc = er.brandKey ? await readBrandOverridesCached(er.brandKey) : null;
+                const funding = (er.cardFunding === "credit" || er.isCredit === true)
+                  ? "credit"
+                  : (er.cardFunding === "us_bank_account" ? "us_bank_account" : "debit");
+                
+                if (siteConfig) {
+                  finalReceipt = recalculateReceiptForCardFunding(r, funding, siteConfig, brandConfigDoc);
+                }
+              } catch (recalcErr) {
+                console.error(`[cron/reconcile-stuck] Recalc error for ${er.receiptId}:`, recalcErr);
+              }
+
+              await container.items.upsert(finalReceipt);
+              succeeded++;
+
+              // Send confirmation email
+              try {
+                const siteConfig = await getSiteConfigForWallet(er.merchantWallet);
+                const brandName = siteConfig?.theme?.brandName || "PortalPay";
+                const brandColor = siteConfig?.theme?.primaryColor || "#35ff7c";
+                const logoUrl = siteConfig?.theme?.brandLogoUrl || "";
+
+                let absoluteLogoUrl = logoUrl;
+                if (absoluteLogoUrl && absoluteLogoUrl.startsWith("/")) {
+                  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://surge.basalthq.com";
+                  absoluteLogoUrl = `${baseUrl}${absoluteLogoUrl}`;
+                }
+
+                const htmlContent = generateHtmlEmailTemplate({
+                  brandName,
+                  brandColor,
+                  logoUrl: absoluteLogoUrl || undefined,
+                  title: "Payment Reconciled",
+                  subtitle: `Receipt #${er.receiptId}`,
+                  message: `We detected your transaction of $${er.amount.toFixed(2)} was completed on-chain but delayed due to temporary network congestion. It has now been successfully processed and reconciled.`,
+                  details: [
+                    { label: "Receipt ID", value: er.receiptId },
+                    { label: "Amount", value: `$${er.amount.toFixed(2)}` },
+                    { label: "Status", value: "Reconciled & Paid" },
+                    { label: "Tx Hash", value: txHash },
+                  ],
+                  ctaText: "View Receipt Online",
+                  ctaUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001"}/portal/${er.receiptId}?recipient=${encodeURIComponent(er.merchantWallet)}`,
+                });
+
+                await sendEmail({
+                  to: email,
+                  subject: `[${brandName}] Payment Reconciled - Receipt #${er.receiptId}`,
+                  html: htmlContent,
+                  fromName: `${brandName} Support`,
+                  brandKey: brandKey,
+                });
+              } catch (emailErr) {
+                console.error(`[cron/reconcile-stuck] Failed to send email for ${er.receiptId}:`, emailErr);
+              }
+
+              results.push({ receiptId: er.receiptId, status: "success", txHash });
+            }
+
+          } catch (txErr: any) {
+            console.error(`[cron/reconcile-stuck] Sweep transaction failed for EOA ${guestAddress} to split ${targetSplitAddress}:`, txErr);
+            for (const er of subGroupReceipts) {
+              failed++;
+              results.push({ receiptId: er.receiptId, status: "failed", reason: "sweep_tx_failed", details: txErr.message });
+            }
           }
-        }
-
-        if (balance === BigInt(0)) {
-          // If balance is 0, check if we already reconciled it or if there was no deposit
-          skipped++;
-          results.push({ receiptId, status: "skipped", reason: "zero_balance_guest_wallet" });
-          continue;
-        }
-
-        // Trigger gasless transfer sweep using the resolved email
-        const txHash = await executeGaslessTransferServer(
-          emailToSweep,
-          targetSplitAddress,
-          amount,
-          brandKey
-        );
-
-        if (!txHash) {
-          throw new Error("Gasless transfer failed to return a transaction hash");
-        }
-
-        // Update receipt in Cosmos DB
-        receipt.status = "paid";
-        receipt.transactionHash = txHash;
-        receipt.transactionTimestamp = Date.now();
-        receipt.lastUpdatedAt = Date.now();
-        receipt.statusHistory = Array.isArray(receipt.statusHistory)
-          ? [...receipt.statusHistory, { status: "paid", ts: Date.now() }]
-          : [{ status: "paid", ts: Date.now() }];
-        receipt.ttl = -1; // disable expiration
-
-
-        // Persist card funding if resolved from Stripe
-        let isCreditCard = receipt.isCreditCard;
-        let detectedCardFunding = receipt.detectedCardFunding;
-
-        if (receipt.stripeSessionId && (!detectedCardFunding || isCreditCard === undefined)) {
+        } else {
+          // Balance is 0! Reconcile via self-healing from recently paid receipt
           try {
-            const stripeKey = process.env.STRIPE_API_KEY;
-            if (stripeKey) {
-              const STRIPE_API_VERSION = "2026-06-24.dahlia";
-              const response = await fetch(
-                `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(receipt.stripeSessionId)}`,
-                {
-                  method: "GET",
-                  headers: {
-                    "Authorization": `Bearer ${stripeKey}`,
-                    "Stripe-Version": STRIPE_API_VERSION,
-                  },
+            console.log(`[cron/reconcile-stuck] EOA balance is 0. Checking database for matching paid transactions to self-heal...`);
+            
+            const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+            
+            // Query Cosmos DB for paid receipts under same EOA/brandKey
+            const paidQuerySpec = {
+              query: "SELECT * FROM c WHERE c.type = 'receipt' AND c.status = 'paid' AND IS_DEFINED(c.transactionHash) AND c.transactionHash != null AND c.transactionHash != '' AND (c.customerEmail = @email OR c.email = @email OR c.stripeEmail = @email) AND c.brandKey = @brandKey",
+              parameters: [
+                { name: "@email", value: email },
+                { name: "@brandKey", value: brandKey }
+              ]
+            };
+            
+            const { resources: paidReceipts } = await container.items.query(paidQuerySpec).fetchAll();
+            
+            // Filter locally for matching splits and within last 24 hours
+            const matches = paidReceipts.filter((r: any) => {
+              const matchesSplit = String(r.splitAddress || r.splitAddressCredit || "").toLowerCase() === targetSplitAddress.toLowerCase();
+              const isRecent = new Date(r.createdAt || 0).getTime() > dayAgo || new Date(r.lastUpdatedAt || 0).getTime() > dayAgo;
+              return matchesSplit && isRecent;
+            });
+
+            let healed = false;
+
+            for (const pr of matches) {
+              const txHash = pr.transactionHash;
+              const txTimestamp = pr.transactionTimestamp || Date.now();
+
+              // Fetch on-chain logs to get actual transferred amount
+              try {
+                const { getRpcClient, eth_getTransactionReceipt } = await import("thirdweb/rpc");
+                const rpc = getRpcClient({ client: brandTwClient, chain: base });
+                const onchainReceipt = await eth_getTransactionReceipt(rpc, { hash: txHash as `0x${string}` });
+
+                const isSuccess = onchainReceipt && (
+                  String(onchainReceipt.status) === "0x1" || 
+                  String(onchainReceipt.status) === "success" || 
+                  Number(onchainReceipt.status) === 1 || 
+                  (!onchainReceipt.status && onchainReceipt.blockNumber)
+                );
+
+                if (isSuccess) {
+                  const usdcAddressLower = BASE_USDC_ADDRESS.toLowerCase();
+                  const transferEventTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+                  
+                  let transferredAmount = 0;
+                  const logs = onchainReceipt.logs || [];
+                  for (const log of logs) {
+                    const topics = log.topics || [];
+                    if (log.address && log.address.toLowerCase() === usdcAddressLower && topics[0] === transferEventTopic) {
+                      const topic1 = topics[1];
+                      const topic2 = topics[2];
+                      if (topic1 && topic2) {
+                        const fromAddress = "0x" + topic1.slice(26).toLowerCase();
+                        const toAddress = "0x" + topic2.slice(26).toLowerCase();
+                        
+                        if (fromAddress === guestAddress.toLowerCase() && toAddress === targetSplitAddress.toLowerCase()) {
+                          const amountUnits = BigInt(log.data || "0");
+                          transferredAmount += Number(amountUnits) / 1_000_000;
+                        }
+                      }
+                    }
+                  }
+
+                  console.log(`[cron/reconcile-stuck] Verified transaction ${txHash} on-chain: transferred $${transferredAmount} USDC`);
+
+                  // Sum up already-paid receipts with this txHash
+                  const paidWithTxQuery = {
+                    query: "SELECT c.totalUsd, c.onrampAmount FROM c WHERE c.type = 'receipt' AND c.status = 'paid' AND c.transactionHash = @txHash",
+                    parameters: [{ name: "@txHash", value: txHash }]
+                  };
+                  const { resources: paidWithTx } = await container.items.query(paidWithTxQuery).fetchAll();
+                  const alreadyPaidSum = paidWithTx.reduce((sum: number, r: any) => sum + (r.onrampAmount || r.totalUsd || 0), 0);
+                  
+                  const pendingSum = totalAmount;
+                  const expectedTotalSum = alreadyPaidSum + pendingSum;
+
+                  console.log(`[cron/reconcile-stuck] Reconciling: onchain=$${transferredAmount}, already paid sum=$${alreadyPaidSum}, pending sum=$${pendingSum} (expected total=$${expectedTotalSum})`);
+
+                  if (transferredAmount >= expectedTotalSum - 0.05) {
+                    console.log(`[cron/reconcile-stuck] Self-healing match found! Reuse txHash ${txHash} for pending receipts.`);
+
+                    for (const er of subGroupReceipts) {
+                      const r = er.receipt;
+                      r.status = "paid";
+                      r.transactionHash = txHash;
+                      r.transactionTimestamp = txTimestamp;
+                      r.lastUpdatedAt = Date.now();
+                      r.statusHistory = Array.isArray(r.statusHistory)
+                        ? [...r.statusHistory, { status: "paid", ts: Date.now() }]
+                        : [{ status: "paid", ts: Date.now() }];
+                      r.ttl = -1;
+
+                      let finalReceipt = r;
+                      try {
+                        const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
+                        const { readBrandOverridesCached } = await import("@/lib/brand-config");
+                        const siteConfig = await getSiteConfigForWallet(er.merchantWallet, er.brandKey);
+                        const brandConfigDoc = er.brandKey ? await readBrandOverridesCached(er.brandKey) : null;
+                        const funding = (er.cardFunding === "credit" || er.isCredit === true)
+                          ? "credit"
+                          : (er.cardFunding === "us_bank_account" ? "us_bank_account" : "debit");
+                        
+                        if (siteConfig) {
+                          finalReceipt = recalculateReceiptForCardFunding(r, funding, siteConfig, brandConfigDoc);
+                        }
+                      } catch (recalcErr) {
+                        console.error(`[cron/reconcile-stuck] Recalc error for ${er.receiptId}:`, recalcErr);
+                      }
+
+                      await container.items.upsert(finalReceipt);
+                      succeeded++;
+
+                      // Send email confirmation
+                      try {
+                        const siteConfig = await getSiteConfigForWallet(er.merchantWallet);
+                        const brandName = siteConfig?.theme?.brandName || "PortalPay";
+                        const brandColor = siteConfig?.theme?.primaryColor || "#35ff7c";
+                        const logoUrl = siteConfig?.theme?.brandLogoUrl || "";
+
+                        let absoluteLogoUrl = logoUrl;
+                        if (absoluteLogoUrl && absoluteLogoUrl.startsWith("/")) {
+                          const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://surge.basalthq.com";
+                          absoluteLogoUrl = `${baseUrl}${absoluteLogoUrl}`;
+                        }
+
+                        const htmlContent = generateHtmlEmailTemplate({
+                          brandName,
+                          brandColor,
+                          logoUrl: absoluteLogoUrl || undefined,
+                          title: "Payment Reconciled",
+                          subtitle: `Receipt #${er.receiptId}`,
+                          message: `We detected your transaction of $${er.amount.toFixed(2)} was completed on-chain but delayed due to temporary network congestion. It has now been successfully processed and reconciled.`,
+                          details: [
+                            { label: "Receipt ID", value: er.receiptId },
+                            { label: "Amount", value: `$${er.amount.toFixed(2)}` },
+                            { label: "Status", value: "Reconciled & Paid" },
+                            { label: "Tx Hash", value: txHash },
+                          ],
+                          ctaText: "View Receipt Online",
+                          ctaUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001"}/portal/${er.receiptId}?recipient=${encodeURIComponent(er.merchantWallet)}`,
+                        });
+
+                        await sendEmail({
+                          to: email,
+                          subject: `[${brandName}] Payment Reconciled - Receipt #${er.receiptId}`,
+                          html: htmlContent,
+                          fromName: `${brandName} Support`,
+                          brandKey: brandKey,
+                        });
+                      } catch (emailErr) {
+                        console.error(`[cron/reconcile-stuck] Failed to send email for ${er.receiptId} during self-heal:`, emailErr);
+                      }
+
+                      results.push({ receiptId: er.receiptId, status: "success", txHash, note: "reconciled_via_self_healing" });
+                    }
+
+                    healed = true;
+                    break;
+                  }
                 }
-              );
-              if (response.ok) {
-                const data = await response.json();
-                const paymentDetailsType = String(data.payment_details?.type || data.payment_method_details?.type || "").toLowerCase();
-                const paymentMethod = String(data.payment_method || "").toLowerCase();
-                const cardFundingDetail = String(data.payment_details?.card?.funding || "").toLowerCase();
-                if (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
-                  detectedCardFunding = "us_bank_account";
-                  isCreditCard = false;
-                } else if (cardFundingDetail) {
-                  isCreditCard = cardFundingDetail === "credit";
-                  detectedCardFunding = cardFundingDetail;
-                } else if (paymentMethod.includes("debit")) {
-                  detectedCardFunding = "debit";
-                  isCreditCard = false;
-                } else if (paymentMethod.includes("credit")) {
-                  detectedCardFunding = "credit";
-                  isCreditCard = true;
-                } else {
-                  isCreditCard = false;
-                  detectedCardFunding = "debit";
-                }
-                receipt.isCreditCard = isCreditCard;
-                receipt.detectedCardFunding = detectedCardFunding;
+              } catch (onchainErr) {
+                console.warn(`[cron/reconcile-stuck] Failed to check transaction ${txHash} on-chain for self-healing:`, onchainErr);
               }
             }
-          } catch (stripeErr) {
-            console.warn(`[cron/reconcile-stuck] Failed to fetch Stripe session ${receipt.stripeSessionId} for card funding info:`, stripeErr);
+
+            if (!healed) {
+              console.log(`[cron/reconcile-stuck] No self-healing match found for EOA ${guestAddress} to split ${targetSplitAddress}.`);
+              for (const er of subGroupReceipts) {
+                skipped++;
+                results.push({ receiptId: er.receiptId, status: "skipped", reason: "zero_balance_guest_wallet" });
+              }
+            }
+
+          } catch (healErr: any) {
+            console.error(`[cron/reconcile-stuck] Error during self-healing check:`, healErr);
+            for (const er of subGroupReceipts) {
+              failed++;
+              results.push({ receiptId: er.receiptId, status: "failed", reason: "self_heal_check_failed", details: healErr.message });
+            }
           }
         }
-
-        const funding = (detectedCardFunding === "credit" || isCreditCard === true)
-          ? "credit"
-          : (detectedCardFunding === "us_bank_account" ? "us_bank_account" : "debit");
-        
-        let finalReceipt = receipt;
-        try {
-          const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
-          const { readBrandOverridesCached } = await import("@/lib/brand-config");
-          const siteConfig = await getSiteConfigForWallet(merchantWallet, brandKey);
-          const brandConfigDoc = brandKey ? await readBrandOverridesCached(brandKey) : null;
-          if (siteConfig) {
-            finalReceipt = recalculateReceiptForCardFunding(receipt, funding, siteConfig, brandConfigDoc);
-          }
-        } catch (recalcErr) {
-          console.error("[cron/reconcile-stuck] Failed to recalculate receipt line items:", recalcErr);
-        }
-
-        await container.items.upsert(finalReceipt);
-        succeeded++;
-
-        // Send confirmation email
-        try {
-          const siteConfig = await getSiteConfigForWallet(merchantWallet);
-          const brandName = siteConfig?.theme?.brandName || "PortalPay";
-          const brandColor = siteConfig?.theme?.primaryColor || "#35ff7c";
-          const logoUrl = siteConfig?.theme?.brandLogoUrl || "";
-
-          let absoluteLogoUrl = logoUrl;
-          if (absoluteLogoUrl && absoluteLogoUrl.startsWith("/")) {
-            const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://surge.basalthq.com";
-            absoluteLogoUrl = `${baseUrl}${absoluteLogoUrl}`;
-          }
-
-          const htmlContent = generateHtmlEmailTemplate({
-            brandName,
-            brandColor,
-            logoUrl: absoluteLogoUrl || undefined,
-            title: "Payment Reconciled",
-            subtitle: `Receipt #${receiptId}`,
-            message: `We detected your transaction of $${amount.toFixed(2)} was completed on-chain but delayed due to temporary network congestion. It has now been successfully processed and reconciled.`,
-            details: [
-              { label: "Receipt ID", value: receiptId },
-              { label: "Amount", value: `$${amount.toFixed(2)}` },
-              { label: "Status", value: "Reconciled & Paid" },
-              { label: "Tx Hash", value: txHash },
-            ],
-            ctaText: "View Receipt Online",
-            ctaUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001"}/portal/${receiptId}?recipient=${encodeURIComponent(merchantWallet)}`,
-          });
-
-          await sendEmail({
-            to: email,
-            subject: `[${brandName}] Payment Reconciled - Receipt #${receiptId}`,
-            html: htmlContent,
-            fromName: `${brandName} Support`,
-            brandKey: brandKey,
-          });
-        } catch (emailErr) {
-          console.error(`[cron/reconcile-stuck] Failed to send reconciliation confirmation email for ${receiptId}:`, emailErr);
-        }
-
-        results.push({ receiptId, status: "success", txHash });
-
-      } catch (err: any) {
-        failed++;
-        console.error(`[cron/reconcile-stuck] Error processing receipt ${receiptId}:`, err);
-        await logCronError({
-          receiptId,
-          action: "reconcile_receipt",
-          message: err.message || "Unknown error",
-          stack: err.stack,
-        });
-        results.push({ receiptId, status: "failed", error: err.message || "Unknown error" });
       }
     }
 

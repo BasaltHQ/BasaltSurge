@@ -14,7 +14,8 @@ export async function executeGaslessTransferServer(
   fromWalletEmail: string,
   toAddress: string,
   usdcAmount: number,
-  brandKey?: string
+  brandKey?: string,
+  sweepAll: boolean = true
 ): Promise<string | null> {
   try {
     const { createThirdwebClient, getContract, prepareContractCall, sendTransaction, readContract } = await import("thirdweb");
@@ -154,7 +155,7 @@ export async function executeGaslessTransferServer(
 
     const requiredUnits = BigInt(Math.floor(usdcAmount * 1_000_000));
     let amountInUnits = requiredUnits;
-    if (balance > BigInt(0)) {
+    if (sweepAll && balance > BigInt(0)) {
       // Sweep full balance to clear dust for guest EOA wallet
       amountInUnits = balance;
     }
