@@ -306,10 +306,23 @@ export async function POST(req: NextRequest) {
         const emailToUse = customerEmail || next.stripeEmail || next.customerEmail || (resource && (resource.stripeEmail || resource.customerEmail)) || "";
         const walletToUse = buyerWallet || next.buyerWallet || (resource && resource.buyerWallet) || "";
         
-        const existingIndex = sessions.findIndex((s: any) => 
-          (stripeSessionId && s.stripeSessionId === stripeSessionId) ||
-          (emailToUse && s.email && s.email.toLowerCase() === emailToUse.toLowerCase() && walletToUse && s.walletAddress && s.walletAddress.toLowerCase() === walletToUse.toLowerCase())
-        );
+        const existingIndex = sessions.findIndex((s: any) => {
+          if (stripeSessionId && s.stripeSessionId === stripeSessionId) {
+            return true;
+          }
+          if (emailToUse && s.email && s.email.toLowerCase() === emailToUse.toLowerCase()) {
+            const w1 = walletToUse ? walletToUse.toLowerCase() : "";
+            const w2 = s.walletAddress ? s.walletAddress.toLowerCase() : "";
+            if (w1 && w2 && w1 !== w2) return false;
+            
+            const s1 = stripeSessionId ? stripeSessionId : "";
+            const s2 = s.stripeSessionId ? s.stripeSessionId : "";
+            if (s1 && s2 && s1 !== s2) return false;
+            
+            return true;
+          }
+          return false;
+        });
         
         const sessionEntry = {
           email: emailToUse || null,

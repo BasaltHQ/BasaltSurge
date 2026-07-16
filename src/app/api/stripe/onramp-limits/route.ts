@@ -140,10 +140,25 @@ export async function POST(req: NextRequest) {
       createdAt: Date.now()
     };
 
-    const existingIndex = sessions.findIndex((s: any) => 
-      s.stripeSessionId === stripeSessionId || 
-      (s.email.toLowerCase() === customerEmail.toLowerCase() && s.walletAddress.toLowerCase() === walletAddress.toLowerCase())
-    );
+    const existingIndex = sessions.findIndex((s: any) => {
+      if (stripeSessionId && s.stripeSessionId === stripeSessionId) {
+        return true;
+      }
+      const email1 = s.email || "";
+      const email2 = customerEmail || "";
+      if (email1 && email2 && email1.toLowerCase() === email2.toLowerCase()) {
+        const w1 = s.walletAddress ? s.walletAddress.toLowerCase() : "";
+        const w2 = walletAddress ? walletAddress.toLowerCase() : "";
+        if (w1 && w2 && w1 !== w2) return false;
+        
+        const s1 = s.stripeSessionId || "";
+        const s2 = stripeSessionId || "";
+        if (s1 && s2 && s1 !== s2) return false;
+        
+        return true;
+      }
+      return false;
+    });
 
     if (existingIndex > -1) {
       sessions[existingIndex] = {

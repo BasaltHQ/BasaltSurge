@@ -18,6 +18,18 @@ export async function GET(req: NextRequest) {
     let allReceiptsLight: any[] = [];
     let logs: any[] = [];
 
+    // Parse fetch limit query parameter (default to 500)
+    const limitParam = req.nextUrl.searchParams.get("limit");
+    let limit = 500;
+    if (limitParam === "all") {
+      limit = 0;
+    } else if (limitParam) {
+      const parsed = parseInt(limitParam, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        limit = parsed;
+      }
+    }
+
     // 2. Fetch receipts and logs using MongoDB projection for performance if available
     if ((container as any).getCollection) {
       const collection = (container as any).getCollection();
@@ -45,8 +57,8 @@ export async function GET(req: NextRequest) {
         }
       ).sort({ createdAt: -1 }).toArray();
 
-      // Query 2: Fetch detailed records ONLY for the most recent 500 receipts for table listing
-      receipts = await collection.find(
+      // Query 2: Fetch detailed records for the most recent receipts for table listing (dynamic limit)
+      let query = collection.find(
         { type: "receipt" },
         {
           projection: {
@@ -76,7 +88,12 @@ export async function GET(req: NextRequest) {
             wallet: 1
           }
         }
-      ).sort({ createdAt: -1 }).limit(500).toArray();
+      ).sort({ createdAt: -1 });
+
+      if (limit > 0) {
+        query = query.limit(limit);
+      }
+      receipts = await query.toArray();
 
       // Query portal logs to find failure reasons
       const db = collection.db;
@@ -101,7 +118,7 @@ export async function GET(req: NextRequest) {
       allReceiptsLight = resources || [];
       // Sort by date manually as Cosmos SQL ordering can be complex depending on indexing
       allReceiptsLight.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      receipts = allReceiptsLight.slice(0, 500);
+      receipts = limit > 0 ? allReceiptsLight.slice(0, limit) : allReceiptsLight;
     }
 
     // 3. Aggregate metrics
