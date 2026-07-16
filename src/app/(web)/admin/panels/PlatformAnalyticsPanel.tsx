@@ -82,6 +82,9 @@ interface ReceiptInfo {
   lastPolledAt?: number | null;
   stripeSessionStatus?: string | null;
   ipAddress?: string | null;
+  statusHistory?: { status: string; ts: number }[];
+  customerEmail?: string | null;
+  stripeEmail?: string | null;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -98,6 +101,7 @@ export default function PlatformAnalyticsPanel() {
   const [failureReasons, setFailureReasons] = useState<FailureReason[]>([]);
   const [brandStats, setBrandStats] = useState<BrandStat[]>([]);
   const [recentReceipts, setRecentReceipts] = useState<ReceiptInfo[]>([]);
+  const [dailySeries, setDailySeries] = useState<any[]>([]);
 
   // Filters
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
@@ -129,6 +133,7 @@ export default function PlatformAnalyticsPanel() {
   // Pagination State
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(25);
+  const [successRateMode, setSuccessRateMode] = useState<"integration" | "process">("integration");
 
   // Reset page when filters change
   useEffect(() => {
@@ -189,6 +194,7 @@ export default function PlatformAnalyticsPanel() {
       setFailureReasons(data.failureReasons);
       setBrandStats(data.brandStats);
       setRecentReceipts(data.recentReceipts);
+      setDailySeries(data.dailySeries || []);
     } catch (e: any) {
       setError(e?.message || "An unexpected error occurred");
     } finally {
@@ -354,6 +360,36 @@ export default function PlatformAnalyticsPanel() {
     return stats;
   }, [stats, dynamicStats, hasActiveFilters]);
 
+  // Refined Success Rate Calculations based on selector mode
+  const displayedSuccessRate = useMemo(() => {
+    if (!displayStats) return 0;
+    if (successRateMode === "integration") {
+      return displayStats.successRate;
+    } else {
+      const denom = displayStats.totalPaid + displayStats.totalFailed;
+      return denom > 0 ? +((displayStats.totalPaid / denom) * 100).toFixed(1) : 0;
+    }
+  }, [displayStats, successRateMode]);
+
+  const displayedBrandStats = useMemo(() => {
+    return brandStats.map(b => {
+      let sr = 0;
+      if (successRateMode === "integration") {
+        sr = b.total > 0 ? (b.paid / b.total) * 100 : 0;
+      } else {
+        const denom = b.paid + b.failed;
+        sr = denom > 0 ? (b.paid / denom) * 100 : 0;
+      }
+      return {
+        ...b,
+        successRate: +sr.toFixed(1),
+        sessionsText: successRateMode === "integration"
+          ? `${b.paid} paid / ${b.total} sessions`
+          : `${b.paid} paid / ${b.paid + b.failed} finished`
+      };
+    });
+  }, [brandStats, successRateMode]);
+
   // Active brand keys in the filtered dataset
   const activeBrandKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -363,64 +399,56 @@ export default function PlatformAnalyticsPanel() {
     return Array.from(keys);
   }, [filteredReceipts]);
 
-  // Daily Success Rate Time Series dataset including separate brands
+  // Daily Success Rate Time Series dataset including separate brands, calculated over the full history
   const successRateTimeSeries = useMemo(() => {
-    // Group by date, and within each date, group by brandKey
-    const dateGroups: Record<string, {
-      dateLabel: string;
-      allPaid: number;
-      allTotal: number;
-      brands: Record<string, { paid: number; total: number }>
-    }> = {};
+    if (!dailySeries || dailySeries.length === 0) {
+      return [{ label: "No Data", aggregate: 0 }];
+    }
 
-    // Sort filtered receipts chronologically for left-to-right plotting
-    const sorted = [...filteredReceipts].sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-    );
-
-    sorted.forEach(r => {
-      if (!r.createdAt) return;
-      const d = new Date(r.createdAt);
-      const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-
-      if (!dateGroups[dateStr]) {
-        dateGroups[dateStr] = {
-          dateLabel: dateStr,
-          allPaid: 0,
-          allTotal: 0,
-          brands: {}
-        };
-      }
-
-      const g = dateGroups[dateStr];
-      g.allTotal++;
-      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
-        g.allPaid++;
-      }
-
-      if (r.brandKey) {
-        if (!g.brands[r.brandKey]) {
-          g.brands[r.brandKey] = { paid: 0, total: 0 };
-        }
-        g.brands[r.brandKey].total++;
-        if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
-          g.brands[r.brandKey].paid++;
-        }
-      }
+    const now = Date.now();
+    // Filter days based on timeRange
+    const filteredDays = dailySeries.filter(day => {
+      if (timeRange === "all") return true;
+      const diffMs = now - day.timestamp;
+      if (timeRange === "24h") return diffMs <= 24 * 60 * 60 * 1000;
+      if (timeRange === "7d") return diffMs <= 7 * 24 * 60 * 60 * 1000;
+      if (timeRange === "30d") return diffMs <= 30 * 24 * 60 * 60 * 1000;
+      return true;
     });
 
-    const list = Object.values(dateGroups).map(g => {
+    const list = filteredDays.map(g => {
+      let aggregate = 0;
+      let totalCountForDetails = 0;
+      if (successRateMode === "integration") {
+        aggregate = g.allTotal > 0 ? (g.allPaid / g.allTotal) * 100 : 0;
+        totalCountForDetails = g.allTotal;
+      } else {
+        const denom = g.allPaid + g.allFailed;
+        aggregate = denom > 0 ? (g.allPaid / denom) * 100 : 0;
+        totalCountForDetails = denom;
+      }
+
       const pt: Record<string, any> = {
         label: g.dateLabel,
-        aggregate: g.allTotal > 0 ? +((g.allPaid / g.allTotal) * 100).toFixed(1) : 0,
-        aggregateDetails: { paid: g.allPaid, total: g.allTotal }
+        aggregate: +aggregate.toFixed(1),
+        aggregateDetails: { paid: g.allPaid, total: totalCountForDetails }
       };
 
-      activeBrandKeys.forEach(bk => {
+      allBrandKeys.forEach(bk => {
         const bData = g.brands[bk];
-        if (bData && bData.total > 0) {
-          pt[bk] = +((bData.paid / bData.total) * 100).toFixed(1);
-          pt[`${bk}Details`] = { paid: bData.paid, total: bData.total };
+        if (bData) {
+          let sr = 0;
+          let totalForBrandDetails = 0;
+          if (successRateMode === "integration") {
+            sr = bData.total > 0 ? (bData.paid / bData.total) * 100 : 0;
+            totalForBrandDetails = bData.total;
+          } else {
+            const denom = bData.paid + bData.failed;
+            sr = denom > 0 ? (bData.paid / denom) * 100 : 0;
+            totalForBrandDetails = denom;
+          }
+          pt[bk] = +sr.toFixed(1);
+          pt[`${bk}Details`] = { paid: bData.paid, total: totalForBrandDetails };
         } else {
           pt[bk] = null;
           pt[`${bk}Details`] = { paid: 0, total: 0 };
@@ -433,7 +461,7 @@ export default function PlatformAnalyticsPanel() {
       return [{ label: "No Data", aggregate: 0 }];
     }
     return list;
-  }, [filteredReceipts, activeBrandKeys]);
+  }, [dailySeries, allBrandKeys, timeRange, successRateMode]);
 
   // Overall status distribution dataset for the DonutChart
   const statusPieData = useMemo(() => {
@@ -526,6 +554,36 @@ export default function PlatformAnalyticsPanel() {
         </button>
       </div>
 
+      {/* Calculation Mode Selector Tabs */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-white/5 pb-4 gap-3">
+        <div className="flex bg-white/5 p-1 rounded-lg border border-white/5">
+          <button
+            onClick={() => setSuccessRateMode("integration")}
+            className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all ${successRateMode === "integration"
+                ? "bg-primary text-white shadow"
+                : "text-muted-foreground hover:text-white"
+              }`}
+          >
+            Integration Rate (All Intents)
+          </button>
+          <button
+            onClick={() => setSuccessRateMode("process")}
+            className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all ${successRateMode === "process"
+                ? "bg-primary text-white shadow"
+                : "text-muted-foreground hover:text-white"
+              }`}
+          >
+            Process Rate (Success / Paid+Failed)
+          </button>
+        </div>
+        <div className="text-[11px] text-muted-foreground max-w-md leading-relaxed">
+          {successRateMode === "integration"
+            ? "Calculates success rate across all initialized checkouts (reflects abandonment rates)."
+            : "Refined metric focusing on actual payment attempts, filtering out empty/unsubmitted sessions."
+          }
+        </div>
+      </div>
+
       {/* Analytics Grid HUD */}
       {displayStats && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -534,17 +592,21 @@ export default function PlatformAnalyticsPanel() {
             <div>
               <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Platform Success Rate</span>
               <div className="text-2xl font-bold mt-1 text-white tracking-tight flex items-baseline gap-2">
-                <span>{displayStats.successRate}%</span>
-                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${displayStats.successRate >= 85 ? "bg-emerald-500/10 text-emerald-400" :
-                    displayStats.successRate >= 70 ? "bg-amber-500/10 text-amber-400" :
-                      "bg-red-500/10 text-red-400"
+                <span>{displayedSuccessRate}%</span>
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${displayedSuccessRate >= 85 ? "bg-emerald-500/10 text-emerald-400" :
+                  displayedSuccessRate >= 70 ? "bg-amber-500/10 text-amber-400" :
+                    "bg-red-500/10 text-red-400"
                   }`}>
-                  {displayStats.successRate >= 85 ? "Optimal" : displayStats.successRate >= 70 ? "Warning" : "Critical"}
+                  {displayedSuccessRate >= 85 ? "Optimal" : displayedSuccessRate >= 70 ? "Warning" : "Critical"}
                 </span>
               </div>
             </div>
             <div className="text-[10px] text-muted-foreground mt-4 border-t border-white/5 pt-2">
-              {displayStats.totalPaid} paid / {displayStats.totalCreated} total intents
+              {successRateMode === "integration" ? (
+                `${displayStats.totalPaid} paid / ${displayStats.totalCreated} total intents`
+              ) : (
+                `${displayStats.totalPaid} paid / ${displayStats.totalPaid + displayStats.totalFailed} finished attempts`
+              )}
             </div>
           </div>
 
@@ -624,8 +686,8 @@ export default function PlatformAnalyticsPanel() {
                   key={opt.value}
                   onClick={() => setTimeRange(opt.value)}
                   className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${timeRange === opt.value
-                      ? "bg-primary text-white shadow-sm"
-                      : "text-muted-foreground hover:text-white"
+                    ? "bg-primary text-white shadow-sm"
+                    : "text-muted-foreground hover:text-white"
                     }`}
                 >
                   {opt.label}
@@ -638,7 +700,7 @@ export default function PlatformAnalyticsPanel() {
           <div className="flex-1 flex flex-col min-h-0 mt-4">
             <CustomInteractiveLineChart
               data={successRateTimeSeries}
-              brandKeys={activeBrandKeys}
+              brandKeys={selectedBrand !== "all" ? [selectedBrand] : allBrandKeys}
               hoveredKey={hoveredLineKey}
               setHoveredKey={setHoveredLineKey}
             />
@@ -664,294 +726,469 @@ export default function PlatformAnalyticsPanel() {
 
       </div>
 
-      {/* Main Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Brand performance & failure reasons above the main table */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
 
-        {/* Left: Brand performance statistics & top failures */}
-        <div className="lg:col-span-1 space-y-6">
+        {/* Brand Breakdown */}
+        <div className="glass-pane rounded-xl border border-white/5 p-4">
+          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-1.5">
+            <Building2 className="w-4 h-4 text-primary" />
+            <span>Brand Performance</span>
+          </h3>
 
-          {/* Brand Breakdown */}
-          <div className="glass-pane rounded-xl border border-white/5 p-4">
-            <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-1.5">
-              <Building2 className="w-4 h-4 text-primary" />
-              <span>Brand Performance</span>
-            </h3>
-
-            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-              {brandStats.map(b => (
-                <div key={b.brandKey} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
-                  <div>
-                    <div className="font-semibold text-white/90">{b.brandKey}</div>
-                    <div className="text-muted-foreground text-[10px] mt-1">
-                      {b.paid} paid / {b.total} sessions
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-bold text-white">${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-                    <div className={`text-[10px] font-medium mt-0.5 ${b.successRate >= 80 ? "text-emerald-400" :
-                        b.successRate >= 60 ? "text-amber-400" :
-                          "text-red-400"
-                      }`}>
-                      {b.successRate}% SR
-                    </div>
+          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+            {displayedBrandStats.map(b => (
+              <div key={b.brandKey} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
+                <div>
+                  <div className="font-semibold text-white/90">{b.brandKey}</div>
+                  <div className="text-muted-foreground text-[10px] mt-1">
+                    {b.sessionsText}
                   </div>
                 </div>
-              ))}
-              {brandStats.length === 0 && (
-                <div className="text-xs text-muted-foreground text-center py-4">No brand keys registered yet.</div>
-              )}
-            </div>
-          </div>
-
-          {/* Top Checkout Failure Diagnostics */}
-          <div className="glass-pane rounded-xl border border-white/5 p-4">
-            <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-1.5">
-              <XCircle className="w-4 h-4 text-red-400" />
-              <span>Technical Failure Reasons</span>
-            </h3>
-
-            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-              {failureReasons.map((fr, idx) => (
-                <div key={idx} className="flex items-start justify-between text-xs border-b border-white/5 pb-2 last:border-b-0 last:pb-0 gap-2">
-                  <span className="text-white/70 font-medium break-words leading-relaxed max-w-[80%]">
-                    {fr.reason}
-                  </span>
-                  <span className="font-bold text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded text-[10px] flex-shrink-0">
-                    {fr.count} times
-                  </span>
+                <div className="text-right">
+                  <div className="font-bold text-white">${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                  <div className={`text-[10px] font-medium mt-0.5 ${b.successRate >= 80 ? "text-emerald-400" :
+                    b.successRate >= 60 ? "text-amber-400" :
+                      "text-red-400"
+                    }`}>
+                    {b.successRate}% SR
+                  </div>
                 </div>
-              ))}
-              {failureReasons.length === 0 && (
-                <div className="text-xs text-muted-foreground text-center py-4">No failed transactions recorded.</div>
-              )}
-            </div>
+              </div>
+            ))}
+            {brandStats.length === 0 && (
+              <div className="text-xs text-muted-foreground text-center py-4">No brand keys registered yet.</div>
+            )}
           </div>
-
         </div>
 
-        {/* Right: Searchable and Detailed Diagnostics Investigation Feed */}
-        <div className="lg:col-span-2 space-y-4">
+        {/* Top Checkout Failure Diagnostics */}
+        <div className="glass-pane rounded-xl border border-white/5 p-4">
+          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-1.5">
+            <XCircle className="w-4 h-4 text-red-400" />
+            <span>Technical Failure Reasons</span>
+          </h3>
 
-          <div className="glass-pane rounded-xl border border-white/5 p-4 space-y-4">
-
-            {/* Filter Toolbar */}
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-
-              {/* Search Bar */}
-              <div className="relative flex-1 w-full">
-                <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
-                <input
-                  type="text"
-                  placeholder="Search receipt ID, email, session ID..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full h-9 pl-9 pr-4 rounded-lg bg-white/5 border border-white/5 focus:border-primary/50 text-xs text-white placeholder:text-muted-foreground focus:outline-none transition-colors"
-                />
+          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+            {failureReasons.map((fr, idx) => (
+              <div key={idx} className="flex items-start justify-between text-xs border-b border-white/5 pb-2 last:border-b-0 last:pb-0 gap-2">
+                <span className="text-white/70 font-medium break-words leading-relaxed max-w-[80%]">
+                  {fr.reason}
+                </span>
+                <span className="font-bold text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded text-[10px] flex-shrink-0">
+                  {fr.count} times
+                </span>
               </div>
+            ))}
+            {failureReasons.length === 0 && (
+              <div className="text-xs text-muted-foreground text-center py-4">No failed transactions recorded.</div>
+            )}
+          </div>
+        </div>
 
-              {/* Filters Dropdown */}
-              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                <select
-                  value={selectedBrand}
-                  onChange={e => setSelectedBrand(e.target.value)}
-                  className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
-                >
-                  <option value="all" className="bg-neutral-900">All Brandkeys</option>
-                  {allBrandKeys.map(bk => (
-                    <option key={bk} value={bk} className="bg-neutral-900">{bk}</option>
-                  ))}
-                </select>
+      </div>
 
-                <select
-                  value={statusFilter}
-                  onChange={e => setStatusFilter(e.target.value)}
-                  className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
-                >
-                  <option value="all" className="bg-neutral-900">All Statuses</option>
-                  <option value="paid" className="bg-neutral-900">Paid Only</option>
-                  <option value="failed" className="bg-neutral-900">Failed Only</option>
-                  <option value="checkout_initialized" className="bg-neutral-900">Initialized Only</option>
-                </select>
+      {/* Full-width Searchable and Detailed Diagnostics Investigation Feed */}
+      <div className="space-y-4">
 
-                <select
-                  value={kycFilter}
-                  onChange={e => setKycFilter(e.target.value)}
-                  className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
-                >
-                  <option value="all" className="bg-neutral-900">All KYC Levels</option>
-                  <option value="L0" className="bg-neutral-900">L0 (Base)</option>
-                  <option value="L1" className="bg-neutral-900">L1 (Demographics)</option>
-                  <option value="L2" className="bg-neutral-900">L2 (ID Verified)</option>
-                </select>
+        <div className="glass-pane rounded-xl border border-white/5 p-4 space-y-4">
 
-                <select
-                  value={timeRange}
-                  onChange={e => setTimeRange(e.target.value)}
-                  className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
-                >
-                  <option value="all" className="bg-neutral-900">All Time</option>
-                  <option value="24h" className="bg-neutral-900">Last 24 Hours</option>
-                  <option value="7d" className="bg-neutral-900">Last 7 Days</option>
-                  <option value="30d" className="bg-neutral-900">Last 30 Days</option>
-                </select>
-              </div>
+          {/* Filter Toolbar */}
+          <div className="flex flex-col sm:flex-row items-center gap-3">
 
+            {/* Search Bar */}
+            <div className="relative flex-1 w-full">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search receipt ID, email, session ID..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full h-9 pl-9 pr-4 rounded-lg bg-white/5 border border-white/5 focus:border-primary/50 text-xs text-white placeholder:text-muted-foreground focus:outline-none transition-colors"
+              />
             </div>
 
-            {/* Receipts Table */}
-            <div className="border border-white/5 rounded-lg overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-white/80">
-                  <thead className="bg-white/5 text-muted-foreground font-semibold uppercase tracking-wider text-[10px] border-b border-white/5 select-none">
-                    <tr>
-                      <th
-                        onClick={() => handleSort("receiptId")}
-                        className="py-2.5 px-4 cursor-pointer hover:text-white transition-colors"
-                      >
-                        Receipt ID {sortKey === "receiptId" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                      </th>
-                      <th
-                        onClick={() => handleSort("createdAt")}
-                        className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
-                      >
-                        Date {sortKey === "createdAt" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                      </th>
-                      <th
-                        onClick={() => handleSort("brandKey")}
-                        className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
-                      >
-                        Brand {sortKey === "brandKey" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                      </th>
-                      <th
-                        onClick={() => handleSort("totalUsd")}
-                        className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
-                      >
-                        Amount {sortKey === "totalUsd" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                      </th>
-                      <th className="py-2.5 px-3">Buyer Email</th>
-                      <th
-                        onClick={() => handleSort("stripeSessionId")}
-                        className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
-                      >
-                        Session ID {sortKey === "stripeSessionId" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                      </th>
-                      <th
-                        onClick={() => handleSort("status")}
-                        className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
-                      >
-                        Status {sortKey === "status" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                      </th>
-                      <th
-                        onClick={() => handleSort("kycLevel")}
-                        className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
-                      >
-                        KYC Level {sortKey === "kycLevel" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                      </th>
-                      <th className="py-2.5 px-4 text-right">Investigation</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {paginatedReceipts.map(r => {
-                      const isExpanded = expandedReceiptId === r.receiptId;
-                      return (
-                        <React.Fragment key={r.receiptId}>
-                          <tr className={`hover:bg-white/5 transition-colors ${isExpanded ? "bg-white/5" : ""}`}>
-                            <td className="py-3 px-4 font-mono font-medium text-white">{r.receiptId}</td>
-                            <td className="py-3 px-3 text-muted-foreground whitespace-nowrap">
-                              {r.createdAt ? new Date(r.createdAt).toLocaleString(undefined, {
-                                month: "short",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit"
-                              }) : "N/A"}
-                            </td>
-                            <td className="py-3 px-3 font-mono font-medium text-white">{r.brandKey}</td>
-                            <td className="py-3 px-3 font-semibold text-white">${r.totalUsd.toFixed(2)}</td>
-                            <td className="py-3 px-3 max-w-[140px] truncate" title={r.email}>{r.email}</td>
-                            <td className="py-3 px-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={r.stripeSessionId || "N/A"}>
-                              {r.stripeSessionId ? (
-                                <a
-                                  href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="hover:text-primary hover:underline inline-flex items-center gap-1"
-                                >
-                                  <span>{r.stripeSessionId}</span>
-                                  <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
-                                </a>
-                              ) : (
-                                "N/A"
-                              )}
-                            </td>
-                            <td className="py-3 px-3">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold inline-flex items-center gap-1 ${["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) ? "bg-emerald-500/10 text-emerald-400" :
-                                  r.status === "failed" ? "bg-red-500/10 text-red-400" :
-                                    "bg-amber-500/10 text-amber-400"
-                                }`}>
-                                {["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) && <CheckCircle2 className="w-2.5 h-2.5" />}
-                                {r.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
-                                <span>{r.status}</span>
-                              </span>
-                            </td>
-                            <td className="py-3 px-3">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${r.kycLevel === "L2" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" :
-                                  r.kycLevel === "L1" ? "bg-blue-500/10 text-blue-400 border-blue-500/20" :
-                                    "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
-                                }`}>
-                                {r.kycLevel}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4 text-right">
-                              <button
-                                onClick={() => handleExpandReceipt(r.receiptId)}
-                                className="px-2.5 h-7 rounded border border-white/5 hover:bg-white/5 text-[10px] font-medium transition-all"
+            {/* Filters Dropdown */}
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <select
+                value={selectedBrand}
+                onChange={e => setSelectedBrand(e.target.value)}
+                className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
+              >
+                <option value="all" className="bg-neutral-900">All Brandkeys</option>
+                {allBrandKeys.map(bk => (
+                  <option key={bk} value={bk} className="bg-neutral-900">{bk}</option>
+                ))}
+              </select>
+
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value)}
+                className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
+              >
+                <option value="all" className="bg-neutral-900">All Statuses</option>
+                <option value="paid" className="bg-neutral-900">Paid Only</option>
+                <option value="failed" className="bg-neutral-900">Failed Only</option>
+                <option value="checkout_initialized" className="bg-neutral-900">Initialized Only</option>
+              </select>
+
+              <select
+                value={kycFilter}
+                onChange={e => setKycFilter(e.target.value)}
+                className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
+              >
+                <option value="all" className="bg-neutral-900">All KYC Levels</option>
+                <option value="L0" className="bg-neutral-900">L0 (Base)</option>
+                <option value="L1" className="bg-neutral-900">L1 (Demographics)</option>
+                <option value="L2" className="bg-neutral-900">L2 (ID Verified)</option>
+              </select>
+
+              <select
+                value={timeRange}
+                onChange={e => setTimeRange(e.target.value)}
+                className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
+              >
+                <option value="all" className="bg-neutral-900">All Time</option>
+                <option value="24h" className="bg-neutral-900">Last 24 Hours</option>
+                <option value="7d" className="bg-neutral-900">Last 7 Days</option>
+                <option value="30d" className="bg-neutral-900">Last 30 Days</option>
+              </select>
+            </div>
+
+          </div>
+
+          {/* Receipts Table */}
+          <div className="border border-white/5 rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-white/80">
+                <thead className="bg-white/5 text-muted-foreground font-semibold uppercase tracking-wider text-[10px] border-b border-white/5 select-none">
+                  <tr>
+                    <th
+                      onClick={() => handleSort("receiptId")}
+                      className="py-2.5 px-4 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Receipt ID {sortKey === "receiptId" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                    </th>
+                    <th
+                      onClick={() => handleSort("createdAt")}
+                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Date {sortKey === "createdAt" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                    </th>
+                    <th
+                      onClick={() => handleSort("brandKey")}
+                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Brand {sortKey === "brandKey" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                    </th>
+                    <th
+                      onClick={() => handleSort("totalUsd")}
+                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Amount {sortKey === "totalUsd" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                    </th>
+                    <th className="py-2.5 px-3">Buyer Email</th>
+                    <th
+                      onClick={() => handleSort("stripeSessionId")}
+                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Session ID {sortKey === "stripeSessionId" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                    </th>
+                    <th
+                      onClick={() => handleSort("status")}
+                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                    >
+                      Status {sortKey === "status" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                    </th>
+                    <th
+                      onClick={() => handleSort("kycLevel")}
+                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                    >
+                      KYC Level {sortKey === "kycLevel" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                    </th>
+                    <th className="py-2.5 px-4 text-right">Investigation</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {paginatedReceipts.map(r => {
+                    const isExpanded = expandedReceiptId === r.receiptId;
+                    return (
+                      <React.Fragment key={r.receiptId}>
+                        <tr className={`hover:bg-white/5 transition-colors ${isExpanded ? "bg-white/5" : ""}`}>
+                          <td className="py-3 px-4 font-mono font-medium text-white">{r.receiptId}</td>
+                          <td className="py-3 px-3 text-muted-foreground whitespace-nowrap">
+                            {r.createdAt ? new Date(r.createdAt).toLocaleString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit"
+                            }) : "N/A"}
+                          </td>
+                          <td className="py-3 px-3 font-mono font-medium text-white">{r.brandKey}</td>
+                          <td className="py-3 px-3 font-semibold text-white">${r.totalUsd.toFixed(2)}</td>
+                          <td className="py-3 px-3 max-w-[140px] truncate" title={r.email}>{r.email}</td>
+                          <td className="py-3 px-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={r.stripeSessionId || "N/A"}>
+                            {r.stripeSessionId ? (
+                              <a
+                                href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="hover:text-primary hover:underline inline-flex items-center gap-1"
                               >
-                                {isExpanded ? "Close" : "Investigate"}
-                              </button>
-                            </td>
-                          </tr>
+                                <span>{r.stripeSessionId}</span>
+                                <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
+                              </a>
+                            ) : (
+                              "N/A"
+                            )}
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold inline-flex items-center gap-1 ${["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) ? "bg-emerald-500/10 text-emerald-400" :
+                              r.status === "failed" ? "bg-red-500/10 text-red-400" :
+                                "bg-amber-500/10 text-amber-400"
+                              }`}>
+                              {["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) && <CheckCircle2 className="w-2.5 h-2.5" />}
+                              {r.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
+                              <span>{r.status}</span>
+                            </span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${r.kycLevel === "L2" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" :
+                              r.kycLevel === "L1" ? "bg-blue-500/10 text-blue-400 border-blue-500/20" :
+                                "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
+                              }`}>
+                              {r.kycLevel}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              onClick={() => handleExpandReceipt(r.receiptId)}
+                              className="px-2.5 h-7 rounded border border-white/5 hover:bg-white/5 text-[10px] font-medium transition-all"
+                            >
+                              {isExpanded ? "Close" : "Investigate"}
+                            </button>
+                          </td>
+                        </tr>
 
-                          {/* Expanded Technical Investigation Detail panel */}
-                          {isExpanded && (() => {
-                            const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status);
-                            const isCredit = r.cardFunding === "credit";
-                            const actualSplitAddress = isCredit ? (r.splitAddressCredit || r.splitAddress) : (r.splitAddress || r.splitAddressCredit);
+                        {/* Expanded Technical Investigation Detail panel */}
+                        {isExpanded && (() => {
+                          const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status);
+                          const isCredit = r.cardFunding === "credit";
+                          const actualSplitAddress = isCredit ? (r.splitAddressCredit || r.splitAddress) : (r.splitAddress || r.splitAddressCredit);
 
-                            return (
-                              <tr>
-                                <td colSpan={9} className="bg-neutral-900/60 p-4 border-t border-b border-white/5">
-                                  <div className="space-y-4">
+                          return (
+                            <tr>
+                              <td colSpan={9} className="bg-neutral-900/60 p-4 border-t border-b border-white/5">
+                                <div className="space-y-4">
 
-                                    {/* Tabs Navigation */}
-                                    <div className="flex items-center gap-1 border-b border-white/5 pb-2">
-                                      {[
-                                        { id: "overview", label: "Overview", icon: Sliders },
-                                        { id: "items", label: "Items Ordered", icon: FileText },
-                                        { id: "origin", label: "Initialization & Origin", icon: Chrome },
-                                        { id: "logs", label: "Client Logs", icon: Activity },
-                                        { id: "customers", label: "Customer Metadata", icon: Users }
-                                      ].map(tab => {
-                                        const Icon = tab.icon;
-                                        const isActive = activeTab === tab.id;
-                                        return (
-                                          <button
-                                            key={tab.id}
-                                            onClick={() => setActiveTab(tab.id)}
-                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isActive
-                                                ? "bg-primary text-white shadow-sm"
-                                                : "text-muted-foreground hover:text-white hover:bg-white/5"
-                                              }`}
-                                          >
-                                            <Icon className="w-3.5 h-3.5" />
-                                            <span>{tab.label}</span>
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
+                                  {/* Tabs Navigation */}
+                                  <div className="flex items-center gap-1 border-b border-white/5 pb-2">
+                                    {[
+                                      { id: "overview", label: "Overview", icon: Sliders },
+                                      { id: "items", label: "Items Ordered", icon: FileText },
+                                      { id: "origin", label: "Initialization & Origin", icon: Chrome },
+                                      { id: "logs", label: "Client Logs", icon: Activity },
+                                      { id: "customers", label: "Customer Metadata", icon: Users }
+                                    ].map(tab => {
+                                      const Icon = tab.icon;
+                                      const isActive = activeTab === tab.id;
+                                      return (
+                                        <button
+                                          key={tab.id}
+                                          onClick={() => setActiveTab(tab.id)}
+                                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isActive
+                                            ? "bg-primary text-white shadow-sm"
+                                            : "text-muted-foreground hover:text-white hover:bg-white/5"
+                                            }`}
+                                        >
+                                          <Icon className="w-3.5 h-3.5" />
+                                          <span>{tab.label}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
 
-                                    {/* Tab 1: Overview & Meta */}
-                                    {activeTab === "overview" && (
+                                  {/* Tab 1: Overview & Meta */}
+                                  {activeTab === "overview" && (() => {
+                                    // 1. Extract status history
+                                    const statusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
+                                    const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
+                                    const currentStatus = String(r.status || "").toLowerCase();
+
+                                    // 2. Identify payment details from customer sessions or receipt fields
+                                    const hasSessionId = !!r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.stripeSessionId));
+
+                                    // 3. Stage 1: Link Opened
+                                    const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
+
+                                    // 4. Stage 2: Customer Identified
+                                    const customerIdentified = statusList.includes("buyer_logged_in") ||
+                                      statusList.includes("checkout_initialized") ||
+                                      statusList.includes("checkout_session_created") ||
+                                      !!r.customerEmail ||
+                                      !!r.stripeEmail ||
+                                      (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.email));
+
+                                    // 5. Stage 3: Payment Method Selected
+                                    const paymentMethodSelected = !!r.cardFunding ||
+                                      statusList.includes("payment_method_detected") ||
+                                      statusList.includes("onramp_confirming_fees") ||
+                                      statusList.includes("onramp_checking_out") ||
+                                      (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.paymentMethodDetails));
+
+                                    // 6. Stage 4: KYC / Verification
+                                    const kycTriggered = statusList.some(s => s.includes("kyc") || s.includes("verifying")) ||
+                                      String(r.failureReason || "").toLowerCase().includes("verification") ||
+                                      String(r.failureReason || "").toLowerCase().includes("kyc");
+
+                                    const kycCompleted = (kycTriggered && (
+                                      statusList.includes("onramp_checking_out") ||
+                                      statusList.includes("onramp_awaiting_funds") ||
+                                      statusList.includes("onramp_completed") ||
+                                      ["paid", "paid - ach pending", "checkout_success", "confirmed", "reconciled"].includes(currentStatus)
+                                    )) && !String(r.failureReason || "").toLowerCase().includes("verification") && !String(r.failureReason || "").toLowerCase().includes("kyc");
+
+                                    const kycFailed = kycTriggered &&
+                                      currentStatus === "failed" &&
+                                      (String(r.failureReason || "").toLowerCase().includes("verification") ||
+                                        String(r.failureReason || "").toLowerCase().includes("kyc") ||
+                                        statusList.includes("onramp_verifying_identity"));
+
+                                    // 7. Stage 5: Settlement
+                                    const settlementSuccess = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined"].includes(currentStatus);
+                                    const settlementAwaiting = ["paid - ach pending", "ach_pending", "awaiting_funds", "onramp_awaiting_funds"].includes(currentStatus);
+                                    const settlementFailed = currentStatus === "failed";
+
+                                    // Compute Intent Level
+                                    let intentLevel: "Low" | "Medium" | "High" = "Low";
+                                    if (paymentMethodSelected || kycTriggered || currentStatus === "failed" || settlementSuccess || settlementAwaiting) {
+                                      intentLevel = "High";
+                                    } else if (customerIdentified || hasSessionId) {
+                                      intentLevel = "Medium";
+                                    }
+
+                                    // Determine details of detected payment method if available
+                                    let pmText = "Selecting payment";
+                                    if (r.cardFunding === "us_bank_account") {
+                                      pmText = "Bank Account (ACH)";
+                                    } else if (r.cardFunding) {
+                                      pmText = `${r.cardFunding} Card`;
+                                    } else if (Array.isArray(r.customerSessions)) {
+                                      const matched = r.customerSessions.find((s: any) => s.paymentMethodDetails);
+                                      if (matched) {
+                                        const details = matched.paymentMethodDetails;
+                                        if (details.type === "us_bank_account") {
+                                          pmText = "Bank Account (ACH)";
+                                        } else if (details.card) {
+                                          pmText = `${details.card.funding || "card"} (${details.card.brand || "unknown"})`;
+                                        }
+                                      }
+                                    }
+
+                                    const steps = [
+                                      {
+                                        id: "opened",
+                                        label: "Link Opened",
+                                        status: "completed",
+                                        description: "Checkout opened"
+                                      },
+                                      {
+                                        id: "identified",
+                                        label: "Identified",
+                                        status: customerIdentified ? "completed" : "active",
+                                        description: customerIdentified ? (r.customerEmail || r.stripeEmail || "User identified") : "Awaiting user info"
+                                      },
+                                      {
+                                        id: "payment",
+                                        label: "Payment Info",
+                                        status: paymentMethodSelected ? "completed" : (customerIdentified ? "active" : "upcoming"),
+                                        description: paymentMethodSelected ? pmText : "Selecting method"
+                                      },
+                                      {
+                                        id: "kyc",
+                                        label: "KYC Check",
+                                        status: kycFailed ? "failed" : (kycCompleted ? "completed" : (kycTriggered ? "active" : (paymentMethodSelected ? "skipped" : "upcoming"))),
+                                        description: kycFailed ? "KYC Rejected" : (kycCompleted ? "KYC Verified" : (kycTriggered ? "Reviewing..." : "Not Required"))
+                                      },
+                                      {
+                                        id: "settlement",
+                                        label: "Settlement",
+                                        status: settlementSuccess ? "completed" : (settlementAwaiting ? "active" : (settlementFailed && !kycFailed ? "failed" : "upcoming")),
+                                        description: settlementSuccess ? "Funds Delivered" : (settlementAwaiting ? "Clearance Pending" : (settlementFailed && !kycFailed ? "Payment Failed" : "Awaiting checkout"))
+                                      }
+                                    ];
+
+                                    return (
                                       <div className="space-y-4 animate-in fade-in duration-200">
+                                        {/* Funnel Progress Stepper Panel */}
+                                        <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4">
+                                          <div className="flex items-center justify-between mb-4">
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-white/40 text-[10px] uppercase font-bold tracking-wider">User Funnel</span>
+                                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${intentLevel === "High" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                                                  intentLevel === "Medium" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
+                                                    "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20"
+                                                }`}>
+                                                {intentLevel} Intent
+                                              </span>
+                                            </div>
+                                            <div className="text-[10px] text-muted-foreground">
+                                              Dynamic Funnel Analysis
+                                            </div>
+                                          </div>
+
+                                          {/* Stepper progress track */}
+                                          <div className="flex items-center justify-between w-full relative px-6 py-2">
+                                            {/* Track Background */}
+                                            <div className="absolute left-12 right-12 top-[22px] h-[2px] bg-white/5 -z-0" />
+
+                                            {/* Track Active Progress Line */}
+                                            <div
+                                              className="absolute left-[48px] top-[22px] h-[2px] bg-emerald-500/30 transition-all duration-500 -z-0"
+                                              style={{
+                                                width: `${settlementSuccess ? "100%" :
+                                                    (kycCompleted || kycFailed) ? "75%" :
+                                                      paymentMethodSelected ? "50%" :
+                                                        customerIdentified ? "25%" : "0%"
+                                                  }`,
+                                                maxWidth: 'calc(100% - 96px)'
+                                              }}
+                                            />
+
+                                            {steps.map((step, idx) => {
+                                              let dotColor = "bg-zinc-900 text-zinc-500 border border-zinc-700";
+                                              let icon = <span>{idx + 1}</span>;
+
+                                              if (step.status === "completed") {
+                                                dotColor = "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
+                                                icon = <CheckCircle2 className="w-3.5 h-3.5" />;
+                                              } else if (step.status === "active") {
+                                                dotColor = "bg-amber-500/10 text-amber-400 border border-amber-500/30 animate-pulse";
+                                                icon = <RefreshCw className="w-3 h-3 animate-spin" />;
+                                              } else if (step.status === "failed") {
+                                                dotColor = "bg-red-500/10 text-red-400 border border-red-500/30";
+                                                icon = <XCircle className="w-3.5 h-3.5" />;
+                                              } else if (step.status === "skipped") {
+                                                dotColor = "bg-zinc-800 text-zinc-400 border border-dashed border-zinc-700";
+                                                icon = <span className="text-[8px] font-bold font-mono text-zinc-400">N/A</span>;
+                                              }
+
+                                              return (
+                                                <div key={step.id} className="flex flex-col items-center relative z-10 w-24">
+                                                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${dotColor} bg-neutral-950`}>
+                                                    {icon}
+                                                  </div>
+                                                  <span className="mt-2 text-[10px] font-semibold text-white/90 whitespace-nowrap">{step.label}</span>
+                                                  <span className="text-[9px] text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis max-w-[90px]" title={step.description}>
+                                                    {step.description}
+                                                  </span>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+
+                                        {/* Metadata Grid */}
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 text-xs mt-1">
                                           <div className="space-y-1">
                                             <div className="text-muted-foreground text-[10px] uppercase font-medium">Stripe Session ID</div>
@@ -1114,335 +1351,334 @@ export default function PlatformAnalyticsPanel() {
                                           </div>
                                         )}
                                       </div>
-                                    )}
+                                    );
+                                  })()}
 
-                                    {/* Tab 4: Client Logs */}
-                                    {activeTab === "logs" && (
-                                      <div className="space-y-2 animate-in fade-in duration-200 mt-1">
-                                        {loadingLogs[r.receiptId] ? (
-                                          <div className="text-xs text-muted-foreground p-4 text-center flex items-center justify-center gap-2">
-                                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
-                                            <span>Fetching logs from database...</span>
-                                          </div>
-                                        ) : (expandedLogs[r.receiptId] && expandedLogs[r.receiptId].length > 0) ? (
-                                          <div className="bg-black/25 border border-white/5 rounded-lg divide-y divide-white/5 max-h-[220px] overflow-y-auto font-mono text-[11px] leading-relaxed">
-                                            {expandedLogs[r.receiptId].map((log, idx) => (
-                                              <div key={idx} className="p-2.5 space-y-1">
-                                                <div className="flex items-center justify-between text-muted-foreground text-[10px]">
-                                                  <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
-                                                  <span className={`px-1 rounded text-[9px] uppercase font-semibold ${log.level === "error" ? "bg-red-500/15 text-red-400" :
-                                                      log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
-                                                        "bg-blue-500/15 text-blue-400"
-                                                    }`}>
-                                                    {log.level}
-                                                  </span>
-                                                </div>
-                                                <div className="text-white/80 whitespace-pre-wrap">{log.message}</div>
-                                                {log.userAgent && (
-                                                  <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                                                    <Smartphone className="w-3 h-3" />
-                                                    <span>UA: {parseUserAgent(log.userAgent)}</span>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            ))}
-                                          </div>
-                                        ) : (
-                                          <div className="text-xs text-muted-foreground p-3 border border-white/5 border-dashed rounded-lg text-center">
-                                            No Client logs matched for this transaction. (Indicates they either completed seamlessly without errors or left early).
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-
-                                    {/* Tab 5: Customer Metadata */}
-                                    {activeTab === "customers" && (
-                                      <div className="space-y-4 animate-in fade-in duration-200 mt-1">
-                                        {(r.customerSessions && r.customerSessions.length > 0) ? (
-                                          <div className="bg-black/25 border border-white/5 rounded-lg overflow-hidden">
-                                            <table className="w-full text-left border-collapse text-xs">
-                                              <thead>
-                                                <tr className="bg-white/5 border-b border-white/5 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
-                                                  <th className="py-2.5 px-4">Date/Time</th>
-                                                  <th className="py-2.5 px-4">Customer Email</th>
-                                                  <th className="py-2.5 px-4">Wallet Address</th>
-                                                  <th className="py-2.5 px-4">Stripe Session ID</th>
-                                                  <th className="py-2.5 px-4">Payment Method</th>
-                                                  <th className="py-2.5 px-4 text-right">Limits Metadata</th>
-                                                </tr>
-                                              </thead>
-                                              <tbody className="divide-y divide-white/5">
-                                                {r.customerSessions.map((session: any, idx: number) => (
-                                                  <tr key={idx} className="hover:bg-white/[0.02]">
-                                                    <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
-                                                      {session.createdAt ? new Date(session.createdAt).toLocaleString() : "N/A"}
-                                                    </td>
-                                                    <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
-                                                    <td className="py-3 px-4 font-mono text-[11px] text-white/80 select-all" title={session.walletAddress}>
-                                                      {session.walletAddress ? (
-                                                        <span className="flex items-center gap-1">
-                                                          <span>{session.walletAddress.slice(0, 8)}...{session.walletAddress.slice(-6)}</span>
-                                                        </span>
-                                                      ) : (
-                                                        "N/A"
-                                                      )}
-                                                    </td>
-                                                    <td className="py-3 px-4 font-mono text-[11px] text-muted-foreground select-all" title={session.stripeSessionId}>
-                                                      {session.stripeSessionId ? (
-                                                        <a
-                                                          href={`https://dashboard.stripe.com/crypto/onramp_sessions/${session.stripeSessionId}`}
-                                                          target="_blank"
-                                                          rel="noopener noreferrer"
-                                                          className="hover:text-primary hover:underline inline-flex items-center gap-1"
-                                                        >
-                                                          <span>{session.stripeSessionId.slice(0, 12)}...</span>
-                                                          <ExternalLink className="w-2.5 h-2.5" />
-                                                        </a>
-                                                      ) : (
-                                                        "N/A"
-                                                      )}
-                                                    </td>
-                                                    <td className="py-3 px-4 text-white/95 text-[11px]">
-                                                      {(() => {
-                                                        const pm = session.paymentMethodDetails;
-                                                        if (!pm) return <span className="text-muted-foreground/50">N/A</span>;
-                                                        if (pm.type === "card") {
-                                                          const card = pm.card || pm.payment_details?.card || pm.paymentDetails?.card;
-                                                          if (!card) return <span>Card</span>;
-                                                          const walletType = card.wallet && (typeof card.wallet === "object" ? card.wallet.type : card.wallet);
-                                                          const formattedWallet = walletType
-                                                            ? String(walletType)
-                                                                .replace(/_/g, " ")
-                                                                .replace(/\b\w/g, (c) => c.toUpperCase())
-                                                            : "";
-                                                          return (
-                                                            <span className="capitalize">
-                                                              {card.brand} •••• {card.last4} ({card.funding})
-                                                              {formattedWallet && ` via ${formattedWallet}`}
-                                                            </span>
-                                                          );
-                                                        } else if (pm.type === "us_bank_account") {
-                                                          const bank = pm.us_bank_account || pm.payment_details?.us_bank_account || pm.paymentDetails?.us_bank_account;
-                                                          if (!bank) return <span>ACH</span>;
-                                                          return (
-                                                            <span>
-                                                              Bank ({bank.bank_name || "ACH"}) •••• {bank.last4 || "bank"}
-                                                            </span>
-                                                          );
-                                                        }
-                                                        return <span className="capitalize">{pm.type || "Unknown"}</span>;
-                                                      })()}
-                                                    </td>
-                                                    <td className="py-3 px-4 text-right">
-                                                      {Array.isArray(session.limits) && session.limits.length > 0 ? (
-                                                        <div className="inline-flex flex-col gap-0.5 text-[10px] text-emerald-400 font-mono text-right">
-                                                          {session.limits.map((l: any, limitIdx: number) => (
-                                                            <div key={limitIdx}>
-                                                              {(() => {
-                                                                const rawAmount = Number(l.amount || 0);
-                                                                // Auto-correct legacy limits written before the x100 multiplier fix
-                                                                const corrected = rawAmount > 1000000 ? rawAmount / 100 : rawAmount;
-                                                                return `$${(corrected / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-                                                              })()} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
-                                                            </div>
-                                                          ))}
-                                                        </div>
-                                                      ) : (
-                                                        <span className="text-muted-foreground italic text-[11px]">No limits tracked</span>
-                                                      )}
-                                                    </td>
-                                                  </tr>
-                                                ))}
-                                              </tbody>
-                                            </table>
-                                          </div>
-                                        ) : (
-                                          <div className="text-xs text-muted-foreground p-4 border border-white/5 border-dashed rounded-lg space-y-2">
-                                            <p>No customer sessions or transaction limits tracked for this receipt yet.</p>
-                                            {r.stripeSessionId && (
-                                              <div className="pt-2 border-t border-white/5 text-[11px]">
-                                                <strong>Primary Session:</strong> {r.email || "anonymous"} • <span className="font-mono text-muted-foreground">{r.stripeSessionId}</span> (Historical record resolved prior to limits/multi-session tracking)
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
+                                  {/* Tab 4: Client Logs */}
+                                  {activeTab === "logs" && (
+                                    <div className="space-y-2 animate-in fade-in duration-200 mt-1">
+                                      {loadingLogs[r.receiptId] ? (
+                                        <div className="text-xs text-muted-foreground p-4 text-center flex items-center justify-center gap-2">
+                                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+                                          <span>Fetching logs from database...</span>
                                         </div>
-                                      )}
-
-                                        {/* Tab 2: Items Ordered */}
-                                        {activeTab === "items" && (
-                                          <div className="space-y-2 animate-in fade-in duration-200 mt-1">
-                                            <div className="bg-black/20 border border-white/5 rounded-lg overflow-hidden">
-                                              <table className="w-full text-left text-xs">
-                                                <thead className="bg-white/5 text-muted-foreground text-[10px] uppercase font-semibold border-b border-white/5">
-                                                  <tr>
-                                                    <th className="py-2 px-3">Item Description</th>
-                                                    <th className="py-2 px-3 text-right">Price</th>
-                                                    <th className="py-2 px-3 text-center">Qty</th>
-                                                    <th className="py-2 px-3 text-right">Total</th>
-                                                  </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-white/5 text-white/90">
-                                                  {r.lineItems && r.lineItems.length > 0 ? (
-                                                    r.lineItems.map((item, idx) => {
-                                                      const qty = item.qty || 1;
-                                                      const price = item.priceUsd || 0;
-                                                      return (
-                                                        <tr key={idx}>
-                                                          <td className="py-2.5 px-3 font-medium">{item.label}</td>
-                                                          <td className="py-2.5 px-3 text-right">${price.toFixed(2)}</td>
-                                                          <td className="py-2.5 px-3 text-center">{qty}</td>
-                                                          <td className="py-2.5 px-3 text-right font-semibold">${(price * qty).toFixed(2)}</td>
-                                                        </tr>
-                                                      );
-                                                    })
-                                                  ) : (
-                                                    <tr>
-                                                      <td colSpan={4} className="py-6 text-center text-muted-foreground">
-                                                        No line items recorded for this receipt.
-                                                      </td>
-                                                    </tr>
-                                                  )}
-                                                </tbody>
-                                              </table>
-                                            </div>
-                                          </div>
-                                        )}
-
-                                        {/* Tab 3: Initialization & Origin */}
-                                        {activeTab === "origin" && (
-                                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs animate-in fade-in duration-200 mt-1">
-                                            <div className="space-y-2">
-                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Site Initialized On</div>
-                                              <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
-                                                <Chrome className="w-4 h-4 text-primary flex-shrink-0" />
-                                                {r.parentUrl ? (
-                                                  <a
-                                                    href={r.parentUrl}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="font-mono text-white hover:underline hover:text-primary truncate max-w-[280px]"
-                                                  >
-                                                    {r.parentUrl}
-                                                  </a>
-                                                ) : (
-                                                  <span className="text-muted-foreground">Direct Access / Parent URL unavailable</span>
-                                                )}
-                                              </div>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Integration Mode</div>
-                                              <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
-                                                <Activity className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                                                <span className="font-semibold text-white/90">
-                                                  {r.parentUrl ? "Embedded Checkout (Iframe)" : "Direct Checkout Link"}
+                                      ) : (expandedLogs[r.receiptId] && expandedLogs[r.receiptId].length > 0) ? (
+                                        <div className="bg-black/25 border border-white/5 rounded-lg divide-y divide-white/5 max-h-[220px] overflow-y-auto font-mono text-[11px] leading-relaxed">
+                                          {expandedLogs[r.receiptId].map((log, idx) => (
+                                            <div key={idx} className="p-2.5 space-y-1">
+                                              <div className="flex items-center justify-between text-muted-foreground text-[10px]">
+                                                <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
+                                                <span className={`px-1 rounded text-[9px] uppercase font-semibold ${log.level === "error" ? "bg-red-500/15 text-red-400" :
+                                                  log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
+                                                    "bg-blue-500/15 text-blue-400"
+                                                  }`}>
+                                                  {log.level}
                                                 </span>
                                               </div>
+                                              <div className="text-white/80 whitespace-pre-wrap">{log.message}</div>
+                                              {log.userAgent && (
+                                                <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                                                  <Smartphone className="w-3 h-3" />
+                                                  <span>UA: {parseUserAgent(log.userAgent)}</span>
+                                                </div>
+                                              )}
                                             </div>
-                                          </div>
-                                        )}
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div className="text-xs text-muted-foreground p-3 border border-white/5 border-dashed rounded-lg text-center">
+                                          No Client logs matched for this transaction. (Indicates they either completed seamlessly without errors or left early).
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Tab 5: Customer Metadata */}
+                                  {activeTab === "customers" && (
+                                    <div className="space-y-4 animate-in fade-in duration-200 mt-1">
+                                      {(r.customerSessions && r.customerSessions.length > 0) ? (
+                                        <div className="bg-black/25 border border-white/5 rounded-lg overflow-hidden">
+                                          <table className="w-full text-left border-collapse text-xs">
+                                            <thead>
+                                              <tr className="bg-white/5 border-b border-white/5 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
+                                                <th className="py-2.5 px-4">Date/Time</th>
+                                                <th className="py-2.5 px-4">Customer Email</th>
+                                                <th className="py-2.5 px-4">Wallet Address</th>
+                                                <th className="py-2.5 px-4">Stripe Session ID</th>
+                                                <th className="py-2.5 px-4">Payment Method</th>
+                                                <th className="py-2.5 px-4 text-right">Limits Metadata</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-white/5">
+                                              {r.customerSessions.map((session: any, idx: number) => (
+                                                <tr key={idx} className="hover:bg-white/[0.02]">
+                                                  <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
+                                                    {session.createdAt ? new Date(session.createdAt).toLocaleString() : "N/A"}
+                                                  </td>
+                                                  <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
+                                                  <td className="py-3 px-4 font-mono text-[11px] text-white/80 select-all" title={session.walletAddress}>
+                                                    {session.walletAddress ? (
+                                                      <span className="flex items-center gap-1">
+                                                        <span>{session.walletAddress.slice(0, 8)}...{session.walletAddress.slice(-6)}</span>
+                                                      </span>
+                                                    ) : (
+                                                      "N/A"
+                                                    )}
+                                                  </td>
+                                                  <td className="py-3 px-4 font-mono text-[11px] text-muted-foreground select-all" title={session.stripeSessionId}>
+                                                    {session.stripeSessionId ? (
+                                                      <a
+                                                        href={`https://dashboard.stripe.com/crypto/onramp_sessions/${session.stripeSessionId}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="hover:text-primary hover:underline inline-flex items-center gap-1"
+                                                      >
+                                                        <span>{session.stripeSessionId.slice(0, 12)}...</span>
+                                                        <ExternalLink className="w-2.5 h-2.5" />
+                                                      </a>
+                                                    ) : (
+                                                      "N/A"
+                                                    )}
+                                                  </td>
+                                                  <td className="py-3 px-4 text-white/95 text-[11px]">
+                                                    {(() => {
+                                                      const pm = session.paymentMethodDetails;
+                                                      if (!pm) return <span className="text-muted-foreground/50">N/A</span>;
+                                                      if (pm.type === "card") {
+                                                        const card = pm.card || pm.payment_details?.card || pm.paymentDetails?.card;
+                                                        if (!card) return <span>Card</span>;
+                                                        const walletType = card.wallet && (typeof card.wallet === "object" ? card.wallet.type : card.wallet);
+                                                        const formattedWallet = walletType
+                                                          ? String(walletType)
+                                                            .replace(/_/g, " ")
+                                                            .replace(/\b\w/g, (c) => c.toUpperCase())
+                                                          : "";
+                                                        return (
+                                                          <span className="capitalize">
+                                                            {card.brand} •••• {card.last4} ({card.funding})
+                                                            {formattedWallet && ` via ${formattedWallet}`}
+                                                          </span>
+                                                        );
+                                                      } else if (pm.type === "us_bank_account") {
+                                                        const bank = pm.us_bank_account || pm.payment_details?.us_bank_account || pm.paymentDetails?.us_bank_account;
+                                                        if (!bank) return <span>ACH</span>;
+                                                        return (
+                                                          <span>
+                                                            Bank ({bank.bank_name || "ACH"}) •••• {bank.last4 || "bank"}
+                                                          </span>
+                                                        );
+                                                      }
+                                                      return <span className="capitalize">{pm.type || "Unknown"}</span>;
+                                                    })()}
+                                                  </td>
+                                                  <td className="py-3 px-4 text-right">
+                                                    {Array.isArray(session.limits) && session.limits.length > 0 ? (
+                                                      <div className="inline-flex flex-col gap-0.5 text-[10px] text-emerald-400 font-mono text-right">
+                                                        {session.limits.map((l: any, limitIdx: number) => (
+                                                          <div key={limitIdx}>
+                                                            {(() => {
+                                                              const rawAmount = Number(l.amount || 0);
+                                                              // Auto-correct legacy limits written before the x100 multiplier fix
+                                                              const corrected = rawAmount > 1000000 ? rawAmount / 100 : rawAmount;
+                                                              return `$${(corrected / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+                                                            })()} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
+                                                          </div>
+                                                        ))}
+                                                      </div>
+                                                    ) : (
+                                                      <span className="text-muted-foreground italic text-[11px]">No limits tracked</span>
+                                                    )}
+                                                  </td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      ) : (
+                                        <div className="text-xs text-muted-foreground p-4 border border-white/5 border-dashed rounded-lg space-y-2">
+                                          <p>No customer sessions or transaction limits tracked for this receipt yet.</p>
+                                          {r.stripeSessionId && (
+                                            <div className="pt-2 border-t border-white/5 text-[11px]">
+                                              <strong>Primary Session:</strong> {r.email || "anonymous"} • <span className="font-mono text-muted-foreground">{r.stripeSessionId}</span> (Historical record resolved prior to limits/multi-session tracking)
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {/* Tab 2: Items Ordered */}
+                                  {activeTab === "items" && (
+                                    <div className="space-y-2 animate-in fade-in duration-200 mt-1">
+                                      <div className="bg-black/20 border border-white/5 rounded-lg overflow-hidden">
+                                        <table className="w-full text-left text-xs">
+                                          <thead className="bg-white/5 text-muted-foreground text-[10px] uppercase font-semibold border-b border-white/5">
+                                            <tr>
+                                              <th className="py-2 px-3">Item Description</th>
+                                              <th className="py-2 px-3 text-right">Price</th>
+                                              <th className="py-2 px-3 text-center">Qty</th>
+                                              <th className="py-2 px-3 text-right">Total</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody className="divide-y divide-white/5 text-white/90">
+                                            {r.lineItems && r.lineItems.length > 0 ? (
+                                              r.lineItems.map((item, idx) => {
+                                                const qty = item.qty || 1;
+                                                const price = item.priceUsd || 0;
+                                                return (
+                                                  <tr key={idx}>
+                                                    <td className="py-2.5 px-3 font-medium">{item.label}</td>
+                                                    <td className="py-2.5 px-3 text-right">${price.toFixed(2)}</td>
+                                                    <td className="py-2.5 px-3 text-center">{qty}</td>
+                                                    <td className="py-2.5 px-3 text-right font-semibold">${(price * qty).toFixed(2)}</td>
+                                                  </tr>
+                                                );
+                                              })
+                                            ) : (
+                                              <tr>
+                                                <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                                                  No line items recorded for this receipt.
+                                                </td>
+                                              </tr>
+                                            )}
+                                          </tbody>
+                                        </table>
                                       </div>
-                                </td>
-                              </tr>
-                            );
-                          })()}
-                        </React.Fragment>
-                      );
-                    })}
-                    {tableReceipts.length === 0 && (
-                      <tr>
-                        <td colSpan={9} className="py-8 text-center text-muted-foreground text-xs">
-                          No transactions found matching the filter credentials.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                                    </div>
+                                  )}
 
-              {/* Pagination Controls */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-t border-white/5 text-xs text-muted-foreground select-none">
-                <div className="flex items-center gap-2">
-                  <span>Show</span>
-                  <select
-                    value={pageSize}
-                    onChange={e => {
-                      const val = Number(e.target.value);
-                      setPageSize(val);
-                      setCurrentPage(1);
-                    }}
-                    className="h-8 px-2 rounded bg-neutral-900 border border-white/5 text-xs text-white/80 focus:outline-none focus:border-primary/50"
-                  >
-                    <option value={10}>10</option>
-                    <option value={25}>25</option>
-                    <option value={50}>50</option>
-                    <option value={100}>100</option>
-                    <option value={-1}>All</option>
-                  </select>
-                  <span>entries</span>
-                </div>
+                                  {/* Tab 3: Initialization & Origin */}
+                                  {activeTab === "origin" && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs animate-in fade-in duration-200 mt-1">
+                                      <div className="space-y-2">
+                                        <div className="text-muted-foreground text-[10px] uppercase font-medium">Site Initialized On</div>
+                                        <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                                          <Chrome className="w-4 h-4 text-primary flex-shrink-0" />
+                                          {r.parentUrl ? (
+                                            <a
+                                              href={r.parentUrl}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="font-mono text-white hover:underline hover:text-primary truncate max-w-[280px]"
+                                            >
+                                              {r.parentUrl}
+                                            </a>
+                                          ) : (
+                                            <span className="text-muted-foreground">Direct Access / Parent URL unavailable</span>
+                                          )}
+                                        </div>
+                                      </div>
 
-                <div className="flex items-center gap-1.5">
-                  <span>
-                    Showing {tableReceipts.length > 0 ? (currentPage - 1) * (pageSize === -1 ? tableReceipts.length : pageSize) + 1 : 0} to{" "}
-                    {Math.min(
-                      currentPage * (pageSize === -1 ? tableReceipts.length : pageSize),
-                      tableReceipts.length
-                    )}{" "}
-                    of {tableReceipts.length} entries
-                  </span>
-                </div>
-
-                {pageSize !== -1 && totalPages > 1 && (
-                  <div className="flex items-center gap-1">
-                    <button
-                      disabled={currentPage === 1}
-                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                      className="h-8 px-3 rounded border border-white/5 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent font-medium transition-colors"
-                    >
-                      Previous
-                    </button>
-
-                    {/* Render page numbers */}
-                    {(() => {
-                      const pages = [];
-                      const maxPageButtons = 5;
-                      let startPage = Math.max(1, currentPage - 2);
-                      let endPage = Math.min(totalPages, startPage + maxPageButtons - 1);
-                      if (endPage - startPage < maxPageButtons - 1) {
-                        startPage = Math.max(1, endPage - maxPageButtons + 1);
-                      }
-
-                      for (let p = startPage; p <= endPage; p++) {
-                        pages.push(
-                          <button
-                            key={p}
-                            onClick={() => setCurrentPage(p)}
-                            className={`h-8 w-8 rounded text-xs transition-colors ${currentPage === p
-                                ? "bg-primary text-white font-semibold"
-                                : "border border-white/5 hover:bg-white/5 text-muted-foreground hover:text-white"
-                              }`}
-                          >
-                            {p}
-                          </button>
-                        );
-                      }
-                      return pages;
-                    })()}
-
-                    <button
-                      disabled={currentPage === totalPages}
-                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                      className="h-8 px-3 rounded border border-white/5 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent font-medium transition-colors"
-                    >
-                      Next
-                    </button>
-                  </div>
-                )}
-              </div>
+                                      <div className="space-y-2">
+                                        <div className="text-muted-foreground text-[10px] uppercase font-medium">Integration Mode</div>
+                                        <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                                          <Activity className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                                          <span className="font-semibold text-white/90">
+                                            {r.parentUrl ? "Embedded Checkout (Iframe)" : "Direct Checkout Link"}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })()}
+                      </React.Fragment>
+                    );
+                  })}
+                  {tableReceipts.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-8 text-center text-muted-foreground text-xs">
+                        No transactions found matching the filter credentials.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
 
+            {/* Pagination Controls */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-t border-white/5 text-xs text-muted-foreground select-none">
+              <div className="flex items-center gap-2">
+                <span>Show</span>
+                <select
+                  value={pageSize}
+                  onChange={e => {
+                    const val = Number(e.target.value);
+                    setPageSize(val);
+                    setCurrentPage(1);
+                  }}
+                  className="h-8 px-2 rounded bg-neutral-900 border border-white/5 text-xs text-white/80 focus:outline-none focus:border-primary/50"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={-1}>All</option>
+                </select>
+                <span>entries</span>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <span>
+                  Showing {tableReceipts.length > 0 ? (currentPage - 1) * (pageSize === -1 ? tableReceipts.length : pageSize) + 1 : 0} to{" "}
+                  {Math.min(
+                    currentPage * (pageSize === -1 ? tableReceipts.length : pageSize),
+                    tableReceipts.length
+                  )}{" "}
+                  of {tableReceipts.length} entries
+                </span>
+              </div>
+
+              {pageSize !== -1 && totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    className="h-8 px-3 rounded border border-white/5 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent font-medium transition-colors"
+                  >
+                    Previous
+                  </button>
+
+                  {/* Render page numbers */}
+                  {(() => {
+                    const pages = [];
+                    const maxPageButtons = 5;
+                    let startPage = Math.max(1, currentPage - 2);
+                    let endPage = Math.min(totalPages, startPage + maxPageButtons - 1);
+                    if (endPage - startPage < maxPageButtons - 1) {
+                      startPage = Math.max(1, endPage - maxPageButtons + 1);
+                    }
+
+                    for (let p = startPage; p <= endPage; p++) {
+                      pages.push(
+                        <button
+                          key={p}
+                          onClick={() => setCurrentPage(p)}
+                          className={`h-8 w-8 rounded text-xs transition-colors ${currentPage === p
+                            ? "bg-primary text-white font-semibold"
+                            : "border border-white/5 hover:bg-white/5 text-muted-foreground hover:text-white"
+                            }`}
+                        >
+                          {p}
+                        </button>
+                      );
+                    }
+                    return pages;
+                  })()}
+
+                  <button
+                    disabled={currentPage === totalPages}
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    className="h-8 px-3 rounded border border-white/5 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent font-medium transition-colors"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
         </div>
@@ -1557,7 +1793,7 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
           onMouseEnter={() => setHoveredKey("aggregate")}
           onMouseLeave={() => setHoveredKey(null)}
           className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${hoveredKey === "aggregate" ? "bg-white/10 scale-[1.03] text-white" :
-              hoveredKey !== null ? "opacity-30" : "text-white/80 hover:text-white"
+            hoveredKey !== null ? "opacity-30" : "text-white/80 hover:text-white"
             }`}
         >
           <div className="h-2.5 w-2.5 rounded-full bg-[#c084fc] shadow-[0_0_8px_rgba(192,132,252,0.6)]" />
@@ -1576,7 +1812,7 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
               onMouseEnter={() => setHoveredKey(bk)}
               onMouseLeave={() => setHoveredKey(null)}
               className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${isHovered ? "bg-white/10 scale-[1.03] text-white" :
-                  isDimmed ? "opacity-30" : "text-white/80 hover:text-white"
+                isDimmed ? "opacity-30" : "text-white/80 hover:text-white"
                 }`}
             >
               <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }} />

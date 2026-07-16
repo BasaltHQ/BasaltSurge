@@ -419,6 +419,28 @@ export function useStripeEmbeddedOnramp({
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
 
+  // ─── CALLBACK REFS TO PREVENT STALE CLOSURES ───
+  const onSuccessRef = useRef(onSuccess);
+  const onErrorRef = useRef(onError);
+  const onCardDetectedRef = useRef(onCardDetected);
+  const onStepChangeRef = useRef(onStepChange);
+
+  useEffect(() => {
+    onSuccessRef.current = onSuccess;
+  }, [onSuccess]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  useEffect(() => {
+    onCardDetectedRef.current = onCardDetected;
+  }, [onCardDetected]);
+
+  useEffect(() => {
+    onStepChangeRef.current = onStepChange;
+  }, [onStepChange]);
+
   const confirmSpeed = useCallback((speed: "standard" | "instant") => {
     if (speedResolverRef.current) {
       speedResolverRef.current(speed);
@@ -450,8 +472,8 @@ export function useStripeEmbeddedOnramp({
     if (!mountedRef.current) return;
     stepRef.current = newStep;
     setStep(newStep);
-    onStepChange?.(newStep);
-  }, [onStepChange]);
+    onStepChangeRef.current?.(newStep);
+  }, []);
 
   // Synchronize email in session storage when it changes dynamically (without clearing session data on keystrokes)
   useEffect(() => {
@@ -874,7 +896,7 @@ export function useStripeEmbeddedOnramp({
       setDetectedCardFunding(null);
       setDetectedCardBrand(null);
       setDetectedCardLast4(null);
-      onCardDetected?.(null);
+      onCardDetectedRef.current?.(null);
     }
     if (onrampRef.current) {
       try {
@@ -886,8 +908,8 @@ export function useStripeEmbeddedOnramp({
       onrampRef.current = null;
     }
     updateStep(isCancellation ? "idle" : "error");
-    onError?.(new Error(friendlyMessage));
-  }, [onError, updateStep, onCardDetected]);
+    onErrorRef.current?.(new Error(friendlyMessage));
+  }, [detectedCardFunding, updateStep]);
 
   const pollKycStatus = useCallback(async (custId: string, targetTier?: "l0" | "l1" | "l2"): Promise<boolean> => {
     const startMsg = `[KYC POLL START] Polling KYC status for customer ${custId} (target: ${targetTier || 'legacy'})`;
@@ -1548,10 +1570,10 @@ export function useStripeEmbeddedOnramp({
       const isAch = fundingTypeToUse === "us_bank_account";
       if (isAch) {
         updateStep("awaiting_funds");
-        onSuccess?.({ sessionId, txHash: "ach_pending" });
+        onSuccessRef.current?.({ sessionId, txHash: "ach_pending" });
       } else {
         updateStep("completed");
-        onSuccess?.({ sessionId, txHash: "ecommerce_pending" });
+        onSuccessRef.current?.({ sessionId, txHash: "ecommerce_pending" });
       }
       return;
     }
@@ -1561,7 +1583,7 @@ export function useStripeEmbeddedOnramp({
       console.log("[EMBEDDED ONRAMP] ACH/Bank payment chosen in standard mode. Redirecting to awaiting_funds and completing client flow.");
       isRunningRef.current = false;
       updateStep("awaiting_funds");
-      onSuccess?.({ sessionId, txHash: "ach_pending" });
+      onSuccessRef.current?.({ sessionId, txHash: "ach_pending" });
       return;
     }
 
@@ -1635,7 +1657,7 @@ export function useStripeEmbeddedOnramp({
 
     isRunningRef.current = false;
     updateStep("completed");
-    onSuccess?.({ sessionId, txHash });
+    onSuccessRef.current?.({ sessionId, txHash });
   }, [
     isEcommerceMode,
     receiptId,
@@ -1646,7 +1668,6 @@ export function useStripeEmbeddedOnramp({
     brandKey,
     detectedCardFunding,
     updateStep,
-    onSuccess,
     handleError,
     executeGaslessTransfer,
     getOnrampAmount
@@ -1699,7 +1720,7 @@ export function useStripeEmbeddedOnramp({
           setDetectedCardFunding("us_bank_account");
           setDetectedCardBrand(bankName);
           setDetectedCardLast4(bankLast4);
-          onCardDetected?.({ funding: "us_bank_account", brand: bankName, last4: bankLast4 });
+          onCardDetectedRef.current?.({ funding: "us_bank_account", brand: bankName, last4: bankLast4 });
           console.log(`[EMBEDDED ONRAMP] Bank account detected: method=${method}, brand=${bankName} (${bankLast4}).`);
 
           const targetAmount = getOnrampAmount("us_bank_account");
@@ -1721,7 +1742,7 @@ export function useStripeEmbeddedOnramp({
           setDetectedCardFunding(fundingType);
           if (brand) setDetectedCardBrand(brand);
           if (last4) setDetectedCardLast4(last4);
-          onCardDetected?.({ funding: fundingType, brand: brand || "", last4: last4 || "" });
+          onCardDetectedRef.current?.({ funding: fundingType, brand: brand || "", last4: last4 || "" });
           console.log(`[EMBEDDED ONRAMP] Card detected: method=${method}, funding=${funding}, brand=${brand} (${last4}). Pausing for fee review.`);
 
           const targetAmount = getOnrampAmount(fundingType);
@@ -2129,7 +2150,6 @@ export function useStripeEmbeddedOnramp({
     network,
     updateStep,
     handleError,
-    onCardDetected,
     getOnrampAmount,
     detectedCardFunding
   ]);
@@ -2900,7 +2920,7 @@ export function useStripeEmbeddedOnramp({
             setDetectedCardFunding(null);
             setDetectedCardBrand(null);
             setDetectedCardLast4(null);
-            onCardDetected?.(null);
+            onCardDetectedRef.current?.(null);
             isRunningRef.current = false;
             setTimeout(() => {
               startOnrampRef.current?.(activeEmailRef.current || undefined);
@@ -3056,7 +3076,7 @@ export function useStripeEmbeddedOnramp({
             setDetectedCardFunding(null);
             setDetectedCardBrand(null);
             setDetectedCardLast4(null);
-            onCardDetected?.(null);
+            onCardDetectedRef.current?.(null);
             isRunningRef.current = false;
             setTimeout(() => {
               startOnrampRef.current?.(activeEmailRef.current || undefined);
@@ -3224,7 +3244,7 @@ export function useStripeEmbeddedOnramp({
   }, [
     enabled, email, phone, localPhone, splitAddress, splitAddressCredit, amount, network,
     destinationCurrency, receiptId, merchantWallet, brandKey,
-    publishableKey, connectedWalletAddress, connectedWallet, onSuccess, handleError,
+    publishableKey, connectedWalletAddress, connectedWallet, handleError,
     updateStep, createBuyerWallet, runCheckoutLoop, pollKycStatus,
   ]);
 

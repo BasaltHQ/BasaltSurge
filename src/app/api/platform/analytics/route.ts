@@ -288,9 +288,67 @@ export async function GET(req: NextRequest) {
         customerSessions: r.customerSessions || [],
         lastPolledAt: r.lastPolledAt || null,
         stripeSessionStatus: r.stripeSessionStatus || null,
-        ipAddress: r.ipAddress || null
+        ipAddress: r.ipAddress || null,
+        statusHistory: r.statusHistory || [],
+        customerEmail: r.customerEmail || null,
+        stripeEmail: r.stripeEmail || null
       };
     });
+
+    // Aggregate metrics chronologically over all historical lightweight records
+    const dailySeriesMap: Record<string, {
+      dateLabel: string;
+      timestamp: number;
+      allPaid: number;
+      allFailed: number;
+      allTotal: number;
+      brands: Record<string, { paid: number; failed: number; total: number }>
+    }> = {};
+
+    for (const r of allReceiptsLight) {
+      if (!r.createdAt) continue;
+      const d = new Date(r.createdAt);
+      // Group by absolute date string (e.g. "Jul 12")
+      const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      const dayStartTimestamp = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+      if (!dailySeriesMap[dateStr]) {
+        dailySeriesMap[dateStr] = {
+          dateLabel: dateStr,
+          timestamp: dayStartTimestamp,
+          allPaid: 0,
+          allFailed: 0,
+          allTotal: 0,
+          brands: {}
+        };
+      }
+
+      const g = dailySeriesMap[dateStr];
+      const status = r.status || "pending";
+      g.allTotal++;
+      
+      const isPaid = ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status);
+      const isFailed = status === "failed";
+      
+      if (isPaid) {
+        g.allPaid++;
+      } else if (isFailed) {
+        g.allFailed++;
+      }
+
+      const bKey = r.brandKey || "unknown";
+      if (!g.brands[bKey]) {
+        g.brands[bKey] = { paid: 0, failed: 0, total: 0 };
+      }
+      g.brands[bKey].total++;
+      if (isPaid) {
+        g.brands[bKey].paid++;
+      } else if (isFailed) {
+        g.brands[bKey].failed++;
+      }
+    }
+
+    const dailySeries = Object.values(dailySeriesMap).sort((a, b) => a.timestamp - b.timestamp);
 
     const successRate = totalCreated > 0 ? (totalPaid / totalCreated) * 100 : 0;
     const aov = totalPaid > 0 ? totalGmv / totalPaid : 0;
@@ -318,7 +376,8 @@ export async function GET(req: NextRequest) {
           fees: +b.fees.toFixed(2)
         }))
         .sort((a, b) => b.gmv - a.gmv),
-      recentReceipts: processedReceipts
+      recentReceipts: processedReceipts,
+      dailySeries
     });
   } catch (e: any) {
     console.error("[PLATFORM ANALYTICS API] Error:", e);
