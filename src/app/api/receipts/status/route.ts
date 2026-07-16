@@ -110,6 +110,8 @@ export async function POST(req: NextRequest) {
       detectedCardFunding = "us_bank_account";
       isCreditCard = false;
     }
+    const failureReason = typeof body.error === "string" ? String(body.error).trim() : undefined;
+    const paymentMethodDetails = typeof body.paymentMethodDetails === "object" ? body.paymentMethodDetails : undefined;
     const parentUrl = typeof body.parentUrl === "string" ? String(body.parentUrl).trim() : undefined;
     const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "127.0.0.1";
     let brandKey: string | undefined = undefined;
@@ -256,6 +258,7 @@ export async function POST(req: NextRequest) {
           ...(detectedCardFunding ? { detectedCardFunding } : {}),
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
+          ...(failureReason ? { failureReason } : {}),
         }
         : {
           id,
@@ -291,7 +294,46 @@ export async function POST(req: NextRequest) {
           ...(detectedCardFunding ? { detectedCardFunding } : {}),
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
+          ...(failureReason ? { failureReason } : {}),
         };
+
+      // Track customerSessions if stripeSessionId or customerEmail or buyerWallet is available
+      if (stripeSessionId || customerEmail || buyerWallet) {
+        let sessions = Array.isArray(next.customerSessions || (resource && resource.customerSessions)) 
+          ? [...(next.customerSessions || resource.customerSessions)] 
+          : [];
+        
+        const emailToUse = customerEmail || next.stripeEmail || next.customerEmail || (resource && (resource.stripeEmail || resource.customerEmail)) || "";
+        const walletToUse = buyerWallet || next.buyerWallet || (resource && resource.buyerWallet) || "";
+        
+        const existingIndex = sessions.findIndex((s: any) => 
+          (stripeSessionId && s.stripeSessionId === stripeSessionId) ||
+          (emailToUse && s.email && s.email.toLowerCase() === emailToUse.toLowerCase() && walletToUse && s.walletAddress && s.walletAddress.toLowerCase() === walletToUse.toLowerCase())
+        );
+        
+        const sessionEntry = {
+          email: emailToUse || null,
+          walletAddress: walletToUse || null,
+          stripeSessionId: stripeSessionId || null,
+          paymentMethodDetails: paymentMethodDetails || null,
+          createdAt: Date.now()
+        };
+        
+        if (existingIndex > -1) {
+          sessions[existingIndex] = {
+            ...sessions[existingIndex],
+            email: emailToUse || sessions[existingIndex].email,
+            walletAddress: walletToUse || sessions[existingIndex].walletAddress,
+            stripeSessionId: stripeSessionId || sessions[existingIndex].stripeSessionId,
+            paymentMethodDetails: paymentMethodDetails || sessions[existingIndex].paymentMethodDetails,
+            updatedAt: Date.now()
+          };
+        } else {
+          sessions.push(sessionEntry);
+        }
+        
+        next.customerSessions = sessions;
+      }
 
       if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
         const reqFunding = detectedCardFunding || (isCreditCard === true ? "credit" : undefined);

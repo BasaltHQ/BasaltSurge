@@ -288,7 +288,10 @@ export async function GET(req: NextRequest) {
         customerSessions: r.customerSessions || [],
         lastPolledAt: r.lastPolledAt || null,
         stripeSessionStatus: r.stripeSessionStatus || null,
-        ipAddress: r.ipAddress || null
+        ipAddress: r.ipAddress || null,
+        statusHistory: r.statusHistory || [],
+        customerEmail: r.customerEmail || null,
+        stripeEmail: r.stripeEmail || null
       };
     });
 

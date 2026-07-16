@@ -3795,11 +3795,32 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         setDetectedCardFunding(card.funding);
         setDetectedCardBrand(card.brand);
         setDetectedCardLast4(card.last4);
+        postStatus("payment_method_detected", {
+          stripeSessionId: headlessSessionId || undefined,
+          customerEmail: shipEmail || headlessEmailInput || undefined,
+          detectedCardFunding: card.funding,
+          paymentMethodDetails: {
+            type: card.funding === "us_bank_account" ? "us_bank_account" : "card",
+            ...(card.funding === "us_bank_account" ? {
+              us_bank_account: { bank_name: card.brand, last4: card.last4 }
+            } : {
+              card: { brand: card.brand, funding: card.funding, last4: card.last4 }
+            })
+          }
+        });
       } else {
         setDetectedCardFunding(null);
         setDetectedCardBrand(null);
         setDetectedCardLast4(null);
       }
+    },
+    onStepChange: (newStep) => {
+      console.log("[STRIPE HEADLESS] Step changed:", newStep);
+      postStatus(`onramp_${newStep}`, {
+        stripeSessionId: headlessSessionId || undefined,
+        customerEmail: shipEmail || headlessEmailInput || undefined,
+        detectedCardFunding: stripeDetectedFunding || undefined,
+      });
     },
     onSuccess: (result) => {
       console.log("[STRIPE HEADLESS] ✓ Onramp + transfer completed:", result);
@@ -3835,13 +3856,27 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       }
 
       console.error("[STRIPE HEADLESS] Error:", error);
-      postStatus("failed", { error: error.message });
+      postStatus("failed", { 
+        error: error.message,
+        stripeSessionId: headlessSessionId || undefined
+      });
       setDisplayError(error.message || "An error occurred during payment.");
       resetHeadlessOnramp();
       setHeadlessEmailPrompt(true);
       setHeadlessInitiated(false);
     },
   });
+
+  useEffect(() => {
+    if (headlessSessionId) {
+      console.log("[STRIPE HEADLESS] Session ID resolved on client:", headlessSessionId);
+      postStatus("checkout_session_created", {
+        stripeSessionId: headlessSessionId,
+        customerEmail: shipEmail || headlessEmailInput || undefined,
+        detectedCardFunding: stripeDetectedFunding || undefined,
+      });
+    }
+  }, [headlessSessionId]);
 
   // Clean up Stripe headless elements on unmount or when they are cleared/replaced
   useEffect(() => {

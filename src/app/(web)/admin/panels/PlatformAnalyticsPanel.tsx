@@ -82,6 +82,9 @@ interface ReceiptInfo {
   lastPolledAt?: number | null;
   stripeSessionStatus?: string | null;
   ipAddress?: string | null;
+  statusHistory?: { status: string; ts: number }[];
+  customerEmail?: string | null;
+  stripeEmail?: string | null;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -950,171 +953,352 @@ export default function PlatformAnalyticsPanel() {
                                     </div>
 
                                     {/* Tab 1: Overview & Meta */}
-                                    {activeTab === "overview" && (
-                                      <div className="space-y-4 animate-in fade-in duration-200">
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 text-xs mt-1">
-                                          <div className="space-y-1">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Stripe Session ID</div>
-                                            <div className="flex items-center gap-1">
-                                              <span className="font-mono text-white/90 truncate max-w-[160px]">
-                                                {r.stripeSessionId || "N/A"}
-                                              </span>
-                                              {r.stripeSessionId && (
-                                                <>
-                                                  <button
-                                                    onClick={() => handleCopy(r.stripeSessionId!, `stripe-${r.receiptId}`)}
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <Copy className="w-3 h-3" />
-                                                  </button>
-                                                  <a
-                                                    href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <ExternalLink className="w-3 h-3" />
-                                                  </a>
-                                                </>
-                                              )}
-                                              {copySuccess[`stripe-${r.receiptId}`] && <span className="text-[10px] text-emerald-400">Copied!</span>}
-                                            </div>
-                                          </div>
+                                    {activeTab === "overview" && (() => {
+                                      // 1. Extract status history
+                                      const statusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
+                                      const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
+                                      const currentStatus = String(r.status || "").toLowerCase();
 
-                                          <div className="space-y-1">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">On-chain Tx Hash</div>
-                                            <div className="flex items-center gap-1">
-                                              <span className="font-mono text-white/90 truncate max-w-[160px]">
-                                                {r.transactionHash || "N/A"}
-                                              </span>
-                                              {r.transactionHash && (
-                                                <>
-                                                  <button
-                                                    onClick={() => handleCopy(r.transactionHash!, `tx-${r.receiptId}`)}
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <Copy className="w-3 h-3" />
-                                                  </button>
-                                                  <a
-                                                    href={`https://basescan.org/tx/${r.transactionHash}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <ExternalLink className="w-3 h-3" />
-                                                  </a>
-                                                </>
-                                              )}
-                                              {copySuccess[`tx-${r.receiptId}`] && <span className="text-[10px] text-emerald-400">Copied!</span>}
-                                            </div>
-                                          </div>
+                                      // 2. Identify payment details from customer sessions or receipt fields
+                                      const hasSessionId = !!r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.stripeSessionId));
+                                      
+                                      // 3. Stage 1: Link Opened
+                                      const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
+                                      
+                                      // 4. Stage 2: Customer Identified
+                                      const customerIdentified = statusList.includes("buyer_logged_in") || 
+                                                                 statusList.includes("checkout_initialized") || 
+                                                                 statusList.includes("checkout_session_created") ||
+                                                                 !!r.customerEmail || 
+                                                                 !!r.stripeEmail ||
+                                                                 (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.email));
 
-                                          <div className="space-y-1">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Created At</div>
-                                            <div className="text-white/90">
-                                              {new Date(r.createdAt).toLocaleString()}
-                                            </div>
-                                          </div>
+                                      // 5. Stage 3: Payment Method Selected
+                                      const paymentMethodSelected = !!r.cardFunding || 
+                                                                    statusList.includes("payment_method_detected") ||
+                                                                    statusList.includes("onramp_confirming_fees") ||
+                                                                    statusList.includes("onramp_checking_out") ||
+                                                                    (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.paymentMethodDetails));
 
-                                          <div className="space-y-1">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Card Funding</div>
-                                            <div className="text-white/90 capitalize">
-                                              {r.cardFunding === "us_bank_account" ? "Bank Transfer (ACH)" : (r.cardFunding || "unknown / N/A")}
-                                            </div>
-                                          </div>
+                                      // 6. Stage 4: KYC / Verification
+                                      const kycTriggered = statusList.some(s => s.includes("kyc") || s.includes("verifying")) || 
+                                                           String(r.failureReason || "").toLowerCase().includes("verification") || 
+                                                           String(r.failureReason || "").toLowerCase().includes("kyc");
+                                      
+                                      const kycCompleted = (kycTriggered && (
+                                                             statusList.includes("onramp_checking_out") || 
+                                                             statusList.includes("onramp_awaiting_funds") ||
+                                                             statusList.includes("onramp_completed") ||
+                                                             ["paid", "paid - ach pending", "checkout_success", "confirmed", "reconciled"].includes(currentStatus)
+                                                           )) && !String(r.failureReason || "").toLowerCase().includes("verification") && !String(r.failureReason || "").toLowerCase().includes("kyc");
 
-                                          <div className="space-y-1">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Client IP</div>
-                                            <div className="text-white/90 font-mono">
-                                              {r.ipAddress || "N/A"}
-                                            </div>
-                                          </div>
-                                        </div>
+                                      const kycFailed = kycTriggered && 
+                                                        currentStatus === "failed" && 
+                                                        (String(r.failureReason || "").toLowerCase().includes("verification") || 
+                                                         String(r.failureReason || "").toLowerCase().includes("kyc") || 
+                                                         statusList.includes("onramp_verifying_identity"));
 
-                                        {r.cardFunding === "us_bank_account" && (
-                                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 mt-2 bg-white/[0.01] border border-white/5 rounded-xl p-3">
-                                            <div className="space-y-1">
-                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Last ACH Poll</div>
-                                              <div className="text-white/90 text-xs">
-                                                {r.lastPolledAt ? new Date(r.lastPolledAt).toLocaleString() : "Never"}
-                                              </div>
-                                            </div>
-                                            <div className="space-y-1">
-                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">ACH Status</div>
-                                              <div className="flex items-center gap-1.5 mt-0.5">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                                                <span className="text-amber-400 font-semibold uppercase tracking-wider text-[10px]">
-                                                  {r.stripeSessionStatus || "Pending"}
+                                      // 7. Stage 5: Settlement
+                                      const settlementSuccess = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined"].includes(currentStatus);
+                                      const settlementAwaiting = ["paid - ach pending", "ach_pending", "awaiting_funds", "onramp_awaiting_funds"].includes(currentStatus);
+                                      const settlementFailed = currentStatus === "failed";
+
+                                      // Compute Intent Level
+                                      let intentLevel: "Low" | "Medium" | "High" = "Low";
+                                      if (paymentMethodSelected || kycTriggered || currentStatus === "failed" || settlementSuccess || settlementAwaiting) {
+                                        intentLevel = "High";
+                                      } else if (customerIdentified || hasSessionId) {
+                                        intentLevel = "Medium";
+                                      }
+
+                                      // Determine details of detected payment method if available
+                                      let pmText = "Selecting payment";
+                                      if (r.cardFunding === "us_bank_account") {
+                                        pmText = "Bank Account (ACH)";
+                                      } else if (r.cardFunding) {
+                                        pmText = `${r.cardFunding} Card`;
+                                      } else if (Array.isArray(r.customerSessions)) {
+                                        const matched = r.customerSessions.find((s: any) => s.paymentMethodDetails);
+                                        if (matched) {
+                                          const details = matched.paymentMethodDetails;
+                                          if (details.type === "us_bank_account") {
+                                            pmText = "Bank Account (ACH)";
+                                          } else if (details.card) {
+                                            pmText = `${details.card.funding || "card"} (${details.card.brand || "unknown"})`;
+                                          }
+                                        }
+                                      }
+
+                                      const steps = [
+                                        {
+                                          id: "opened",
+                                          label: "Link Opened",
+                                          status: "completed",
+                                          description: "Checkout opened"
+                                        },
+                                        {
+                                          id: "identified",
+                                          label: "Identified",
+                                          status: customerIdentified ? "completed" : "active",
+                                          description: customerIdentified ? (r.customerEmail || r.stripeEmail || "User identified") : "Awaiting user info"
+                                        },
+                                        {
+                                          id: "payment",
+                                          label: "Payment Info",
+                                          status: paymentMethodSelected ? "completed" : (customerIdentified ? "active" : "upcoming"),
+                                          description: paymentMethodSelected ? pmText : "Selecting method"
+                                        },
+                                        {
+                                          id: "kyc",
+                                          label: "KYC Check",
+                                          status: kycFailed ? "failed" : (kycCompleted ? "completed" : (kycTriggered ? "active" : (paymentMethodSelected ? "skipped" : "upcoming"))),
+                                          description: kycFailed ? "KYC Rejected" : (kycCompleted ? "KYC Verified" : (kycTriggered ? "Reviewing..." : "Not Required"))
+                                        },
+                                        {
+                                          id: "settlement",
+                                          label: "Settlement",
+                                          status: settlementSuccess ? "completed" : (settlementAwaiting ? "active" : (settlementFailed && !kycFailed ? "failed" : "upcoming")),
+                                          description: settlementSuccess ? "Funds Delivered" : (settlementAwaiting ? "Clearance Pending" : (settlementFailed && !kycFailed ? "Payment Failed" : "Awaiting checkout"))
+                                        }
+                                      ];
+
+                                      return (
+                                        <div className="space-y-4 animate-in fade-in duration-200">
+                                          {/* Funnel Progress Stepper Panel */}
+                                          <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4">
+                                            <div className="flex items-center justify-between mb-4">
+                                              <div className="flex items-center gap-2">
+                                                <span className="text-white/40 text-[10px] uppercase font-bold tracking-wider">User Funnel</span>
+                                                <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
+                                                  intentLevel === "High" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                                                  intentLevel === "Medium" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
+                                                  "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20"
+                                                }`}>
+                                                  {intentLevel} Intent
                                                 </span>
                                               </div>
+                                              <div className="text-[10px] text-muted-foreground">
+                                                Dynamic Funnel Analysis
+                                              </div>
                                             </div>
-                                          </div>
-                                        )}
 
-                                        {/* Intended / Actual Split Address */}
-                                        <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
-                                            {isSettled ? "Settled Split Address" : "Intended Split Addresses"}
-                                          </div>
-                                          {isSettled ? (
-                                            <div className="flex items-center gap-2 font-mono text-white text-xs">
-                                              <span className="font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded text-[9px] uppercase">
-                                                {isCredit ? "Credit Split" : "Standard Split"}
-                                              </span>
-                                              <span className="truncate">{actualSplitAddress || "N/A"}</span>
-                                              {actualSplitAddress && (
-                                                <button
-                                                  onClick={() => handleCopy(actualSplitAddress, `split-${r.receiptId}`)}
-                                                  className="text-muted-foreground hover:text-white transition-colors"
-                                                >
-                                                  <Copy className="w-3.5 h-3.5" />
-                                                </button>
-                                              )}
-                                              {copySuccess[`split-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
+                                            {/* Stepper progress track */}
+                                            <div className="flex items-center justify-between w-full relative px-6 py-2">
+                                              {/* Track Background */}
+                                              <div className="absolute left-12 right-12 top-[22px] h-[2px] bg-white/5 -z-0" />
+                                              
+                                              {/* Track Active Progress Line */}
+                                              <div 
+                                                className="absolute left-[48px] top-[22px] h-[2px] bg-emerald-500/30 transition-all duration-500 -z-0"
+                                                style={{
+                                                  width: `${
+                                                    settlementSuccess ? "100%" :
+                                                    (kycCompleted || kycFailed) ? "75%" :
+                                                    paymentMethodSelected ? "50%" :
+                                                    customerIdentified ? "25%" : "0%"
+                                                  }`,
+                                                  maxWidth: 'calc(100% - 96px)'
+                                                }}
+                                              />
+
+                                              {steps.map((step, idx) => {
+                                                let dotColor = "bg-zinc-900 text-zinc-500 border border-zinc-700";
+                                                let icon = <span>{idx + 1}</span>;
+                                                
+                                                if (step.status === "completed") {
+                                                  dotColor = "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
+                                                  icon = <CheckCircle2 className="w-3.5 h-3.5" />;
+                                                } else if (step.status === "active") {
+                                                  dotColor = "bg-amber-500/10 text-amber-400 border border-amber-500/30 animate-pulse";
+                                                  icon = <RefreshCw className="w-3 h-3 animate-spin" />;
+                                                } else if (step.status === "failed") {
+                                                  dotColor = "bg-red-500/10 text-red-400 border border-red-500/30";
+                                                  icon = <XCircle className="w-3.5 h-3.5" />;
+                                                } else if (step.status === "skipped") {
+                                                  dotColor = "bg-zinc-800 text-zinc-400 border border-dashed border-zinc-700";
+                                                  icon = <span className="text-[8px] font-bold font-mono text-zinc-400">N/A</span>;
+                                                }
+
+                                                return (
+                                                  <div key={step.id} className="flex flex-col items-center relative z-10 w-24">
+                                                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${dotColor} bg-neutral-950`}>
+                                                      {icon}
+                                                    </div>
+                                                    <span className="mt-2 text-[10px] font-semibold text-white/90 whitespace-nowrap">{step.label}</span>
+                                                    <span className="text-[9px] text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis max-w-[90px]" title={step.description}>
+                                                      {step.description}
+                                                    </span>
+                                                  </div>
+                                                );
+                                              })}
                                             </div>
-                                          ) : (
-                                            <div className="space-y-1.5">
+                                          </div>
+
+                                          {/* Metadata Grid */}
+                                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 text-xs mt-1">
+                                            <div className="space-y-1">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Stripe Session ID</div>
+                                              <div className="flex items-center gap-1">
+                                                <span className="font-mono text-white/90 truncate max-w-[160px]">
+                                                  {r.stripeSessionId || "N/A"}
+                                                </span>
+                                                {r.stripeSessionId && (
+                                                  <>
+                                                    <button
+                                                      onClick={() => handleCopy(r.stripeSessionId!, `stripe-${r.receiptId}`)}
+                                                      className="text-muted-foreground hover:text-white transition-colors"
+                                                    >
+                                                      <Copy className="w-3 h-3" />
+                                                    </button>
+                                                    <a
+                                                      href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      className="text-muted-foreground hover:text-white transition-colors"
+                                                    >
+                                                      <ExternalLink className="w-3 h-3" />
+                                                    </a>
+                                                  </>
+                                                )}
+                                                {copySuccess[`stripe-${r.receiptId}`] && <span className="text-[10px] text-emerald-400">Copied!</span>}
+                                              </div>
+                                            </div>
+
+                                            <div className="space-y-1">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">On-chain Tx Hash</div>
+                                              <div className="flex items-center gap-1">
+                                                <span className="font-mono text-white/90 truncate max-w-[160px]">
+                                                  {r.transactionHash || "N/A"}
+                                                </span>
+                                                {r.transactionHash && (
+                                                  <>
+                                                    <button
+                                                      onClick={() => handleCopy(r.transactionHash!, `tx-${r.receiptId}`)}
+                                                      className="text-muted-foreground hover:text-white transition-colors"
+                                                    >
+                                                      <Copy className="w-3 h-3" />
+                                                    </button>
+                                                    <a
+                                                      href={`https://basescan.org/tx/${r.transactionHash}`}
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      className="text-muted-foreground hover:text-white transition-colors"
+                                                    >
+                                                      <ExternalLink className="w-3 h-3" />
+                                                    </a>
+                                                  </>
+                                                )}
+                                                {copySuccess[`tx-${r.receiptId}`] && <span className="text-[10px] text-emerald-400">Copied!</span>}
+                                              </div>
+                                            </div>
+
+                                            <div className="space-y-1">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Created At</div>
+                                              <div className="text-white/90">
+                                                {new Date(r.createdAt).toLocaleString()}
+                                              </div>
+                                            </div>
+
+                                            <div className="space-y-1">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Card Funding</div>
+                                              <div className="text-white/90 capitalize">
+                                                {r.cardFunding === "us_bank_account" ? "Bank Transfer (ACH)" : (r.cardFunding || "unknown / N/A")}
+                                              </div>
+                                            </div>
+
+                                            <div className="space-y-1">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Client IP</div>
+                                              <div className="text-white/90 font-mono">
+                                                {r.ipAddress || "N/A"}
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          {r.cardFunding === "us_bank_account" && (
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 mt-2 bg-white/[0.01] border border-white/5 rounded-xl p-3">
+                                              <div className="space-y-1">
+                                                <div className="text-muted-foreground text-[10px] uppercase font-medium">Last ACH Poll</div>
+                                                <div className="text-white/90 text-xs">
+                                                  {r.lastPolledAt ? new Date(r.lastPolledAt).toLocaleString() : "Never"}
+                                                </div>
+                                              </div>
+                                              <div className="space-y-1">
+                                                <div className="text-muted-foreground text-[10px] uppercase font-medium">ACH Status</div>
+                                                <div className="flex items-center gap-1.5 mt-0.5">
+                                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                                                  <span className="text-amber-400 font-semibold uppercase tracking-wider text-[10px]">
+                                                    {r.stripeSessionStatus || "Pending"}
+                                                  </span>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          )}
+
+                                          {/* Intended / Actual Split Address */}
+                                          <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3">
+                                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
+                                              {isSettled ? "Settled Split Address" : "Intended Split Addresses"}
+                                            </div>
+                                            {isSettled ? (
                                               <div className="flex items-center gap-2 font-mono text-white text-xs">
-                                                <span className="text-muted-foreground w-28">Standard Split:</span>
-                                                <span className="truncate">{r.splitAddress || "N/A"}</span>
-                                                {r.splitAddress && (
+                                                <span className="font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded text-[9px] uppercase">
+                                                  {isCredit ? "Credit Split" : "Standard Split"}
+                                                </span>
+                                                <span className="truncate">{actualSplitAddress || "N/A"}</span>
+                                                {actualSplitAddress && (
                                                   <button
-                                                    onClick={() => handleCopy(r.splitAddress!, `split-std-${r.receiptId}`)}
+                                                    onClick={() => handleCopy(actualSplitAddress, `split-${r.receiptId}`)}
                                                     className="text-muted-foreground hover:text-white transition-colors"
                                                   >
                                                     <Copy className="w-3.5 h-3.5" />
                                                   </button>
                                                 )}
-                                                {copySuccess[`split-std-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
+                                                {copySuccess[`split-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
                                               </div>
-                                              {r.splitAddressCredit && r.splitAddressCredit !== r.splitAddress && (
+                                            ) : (
+                                              <div className="space-y-1.5">
                                                 <div className="flex items-center gap-2 font-mono text-white text-xs">
-                                                  <span className="text-muted-foreground w-28">Credit Split:</span>
-                                                  <span className="truncate">{r.splitAddressCredit}</span>
-                                                  <button
-                                                    onClick={() => handleCopy(r.splitAddressCredit!, `split-cred-${r.receiptId}`)}
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <Copy className="w-3.5 h-3.5" />
-                                                  </button>
-                                                  {copySuccess[`split-cred-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
+                                                  <span className="text-muted-foreground w-28">Standard Split:</span>
+                                                  <span className="truncate">{r.splitAddress || "N/A"}</span>
+                                                  {r.splitAddress && (
+                                                    <button
+                                                      onClick={() => handleCopy(r.splitAddress!, `split-std-${r.receiptId}`)}
+                                                      className="text-muted-foreground hover:text-white transition-colors"
+                                                    >
+                                                      <Copy className="w-3.5 h-3.5" />
+                                                    </button>
+                                                  )}
+                                                  {copySuccess[`split-std-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
                                                 </div>
-                                              )}
+                                                {r.splitAddressCredit && r.splitAddressCredit !== r.splitAddress && (
+                                                  <div className="flex items-center gap-2 font-mono text-white text-xs">
+                                                    <span className="text-muted-foreground w-28">Credit Split:</span>
+                                                    <span className="truncate">{r.splitAddressCredit}</span>
+                                                    <button
+                                                      onClick={() => handleCopy(r.splitAddressCredit!, `split-cred-${r.receiptId}`)}
+                                                      className="text-muted-foreground hover:text-white transition-colors"
+                                                    >
+                                                      <Copy className="w-3.5 h-3.5" />
+                                                    </button>
+                                                    {copySuccess[`split-cred-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+
+                                          {r.status === "failed" && (
+                                            <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/10 rounded-lg text-xs text-red-400">
+                                              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                              <div>
+                                                <div className="font-semibold">Decline / Failure Diagnosis</div>
+                                                <div className="mt-0.5 leading-relaxed">{r.failureReason || "Abandoned Checkout Session"}</div>
+                                              </div>
                                             </div>
                                           )}
                                         </div>
-
-                                        {r.status === "failed" && (
-                                          <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/10 rounded-lg text-xs text-red-400">
-                                            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                                            <div>
-                                              <div className="font-semibold">Decline / Failure Diagnosis</div>
-                                              <div className="mt-0.5 leading-relaxed">{r.failureReason || "Abandoned Checkout Session"}</div>
-                                            </div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
+                                      );
+                                    })()}
 
                                     {/* Tab 4: Client Logs */}
                                     {activeTab === "logs" && (
