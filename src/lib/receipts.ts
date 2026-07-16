@@ -271,7 +271,23 @@ export function enrichReceiptFromStripeData(receipt: any, onrampData: any) {
     console.log("[enrichReceipt] Initialized customerSessions array.");
   } else {
     // If the session exists, update it, otherwise push
-    const index = receipt.customerSessions.findIndex((s: any) => s.id === onrampData.id || s.stripeSessionId === onrampData.id);
+    const index = receipt.customerSessions.findIndex((s: any) => {
+      if ((s.id && s.id === onrampData.id) || (s.stripeSessionId && s.stripeSessionId === onrampData.id)) {
+        return true;
+      }
+      if (email && s.email && s.email.toLowerCase() === email.toLowerCase()) {
+        const w1 = s.walletAddress ? s.walletAddress.toLowerCase() : "";
+        const w2 = (walletAddress || receipt.buyerWallet || "").toLowerCase();
+        if (w1 && w2 && w1 !== w2) return false;
+        
+        const s1 = s.id || s.stripeSessionId || "";
+        const s2 = onrampData.id || "";
+        if (s1 && s2 && s1 !== s2) return false;
+        
+        return true;
+      }
+      return false;
+    });
     if (index >= 0) {
       receipt.customerSessions[index] = {
         ...receipt.customerSessions[index],

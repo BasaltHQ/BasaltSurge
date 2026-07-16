@@ -134,11 +134,12 @@ export default function PlatformAnalyticsPanel() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(25);
   const [successRateMode, setSuccessRateMode] = useState<"integration" | "process">("integration");
+  const [fetchLimit, setFetchLimit] = useState<number | "all">(500);
 
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedBrand, statusFilter, timeRange, searchQuery, kycFilter, sortKey, sortDirection]);
+  }, [selectedBrand, statusFilter, timeRange, searchQuery, kycFilter, sortKey, sortDirection, fetchLimit]);
 
   const fetchReceiptLogs = useCallback(async (receiptId: string) => {
     if (expandedLogs[receiptId]) return; // Already loaded
@@ -180,7 +181,7 @@ export default function PlatformAnalyticsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/platform/analytics", {
+      const res = await fetch(`/api/platform/analytics?limit=${fetchLimit}`, {
         headers: {
           "x-wallet": wallet,
         },
@@ -200,7 +201,7 @@ export default function PlatformAnalyticsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [wallet]);
+  }, [wallet, fetchLimit]);
 
   useEffect(() => {
     fetchAnalytics();
@@ -853,12 +854,48 @@ export default function PlatformAnalyticsPanel() {
                 <option value="7d" className="bg-neutral-900">Last 7 Days</option>
                 <option value="30d" className="bg-neutral-900">Last 30 Days</option>
               </select>
+
+              <select
+                value={fetchLimit}
+                onChange={e => {
+                  const val = e.target.value;
+                  setFetchLimit(val === "all" ? "all" : Number(val));
+                }}
+                className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
+              >
+                <option value={500} className="bg-neutral-900">500 Records</option>
+                <option value={1000} className="bg-neutral-900">1000 Records</option>
+                <option value={2500} className="bg-neutral-900">2500 Records</option>
+                <option value="all" className="bg-neutral-900">All Records</option>
+              </select>
             </div>
 
           </div>
 
           {/* Receipts Table */}
           <div className="border border-white/5 rounded-lg overflow-hidden">
+            {fetchLimit !== "all" && stats && stats.totalCreated > recentReceipts.length && (
+              <div className="flex flex-col sm:flex-row items-center justify-between bg-amber-500/10 border-b border-white/5 px-4 py-2.5 gap-2 text-xs text-amber-400 font-medium">
+                <span className="flex items-center gap-1.5">
+                  <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                  <span>Only the most recent {recentReceipts.length} records are fetched from the database (total: {stats.totalCreated}).</span>
+                </span>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setFetchLimit(prev => (prev === "all" ? "all" : prev + 500))}
+                    className="hover:text-white transition-colors bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded border border-white/5 text-[10px] font-semibold"
+                  >
+                    Load More (+500)
+                  </button>
+                  <button
+                    onClick={() => setFetchLimit("all")}
+                    className="hover:text-white transition-colors bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded border border-white/5 text-[10px] font-semibold"
+                  >
+                    Load All
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-white/80">
                 <thead className="bg-white/5 text-muted-foreground font-semibold uppercase tracking-wider text-[10px] border-b border-white/5 select-none">
@@ -1396,114 +1433,187 @@ export default function PlatformAnalyticsPanel() {
                                   {/* Tab 5: Customer Metadata */}
                                   {activeTab === "customers" && (
                                     <div className="space-y-4 animate-in fade-in duration-200 mt-1">
-                                      {(r.customerSessions && r.customerSessions.length > 0) ? (
-                                        <div className="bg-black/25 border border-white/5 rounded-lg overflow-hidden">
-                                          <table className="w-full text-left border-collapse text-xs">
-                                            <thead>
-                                              <tr className="bg-white/5 border-b border-white/5 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
-                                                <th className="py-2.5 px-4">Date/Time</th>
-                                                <th className="py-2.5 px-4">Customer Email</th>
-                                                <th className="py-2.5 px-4">Wallet Address</th>
-                                                <th className="py-2.5 px-4">Stripe Session ID</th>
-                                                <th className="py-2.5 px-4">Payment Method</th>
-                                                <th className="py-2.5 px-4 text-right">Limits Metadata</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-white/5">
-                                              {r.customerSessions.map((session: any, idx: number) => (
-                                                <tr key={idx} className="hover:bg-white/[0.02]">
-                                                  <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
-                                                    {session.createdAt ? new Date(session.createdAt).toLocaleString() : "N/A"}
-                                                  </td>
-                                                  <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
-                                                  <td className="py-3 px-4 font-mono text-[11px] text-white/80 select-all" title={session.walletAddress}>
-                                                    {session.walletAddress ? (
-                                                      <span className="flex items-center gap-1">
-                                                        <span>{session.walletAddress.slice(0, 8)}...{session.walletAddress.slice(-6)}</span>
-                                                      </span>
-                                                    ) : (
-                                                      "N/A"
-                                                    )}
-                                                  </td>
-                                                  <td className="py-3 px-4 font-mono text-[11px] text-muted-foreground select-all" title={session.stripeSessionId}>
-                                                    {session.stripeSessionId ? (
-                                                      <a
-                                                        href={`https://dashboard.stripe.com/crypto/onramp_sessions/${session.stripeSessionId}`}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="hover:text-primary hover:underline inline-flex items-center gap-1"
-                                                      >
-                                                        <span>{session.stripeSessionId.slice(0, 12)}...</span>
-                                                        <ExternalLink className="w-2.5 h-2.5" />
-                                                      </a>
-                                                    ) : (
-                                                      "N/A"
-                                                    )}
-                                                  </td>
-                                                  <td className="py-3 px-4 text-white/95 text-[11px]">
-                                                    {(() => {
-                                                      const pm = session.paymentMethodDetails;
-                                                      if (!pm) return <span className="text-muted-foreground/50">N/A</span>;
-                                                      if (pm.type === "card") {
-                                                        const card = pm.card || pm.payment_details?.card || pm.paymentDetails?.card;
-                                                        if (!card) return <span>Card</span>;
-                                                        const walletType = card.wallet && (typeof card.wallet === "object" ? card.wallet.type : card.wallet);
-                                                        const formattedWallet = walletType
-                                                          ? String(walletType)
-                                                            .replace(/_/g, " ")
-                                                            .replace(/\b\w/g, (c) => c.toUpperCase())
-                                                          : "";
-                                                        return (
-                                                          <span className="capitalize">
-                                                            {card.brand} •••• {card.last4} ({card.funding})
-                                                            {formattedWallet && ` via ${formattedWallet}`}
+                                      {(() => {
+                                        const sessions = r.customerSessions || [];
+                                        
+                                        // Merge duplicate customer sessions in UI
+                                        const sessionsByStripeId: Record<string, any> = {};
+                                        const sessionsByEmail: Record<string, any> = {};
+                                        const residualSessions: any[] = [];
+
+                                        for (const s of sessions) {
+                                          if (s.stripeSessionId) {
+                                            if (!sessionsByStripeId[s.stripeSessionId]) {
+                                              sessionsByStripeId[s.stripeSessionId] = { ...s };
+                                            } else {
+                                              sessionsByStripeId[s.stripeSessionId] = {
+                                                ...sessionsByStripeId[s.stripeSessionId],
+                                                email: s.email || sessionsByStripeId[s.stripeSessionId].email,
+                                                walletAddress: s.walletAddress || sessionsByStripeId[s.stripeSessionId].walletAddress,
+                                                paymentMethodDetails: s.paymentMethodDetails || sessionsByStripeId[s.stripeSessionId].paymentMethodDetails,
+                                                limits: (s.limits && s.limits.length) ? s.limits : sessionsByStripeId[s.stripeSessionId].limits,
+                                                createdAt: Math.min(new Date(s.createdAt || 0).getTime(), new Date(sessionsByStripeId[s.stripeSessionId].createdAt || 0).getTime())
+                                              };
+                                            }
+                                          } else if (s.email) {
+                                            const emailKey = s.email.toLowerCase();
+                                            if (!sessionsByEmail[emailKey]) {
+                                              sessionsByEmail[emailKey] = { ...s };
+                                            } else {
+                                              sessionsByEmail[emailKey] = {
+                                                ...sessionsByEmail[emailKey],
+                                                walletAddress: s.walletAddress || sessionsByEmail[emailKey].walletAddress,
+                                                paymentMethodDetails: s.paymentMethodDetails || sessionsByEmail[emailKey].paymentMethodDetails,
+                                                limits: (s.limits && s.limits.length) ? s.limits : sessionsByEmail[emailKey].limits,
+                                                createdAt: Math.min(new Date(s.createdAt || 0).getTime(), new Date(sessionsByEmail[emailKey].createdAt || 0).getTime())
+                                              };
+                                            }
+                                          } else {
+                                            residualSessions.push(s);
+                                          }
+                                        }
+
+                                        const mergedSessions: any[] = [];
+                                        const processedEmails = new Set<string>();
+
+                                        for (const sid in sessionsByStripeId) {
+                                          const s = sessionsByStripeId[sid];
+                                          if (s.email) {
+                                            const emailKey = s.email.toLowerCase();
+                                            const emailOnlySession = sessionsByEmail[emailKey];
+                                            if (emailOnlySession) {
+                                              s.walletAddress = s.walletAddress || emailOnlySession.walletAddress;
+                                              s.paymentMethodDetails = s.paymentMethodDetails || emailOnlySession.paymentMethodDetails;
+                                              s.limits = (s.limits && s.limits.length) ? s.limits : emailOnlySession.limits;
+                                              s.createdAt = Math.min(new Date(s.createdAt || 0).getTime(), new Date(emailOnlySession.createdAt || 0).getTime());
+                                              processedEmails.add(emailKey);
+                                            }
+                                          }
+                                          mergedSessions.push(s);
+                                        }
+
+                                        for (const emailKey in sessionsByEmail) {
+                                          if (!processedEmails.has(emailKey)) {
+                                            mergedSessions.push(sessionsByEmail[emailKey]);
+                                          }
+                                        }
+                                        mergedSessions.push(...residualSessions);
+
+                                        const uniqueSessions = mergedSessions.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+
+                                        if (uniqueSessions.length > 0) {
+                                          return (
+                                            <div className="bg-black/25 border border-white/5 rounded-lg overflow-hidden">
+                                              <table className="w-full text-left border-collapse text-xs">
+                                                <thead>
+                                                  <tr className="bg-white/5 border-b border-white/5 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
+                                                    <th className="py-2.5 px-4">Date/Time</th>
+                                                    <th className="py-2.5 px-4">Customer Email</th>
+                                                    <th className="py-2.5 px-4">Wallet Address</th>
+                                                    <th className="py-2.5 px-4">Stripe Session ID</th>
+                                                    <th className="py-2.5 px-4">Payment Method</th>
+                                                    <th className="py-2.5 px-4 text-right">Limits Metadata</th>
+                                                  </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-white/5">
+                                                  {uniqueSessions.map((session: any, idx: number) => (
+                                                    <tr key={idx} className="hover:bg-white/[0.02]">
+                                                      <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
+                                                        {session.createdAt ? new Date(session.createdAt).toLocaleString() : "N/A"}
+                                                      </td>
+                                                      <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
+                                                      <td className="py-3 px-4 font-mono text-[11px] text-white/80 select-all" title={session.walletAddress}>
+                                                        {session.walletAddress ? (
+                                                          <span className="flex items-center gap-1">
+                                                            <span>{session.walletAddress.slice(0, 8)}...{session.walletAddress.slice(-6)}</span>
                                                           </span>
-                                                        );
-                                                      } else if (pm.type === "us_bank_account") {
-                                                        const bank = pm.us_bank_account || pm.payment_details?.us_bank_account || pm.paymentDetails?.us_bank_account;
-                                                        if (!bank) return <span>ACH</span>;
-                                                        return (
-                                                          <span>
-                                                            Bank ({bank.bank_name || "ACH"}) •••• {bank.last4 || "bank"}
-                                                          </span>
-                                                        );
-                                                      }
-                                                      return <span className="capitalize">{pm.type || "Unknown"}</span>;
-                                                    })()}
-                                                  </td>
-                                                  <td className="py-3 px-4 text-right">
-                                                    {Array.isArray(session.limits) && session.limits.length > 0 ? (
-                                                      <div className="inline-flex flex-col gap-0.5 text-[10px] text-emerald-400 font-mono text-right">
-                                                        {session.limits.map((l: any, limitIdx: number) => (
-                                                          <div key={limitIdx}>
-                                                            {(() => {
-                                                              const rawAmount = Number(l.amount || 0);
-                                                              // Auto-correct legacy limits written before the x100 multiplier fix
-                                                              const corrected = rawAmount > 1000000 ? rawAmount / 100 : rawAmount;
-                                                              return `$${(corrected / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-                                                            })()} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
+                                                        ) : (
+                                                          "N/A"
+                                                        )}
+                                                      </td>
+                                                      <td className="py-3 px-4 font-mono text-[11px] text-muted-foreground select-all" title={session.stripeSessionId}>
+                                                        {session.stripeSessionId ? (
+                                                          <a
+                                                            href={`https://dashboard.stripe.com/crypto/onramp_sessions/${session.stripeSessionId}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="hover:text-primary hover:underline inline-flex items-center gap-1"
+                                                          >
+                                                            <span>{session.stripeSessionId.slice(0, 12)}...</span>
+                                                            <ExternalLink className="w-2.5 h-2.5" />
+                                                          </a>
+                                                        ) : (
+                                                          "N/A"
+                                                        )}
+                                                      </td>
+                                                      <td className="py-3 px-4 text-white/95 text-[11px]">
+                                                        {(() => {
+                                                          const pm = session.paymentMethodDetails;
+                                                          if (!pm) return <span className="text-muted-foreground/50">N/A</span>;
+                                                          if (pm.type === "card") {
+                                                            const card = pm.card || pm.payment_details?.card || pm.paymentDetails?.card;
+                                                            if (!card) return <span>Card</span>;
+                                                            const walletType = card.wallet && (typeof card.wallet === "object" ? card.wallet.type : card.wallet);
+                                                            const formattedWallet = walletType
+                                                              ? String(walletType)
+                                                                .replace(/_/g, " ")
+                                                                .replace(/\b\w/g, (c) => c.toUpperCase())
+                                                              : "";
+                                                            return (
+                                                              <span className="capitalize">
+                                                                {card.brand} •••• {card.last4} ({card.funding})
+                                                                {formattedWallet && ` via ${formattedWallet}`}
+                                                              </span>
+                                                            );
+                                                          } else if (pm.type === "us_bank_account") {
+                                                            const bank = pm.us_bank_account || pm.payment_details?.us_bank_account || pm.paymentDetails?.us_bank_account;
+                                                            if (!bank) return <span>ACH</span>;
+                                                            return (
+                                                              <span>
+                                                                Bank ({bank.bank_name || "ACH"}) •••• {bank.last4 || "bank"}
+                                                              </span>
+                                                            );
+                                                          }
+                                                          return <span className="capitalize">{pm.type || "Unknown"}</span>;
+                                                        })()}
+                                                      </td>
+                                                      <td className="py-3 px-4 text-right">
+                                                        {Array.isArray(session.limits) && session.limits.length > 0 ? (
+                                                          <div className="inline-flex flex-col gap-0.5 text-[10px] text-emerald-400 font-mono text-right">
+                                                            {session.limits.map((l: any, limitIdx: number) => (
+                                                              <div key={limitIdx}>
+                                                                {(() => {
+                                                                  const rawAmount = Number(l.amount || 0);
+                                                                  // Auto-correct legacy limits written before the x100 multiplier fix
+                                                                  const corrected = rawAmount > 1000000 ? rawAmount / 100 : rawAmount;
+                                                                  return `$${(corrected / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+                                                                })()} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
+                                                              </div>
+                                                            ))}
                                                           </div>
-                                                        ))}
-                                                      </div>
-                                                    ) : (
-                                                      <span className="text-muted-foreground italic text-[11px]">No limits tracked</span>
-                                                    )}
-                                                  </td>
-                                                </tr>
-                                              ))}
-                                            </tbody>
-                                          </table>
-                                        </div>
-                                      ) : (
-                                        <div className="text-xs text-muted-foreground p-4 border border-white/5 border-dashed rounded-lg space-y-2">
-                                          <p>No customer sessions or transaction limits tracked for this receipt yet.</p>
-                                          {r.stripeSessionId && (
-                                            <div className="pt-2 border-t border-white/5 text-[11px]">
-                                              <strong>Primary Session:</strong> {r.email || "anonymous"} • <span className="font-mono text-muted-foreground">{r.stripeSessionId}</span> (Historical record resolved prior to limits/multi-session tracking)
+                                                        ) : (
+                                                          <span className="text-muted-foreground italic text-[11px]">No limits tracked</span>
+                                                        )}
+                                                      </td>
+                                                    </tr>
+                                                  ))}
+                                                </tbody>
+                                              </table>
                                             </div>
-                                          )}
-                                        </div>
-                                      )}
+                                          );
+                                        }
+
+                                        return (
+                                          <div className="text-xs text-muted-foreground p-4 border border-white/5 border-dashed rounded-lg space-y-2">
+                                            <p>No customer sessions or transaction limits tracked for this receipt yet.</p>
+                                            {r.stripeSessionId && (
+                                              <div className="pt-2 border-t border-white/5 text-[11px]">
+                                                <strong>Primary Session:</strong> {r.email || "anonymous"} • <span className="font-mono text-muted-foreground">{r.stripeSessionId}</span> (Historical record resolved prior to limits/multi-session tracking)
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
                                     </div>
                                   )}
 
