@@ -3135,9 +3135,13 @@ export function useStripeEmbeddedOnramp({
               ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
               : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
 
+            const isOverallIdVerified = kycData.idDocStatus === "approved" ||
+                                        kycData.idDocStatus === "verified" ||
+                                        kycData.idDocStatus === "completed";
+
             const isL2Verified = l2Tier
               ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
-              : false;
+              : isOverallIdVerified;
 
             console.log("[EMBEDDED ONRAMP] Audited tiers:", { isL0Verified, isL1Verified, isL2Verified });
 
