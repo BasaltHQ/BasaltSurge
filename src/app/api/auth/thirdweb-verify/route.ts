@@ -48,7 +48,7 @@ export function markEmailVerified(email: string, customSecret?: string): string 
 /**
  * Check if an email was recently verified by Stripe Link.
  */
-function isEmailVerified(email: string, token?: string, customSecret?: string): boolean {
+export function isEmailVerified(email: string, token?: string, customSecret?: string): boolean {
   if (!token) return false;
   
   try {

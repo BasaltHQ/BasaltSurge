@@ -756,14 +756,18 @@ export function useStripeEmbeddedOnramp({
               const kycTiers = kycData.kycTiers || [];
               const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
               const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-              
+
+              const isOverallKycVerified = kycData.kycStatus === "approved" ||
+                                           kycData.kycStatus === "verified" ||
+                                           kycData.kycStatus === "completed";
+
               const isL0Verified = l0Tier 
                 ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
-                : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+                : isOverallKycVerified;
               
               const isL1Verified = l1Tier 
                 ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
-                : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+                : isOverallKycVerified;
               
               if (!isL0Verified) {
                 if (l0Tier?.verification_status === "pending") {
@@ -1667,7 +1671,15 @@ export function useStripeEmbeddedOnramp({
           fundsDelivered = true;
           const method = statusData.paymentMethod || null;
           const funding = statusData.paymentDetails?.card?.funding || null;
-          const resolvedFunding = funding || detectedCardFunding || (method === "debit_card" ? "debit" : null);
+          let resolvedFunding = funding || detectedCardFunding;
+          if (!resolvedFunding && method) {
+            const methodLower = String(method).toLowerCase();
+            if (methodLower.includes("debit")) {
+              resolvedFunding = "debit";
+            } else if (methodLower.includes("credit")) {
+              resolvedFunding = "credit";
+            }
+          }
           isCreditCard = resolvedFunding === "credit" || resolvedFunding === null;
           console.log("[EMBEDDED ONRAMP] ✓ USDC delivered to buyer's smart wallet. Credit card:", isCreditCard, "Resolved funding:", resolvedFunding);
           break;
@@ -2260,6 +2272,74 @@ export function useStripeEmbeddedOnramp({
         }
       }
     } catch (err: any) {
+      const errMsg = String(err?.message || err || "").toLowerCase();
+      const isAlreadyVerified = errMsg.includes("already been verified") || 
+                                errMsg.includes("already_verified") ||
+                                errMsg.includes("cannot be updated");
+      
+      if (isAlreadyVerified) {
+        console.log("[EMBEDDED ONRAMP] Customer is already verified globally. Bypassing demographics submission error...");
+        try {
+          const submittedTier = (kycInfo.date_of_birth || kycInfo.id_number || kycInfo.nationalities) ? "l1" : "l0";
+          updateStep("checking_kyc");
+          const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
+          if (!kycApproved) {
+            throw new Error(`KYC ${submittedTier.toUpperCase()} verification was not approved.`);
+          }
+
+          console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
+          if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
+            if (paymentTokenRef.current) {
+              runCheckoutLoop(
+                activeEmailRef.current,
+                customerIdRef.current,
+                paymentTokenRef.current,
+                buyerWalletRef.current,
+                detectedCardFunding
+              ).catch((loopErr) => {
+                const isCardDecline = checkIfCardDecline(loopErr);
+                if (isCardDecline) {
+                  console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval bypass, returning to payment selection...");
+                  setError(loopErr?.message || "Your card was declined. Please try another card.");
+                  paymentTokenRef.current = null;
+                  sessionIdRef.current = null;
+                  setSessionId(null);
+                  if (typeof window !== "undefined") {
+                    sessionStorage.removeItem("stripe_onramp_session_id");
+                  }
+                  if (onrampRef.current) {
+                    try { onrampRef.current.destroy(); } catch {}
+                    onrampRef.current = null;
+                  }
+                  setDetectedCardFunding(null);
+                  setDetectedCardBrand(null);
+                  setDetectedCardLast4(null);
+                  onCardDetected?.(null);
+                  isRunningRef.current = false;
+                  setTimeout(() => {
+                    startOnrampRef.current?.(activeEmailRef.current || undefined);
+                  }, 0);
+                } else {
+                  handleError(loopErr?.message || "Checkout failed after KYC submission", loopErr);
+                }
+              });
+            } else {
+              isRunningRef.current = false;
+              startOnrampRef.current?.(activeEmailRef.current || undefined);
+            }
+          } else {
+            console.warn("[EMBEDDED ONRAMP] Missing required refs after KYC approval bypass, restarting flow...");
+            isRunningRef.current = false;
+            startOnrampRef.current?.(activeEmailRef.current || undefined);
+          }
+          return;
+        } catch (pollErr: any) {
+          console.error("[EMBEDDED ONRAMP] Polling failed after bypass:", pollErr);
+          handleError(pollErr?.message || "KYC verification polling failed");
+          return;
+        }
+      }
+
       console.error("[EMBEDDED ONRAMP] submitKycInfo error:", err);
       handleError(err?.message || "KYC submission failed");
     }
@@ -2527,6 +2607,7 @@ export function useStripeEmbeddedOnramp({
       buyerWallet = createdWallet;
       console.log("[EMBEDDED ONRAMP] Created/retrieved guest EOA wallet:", buyerWallet);
 
+      const verificationToken = verificationTokenRef.current;
       try {
         fetch("/api/users/profile", {
           method: "PUT",
@@ -2534,6 +2615,7 @@ export function useStripeEmbeddedOnramp({
             "Content-Type": "application/json",
             "x-wallet": buyerWallet,
             ...(brandKey ? { "x-brand-key": brandKey } : {}),
+            ...(verificationToken ? { "x-verification-token": verificationToken } : {}),
           },
           body: JSON.stringify({
             wallet: buyerWallet,
@@ -2566,7 +2648,7 @@ export function useStripeEmbeddedOnramp({
 
       updateStep("checking_kyc");
 
-      const kycRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
+      const kycRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId || "")}?t=${Date.now()}`, {
         headers: {
           "x-stripe-oauth-token": oauthTokenRef.current || "",
         },
@@ -2589,22 +2671,23 @@ export function useStripeEmbeddedOnramp({
         const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
         const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
 
-        const isOverallVerified = kycData.kycStatus === "approved" ||
-                                  kycData.kycStatus === "verified" ||
-                                  kycData.kycStatus === "completed" ||
-                                  kycData.idDocStatus === "approved" ||
-                                  kycData.idDocStatus === "verified" ||
-                                  kycData.idDocStatus === "completed";
+        const isOverallKycVerified = kycData.kycStatus === "approved" ||
+                                     kycData.kycStatus === "verified" ||
+                                     kycData.kycStatus === "completed";
+
+        const isOverallIdVerified = kycData.idDocStatus === "approved" ||
+                                    kycData.idDocStatus === "verified" ||
+                                    kycData.idDocStatus === "completed";
 
         const isL0Verified = l0Tier 
           ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available") 
-          : isOverallVerified;
+          : isOverallKycVerified;
         const isL1Verified = l1Tier 
           ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") 
-          : isOverallVerified;
+          : isOverallKycVerified;
         const isL2Verified = l2Tier 
           ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available") 
-          : isOverallVerified;
+          : isOverallIdVerified;
 
         // If ACH payment is chosen, we strictly enforce verification through L2.
         const isCustomerVerified = isAchEnforcedRef.current 
@@ -2625,7 +2708,7 @@ export function useStripeEmbeddedOnramp({
         if (pendingTier) {
           console.log(`[EMBEDDED ONRAMP] ${pendingTier.toUpperCase()} verification is pending. Polling for approval status...`);
           updateStep("checking_kyc");
-          const kycApproved = await pollKycStatus(customerId, pendingTier);
+          const kycApproved = await pollKycStatus(customerId || "", pendingTier);
           if (!kycApproved) {
             // If polling failed or was rejected, determine next steps based on the tier
             if (pendingTier === "l0" || l0Tier?.verification_status === "rejected") {
@@ -2642,7 +2725,7 @@ export function useStripeEmbeddedOnramp({
           }
           
           // Re-fetch customer status after polling to ensure we have the latest state
-          const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
+          const checkRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId || "")}?t=${Date.now()}`, {
             headers: {
               "x-stripe-oauth-token": oauthTokenRef.current || "",
             },
@@ -2654,9 +2737,23 @@ export function useStripeEmbeddedOnramp({
             const freshL1 = freshKycTiers.find((t: any) => t.tier === "l1");
             const freshL2 = freshKycTiers.find((t: any) => t.tier === "l2");
             
-            const isFreshL0Verified = freshL0 ? (freshL0.verification_status === "verified" || freshL0.verification_status === "not_available") : isOverallVerified;
-            const isFreshL1Verified = freshL1 ? (freshL1.verification_status === "verified" || freshL1.verification_status === "not_available") : isOverallVerified;
-            const isFreshL2Verified = freshL2 ? (freshL2.verification_status === "verified" || freshL2.verification_status === "not_available") : isOverallVerified;
+            const isFreshOverallKycVerified = freshKycData.kycStatus === "approved" ||
+                                              freshKycData.kycStatus === "verified" ||
+                                              freshKycData.kycStatus === "completed";
+
+            const isFreshOverallIdVerified = freshKycData.idDocStatus === "approved" ||
+                                             freshKycData.idDocStatus === "verified" ||
+                                             freshKycData.idDocStatus === "completed";
+
+            const isFreshL0Verified = freshL0 
+              ? (freshL0.verification_status === "verified" || freshL0.verification_status === "not_available") 
+              : isFreshOverallKycVerified;
+            const isFreshL1Verified = freshL1 
+              ? (freshL1.verification_status === "verified" || freshL1.verification_status === "not_available") 
+              : isFreshOverallKycVerified;
+            const isFreshL2Verified = freshL2 
+              ? (freshL2.verification_status === "verified" || freshL2.verification_status === "not_available") 
+              : isFreshOverallIdVerified;
             
             const isFreshVerified = isAchEnforcedRef.current
               ? isFreshL2Verified
@@ -2704,7 +2801,7 @@ export function useStripeEmbeddedOnramp({
                 
                 console.log("[EMBEDDED ONRAMP] L2 document verification finished. Polling status...");
                 updateStep("checking_kyc");
-                const success = await pollKycStatus(customerId);
+                const success = await pollKycStatus(customerId || "");
                 if (!success) {
                   throw new Error("Identity verification not approved");
                 }
@@ -2772,12 +2869,18 @@ export function useStripeEmbeddedOnramp({
         }
       }
 
+      if (!buyerWallet) {
+        handleError("Buyer wallet is missing");
+        return;
+      }
+      const finalBuyerWallet = buyerWallet;
+
       // ─── Step 7: Register buyer's wallet with Stripe ───
       updateStep("registering_wallet");
 
       try {
-        await onramp.registerWalletAddress(buyerWallet, network);
-        console.log("[EMBEDDED ONRAMP] Buyer wallet registered with Stripe:", buyerWallet.slice(0, 10) + "...");
+        await onramp.registerWalletAddress(finalBuyerWallet, network);
+        console.log("[EMBEDDED ONRAMP] Buyer wallet registered with Stripe:", finalBuyerWallet.slice(0, 10) + "...");
       } catch (walletErr: any) {
         console.log("[EMBEDDED ONRAMP] Wallet registration (may already exist):", walletErr?.message);
       }
@@ -2801,7 +2904,7 @@ export function useStripeEmbeddedOnramp({
               },
               body: JSON.stringify({
                 receiptId,
-                walletAddress: buyerWallet,
+                walletAddress: finalBuyerWallet,
                 network,
                 email: activeEmail,
                 stripeSessionId: sessionIdRef.current
@@ -3054,7 +3157,7 @@ export function useStripeEmbeddedOnramp({
                   
                   console.log("[EMBEDDED ONRAMP] ACH L2 document verification finished. Polling status...");
                   updateStep("checking_kyc");
-                  const success = await pollKycStatus(customerId);
+                  const success = await pollKycStatus(customerId || "");
                   if (!success) {
                     throw new Error("Identity verification not approved");
                   }
@@ -3102,7 +3205,7 @@ export function useStripeEmbeddedOnramp({
 
         // ─── Step 9-10: Run the headless checkout process ───
         try {
-          await runCheckoutLoop(activeEmail, customerId, pmToken, buyerWallet, collectedFunding);
+          await runCheckoutLoop(activeEmail, customerId || "", pmToken, finalBuyerWallet, collectedFunding);
           checkoutSucceeded = true;
         } catch (checkoutErr: any) {
           const isCardDecline = checkIfCardDecline(checkoutErr);

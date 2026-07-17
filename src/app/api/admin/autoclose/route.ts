@@ -205,6 +205,10 @@ export async function POST(req: NextRequest) {
           cardFunding = "us_bank_account";
         } else if (cardFundingDetail) {
           cardFunding = cardFundingDetail;
+        } else if (paymentMethod.includes("debit")) {
+          cardFunding = "debit";
+        } else if (paymentMethod.includes("credit")) {
+          cardFunding = "credit";
         }
         const isCredit = cardFunding === "credit" || receipt.isCreditCard === true;
 
