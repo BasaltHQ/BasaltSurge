@@ -3881,8 +3881,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Clean up Stripe headless elements on unmount or when they are cleared/replaced
   useEffect(() => {
     const authEl = headlessAuthElement;
-    const payEl = headlessPaymentElement;
-    
     return () => {
       if (authEl) {
         try {
@@ -3894,6 +3892,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           console.warn("[PORTAL] Failed to clean up auth element:", e);
         }
       }
+    };
+  }, [headlessAuthElement]);
+
+  useEffect(() => {
+    const payEl = headlessPaymentElement;
+    return () => {
       if (payEl) {
         try {
           (payEl as any).unmount?.();
@@ -3904,43 +3908,45 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           console.warn("[PORTAL] Failed to clean up payment element:", e);
         }
       }
-      
-      // Manually find and remove/hide any leftover iframe components or global Stripe overlays
-      // Only clean up external overlays/iframes if we are in a terminal state (idle, error, completed)
-      const isTerminalState = headlessStep === "idle" || headlessStep === "error" || headlessStep === "completed";
-      if (isTerminalState) {
-        try {
-          const activeContainer = document.querySelector('.stripe-embedded-container');
-          const stripeIframes = document.querySelectorAll('iframe[src*="stripe.com"], iframe[src*="link.com"]');
-          stripeIframes.forEach(iframe => {
-            const src = iframe.getAttribute("src") || "";
-            const iframeName = iframe.getAttribute("name") || "";
-            const iframeId = iframe.getAttribute("id") || "";
-            const isTestWidget = src.includes("controller-onramp") || 
-                                 src.includes("test-mode-options") || 
-                                 src.includes("m-outer") ||
-                                 iframeName.includes("controller-onramp") ||
-                                 iframeId.includes("controller-onramp");
-
-            if (isTestWidget) {
-              return; // Skip hiding the test mode widget/controller helper
-            }
-
-            if (!activeContainer || !activeContainer.contains(iframe)) {
-              (iframe as HTMLElement).style.display = "none";
-              if (iframe.parentNode && iframe.parentNode !== document.body) {
-                try {
-                  iframe.parentNode.removeChild(iframe);
-                } catch {}
-              }
-            }
-          });
-        } catch (err) {
-          console.warn("[PORTAL] Failed to clean global Stripe elements:", err);
-        }
-      }
     };
-  }, [headlessAuthElement, headlessPaymentElement, headlessStep]);
+  }, [headlessPaymentElement]);
+
+  // Manually find and remove/hide any leftover iframe components or global Stripe overlays
+  // Only clean up external overlays/iframes if we are in a terminal state (idle, error, completed)
+  useEffect(() => {
+    const isTerminalState = headlessStep === "idle" || headlessStep === "error" || headlessStep === "completed";
+    if (isTerminalState) {
+      try {
+        const activeContainer = document.querySelector('.stripe-embedded-container');
+        const stripeIframes = document.querySelectorAll('iframe[src*="stripe.com"], iframe[src*="link.com"]');
+        stripeIframes.forEach(iframe => {
+          const src = iframe.getAttribute("src") || "";
+          const iframeName = iframe.getAttribute("name") || "";
+          const iframeId = iframe.getAttribute("id") || "";
+          const isTestWidget = src.includes("controller-onramp") || 
+                               src.includes("test-mode-options") || 
+                               src.includes("m-outer") ||
+                               iframeName.includes("controller-onramp") ||
+                               iframeId.includes("controller-onramp");
+
+          if (isTestWidget) {
+            return; // Skip hiding the test mode widget/controller helper
+          }
+
+          if (!activeContainer || !activeContainer.contains(iframe)) {
+            (iframe as HTMLElement).style.display = "none";
+            if (iframe.parentNode && iframe.parentNode !== document.body) {
+              try {
+                iframe.parentNode.removeChild(iframe);
+              } catch {}
+            }
+          }
+        });
+      } catch (err) {
+        console.warn("[PORTAL] Failed to clean global Stripe elements:", err);
+      }
+    }
+  }, [headlessStep]);
 
   // Client-side logging pipeline for portal errors & console logs
   usePortalLogger({
@@ -4457,7 +4463,19 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const stripeHeadlessUI = (headlessEmailPrompt || headlessActive || headlessInitiated) ? (
     <div className="w-full flex flex-col items-stretch justify-start animate-in fade-in duration-300">
       {headlessEmailPrompt ? (
-        <div className={`w-full rounded-xl border p-5 flex flex-col items-stretch animate-in zoom-in duration-300 backdrop-blur-xl ${isLightText ? 'border-white/5 bg-white/[0.02]' : 'border-black/5 bg-black/[0.02]'}`}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (isValidEmail(headlessEmailInput)) {
+              setShipEmail(headlessEmailInput);
+              setHeadlessInitiated(true);
+              setHeadlessEmailPrompt(false);
+              postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
+              startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
+            }
+          }}
+          className={`w-full rounded-xl border p-5 flex flex-col items-stretch animate-in zoom-in duration-300 backdrop-blur-xl ${isLightText ? 'border-white/5 bg-white/[0.02]' : 'border-black/5 bg-black/[0.02]'}`}
+        >
           <div className="flex justify-between items-center mb-1">
             <h3 className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>Stripe Quick Checkout</h3>
           </div>
@@ -4471,6 +4489,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
           <input
             type="email"
+            name="email"
+            autoComplete="email"
             placeholder="Email address"
             className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${isLightText
                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/75 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
@@ -4563,7 +4583,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               </button>
             </div>
           )}
-        </div>
+        </form>
       ) : (
         <div className={`w-full flex flex-col relative transition-all duration-300 ${(headlessAuthElement || headlessPaymentElement)
             ? "border-0 bg-transparent shadow-none"
@@ -4724,6 +4744,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Email Address</label>
                           <input
                             type="email"
+                            name="email"
+                            autoComplete="email"
                             placeholder="email@example.com"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
@@ -5421,19 +5443,42 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   </div>
                 )}
 
+                {/* Dynamic Status / Spinner for intermediate steps */}
+                {!(headlessStep === "authenticating" || headlessStep === "collecting_payment") && (
+                  <div className="text-center flex flex-col items-center justify-center gap-4 min-h-[320px] px-4 py-8 w-full animate-in fade-in duration-300">
+                    <p className={`font-semibold text-sm tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>{headlessStatus}</p>
+                    <div className="relative flex items-center justify-center mt-2 mb-4 scale-110">
+                      <div className="absolute w-10 h-10 rounded-full bg-primary/20 blur-md animate-pulse" />
+                      <div className="w-8 h-8 rounded-full border-[3px] border-primary/20 border-t-primary animate-spin" />
+                    </div>
+                  </div>
+                )}
+
+                {/* Auth Element Container */}
                 <div
                   className="w-full h-full flex flex-col items-stretch"
+                  style={{ display: headlessStep === "authenticating" && headlessAuthElement ? "block" : "none" }}
                   ref={(el) => {
-                    if (el) {
-                      const elementToMount = headlessAuthElement || headlessPaymentElement;
-                      if (elementToMount && !el.contains(elementToMount)) {
-                        el.innerHTML = "";
-                        el.appendChild(elementToMount);
-                      }
+                    if (el && headlessAuthElement && !el.contains(headlessAuthElement)) {
+                      el.innerHTML = "";
+                      el.appendChild(headlessAuthElement);
                     }
                   }}
                 />
-                 {headlessAuthElement && (
+
+                {/* Payment Element Container */}
+                <div
+                  className="w-full h-full flex flex-col items-stretch"
+                  style={{ display: headlessStep === "collecting_payment" && headlessPaymentElement ? "block" : "none" }}
+                  ref={(el) => {
+                    if (el && headlessPaymentElement && !el.contains(headlessPaymentElement)) {
+                      el.innerHTML = "";
+                      el.appendChild(headlessPaymentElement);
+                    }
+                  }}
+                />
+
+                 {headlessStep === "authenticating" && headlessAuthElement && (
                   <div
                     className="absolute bottom-[14px] left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
                     style={{

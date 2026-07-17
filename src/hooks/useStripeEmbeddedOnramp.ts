@@ -418,6 +418,7 @@ export function useStripeEmbeddedOnramp({
   const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
+  const isCoordinatorAuthedRef = useRef(false);
 
   // ─── CALLBACK REFS TO PREVENT STALE CLOSURES ───
   const onSuccessRef = useRef(onSuccess);
@@ -440,6 +441,47 @@ export function useStripeEmbeddedOnramp({
   useEffect(() => {
     onStepChangeRef.current = onStepChange;
   }, [onStepChange]);
+
+  // Dynamically inject allow="otp-credentials" into all Stripe/Link iframe elements when mounted
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.MutationObserver) return;
+
+    const addOtpPolicyToIframes = (nodes: NodeList) => {
+      nodes.forEach((node) => {
+        if (node instanceof HTMLIFrameElement) {
+          const src = node.getAttribute("src") || "";
+          if (src.includes("stripe.com") || src.includes("link.com") || src.includes("stripe.network")) {
+            const currentAllow = node.getAttribute("allow") || "";
+            if (!currentAllow.includes("otp-credentials")) {
+              const newAllow = currentAllow ? `${currentAllow}; otp-credentials` : "otp-credentials";
+              node.setAttribute("allow", newAllow);
+              console.log("[STRIPE IFRAME MONITOR] Dynamically added allow='otp-credentials' to Stripe iframe:", src);
+            }
+          }
+        } else if (node instanceof HTMLElement) {
+          addOtpPolicyToIframes(node.querySelectorAll("iframe"));
+        }
+      });
+    };
+
+    // Scan initial document
+    addOtpPolicyToIframes(document.querySelectorAll("iframe"));
+
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.addedNodes.length) {
+          addOtpPolicyToIframes(mutation.addedNodes);
+        }
+      }
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+
+    return () => observer.disconnect();
+  }, []);
 
   const confirmSpeed = useCallback((speed: "standard" | "instant") => {
     if (speedResolverRef.current) {
@@ -1083,6 +1125,7 @@ export function useStripeEmbeddedOnramp({
       }
       onrampRef.current = null;
     }
+    isCoordinatorAuthedRef.current = false;
     if (typeof window !== "undefined") {
       sessionStorage.removeItem("stripe_onramp_customer_id");
       sessionStorage.removeItem("stripe_onramp_oauth_token");
@@ -2274,7 +2317,7 @@ export function useStripeEmbeddedOnramp({
       let customerId = customerIdRef.current;
       let buyerWallet = buyerWalletRef.current;
 
-      if (onramp && customerId && oauthTokenRef.current && buyerWallet) {
+      if (onramp && isCoordinatorAuthedRef.current && customerId && oauthTokenRef.current && buyerWallet) {
         console.log("[EMBEDDED ONRAMP] Reusing active authenticated onramp coordinator and customer session:", customerId);
       } else {
         if (onrampRef.current) {
@@ -2286,6 +2329,7 @@ export function useStripeEmbeddedOnramp({
           }
           onrampRef.current = null;
         }
+        isCoordinatorAuthedRef.current = false;
 
         // ─── Step 1: Initialize Stripe SDK with native Dark theme ───
         // @ts-ignore - beta SDK method missing from types
@@ -2311,7 +2355,9 @@ export function useStripeEmbeddedOnramp({
 
       let authIntentId = "";
 
-      if (!customerId || !oauthTokenRef.current || !buyerWallet) {
+      const needsAuth = !isCoordinatorAuthedRef.current || !customerId || !oauthTokenRef.current || !buyerWallet;
+
+      if (needsAuth) {
         // ─── Step 2: Check for Link account ───
         updateStep("checking_link");
 
@@ -2393,6 +2439,7 @@ export function useStripeEmbeddedOnramp({
       const authPromise = new Promise<string>((resolve, reject) => {
         onramp.authenticate(authIntentId, (result: any) => {
           if (result.result === "success" && result.crypto_customer_id) {
+            isCoordinatorAuthedRef.current = true;
             resolve(result.crypto_customer_id);
           } else if (result.result === "abandoned") {
             reject(new Error("Authentication cancelled"));
@@ -2416,7 +2463,7 @@ export function useStripeEmbeddedOnramp({
       if (typeof window !== "undefined") {
         sessionStorage.setItem("stripe_onramp_customer_id", customerId);
       }
-      setAuthElement(null);
+      // Do NOT set authElement to null here so it remains mounted in the DOM (hidden) to preserve session state
 
       // ─── Step 4: Exchange tokens ───
       updateStep("exchanging_tokens");
