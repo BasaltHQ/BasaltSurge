@@ -226,6 +226,10 @@ export function enrichReceiptFromStripeData(receipt: any, onrampData: any) {
     detectedFunding = "us_bank_account";
   } else if (cardFundingDetail) {
     detectedFunding = cardFundingDetail;
+  } else if (paymentMethod.includes("debit")) {
+    detectedFunding = "debit";
+  } else if (paymentMethod.includes("credit")) {
+    detectedFunding = "credit";
   }
 
   if (detectedFunding) {

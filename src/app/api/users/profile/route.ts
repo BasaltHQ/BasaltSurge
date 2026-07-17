@@ -155,11 +155,36 @@ export async function PUT(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const authed = await getAuthenticatedWallet(req);
     const headerWallet = String((body.wallet || req.headers.get('x-wallet') || '')).toLowerCase();
-    const wallet = (authed || headerWallet).toLowerCase();
-    if (authed) {
-      if (wallet !== (authed || '').toLowerCase()) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    const verificationToken = req.headers.get('x-verification-token');
+    
+    let wallet = (headerWallet || authed || "").toLowerCase();
+
+    if (authed && headerWallet && headerWallet !== authed.toLowerCase()) {
+      // The user is authenticated as one wallet, but trying to update a different wallet.
+      // This is allowed ONLY if they provide a valid verification token for the guest EOA registration.
+      let isVerifiedGuestUpdate = false;
+      if (verificationToken && body.contact?.email) {
+        const { isEmailVerified } = await import("../../auth/thirdweb-verify/route");
+        if (isEmailVerified(body.contact.email, verificationToken)) {
+          isVerifiedGuestUpdate = true;
+          console.log(`[PROFILE PUT] Bypassing auth check for verified guest wallet: ${headerWallet} with email ${body.contact.email}`);
+        }
+      }
+      
+      if (!isVerifiedGuestUpdate) {
+        return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+      }
+      wallet = headerWallet;
     } else {
-      if (!/^0x[a-f0-9]{40}$/i.test(wallet)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+      if (authed) {
+        if (wallet !== authed.toLowerCase()) {
+          return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+        }
+      } else {
+        if (!/^0x[a-f0-9]{40}$/i.test(wallet)) {
+          return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+        }
+      }
     }
     if (!/^0x[a-f0-9]{40}$/i.test(wallet)) return NextResponse.json({ error: 'invalid wallet' }, { status: 400 });
 

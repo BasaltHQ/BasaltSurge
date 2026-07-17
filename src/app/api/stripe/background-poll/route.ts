@@ -248,9 +248,16 @@ async function runBackgroundPoll(params: {
         resolvedStatus = "success";
         const paymentDetailsType = String(data.payment_details?.type || data.payment_method_details?.type || "").toLowerCase();
         const paymentMethod = String(data.payment_method || "").toLowerCase();
-        const stripeFunding = (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach"))
+        let stripeFunding = (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach"))
           ? "us_bank_account"
           : (data.payment_details?.card?.funding || data.payment_method_details?.card?.funding);
+        if (!stripeFunding) {
+          if (paymentMethod.includes("debit")) {
+            stripeFunding = "debit";
+          } else if (paymentMethod.includes("credit")) {
+            stripeFunding = "credit";
+          }
+        }
         const resolvedFunding = stripeFunding || detectedCardFunding;
         isCreditCard = resolvedFunding === "credit" || resolvedFunding === null || resolvedFunding === undefined;
         break;
