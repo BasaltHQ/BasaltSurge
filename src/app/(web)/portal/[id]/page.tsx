@@ -3841,6 +3841,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         stripeSessionId: result.sessionId,
         customerEmail: shipEmail || headlessEmailInput || undefined,
         detectedCardFunding: isAch ? "us_bank_account" : undefined,
+        kycLevel: result.kycLevel,
       });
     },
     onError: (error) => {

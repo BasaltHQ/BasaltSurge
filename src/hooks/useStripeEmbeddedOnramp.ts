@@ -83,8 +83,36 @@ type OnrampCoordinator = {
   destroy: () => void;
 };
 
+function normalizeCountryCode(country: string): string {
+  const c = String(country || "").trim().toUpperCase();
+  if (c === "USA" || c === "UNITED STATES" || c === "UNITED STATES OF AMERICA") return "US";
+  if (c === "CAN" || c === "CANADA") return "CA";
+  if (c === "GBR" || c === "UK" || c === "UNITED KINGDOM" || c === "GREAT BRITAIN") return "GB";
+  if (c === "DEU" || c === "GERMANY") return "DE";
+  if (c === "FRA" || c === "FRANCE") return "FR";
+  if (c === "ESP" || c === "SPAIN") return "ES";
+  if (c === "ITA" || c === "ITALY") return "IT";
+  if (c === "NLD" || c === "NETHERLANDS") return "NL";
+  if (c === "IRL" || c === "IRELAND") return "IE";
+  return c.length === 2 ? c : "US";
+}
+
 /** Helper to wrap Stripe KYC submission with a timeout to prevent iframe postMessage hangs */
 async function submitKycInfoWithTimeout(coordinator: OnrampCoordinator, kycInfo: any, timeoutMs = 15000): Promise<void> {
+  if (kycInfo) {
+    if (kycInfo.address && typeof kycInfo.address.country === "string") {
+      kycInfo.address.country = normalizeCountryCode(kycInfo.address.country);
+    }
+    if (typeof kycInfo.birth_country === "string") {
+      kycInfo.birth_country = normalizeCountryCode(kycInfo.birth_country);
+    }
+    if (Array.isArray(kycInfo.nationalities)) {
+      kycInfo.nationalities = kycInfo.nationalities.map((n: any) => 
+        typeof n === "string" ? normalizeCountryCode(n) : n
+      );
+    }
+  }
+
   return Promise.race([
     coordinator.submitKycInfo(kycInfo),
     new Promise<void>((_, reject) =>
@@ -142,7 +170,7 @@ export type UseStripeEmbeddedOnrampProps = {
    */
   connectedWallet?: any;
   /** Callbacks */
-  onSuccess?: (result: { sessionId: string; txHash?: string }) => void;
+  onSuccess?: (result: { sessionId: string; txHash?: string; kycLevel?: string }) => void;
   /** Error callback */
   onError?: (error: Error) => void;
   /** Step change callback */
@@ -419,6 +447,7 @@ export function useStripeEmbeddedOnramp({
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
   const isCoordinatorAuthedRef = useRef(false);
+  const kycOccurredRef = useRef(false);
 
   // ─── CALLBACK REFS TO PREVENT STALE CLOSURES ───
   const onSuccessRef = useRef(onSuccess);
@@ -1111,7 +1140,10 @@ export function useStripeEmbeddedOnramp({
         }
       }
       if (isRejected) {
-        throw new Error("Identity verification was rejected. Please check your document and try again.");
+        const errorMsg = targetTier === "l2"
+          ? "Identity verification was rejected. Please check your document and try again."
+          : "Identity verification details were rejected. Please check your legal details (name, address, date of birth, SSN/ID) and try again.";
+        throw new Error(errorMsg);
       }
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
@@ -1608,6 +1640,9 @@ export function useStripeEmbeddedOnramp({
           splitAddressCredit,
           brandKey,
           detectedCardFunding: fundingTypeToUse,
+          kycLevel: kycOccurredRef.current
+            ? (kycTierRequired === "l2" ? "L2" : (kycTierRequired === "l1" ? "L1" : "L0"))
+            : "N/AKYC",
         }),
       }).catch((err) => {
         console.error("[EMBEDDED ONRAMP] Failed to kick off background poll:", err);
@@ -1712,7 +1747,13 @@ export function useStripeEmbeddedOnramp({
 
     isRunningRef.current = false;
     updateStep("completed");
-    onSuccessRef.current?.({ sessionId, txHash });
+    onSuccessRef.current?.({
+      sessionId,
+      txHash,
+      kycLevel: kycOccurredRef.current
+        ? (kycTierRequired === "l2" ? "L2" : (kycTierRequired === "l1" ? "L1" : "L0"))
+        : "N/AKYC"
+    });
   }, [
     isEcommerceMode,
     receiptId,
@@ -1921,6 +1962,22 @@ export function useStripeEmbeddedOnramp({
           const lastError = statusData.transactionDetails?.last_error;
 
           console.log(`[EMBEDDED ONRAMP] Inspecting lastError from session status:`, lastError);
+
+          if (lastError === "transaction_blocked") {
+            console.warn("[EMBEDDED ONRAMP] Terminal onramp error: transaction_blocked. Aborting retry loop.");
+            handleError("This transaction was blocked by the payment processor's security filters. Please try a different card/payment method or check your details.");
+            return;
+          }
+          if (lastError === "location_not_supported") {
+            console.warn("[EMBEDDED ONRAMP] Terminal onramp error: location_not_supported. Aborting retry loop.");
+            handleError("Stripe Onramp is not available in your current location/region.");
+            return;
+          }
+          if (lastError === "transaction_limit_reached") {
+            console.warn("[EMBEDDED ONRAMP] Terminal onramp error: transaction_limit_reached. Aborting.");
+            handleError("This transaction exceeds your payment limits. Please try a lower amount.");
+            return;
+          }
 
           const nestedErr = checkoutErr?.error || {};
           const errMessage = String(checkoutErr?.message || nestedErr?.message || "").toLowerCase();
@@ -2217,6 +2274,7 @@ export function useStripeEmbeddedOnramp({
     updateStep("submitting_kyc");
     isRunningRef.current = true;
     try {
+      kycOccurredRef.current = true;
       await submitKycInfoWithTimeout(onrampRef.current, kycInfo);
       console.log("[EMBEDDED ONRAMP] KYC demographics submitted successfully! Checking verification status...");
 
@@ -2793,7 +2851,7 @@ export function useStripeEmbeddedOnramp({
               try {
                 // Demographics submission is skipped because the user is already L1 verified.
                 // We directly call verifyDocuments() to upload document identity verification.
-                
+                kycOccurredRef.current = true;
                 const verifyResult = await onrampRef.current!.verifyDocuments();
                 if (verifyResult.result === "abandoned") {
                   throw new Error("Identity verification was abandoned");
@@ -3154,6 +3212,7 @@ export function useStripeEmbeddedOnramp({
                 
                 try {
                   console.log("[EMBEDDED ONRAMP] Launching document verification for L2...");
+                  kycOccurredRef.current = true;
                   const verifyResult = await onrampRef.current!.verifyDocuments();
                   if (verifyResult.result === "abandoned") {
                     throw new Error("Identity verification was abandoned");
