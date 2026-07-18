@@ -321,7 +321,7 @@ export default function PlatformAnalyticsPanel() {
         totalFailed++;
       }
 
-      const funding = r.cardFunding;
+      const funding = String(r.cardFunding || "").toLowerCase();
       if (funding === "us_bank_account") cardTypes.bank++;
       else if (funding === "credit") cardTypes.credit++;
       else if (funding === "debit") cardTypes.debit++;
@@ -1010,7 +1010,7 @@ export default function PlatformAnalyticsPanel() {
                         {/* Expanded Technical Investigation Detail panel */}
                         {isExpanded && (() => {
                           const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status);
-                          const isCredit = r.cardFunding === "credit";
+                          const isCredit = String(r.cardFunding || "").toLowerCase() === "credit";
                           const actualSplitAddress = isCredit ? (r.splitAddressCredit || r.splitAddress) : (r.splitAddress || r.splitAddressCredit);
 
                           return (
@@ -1106,8 +1106,8 @@ export default function PlatformAnalyticsPanel() {
 
                                     // Determine details of detected payment method if available
                                     let pmText = "Selecting payment";
-                                    if (r.cardFunding === "us_bank_account") {
-                                      pmText = "Bank Account (ACH)";
+                                    if (String(r.cardFunding || "").toLowerCase() === "us_bank_account") {
+                                      pmText = "Bank Transfer (ACH)";
                                     } else if (r.cardFunding) {
                                       pmText = `${r.cardFunding} Card`;
                                     } else if (Array.isArray(r.customerSessions)) {
@@ -1293,7 +1293,7 @@ export default function PlatformAnalyticsPanel() {
                                           <div className="space-y-1">
                                             <div className="text-muted-foreground text-[10px] uppercase font-medium">Card Funding</div>
                                             <div className="text-white/90 capitalize">
-                                              {r.cardFunding === "us_bank_account" ? "Bank Transfer (ACH)" : (r.cardFunding || "unknown / N/A")}
+                                              {String(r.cardFunding || "").toLowerCase() === "us_bank_account" ? "Bank Transfer (ACH)" : (r.cardFunding || "unknown / N/A")}
                                             </div>
                                           </div>
 
@@ -1305,7 +1305,7 @@ export default function PlatformAnalyticsPanel() {
                                           </div>
                                         </div>
 
-                                        {r.cardFunding === "us_bank_account" && (
+                                        {String(r.cardFunding || "").toLowerCase() === "us_bank_account" && (
                                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 mt-2 bg-white/[0.01] border border-white/5 rounded-xl p-3">
                                             <div className="space-y-1">
                                               <div className="text-muted-foreground text-[10px] uppercase font-medium">Last ACH Poll</div>
