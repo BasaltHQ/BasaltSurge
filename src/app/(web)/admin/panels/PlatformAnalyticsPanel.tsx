@@ -20,10 +20,11 @@ import {
   ArrowUpDown,
   FileText,
   Users,
-  Globe,
-  BarChart2
+  BarChart2,
+  Route
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
+import RollercoasterOverlay from "../components/RollercoasterOverlay";
 
 interface Stat {
   totalCreated: number;
@@ -111,6 +112,7 @@ export default function PlatformAnalyticsPanel() {
   const [brandMetric, setBrandMetric] = useState<"successRate" | "amountEarned">("successRate");
   const [scaleType, setScaleType] = useState<"linear" | "log">("linear");
   const [brandScale, setBrandScale] = useState<"linear" | "log">("linear");
+  const [showCoaster, setShowCoaster] = useState(false);
 
   // Filters
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
@@ -996,6 +998,15 @@ export default function PlatformAnalyticsPanel() {
                 </button>
               ))}
             </div>
+
+            {/* Rollercoaster Ride Button */}
+            <button
+              onClick={() => setShowCoaster(true)}
+              className="px-2.5 h-7 text-[10px] font-bold rounded-lg transition-all bg-primary/20 border border-primary/30 hover:border-primary/50 hover:bg-primary/30 text-primary hover:text-white flex items-center gap-1.5 shadow-sm active:scale-95"
+            >
+              <Route className="w-3.5 h-3.5" />
+              <span>Ride the Data</span>
+            </button>
           </div>
         </div>
 
@@ -2439,6 +2450,15 @@ export default function PlatformAnalyticsPanel() {
 
       </div>
 
+      {showCoaster && (
+        <RollercoasterOverlay
+          data={chartTimeSeries}
+          brandKeys={allBrandKeys}
+          metricType={chartMetric}
+          scaleType={scaleType}
+          onClose={() => setShowCoaster(false)}
+        />
+      )}
     </div>
   );
 }
