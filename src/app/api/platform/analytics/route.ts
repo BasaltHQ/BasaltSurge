@@ -320,7 +320,8 @@ export async function GET(req: NextRequest) {
       allPaid: number;
       allFailed: number;
       allTotal: number;
-      brands: Record<string, { paid: number; failed: number; total: number }>
+      allGmv: number;
+      brands: Record<string, { paid: number; failed: number; total: number; gmv: number }>
     }> = {};
 
     for (const r of allReceiptsLight) {
@@ -337,6 +338,7 @@ export async function GET(req: NextRequest) {
           allPaid: 0,
           allFailed: 0,
           allTotal: 0,
+          allGmv: 0,
           brands: {}
         };
       }
@@ -347,20 +349,23 @@ export async function GET(req: NextRequest) {
       
       const isPaid = ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status);
       const isFailed = status === "failed";
+      const paymentGmv = isPaid ? Number(r.totalUsd || 0) : 0;
       
       if (isPaid) {
         g.allPaid++;
+        g.allGmv += paymentGmv;
       } else if (isFailed) {
         g.allFailed++;
       }
 
       const bKey = r.brandKey || "unknown";
       if (!g.brands[bKey]) {
-        g.brands[bKey] = { paid: 0, failed: 0, total: 0 };
+        g.brands[bKey] = { paid: 0, failed: 0, total: 0, gmv: 0 };
       }
       g.brands[bKey].total++;
       if (isPaid) {
         g.brands[bKey].paid++;
+        g.brands[bKey].gmv += paymentGmv;
       } else if (isFailed) {
         g.brands[bKey].failed++;
       }
