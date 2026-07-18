@@ -1140,7 +1140,10 @@ export function useStripeEmbeddedOnramp({
         }
       }
       if (isRejected) {
-        throw new Error("Identity verification was rejected. Please check your document and try again.");
+        const errorMsg = targetTier === "l2"
+          ? "Identity verification was rejected. Please check your document and try again."
+          : "Identity verification details were rejected. Please check your legal details (name, address, date of birth, SSN/ID) and try again.";
+        throw new Error(errorMsg);
       }
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
@@ -1959,6 +1962,22 @@ export function useStripeEmbeddedOnramp({
           const lastError = statusData.transactionDetails?.last_error;
 
           console.log(`[EMBEDDED ONRAMP] Inspecting lastError from session status:`, lastError);
+
+          if (lastError === "transaction_blocked") {
+            console.warn("[EMBEDDED ONRAMP] Terminal onramp error: transaction_blocked. Aborting retry loop.");
+            handleError("This transaction was blocked by the payment processor's security filters. Please try a different card/payment method or check your details.");
+            return;
+          }
+          if (lastError === "location_not_supported") {
+            console.warn("[EMBEDDED ONRAMP] Terminal onramp error: location_not_supported. Aborting retry loop.");
+            handleError("Stripe Onramp is not available in your current location/region.");
+            return;
+          }
+          if (lastError === "transaction_limit_reached") {
+            console.warn("[EMBEDDED ONRAMP] Terminal onramp error: transaction_limit_reached. Aborting.");
+            handleError("This transaction exceeds your payment limits. Please try a lower amount.");
+            return;
+          }
 
           const nestedErr = checkoutErr?.error || {};
           const errMessage = String(checkoutErr?.message || nestedErr?.message || "").toLowerCase();
