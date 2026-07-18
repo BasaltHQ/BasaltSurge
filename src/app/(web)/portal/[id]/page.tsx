@@ -2146,7 +2146,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               setIsAccordionOpen(true);
             }
             try {
-              const rw = String((rec as any)?.recipientWallet || "").toLowerCase();
+              const rw = String((rec as any)?.recipientWallet || (rec as any)?.wallet || "").toLowerCase();
               if (/^0x[a-f0-9]{40}$/i.test(rw)) setResolvedRecipient(rw as `0x${string}`);
             } catch { }
           } else {
@@ -3840,7 +3840,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         paymentMethod: "stripe_headless",
         stripeSessionId: result.sessionId,
         customerEmail: shipEmail || headlessEmailInput || undefined,
-        detectedCardFunding: isAch ? "us_bank_account" : undefined,
+        detectedCardFunding: isAch ? "us_bank_account" : (result.detectedCardFunding || stripeDetectedFunding || undefined),
+        isCreditCard: typeof result.isCreditCard === "boolean" ? result.isCreditCard : (stripeDetectedFunding === "credit" ? true : (stripeDetectedFunding === "debit" ? false : undefined)),
         kycLevel: result.kycLevel,
       });
     },
@@ -6767,17 +6768,19 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             <div className="text-sm text-muted-foreground">
                               {loadingReceipt
                                 ? "Loading receipt…"
-                                : totalUsd <= 0
-                                  ? "Invalid amount"
-                                  : !merchantWallet
-                                    ? "Recipient not configured"
-                                    : !widgetSupported
-                                      ? "Unsupported token/network"
-                                      : !amountReady
-                                        ? "Loading rates…"
-                                        : (!tokenDef || !hasTokenAddr)
-                                          ? "Token not configured"
-                                          : "Preparing checkout…"}
+                                : !receipt
+                                  ? "Receipt not found or invalid scope"
+                                  : totalUsd <= 0
+                                    ? "Invalid amount"
+                                    : !merchantWallet
+                                      ? "Recipient not configured"
+                                      : !widgetSupported
+                                        ? "Unsupported token/network"
+                                        : !amountReady
+                                          ? "Loading rates…"
+                                          : (!tokenDef || !hasTokenAddr)
+                                            ? "Token not configured"
+                                            : "Preparing checkout…"}
                             </div>
                           </div>
                         )}

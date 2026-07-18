@@ -20,9 +20,11 @@ import {
   ArrowUpDown,
   FileText,
   Users,
-  Globe
+  BarChart2,
+  Route
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
+import RollercoasterOverlay from "../components/RollercoasterOverlay";
 
 interface Stat {
   totalCreated: number;
@@ -102,6 +104,15 @@ export default function PlatformAnalyticsPanel() {
   const [brandStats, setBrandStats] = useState<BrandStat[]>([]);
   const [recentReceipts, setRecentReceipts] = useState<ReceiptInfo[]>([]);
   const [dailySeries, setDailySeries] = useState<any[]>([]);
+  const [bpFlipped, setBpFlipped] = useState(false);
+  const [tfrFlipped, setTfrFlipped] = useState(false);
+  const [selectedErrorCombo, setSelectedErrorCombo] = useState<[string, string] | null>(null);
+  const [hoveredHeatmapCell, setHoveredHeatmapCell] = useState<{ x: number; y: number; reasonA: string; reasonB: string; val: number } | null>(null);
+  const [chartMetric, setChartMetric] = useState<"successRate" | "amountEarned">("successRate");
+  const [brandMetric, setBrandMetric] = useState<"successRate" | "amountEarned">("successRate");
+  const [scaleType, setScaleType] = useState<"linear" | "log">("linear");
+  const [brandScale, setBrandScale] = useState<"linear" | "log">("linear");
+  const [showCoaster, setShowCoaster] = useState(false);
 
   // Filters
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
@@ -207,32 +218,54 @@ export default function PlatformAnalyticsPanel() {
     fetchAnalytics();
   }, [fetchAnalytics]);
 
-  // Unique brandkeys for filtering dropdown
+  // Unique brandkeys for filtering dropdown (omitting "unknown")
   const allBrandKeys = useMemo(() => {
     const keys = new Set<string>();
     brandStats.forEach(b => {
-      if (b.brandKey) keys.add(b.brandKey);
+      if (b.brandKey && b.brandKey !== "unknown") keys.add(b.brandKey);
     });
     return Array.from(keys);
   }, [brandStats]);
 
-  // Filter & Search Receipts
-  const filteredReceipts = useMemo(() => {
-    const now = new Date().getTime();
+  // Shared brand colors matching the Line Chart
+  const brandColors: Record<string, string> = useMemo(() => ({
+    aggregate: "#c084fc", // vibrant purple/indigo for overall platform success rate
+    aipowerpay: "#38bdf8", // clear sky blue
+    basaltsurge: "#fb7185", // soft rose
+  }), []);
+
+  const getBrandColor = useCallback((key: string, idx: number) => {
+    if (brandColors[key]) return brandColors[key];
+    const colors = ["#34d399", "#fbbf24", "#a78bfa", "#22d3ee", "#f472b6", "#fb923c"];
+    return colors[idx % colors.length];
+  }, [brandColors]);
+
+  // Base Filter & Search Receipts (excluding selected combo)
+  const baseFilteredReceipts = useMemo(() => {
     return recentReceipts.filter(r => {
+      if (r.brandKey === "unknown") return false;
+
       const matchesBrand = selectedBrand === "all" || r.brandKey === selectedBrand;
       const matchesStatus = statusFilter === "all" || r.status === statusFilter;
 
       let matchesTime = true;
       if (r.createdAt && timeRange !== "all") {
         const itemTime = new Date(r.createdAt).getTime();
-        const diffMs = now - itemTime;
-        if (timeRange === "24h") {
-          matchesTime = diffMs <= 24 * 60 * 60 * 1000;
-        } else if (timeRange === "7d") {
-          matchesTime = diffMs <= 7 * 24 * 60 * 60 * 1000;
-        } else if (timeRange === "30d") {
-          matchesTime = diffMs <= 30 * 24 * 60 * 60 * 1000;
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const startOfTodayMs = startOfToday.getTime();
+
+        if (timeRange === "today") {
+          matchesTime = itemTime >= startOfTodayMs;
+        } else if (timeRange === "yesterday") {
+          const startOfYesterdayMs = startOfTodayMs - 24 * 60 * 60 * 1000;
+          matchesTime = itemTime >= startOfYesterdayMs && itemTime < startOfTodayMs;
+        } else if (timeRange === "weekly") {
+          const startOfSevenDaysAgoMs = startOfTodayMs - 7 * 24 * 60 * 60 * 1000;
+          matchesTime = itemTime >= startOfSevenDaysAgoMs;
+        } else if (timeRange === "monthly") {
+          const startOfThirtyDaysAgoMs = startOfTodayMs - 30 * 24 * 60 * 60 * 1000;
+          matchesTime = itemTime >= startOfThirtyDaysAgoMs;
         }
       }
 
@@ -247,6 +280,84 @@ export default function PlatformAnalyticsPanel() {
       return matchesBrand && matchesStatus && matchesQuery && matchesTime;
     });
   }, [recentReceipts, selectedBrand, statusFilter, searchQuery, timeRange]);
+
+  // Final filtered receipts (including selected error combo filter)
+  const filteredReceipts = useMemo(() => {
+    if (!selectedErrorCombo) return baseFilteredReceipts;
+    const [reasonA, reasonB] = selectedErrorCombo;
+
+    const getErrorsForReceipt = (rc: any) => {
+      const errs = new Set<string>();
+      if (rc.failureReason) errs.add(rc.failureReason.toLowerCase());
+      if (Array.isArray(rc.customerSessions)) {
+        rc.customerSessions.forEach((s: any) => {
+          if (s.lastError) errs.add(s.lastError.toLowerCase());
+          if (s.status === "failed" && s.error) errs.add(s.error.toLowerCase());
+        });
+      }
+      return Array.from(errs);
+    };
+
+    return baseFilteredReceipts.filter(r => {
+      const receiptErrors = getErrorsForReceipt(r);
+      const hasA = receiptErrors.some(e => e.includes(reasonA.toLowerCase()) || reasonA.toLowerCase().includes(e));
+      const hasB = receiptErrors.some(e => e.includes(reasonB.toLowerCase()) || reasonB.toLowerCase().includes(e));
+      return hasA && hasB;
+    });
+  }, [baseFilteredReceipts, selectedErrorCombo]);
+
+  // Compute co-occurrences of failure reasons inside the same session
+  const failureCombinations = useMemo(() => {
+    const topReasons = failureReasons.slice(0, 5).map(r => r.reason);
+    const N = topReasons.length;
+    const matrix = Array(N).fill(0).map(() => Array(N).fill(0));
+
+    if (N === 0) return { topReasons, matrix };
+
+    baseFilteredReceipts.forEach(r => {
+      if (r.status !== "failed" && !r.failureReason) return;
+      
+      const reasonsSet = new Set<string>();
+      if (r.failureReason) {
+        reasonsSet.add(r.failureReason);
+      }
+      
+      if (Array.isArray(r.customerSessions)) {
+        r.customerSessions.forEach(s => {
+          if (s.lastError) {
+            reasonsSet.add(s.lastError);
+          }
+          if (s.status === "failed" && s.error) {
+            reasonsSet.add(s.error);
+          }
+        });
+      }
+
+      const matchedIndices: number[] = [];
+      reasonsSet.forEach(reason => {
+        const idx = topReasons.findIndex(tr => 
+          reason.toLowerCase().includes(tr.toLowerCase()) || 
+          tr.toLowerCase().includes(reason.toLowerCase())
+        );
+        if (idx >= 0) matchedIndices.push(idx);
+      });
+
+      const uniqueIndices = Array.from(new Set(matchedIndices));
+
+      for (let i = 0; i < uniqueIndices.length; i++) {
+        for (let j = i; j < uniqueIndices.length; j++) {
+          const idxA = uniqueIndices[i];
+          const idxB = uniqueIndices[j];
+          matrix[idxA][idxB]++;
+          if (idxA !== idxB) {
+            matrix[idxB][idxA]++;
+          }
+        }
+      }
+    });
+
+    return { topReasons, matrix };
+  }, [failureReasons, baseFilteredReceipts]);
 
   // Filtered & Sorted list for the table rows
   const tableReceipts = useMemo(() => {
@@ -305,14 +416,14 @@ export default function PlatformAnalyticsPanel() {
 
   // Compute dynamic stats based on filtered list to make HUD react to filters
   const dynamicStats = useMemo(() => {
-    const totalCreated = filteredReceipts.length;
+    const totalCreated = baseFilteredReceipts.length;
     let totalPaid = 0;
     let totalFailed = 0;
     let totalGmv = 0;
     let totalFees = 0;
     const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
 
-    filteredReceipts.forEach(r => {
+    baseFilteredReceipts.forEach(r => {
       if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
         totalPaid++;
         totalGmv += r.totalUsd;
@@ -341,7 +452,7 @@ export default function PlatformAnalyticsPanel() {
       aov: +aov.toFixed(2),
       cardTypes
     };
-  }, [filteredReceipts]);
+  }, [baseFilteredReceipts]);
 
   const hasActiveFilters = useMemo(() => {
     return (
@@ -373,7 +484,7 @@ export default function PlatformAnalyticsPanel() {
   }, [displayStats, successRateMode]);
 
   const displayedBrandStats = useMemo(() => {
-    return brandStats.map(b => {
+    return brandStats.filter(b => b.brandKey !== "unknown").map(b => {
       let sr = 0;
       if (successRateMode === "integration") {
         sr = b.total > 0 ? (b.paid / b.total) * 100 : 0;
@@ -391,6 +502,10 @@ export default function PlatformAnalyticsPanel() {
     });
   }, [brandStats, successRateMode]);
 
+  const maxBrandGmv = useMemo(() => {
+    return Math.max(...displayedBrandStats.map(b => b.gmv), 1);
+  }, [displayedBrandStats]);
+
   // Active brand keys in the filtered dataset
   const activeBrandKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -400,59 +515,83 @@ export default function PlatformAnalyticsPanel() {
     return Array.from(keys);
   }, [filteredReceipts]);
 
-  // Daily Success Rate Time Series dataset including separate brands, calculated over the full history
-  const successRateTimeSeries = useMemo(() => {
+  // Daily Time Series dataset (supporting Success Rate or Amount Earned) including separate brands
+  const chartTimeSeries = useMemo(() => {
     if (!dailySeries || dailySeries.length === 0) {
       return [{ label: "No Data", aggregate: 0 }];
     }
 
-    const now = Date.now();
-    // Filter days based on timeRange
     const filteredDays = dailySeries.filter(day => {
       if (timeRange === "all") return true;
-      const diffMs = now - day.timestamp;
-      if (timeRange === "24h") return diffMs <= 24 * 60 * 60 * 1000;
-      if (timeRange === "7d") return diffMs <= 7 * 24 * 60 * 60 * 1000;
-      if (timeRange === "30d") return diffMs <= 30 * 24 * 60 * 60 * 1000;
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const startOfTodayMs = startOfToday.getTime();
+
+      if (timeRange === "today") {
+        return day.timestamp >= startOfTodayMs;
+      }
+      if (timeRange === "yesterday") {
+        const startOfYesterdayMs = startOfTodayMs - 24 * 60 * 60 * 1000;
+        return day.timestamp >= startOfYesterdayMs && day.timestamp < startOfTodayMs;
+      }
+      if (timeRange === "weekly") {
+        const startOfSevenDaysAgoMs = startOfTodayMs - 7 * 24 * 60 * 60 * 1000;
+        return day.timestamp >= startOfSevenDaysAgoMs;
+      }
+      if (timeRange === "monthly") {
+        const startOfThirtyDaysAgoMs = startOfTodayMs - 30 * 24 * 60 * 60 * 1000;
+        return day.timestamp >= startOfThirtyDaysAgoMs;
+      }
       return true;
     });
 
     const list = filteredDays.map(g => {
       let aggregate = 0;
       let totalCountForDetails = 0;
-      if (successRateMode === "integration") {
-        aggregate = g.allTotal > 0 ? (g.allPaid / g.allTotal) * 100 : 0;
-        totalCountForDetails = g.allTotal;
+
+      if (chartMetric === "successRate") {
+        if (successRateMode === "integration") {
+          aggregate = g.allTotal > 0 ? (g.allPaid / g.allTotal) * 100 : 0;
+          totalCountForDetails = g.allTotal;
+        } else {
+          const denom = g.allPaid + g.allFailed;
+          aggregate = denom > 0 ? (g.allPaid / denom) * 100 : 0;
+          totalCountForDetails = denom;
+        }
       } else {
-        const denom = g.allPaid + g.allFailed;
-        aggregate = denom > 0 ? (g.allPaid / denom) * 100 : 0;
-        totalCountForDetails = denom;
+        aggregate = g.allGmv || 0;
+        totalCountForDetails = g.allTotal;
       }
 
       const pt: Record<string, any> = {
         label: g.dateLabel,
-        aggregate: +aggregate.toFixed(1),
-        aggregateDetails: { paid: g.allPaid, total: totalCountForDetails }
+        aggregate: +aggregate.toFixed(chartMetric === "successRate" ? 1 : 2),
+        aggregateDetails: { paid: g.allPaid, total: totalCountForDetails, gmv: g.allGmv || 0 }
       };
 
       allBrandKeys.forEach(bk => {
         const bData = g.brands[bk];
         if (bData) {
-          let sr = 0;
+          let val = 0;
           let totalForBrandDetails = 0;
-          if (successRateMode === "integration") {
-            sr = bData.total > 0 ? (bData.paid / bData.total) * 100 : 0;
-            totalForBrandDetails = bData.total;
+          if (chartMetric === "successRate") {
+            if (successRateMode === "integration") {
+              val = bData.total > 0 ? (bData.paid / bData.total) * 100 : 0;
+              totalForBrandDetails = bData.total;
+            } else {
+              const denom = bData.paid + bData.failed;
+              val = denom > 0 ? (bData.paid / denom) * 100 : 0;
+              totalForBrandDetails = denom;
+            }
           } else {
-            const denom = bData.paid + bData.failed;
-            sr = denom > 0 ? (bData.paid / denom) * 100 : 0;
-            totalForBrandDetails = denom;
+            val = bData.gmv || 0;
+            totalForBrandDetails = bData.total;
           }
-          pt[bk] = +sr.toFixed(1);
-          pt[`${bk}Details`] = { paid: bData.paid, total: totalForBrandDetails };
+          pt[bk] = +val.toFixed(chartMetric === "successRate" ? 1 : 2);
+          pt[`${bk}Details`] = { paid: bData.paid, total: totalForBrandDetails, gmv: bData.gmv || 0 };
         } else {
           pt[bk] = null;
-          pt[`${bk}Details`] = { paid: 0, total: 0 };
+          pt[`${bk}Details`] = { paid: 0, total: 0, gmv: 0 };
         }
       });
       return pt;
@@ -462,7 +601,104 @@ export default function PlatformAnalyticsPanel() {
       return [{ label: "No Data", aggregate: 0 }];
     }
     return list;
-  }, [dailySeries, allBrandKeys, timeRange, successRateMode]);
+  }, [dailySeries, allBrandKeys, timeRange, successRateMode, chartMetric]);
+
+  // DTD, MTD, YTD comparisons
+  const comparisons = useMemo(() => {
+    const now = new Date();
+    
+    // Start of Today
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayMs = startOfToday.getTime();
+
+    // Start of Yesterday
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    const startOfYesterdayMs = startOfYesterday.getTime();
+
+    // Start of This Month
+    const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfThisMonthMs = startOfThisMonth.getTime();
+
+    // Start of Last Month
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const startOfLastMonthMs = startOfLastMonth.getTime();
+
+    // Last Month equivalent day-of-month for MTD comparison
+    const lastMonthToDateEnd = new Date(startOfLastMonth);
+    lastMonthToDateEnd.setDate(Math.min(now.getDate(), new Date(now.getFullYear(), now.getMonth(), 0).getDate()));
+    lastMonthToDateEnd.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+    const lastMonthToDateEndMs = lastMonthToDateEnd.getTime();
+
+    // Start of This Year
+    const startOfThisYear = new Date(now.getFullYear(), 0, 1);
+    const startOfThisYearMs = startOfThisYear.getTime();
+
+    // Start of Last Year
+    const startOfLastYear = new Date(now.getFullYear() - 1, 0, 1);
+    const startOfLastYearMs = startOfLastYear.getTime();
+
+    // Last Year equivalent date for YTD comparison
+    const lastYearToDateEnd = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    lastYearToDateEnd.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+    const lastYearToDateEndMs = lastYearToDateEnd.getTime();
+
+    // Helper to calculate stats for a range
+    const getRangeStats = (startMs: number, endMs?: number) => {
+      let paidCount = 0;
+      let failedCount = 0;
+      let totalCount = 0;
+      let gmv = 0;
+      let fees = 0;
+
+      recentReceipts.forEach(r => {
+        if (!r.createdAt) return;
+        const t = new Date(r.createdAt).getTime();
+        if (t < startMs) return;
+        if (endMs !== undefined && t >= endMs) return;
+
+        totalCount++;
+        if (["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status)) {
+          paidCount++;
+          gmv += r.totalUsd || 0;
+          fees += (typeof r.platformFee === "number" ? r.platformFee : 0);
+        } else if (r.status === "failed") {
+          failedCount++;
+        }
+      });
+
+      const denom = successRateMode === "integration" ? totalCount : (paidCount + failedCount);
+      const successRate = denom > 0 ? (paidCount / denom) * 100 : 0;
+
+      return { paidCount, totalCount, successRate, gmv, fees };
+    };
+
+    const todayStats = getRangeStats(startOfTodayMs);
+    const yesterdayStats = getRangeStats(startOfYesterdayMs, startOfTodayMs);
+    
+    const mtdThisMonth = getRangeStats(startOfThisMonthMs);
+    const mtdLastMonth = getRangeStats(startOfLastMonthMs, lastMonthToDateEndMs);
+
+    const ytdThisYear = getRangeStats(startOfThisYearMs);
+    const ytdLastYear = getRangeStats(startOfLastYearMs, lastYearToDateEndMs);
+
+    const pctChange = (current: number, previous: number) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return ((current - previous) / previous) * 100;
+    };
+
+    return {
+      today: todayStats,
+      yesterday: yesterdayStats,
+      mtdThisMonth,
+      mtdLastMonth,
+      ytdThisYear,
+      ytdLastYear,
+      gmvChangeMtd: pctChange(mtdThisMonth.gmv, mtdLastMonth.gmv),
+      feesChangeYtd: pctChange(ytdThisYear.fees, ytdLastYear.fees),
+    };
+  }, [recentReceipts, successRateMode]);
 
   // Overall status distribution dataset for the DonutChart
   const statusPieData = useMemo(() => {
@@ -470,7 +706,7 @@ export default function PlatformAnalyticsPanel() {
     let failedCount = 0;
     let pendingCount = 0;
 
-    filteredReceipts.forEach(r => {
+    baseFilteredReceipts.forEach(r => {
       if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) paidCount++;
       else if (r.status === "failed") failedCount++;
       else pendingCount++;
@@ -481,7 +717,7 @@ export default function PlatformAnalyticsPanel() {
       { label: "Failed", value: failedCount },
       { label: "Pending/Init", value: pendingCount }
     ];
-  }, [filteredReceipts]);
+  }, [baseFilteredReceipts]);
 
   // Copy to clipboard helper
   const handleCopy = (text: string, key: string) => {
@@ -602,12 +838,23 @@ export default function PlatformAnalyticsPanel() {
                 </span>
               </div>
             </div>
-            <div className="text-[10px] text-muted-foreground mt-4 border-t border-white/5 pt-2">
-              {successRateMode === "integration" ? (
-                `${displayStats.totalPaid} paid / ${displayStats.totalCreated} total intents`
-              ) : (
-                `${displayStats.totalPaid} paid / ${displayStats.totalPaid + displayStats.totalFailed} finished attempts`
-              )}
+            <div className="mt-2 text-[10px] border-t border-white/5 pt-2 space-y-1">
+              <div className="flex justify-between text-muted-foreground">
+                <span>DTD:</span>
+                <span className="font-semibold text-white/95">
+                  Today {comparisons.today.successRate.toFixed(1)}% vs Yesterday {comparisons.yesterday.successRate.toFixed(1)}%
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>Total:</span>
+                <span>
+                  {successRateMode === "integration" ? (
+                    `${displayStats.totalPaid} paid / ${displayStats.totalCreated} total intents`
+                  ) : (
+                    `${displayStats.totalPaid} paid / ${displayStats.totalPaid + displayStats.totalFailed} finished`
+                  )}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -618,9 +865,17 @@ export default function PlatformAnalyticsPanel() {
                 ${displayStats.totalGmv.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
-            <div className="text-[10px] text-muted-foreground mt-4 border-t border-white/5 pt-2 flex items-center justify-between">
-              <span>Avg. Order Value (AOV):</span>
-              <span className="font-semibold text-white/90">${displayStats.aov}</span>
+            <div className="mt-2 text-[10px] border-t border-white/5 pt-2 space-y-1">
+              <div className="flex justify-between text-muted-foreground">
+                <span>MTD GMV vs Last MTD:</span>
+                <span className={`font-semibold ${comparisons.gmvChangeMtd >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                  ${comparisons.mtdThisMonth.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({comparisons.gmvChangeMtd >= 0 ? "+" : ""}{comparisons.gmvChangeMtd.toFixed(1)}%)
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>Avg. Order Value (AOV):</span>
+                <span className="font-semibold text-white/90">${displayStats.aov}</span>
+              </div>
             </div>
           </div>
 
@@ -631,8 +886,17 @@ export default function PlatformAnalyticsPanel() {
                 ${displayStats.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
-            <div className="text-[10px] text-muted-foreground mt-4 border-t border-white/5 pt-2">
-              Actual platform fee share (derived from BPS config)
+            <div className="mt-2 text-[10px] border-t border-white/5 pt-2 space-y-1">
+              <div className="flex justify-between text-muted-foreground">
+                <span>YTD Fees vs Last YTD:</span>
+                <span className={`font-semibold ${comparisons.feesChangeYtd >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                  ${comparisons.ytdThisYear.fees.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({comparisons.feesChangeYtd >= 0 ? "+" : ""}{comparisons.feesChangeYtd.toFixed(1)}%)
+                </span>
+              </div>
+              <div className="text-muted-foreground flex justify-between">
+                <span>Fee Basis:</span>
+                <span>Derived from BPS config</span>
+              </div>
             </div>
           </div>
 
@@ -659,28 +923,67 @@ export default function PlatformAnalyticsPanel() {
         </div>
       )}
 
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Success Rate / Amount Earned Over Time - Line Chart (Full Row) */}
+      <div className="w-full glass-pane rounded-xl border border-white/5 p-5 flex flex-col min-h-0 mb-6">
+        <div className="flex items-center justify-between mb-4 shrink-0">
+          <div>
+            <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+              <Activity className="w-4 h-4 text-primary" />
+              <span>{chartMetric === "successRate" ? "Success Rate Over Time" : "Amount Earned Over Time"}</span>
+            </h3>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              {chartMetric === "successRate"
+                ? "Daily transaction success rates (%) plotted chronologically. Hover over any legend item or line to focus it."
+                : "Daily aggregate volume ($) earned plotted chronologically. Hover over any legend item or line to focus it."}
+            </p>
+          </div>
 
-        {/* Success Rate Over Time - Line Chart */}
-        <div className="lg:col-span-2 glass-pane rounded-xl border border-white/5 p-5 flex flex-col min-h-0">
-          <div className="flex items-center justify-between mb-4 shrink-0">
-            <div>
-              <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
-                <Activity className="w-4 h-4 text-primary" />
-                <span>Success Rate Over Time</span>
-              </h3>
-              <p className="text-[10px] text-muted-foreground mt-0.5">
-                Daily transaction success rates (%) plotted chronologically. Hover over any legend item or line to focus it.
-              </p>
+          <div className="flex items-center gap-3">
+            {/* Metric Toggle */}
+            <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+              {[
+                { label: "Success Rate", value: "successRate" },
+                { label: "Amount Earned", value: "amountEarned" }
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setChartMetric(opt.value as any)}
+                  className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${chartMetric === opt.value
+                    ? "bg-primary text-white shadow-sm"
+                    : "text-muted-foreground hover:text-white"
+                    }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Scale Toggle */}
+            <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+              {[
+                { label: "Linear", value: "linear" },
+                { label: "Log", value: "log" }
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setScaleType(opt.value as any)}
+                  className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${scaleType === opt.value
+                    ? "bg-primary text-white shadow-sm"
+                    : "text-muted-foreground hover:text-white"
+                    }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
 
             {/* Time Range Selector */}
             <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
               {[
-                { label: "24h", value: "24h" },
-                { label: "7d", value: "7d" },
-                { label: "30d", value: "30d" },
+                { label: "Today", value: "today" },
+                { label: "Yesterday", value: "yesterday" },
+                { label: "Weekly", value: "weekly" },
+                { label: "Monthly", value: "monthly" },
                 { label: "All", value: "all" }
               ].map(opt => (
                 <button
@@ -695,95 +998,446 @@ export default function PlatformAnalyticsPanel() {
                 </button>
               ))}
             </div>
-          </div>
 
-          {/* Custom Interactive Line Chart */}
-          <div className="flex-1 flex flex-col min-h-0 mt-4">
-            <CustomInteractiveLineChart
-              data={successRateTimeSeries}
-              brandKeys={selectedBrand !== "all" ? [selectedBrand] : allBrandKeys}
-              hoveredKey={hoveredLineKey}
-              setHoveredKey={setHoveredLineKey}
-            />
+            {/* Rollercoaster Ride Button */}
+            <button
+              onClick={() => setShowCoaster(true)}
+              className="px-2.5 h-7 text-[10px] font-bold rounded-lg transition-all bg-primary/20 border border-primary/30 hover:border-primary/50 hover:bg-primary/30 text-primary hover:text-white flex items-center gap-1.5 shadow-sm active:scale-95"
+            >
+              <Route className="w-3.5 h-3.5" />
+              <span>Ride the Data</span>
+            </button>
           </div>
         </div>
 
-        {/* Transaction Status Distribution - Pie Chart */}
-        <div className="lg:col-span-1 glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-1.5">
-              <CheckCircle2 className="w-4 h-4 text-primary" />
-              <span>Status Distribution</span>
-            </h3>
-            <p className="text-[10px] text-muted-foreground mb-4">
-              Breakdown of successful, failed, and pending checkouts.
-            </p>
+        {/* Custom Interactive Line Chart */}
+        <div className="flex-1 flex flex-col min-h-[220px] mt-4">
+          <CustomInteractiveLineChart
+            data={chartTimeSeries}
+            brandKeys={selectedBrand !== "all" ? [selectedBrand] : allBrandKeys}
+            hoveredKey={hoveredLineKey}
+            setHoveredKey={setHoveredLineKey}
+            metricType={chartMetric}
+            scaleType={scaleType}
+          />
+        </div>
+      </div>
 
-            <div className="flex items-center justify-center">
+      {/* 3-Column Row: Status Distribution, Brand Performance, and Technical Failure Reasons */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+
+        {/* Transaction Status Distribution - Pie Chart */}
+        <div className="glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between aspect-square w-full">
+          <div className="flex flex-col h-full justify-between">
+            <div className="flex-shrink-0">
+              <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-primary" />
+                <span>Status Distribution</span>
+              </h3>
+              <p className="text-[10px] text-muted-foreground">
+                Breakdown of successful, failed, and pending checkouts.
+              </p>
+            </div>
+
+            <div className="flex-1 flex items-center justify-center min-h-0">
               <CustomLargeDonutChart data={statusPieData} />
             </div>
           </div>
         </div>
 
-      </div>
+        {/* Brand Performance - Flippable Card */}
+        <div className="relative [perspective:1000px] aspect-square w-full">
+          <div
+            className="relative w-full h-full duration-500 transition-transform"
+            style={{
+              transformStyle: "preserve-3d",
+              transform: bpFlipped ? "rotateY(180deg)" : "none",
+            }}
+          >
+            {/* Front Face: Bar Chart */}
+            <div
+              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between"
+              style={{ backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden" }}
+            >
+              <div className="flex flex-col h-full justify-between">
+                <div className="flex items-center justify-between flex-shrink-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                      <BarChart2 className="w-4 h-4 text-primary" />
+                      <span>Brand Performance</span>
+                    </h3>
+                    
+                    {/* Toggle Metric Switch */}
+                    <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 p-0.5 rounded">
+                      <button
+                        onClick={() => setBrandMetric("successRate")}
+                        className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${brandMetric === "successRate"
+                          ? "bg-primary text-white"
+                          : "text-muted-foreground hover:text-white"
+                          }`}
+                      >
+                        SR%
+                      </button>
+                      <button
+                        onClick={() => setBrandMetric("amountEarned")}
+                        className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${brandMetric === "amountEarned"
+                          ? "bg-primary text-white"
+                          : "text-muted-foreground hover:text-white"
+                          }`}
+                      >
+                        Earned$
+                      </button>
+                    </div>
 
-      {/* Brand performance & failure reasons above the main table */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-
-        {/* Brand Breakdown */}
-        <div className="glass-pane rounded-xl border border-white/5 p-4">
-          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-1.5">
-            <Building2 className="w-4 h-4 text-primary" />
-            <span>Brand Performance</span>
-          </h3>
-
-          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-            {displayedBrandStats.map(b => (
-              <div key={b.brandKey} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
-                <div>
-                  <div className="font-semibold text-white/90">{b.brandKey}</div>
-                  <div className="text-muted-foreground text-[10px] mt-1">
-                    {b.sessionsText}
+                    {/* Toggle Scale Switch */}
+                    <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 p-0.5 rounded">
+                      <button
+                        onClick={() => setBrandScale("linear")}
+                        className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${brandScale === "linear"
+                          ? "bg-primary text-white"
+                          : "text-muted-foreground hover:text-white"
+                          }`}
+                      >
+                        Lin
+                      </button>
+                      <button
+                        onClick={() => setBrandScale("log")}
+                        className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${brandScale === "log"
+                          ? "bg-primary text-white"
+                          : "text-muted-foreground hover:text-white"
+                          }`}
+                      >
+                        Log
+                      </button>
+                    </div>
                   </div>
+
+                  <button
+                    onClick={() => setBpFlipped(true)}
+                    className="text-[10px] font-medium text-muted-foreground hover:text-white transition-colors bg-white/5 border border-white/5 px-2 py-0.5 rounded flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" />
+                    <span>View Table</span>
+                  </button>
                 </div>
-                <div className="text-right">
-                  <div className="font-bold text-white">${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-                  <div className={`text-[10px] font-medium mt-0.5 ${b.successRate >= 80 ? "text-emerald-400" :
-                    b.successRate >= 60 ? "text-amber-400" :
-                      "text-red-400"
-                    }`}>
-                    {b.successRate}% SR
-                  </div>
+
+                <div className="flex flex-col justify-around py-2 flex-1 min-h-0 mt-4 mb-2">
+                  {displayedBrandStats.map((b) => {
+                    const brandIdx = allBrandKeys.indexOf(b.brandKey);
+                    const color = getBrandColor(b.brandKey, brandIdx);
+                    
+                    // Determine width percentage dynamically with linear or logarithmic scaling
+                    let widthPct = 0;
+                    if (brandMetric === "successRate") {
+                      if (brandScale === "linear") {
+                        widthPct = b.successRate;
+                      } else {
+                        widthPct = (Math.log10(b.successRate + 1) / Math.log10(101)) * 100;
+                      }
+                    } else {
+                      if (brandScale === "linear") {
+                        widthPct = (b.gmv / maxBrandGmv) * 100;
+                      } else {
+                        widthPct = (Math.log10(b.gmv + 1) / Math.log10(maxBrandGmv + 1)) * 100;
+                      }
+                    }
+
+                    return (
+                      <div key={b.brandKey} className="space-y-2">
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="font-semibold text-white/95">{b.brandKey}</span>
+                          <span className="text-muted-foreground text-xs font-medium">
+                            {brandMetric === "successRate" ? (
+                              <>
+                                {b.successRate}% SR <span className="text-white/20 mx-1">|</span> ${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                              </>
+                            ) : (
+                              <>
+                                ${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span className="text-white/20 mx-1">|</span> {b.successRate}% SR
+                              </>
+                            )}
+                          </span>
+                        </div>
+                        <div className="w-full bg-white/[0.03] border border-white/5 rounded-full relative overflow-hidden" style={{ height: "18px" }}>
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{
+                              width: `${widthPct}%`,
+                              backgroundColor: color,
+                              boxShadow: `0 0 10px ${color}50`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {brandStats.length === 0 && (
+                    <div className="text-xs text-muted-foreground text-center py-4">No brand performance data.</div>
+                  )}
                 </div>
               </div>
-            ))}
-            {brandStats.length === 0 && (
-              <div className="text-xs text-muted-foreground text-center py-4">No brand keys registered yet.</div>
-            )}
+            </div>
+
+            {/* Back Face: Table List */}
+            <div
+              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between"
+              style={{
+                backfaceVisibility: "hidden",
+                WebkitBackfaceVisibility: "hidden",
+                transform: "rotateY(180deg)",
+              }}
+            >
+              <div className="flex flex-col h-full justify-between">
+                <div className="flex items-center justify-between flex-shrink-0">
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                    <Building2 className="w-4 h-4 text-primary" />
+                    <span>Brand Performance</span>
+                  </h3>
+                  <button
+                    onClick={() => setBpFlipped(false)}
+                    className="text-[10px] font-medium text-muted-foreground hover:text-white transition-colors bg-white/5 border border-white/5 px-2 py-0.5 rounded flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" />
+                    <span>View Chart</span>
+                  </button>
+                </div>
+
+                <div className="space-y-3 overflow-y-auto pr-1 flex-1 min-h-0 mt-3">
+                  {displayedBrandStats.map(b => (
+                    <div key={b.brandKey} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
+                      <div>
+                        <div className="font-semibold text-white/90">{b.brandKey}</div>
+                        <div className="text-muted-foreground text-[10px] mt-1">
+                          {b.sessionsText}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold text-white">${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                        <div className={`text-[10px] font-medium mt-0.5 ${b.successRate >= 80 ? "text-emerald-400" :
+                          b.successRate >= 60 ? "text-amber-400" :
+                            "text-red-400"
+                          }`}>
+                          {b.successRate}% SR
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {brandStats.length === 0 && (
+                    <div className="text-xs text-muted-foreground text-center py-4">No brand keys registered yet.</div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Top Checkout Failure Diagnostics */}
-        <div className="glass-pane rounded-xl border border-white/5 p-4">
-          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-1.5">
-            <XCircle className="w-4 h-4 text-red-400" />
-            <span>Technical Failure Reasons</span>
-          </h3>
+        {/* Technical Failure Reasons - Flippable Card */}
+        <div className="relative [perspective:1000px] aspect-square w-full">
+          <div
+            className="relative w-full h-full duration-500 transition-transform"
+            style={{
+              transformStyle: "preserve-3d",
+              transform: tfrFlipped ? "rotateY(180deg)" : "none",
+            }}
+          >
+            {/* Front Face: Heatmap */}
+            <div
+              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between"
+              style={{ backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden" }}
+            >
+              <div className="flex flex-col h-full relative justify-between">
+                <div className="flex items-center justify-between flex-shrink-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                      <Activity className="w-4 h-4 text-red-400" />
+                      <span>Failure Combination Heatmap</span>
+                    </h3>
+                    {selectedErrorCombo && (
+                      <span className="text-[9px] text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded border border-red-500/20 animate-pulse">
+                        Filter Active
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setTfrFlipped(true)}
+                    className="text-[10px] font-medium text-muted-foreground hover:text-white transition-colors bg-white/5 border border-white/5 px-2 py-0.5 rounded flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" />
+                    <span>View List</span>
+                  </button>
+                </div>
 
-          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-            {failureReasons.map((fr, idx) => (
-              <div key={idx} className="flex items-start justify-between text-xs border-b border-white/5 pb-2 last:border-b-0 last:pb-0 gap-2">
-                <span className="text-white/70 font-medium break-words leading-relaxed max-w-[80%]">
-                  {fr.reason}
-                </span>
-                <span className="font-bold text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded text-[10px] flex-shrink-0">
-                  {fr.count} times
-                </span>
+                {failureCombinations.topReasons.length > 0 ? (
+                  <div className="flex flex-col items-center justify-center flex-1 py-1 min-h-0 relative mt-2">
+                    <svg viewBox="0 0 300 280" className="w-full h-[90%] overflow-visible select-none">
+                      {/* Grid Header Labels */}
+                      {failureCombinations.topReasons.map((_, idx) => (
+                        <text
+                          key={idx}
+                          x={34 + idx * 52 + 22}
+                          y="15"
+                          className="fill-white/40 text-[10px] font-bold font-sans"
+                          textAnchor="middle"
+                        >
+                          E{idx + 1}
+                        </text>
+                      ))}
+
+                      {/* Grid Rows */}
+                      {failureCombinations.topReasons.map((reasonA, idxA) => {
+                        const y = 25 + idxA * 50;
+                        return (
+                          <g key={idxA}>
+                            {/* Row Label */}
+                            <text
+                              x="16"
+                              y={y + 25}
+                              className="fill-white/40 text-[10px] font-bold font-sans"
+                              textAnchor="middle"
+                            >
+                              E{idxA + 1}
+                            </text>
+
+                            {/* Cells */}
+                            {failureCombinations.topReasons.map((reasonB, idxB) => {
+                              const x = 34 + idxB * 52;
+                              const val = failureCombinations.matrix[idxA][idxB];
+                              const maxVal = Math.max(...failureCombinations.matrix.map(row => Math.max(...row)), 1);
+                              const opacity = val > 0 ? 0.15 + (val / maxVal) * 0.85 : 0.02;
+                              const isDiagonal = idxA === idxB;
+                              const isSelected = selectedErrorCombo && selectedErrorCombo[0] === reasonA && selectedErrorCombo[1] === reasonB;
+
+                              return (
+                                <g key={idxB}>
+                                  <rect
+                                    x={x}
+                                    y={y}
+                                    width="44"
+                                    height="40"
+                                    rx="6"
+                                    className={`transition-all duration-300 cursor-pointer ${
+                                      isSelected 
+                                        ? "stroke-red-400 stroke-2" 
+                                        : "hover:stroke-red-400/80 stroke-1"
+                                    }`}
+                                    stroke={isSelected ? "#ef4444" : val > 0 ? "rgba(239, 68, 68, 0.3)" : "rgba(255,255,255,0.04)"}
+                                    fill={val > 0 ? `rgba(239, 68, 68, ${opacity})` : "rgba(255, 255, 255, 0.01)"}
+                                    onMouseEnter={(e) => {
+                                      const rect = e.currentTarget.getBoundingClientRect();
+                                      const container = e.currentTarget.ownerSVGElement?.getBoundingClientRect();
+                                      if (container) {
+                                        setHoveredHeatmapCell({
+                                          x: rect.left - container.left + rect.width / 2,
+                                          y: rect.top - container.top - 8,
+                                          reasonA,
+                                          reasonB,
+                                          val
+                                        });
+                                      }
+                                    }}
+                                    onMouseLeave={() => setHoveredHeatmapCell(null)}
+                                    onClick={() => {
+                                      if (isSelected) {
+                                        setSelectedErrorCombo(null);
+                                      } else {
+                                        setSelectedErrorCombo([reasonA, reasonB]);
+                                      }
+                                    }}
+                                  />
+                                  {val > 0 && (
+                                    <text
+                                      x={x + 22}
+                                      y={y + 25}
+                                      className="fill-white text-[11px] font-bold font-sans pointer-events-none"
+                                      textAnchor="middle"
+                                    >
+                                      {val}
+                                    </text>
+                                  )}
+                                </g>
+                              );
+                            })}
+                          </g>
+                        );
+                      })}
+                    </svg>
+
+                    {/* Interactive hover tooltip (HTML Overlay) */}
+                    {hoveredHeatmapCell && (
+                      <div
+                        className="absolute z-50 bg-neutral-950 border border-white/10 rounded-lg p-2.5 shadow-2xl text-[10px] pointer-events-none -translate-x-1/2 -translate-y-full mb-2 transition-all duration-100 max-w-[200px]"
+                        style={{ left: hoveredHeatmapCell.x, top: hoveredHeatmapCell.y }}
+                      >
+                        <div className="font-bold text-white mb-1">
+                          {hoveredHeatmapCell.reasonA === hoveredHeatmapCell.reasonB 
+                            ? "Error Frequency" 
+                            : "Co-occurring Combo"}
+                        </div>
+                        <div className="text-red-400 font-semibold mb-1">
+                          Occurrences: {hoveredHeatmapCell.val}
+                        </div>
+                        <div className="text-white/70 leading-relaxed break-words font-medium">
+                          {hoveredHeatmapCell.reasonA === hoveredHeatmapCell.reasonB ? (
+                            <span>{hoveredHeatmapCell.reasonA}</span>
+                          ) : (
+                            <div className="space-y-1">
+                              <div>• {hoveredHeatmapCell.reasonA}</div>
+                              <div>• {hoveredHeatmapCell.reasonB}</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground text-center py-8 flex-1 flex items-center justify-center">
+                    No failed transactions recorded.
+                  </div>
+                )}
               </div>
-            ))}
-            {failureReasons.length === 0 && (
-              <div className="text-xs text-muted-foreground text-center py-4">No failed transactions recorded.</div>
-            )}
+            </div>
+
+            {/* Back Face: List */}
+            <div
+              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between"
+              style={{
+                backfaceVisibility: "hidden",
+                WebkitBackfaceVisibility: "hidden",
+                transform: "rotateY(180deg)",
+              }}
+            >
+              <div className="flex flex-col h-full justify-between">
+                <div className="flex items-center justify-between flex-shrink-0">
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                    <XCircle className="w-4 h-4 text-red-400" />
+                    <span>Technical Failure Reasons</span>
+                  </h3>
+                  <button
+                    onClick={() => setTfrFlipped(false)}
+                    className="text-[10px] font-medium text-muted-foreground hover:text-white transition-colors bg-white/5 border border-white/5 px-2 py-0.5 rounded flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" />
+                    <span>View Heatmap</span>
+                  </button>
+                </div>
+
+                <div className="space-y-3 overflow-y-auto pr-1 flex-1 min-h-0 mt-3">
+                  {failureReasons.map((fr, idx) => (
+                    <div key={idx} className="flex items-start justify-between text-xs border-b border-white/5 pb-2 last:border-b-0 last:pb-0 gap-2">
+                      <span className="text-white/70 font-medium break-words leading-relaxed max-w-[80%]">
+                        {fr.reason}
+                      </span>
+                      <span className="font-bold text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded text-[10px] flex-shrink-0">
+                        {fr.count} times
+                      </span>
+                    </div>
+                  ))}
+                  {failureReasons.length === 0 && (
+                    <div className="text-xs text-muted-foreground text-center py-4">No failed transactions recorded.</div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -850,9 +1504,10 @@ export default function PlatformAnalyticsPanel() {
                 className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
               >
                 <option value="all" className="bg-neutral-900">All Time</option>
-                <option value="24h" className="bg-neutral-900">Last 24 Hours</option>
-                <option value="7d" className="bg-neutral-900">Last 7 Days</option>
-                <option value="30d" className="bg-neutral-900">Last 30 Days</option>
+                <option value="today" className="bg-neutral-900">Today</option>
+                <option value="yesterday" className="bg-neutral-900">Yesterday</option>
+                <option value="weekly" className="bg-neutral-900">Weekly</option>
+                <option value="monthly" className="bg-neutral-900">Monthly</option>
               </select>
 
               <select
@@ -1795,6 +2450,15 @@ export default function PlatformAnalyticsPanel() {
 
       </div>
 
+      {showCoaster && (
+        <RollercoasterOverlay
+          data={chartTimeSeries}
+          brandKeys={allBrandKeys}
+          metricType={chartMetric}
+          scaleType={scaleType}
+          onClose={() => setShowCoaster(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1808,19 +2472,81 @@ interface CustomLineChartProps {
   brandKeys: string[];
   hoveredKey: string | null;
   setHoveredKey: (key: string | null) => void;
+  metricType?: "successRate" | "amountEarned";
+  scaleType?: "linear" | "log";
 }
 
-function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey }: CustomLineChartProps) {
+function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey, metricType = "successRate", scaleType = "linear" }: CustomLineChartProps) {
   const N = data.length;
 
   // Simple coordinate space for SVG drawing
   const totalWidth = 1000;
   const totalHeight = 180;
 
+  // Find max value in series for dynamic amount earned scaling
+  const maxValInSeries = useMemo(() => {
+    if (metricType === "successRate") return 100;
+    return Math.max(
+      ...data.map(d => {
+        const values = [d.aggregate || 0];
+        brandKeys.forEach(bk => {
+          if (typeof d[bk] === "number") values.push(d[bk]);
+        });
+        return Math.max(...values);
+      }),
+      10
+    );
+  }, [data, brandKeys, metricType]);
+
+  // Round maxVal to a clean upper bound for axis
+  const maxAxisVal = useMemo(() => {
+    if (metricType === "successRate") return 100;
+    const val = maxValInSeries;
+    if (val <= 10) return 10;
+    const order = Math.pow(10, Math.floor(Math.log10(val)));
+    const normalized = val / order;
+    let rounded = 10;
+    if (normalized <= 1.2) rounded = 1.2;
+    else if (normalized <= 1.5) rounded = 1.5;
+    else if (normalized <= 2) rounded = 2;
+    else if (normalized <= 2.5) rounded = 2.5;
+    else if (normalized <= 3) rounded = 3;
+    else if (normalized <= 4) rounded = 4;
+    else if (normalized <= 5) rounded = 5;
+    else if (normalized <= 7.5) rounded = 7.5;
+    return rounded * order;
+  }, [maxValInSeries, metricType]);
+
+  // Dynamic grid levels based on linear or log scale
+  const gridLevels = useMemo(() => {
+    if (scaleType === "linear") {
+      return [0, 0.25, 0.5, 0.75, 1].map(pct => maxAxisVal * pct);
+    } else {
+      // Log levels: 0, then powers of 10 up to maxAxisVal
+      const levels = [0];
+      let current = 1;
+      while (current <= maxAxisVal) {
+        levels.push(current);
+        current *= 10;
+      }
+      // If the last level is far below maxAxisVal, add maxAxisVal as a level
+      if (levels[levels.length - 1] < maxAxisVal) {
+        levels.push(maxAxisVal);
+      }
+      return levels;
+    }
+  }, [scaleType, maxAxisVal]);
+
   const getCoords = (val: number, idx: number) => {
     const x = N > 1 ? (idx / (N - 1)) * totalWidth : totalWidth / 2;
-    // Map val from [0, 100] to y in [172, 8] to keep an 8px cushion at top/bottom
-    const y = 172 - (val / 100) * 164;
+    let y = 172;
+    if (scaleType === "linear") {
+      y = 172 - (val / maxAxisVal) * 164;
+    } else {
+      const logVal = Math.log10(val + 1);
+      const logMax = Math.log10(maxAxisVal + 1);
+      y = 172 - (logVal / logMax) * 164;
+    }
     return { x, y };
   };
 
@@ -1894,6 +2620,12 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
     });
   };
 
+  const formatYLabel = (val: number) => {
+    if (metricType === "successRate") return `${val.toFixed(0)}%`;
+    if (val >= 1000) return `$${(val / 1000).toFixed(1).replace(".0", "")}k`;
+    return `$${val.toFixed(0)}`;
+  };
+
   return (
     <div className="relative w-full space-y-4 chart-container-card">
       {/* Legend with interactive Hover highlighting */}
@@ -1938,20 +2670,42 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
         {/* The Grid/Chart Area wrapper */}
         <div className="relative flex-1 min-h-0 w-full pl-12 pr-2">
 
-          {/* Left vertical Y-axis labels (HTML absolute, never stretched, aligned perfectly with the top/bottom of the chart container) */}
-          <div className="absolute top-[4.4%] bottom-[4.4%] left-2 flex flex-col justify-between text-[10px] text-white/40 font-sans font-medium pointer-events-none select-none z-10 py-0.5">
-            <span>100%</span>
-            <span>75%</span>
-            <span>50%</span>
-            <span>25%</span>
-            <span>0%</span>
+          {/* Left vertical Y-axis labels */}
+          <div className="absolute top-[4.4%] bottom-[4.4%] left-2 flex flex-col justify-between text-[10px] text-white/40 font-sans font-medium pointer-events-none select-none z-10 py-0.5 w-10">
+            {gridLevels.slice().reverse().map(lvl => {
+              let yPct = 0;
+              if (scaleType === "linear") {
+                yPct = (lvl / maxAxisVal) * 100;
+              } else {
+                const logVal = Math.log10(lvl + 1);
+                const logMax = Math.log10(maxAxisVal + 1);
+                yPct = (logVal / logMax) * 100;
+              }
+              // Position absolutely to align with the SVG line
+              return (
+                <span
+                  key={lvl}
+                  className="absolute left-0 -translate-y-1/2"
+                  style={{ top: `${100 - yPct}%` }}
+                >
+                  {formatYLabel(lvl)}
+                </span>
+              );
+            })}
           </div>
 
           {/* SVG viewport (Filling the exact same vertical space) */}
           <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
             {/* Horizontal Grid lines */}
-            {[0, 25, 50, 75, 100].map(lvl => {
-              const y = 172 - (lvl / 100) * 164;
+            {gridLevels.map(lvl => {
+              let y = 172;
+              if (scaleType === "linear") {
+                y = 172 - (lvl / maxAxisVal) * 164;
+              } else {
+                const logVal = Math.log10(lvl + 1);
+                const logMax = Math.log10(maxAxisVal + 1);
+                y = 172 - (logVal / logMax) * 164;
+              }
               return (
                 <line
                   key={lvl}
@@ -1965,7 +2719,67 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
               );
             })}
 
-            {/* 1. Draw individual Brand Lines */}
+            {/* 1. Draw Platform Aggregate Line (Rendered in background) */}
+            {(() => {
+              const pts = data.map((d, i) => ({
+                val: d.aggregate,
+                idx: i,
+                date: d.label,
+                details: d.aggregateDetails || { paid: 0, total: 0 }
+              }));
+              const coords = pts.map(item => getCoords(item.val, item.idx));
+              const pathData = getBezierPath(coords);
+              const isHovered = hoveredKey === "aggregate";
+              const isDimmed = hoveredKey !== null && !isHovered;
+
+              return (
+                <g>
+                  {/* Glow shadow */}
+                  <path
+                    d={pathData}
+                    fill="none"
+                    stroke="#c084fc"
+                    strokeWidth={isHovered ? "5" : "2.2"}
+                    strokeOpacity={isHovered ? "0.25" : isDimmed ? "0.01" : "0.08"}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="transition-all duration-200"
+                  />
+                  {/* Active Line */}
+                  <path
+                    d={pathData}
+                    fill="none"
+                    stroke="#c084fc"
+                    strokeWidth={isHovered ? "2.8" : isDimmed ? "0.8" : "1.6"}
+                    strokeOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.85"}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="transition-all duration-200"
+                  />
+                  {/* Active Nodes */}
+                  {coords.map((p, idx) => {
+                    const item = pts[idx];
+                    return (
+                      <circle
+                        key={idx}
+                        cx={p.x}
+                        cy={p.y}
+                        r={isHovered ? "4" : isDimmed ? "0.8" : "2.2"}
+                        fill="#c084fc"
+                        stroke="#0a0a0a"
+                        strokeWidth={isHovered ? "1.2" : "0.6"}
+                        fillOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.9"}
+                        onMouseEnter={(e) => handleMouseEnterNode(e, "aggregate", item.date, item.val, item.details)}
+                        onMouseLeave={() => setHoveredNode(null)}
+                        className="transition-all duration-200 cursor-pointer"
+                      />
+                    );
+                  })}
+                </g>
+              );
+            })()}
+
+            {/* 2. Draw individual Brand Lines (Rendered on top) */}
             {brandKeys.map((bk, bIdx) => {
               const color = getBrandColor(bk, bIdx);
 
@@ -1992,7 +2806,7 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
                     d={pathData}
                     fill="none"
                     stroke={color}
-                    strokeWidth={isHovered ? "8" : "4"}
+                    strokeWidth={isHovered ? "4" : "1.8"}
                     strokeOpacity={isHovered ? "0.2" : isDimmed ? "0.01" : "0.05"}
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -2003,7 +2817,7 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
                     d={pathData}
                     fill="none"
                     stroke={color}
-                    strokeWidth={isHovered ? "3.5" : isDimmed ? "1.5" : "2"}
+                    strokeWidth={isHovered ? "2.2" : isDimmed ? "0.6" : "1.1"}
                     strokeOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.55"}
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -2017,10 +2831,10 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
                         key={idx}
                         cx={p.x}
                         cy={p.y}
-                        r={isHovered ? "5" : isDimmed ? "1.5" : "3.5"}
+                        r={isHovered ? "3.5" : isDimmed ? "0.6" : "1.8"}
                         fill={color}
                         stroke="#0a0a0a"
-                        strokeWidth="1.5"
+                        strokeWidth={isHovered ? "1" : "0.5"}
                         fillOpacity={isHovered ? "1" : isDimmed ? "0.1" : "0.8"}
                         onMouseEnter={(e) => handleMouseEnterNode(e, bk, item.date, item.val, item.details)}
                         onMouseLeave={() => setHoveredNode(null)}
@@ -2031,73 +2845,12 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
                 </g>
               );
             })}
-
-            {/* 2. Draw Platform Aggregate Line */}
-            {(() => {
-              const pts = data.map((d, i) => ({
-                val: d.aggregate,
-                idx: i,
-                date: d.label,
-                details: d.aggregateDetails || { paid: 0, total: 0 }
-              }));
-              const coords = pts.map(item => getCoords(item.val, item.idx));
-              const pathData = getBezierPath(coords);
-              const isHovered = hoveredKey === "aggregate";
-              const isDimmed = hoveredKey !== null && !isHovered;
-
-              return (
-                <g>
-                  {/* Glow shadow */}
-                  <path
-                    d={pathData}
-                    fill="none"
-                    stroke="#c084fc"
-                    strokeWidth={isHovered ? "10" : "5"}
-                    strokeOpacity={isHovered ? "0.25" : isDimmed ? "0.01" : "0.08"}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="transition-all duration-200"
-                  />
-                  {/* Active Line */}
-                  <path
-                    d={pathData}
-                    fill="none"
-                    stroke="#c084fc"
-                    strokeWidth={isHovered ? "4" : isDimmed ? "1.5" : "3"}
-                    strokeOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.85"}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="transition-all duration-200"
-                  />
-                  {/* Active Nodes */}
-                  {coords.map((p, idx) => {
-                    const item = pts[idx];
-                    return (
-                      <circle
-                        key={idx}
-                        cx={p.x}
-                        cy={p.y}
-                        r={isHovered ? "5.5" : isDimmed ? "2" : "4"}
-                        fill="#c084fc"
-                        stroke="#0a0a0a"
-                        strokeWidth="2"
-                        fillOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.9"}
-                        onMouseEnter={(e) => handleMouseEnterNode(e, "aggregate", item.date, item.val, item.details)}
-                        onMouseLeave={() => setHoveredNode(null)}
-                        className="transition-all duration-200 cursor-pointer"
-                      />
-                    );
-                  })}
-                </g>
-              );
-            })()}
           </svg>
         </div>
 
-        {/* Bottom X-axis Labels (HTML overlay, sitting cleanly below the chart area) */}
+        {/* Bottom X-axis Labels */}
         <div className="w-full pl-12 pr-2 flex justify-between text-[10px] text-white/40 font-sans font-medium select-none z-10">
           {data.map((d, i) => {
-            // Space out labels dynamically to prevent clutter
             const labelInterval = Math.max(1, Math.ceil(data.length / 8));
             const shouldShowLabel = i === 0 || i === data.length - 1 || i % labelInterval === 0;
             return (
@@ -2123,10 +2876,21 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
             <span>{hoveredNode.bk === "aggregate" ? "Platform Aggregate" : hoveredNode.bk}</span>
           </div>
           <div className="text-[11px] font-bold text-primary mt-1.5 border-t border-white/5 pt-1 flex flex-col gap-0.5">
-            <div>Success Rate: {hoveredNode.val}%</div>
-            <div className="text-[10px] text-white/50 font-normal">
-              Volume: {hoveredNode.paid} paid / {hoveredNode.total} total
-            </div>
+            {metricType === "successRate" ? (
+              <>
+                <div>Success Rate: {hoveredNode.val}%</div>
+                <div className="text-[10px] text-white/50 font-normal">
+                  Volume: {hoveredNode.paid} paid / {hoveredNode.total} total
+                </div>
+              </>
+            ) : (
+              <>
+                <div>Volume Earned: ${hoveredNode.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-[10px] text-white/50 font-normal">
+                  Details: {hoveredNode.paid} paid transactions
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -2164,9 +2928,9 @@ function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
   const gapSize = activeSegmentsCount > 1 ? 0.6 : 0; // 0.6% gap for subtle and clean separation
 
   return (
-    <div className="flex flex-col items-center justify-center h-full w-full py-4 space-y-6">
+    <div className="flex flex-col items-center justify-between h-full w-full py-1">
       {/* Large Centered Donut Circle */}
-      <div className="relative w-48 h-48 flex-shrink-0">
+      <div className="relative w-[88%] aspect-square flex-shrink-0 mt-2">
         <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
           {segments.map((seg, i) => {
             if (seg.value === 0) return null;
@@ -2191,26 +2955,21 @@ function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
           })}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center select-none pointer-events-none">
-          <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Total</span>
-          <span className="text-3xl font-extrabold text-white tracking-tight">{total}</span>
-          <span className="text-[10px] text-muted-foreground mt-0.5">sessions</span>
+          <span className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Total</span>
+          <span className="text-4xl font-extrabold text-white tracking-tight leading-none my-1">{total}</span>
+          <span className="text-[11px] text-muted-foreground">sessions</span>
         </div>
       </div>
 
-      {/* Grid Legend below - perfectly fitted */}
-      <div className="grid grid-cols-3 gap-2 w-full px-2 border-t border-white/5 pt-4">
+      {/* Slim HUD Legend along the bottom edge */}
+      <div className="flex items-center justify-around w-full border-t border-white/5 pt-3 mt-3 flex-shrink-0">
         {segments.map((seg, i) => (
-          <div key={i} className="flex flex-col items-center justify-center text-center">
-            <div className="flex items-center gap-1.5 text-[11px] font-medium text-white/80">
-              <div className="h-2 w-2 rounded-full flex-shrink-0 animate-pulse" style={{ backgroundColor: seg.color }} />
-              <span>{seg.label}</span>
-            </div>
-            <div className="text-base font-bold text-white mt-0.5 tabular-nums">
-              {seg.value}
-            </div>
-            <div className="text-[10px] text-muted-foreground font-mono mt-0.5">
-              {seg.pct.toFixed(1)}%
-            </div>
+          <div key={i} className="flex items-center gap-1 text-[10px] text-white/70">
+            <div className="h-1.5 w-1.5 rounded-full flex-shrink-0 animate-pulse" style={{ backgroundColor: seg.color }} />
+            <span>
+              {seg.label}: <strong className="text-white font-mono">{seg.value}</strong>{" "}
+              <span className="text-white/40">({seg.pct.toFixed(0)}%)</span>
+            </span>
           </div>
         ))}
       </div>

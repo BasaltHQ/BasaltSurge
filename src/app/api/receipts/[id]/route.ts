@@ -138,8 +138,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     const spec = {
       query:
-        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
-      parameters: [{ name: "@id", value: id }],
+        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
+      parameters: [
+        { name: "@id", value: id },
+        { name: "@wallet", value: wallet }
+      ],
     } as { query: string; parameters: { name: string; value: any }[] };
 
     const { resources } = await container.items.query(spec).fetchAll();
