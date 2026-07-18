@@ -169,6 +169,7 @@ export async function GET(req: NextRequest) {
 
     // Helper to compute KYC Level
     const getKycLevel = (receipt: any, rLogs: any[]) => {
+      if (receipt.kycLevel) return receipt.kycLevel;
       if (rLogs.length === 0) {
         if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(receipt.status)) {
           if (receipt.totalUsd >= 100) return "L2";

@@ -15,7 +15,8 @@ export async function executeGaslessTransferServer(
   toAddress: string,
   usdcAmount: number,
   brandKey?: string,
-  sweepAll: boolean = true
+  sweepAll: boolean = true,
+  kycLevel?: string
 ): Promise<string | null> {
   try {
     const { createThirdwebClient, getContract, prepareContractCall, sendTransaction, readContract } = await import("thirdweb");
@@ -127,6 +128,9 @@ export async function executeGaslessTransferServer(
         email: fromWalletEmail.trim().toLowerCase(),
       };
       doc.lastSeen = Date.now();
+      if (kycLevel) {
+        doc.kycLevel = kycLevel;
+      }
 
       await container.items.upsert(doc);
       console.log(`[BACKGROUND POLL] Successfully registered/updated user profile for ${walletAddress} (email: ${fromWalletEmail}, brandKey: ${bKey})`);
@@ -215,6 +219,7 @@ async function runBackgroundPoll(params: {
   let isCreditCard = detectedCardFunding === "credit";
   let finalTxHash = "";
   let isDefinitiveFailure = false;
+  let cryptoCustomerId = "";
 
   // Poll up to 120 times every 5 seconds (10 minutes total)
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -241,6 +246,7 @@ async function runBackgroundPoll(params: {
       const data = await response.json();
       const status = data.status;
       const lastError = data.transaction_details?.last_error;
+      cryptoCustomerId = data.customer || data.crypto_customer || "";
 
       console.log(`[BACKGROUND POLL] Status check (attempt ${attempt + 1}): ${status}`);
 
@@ -284,12 +290,68 @@ async function runBackgroundPoll(params: {
   if (resolvedStatus === "success") {
     console.log(`[BACKGROUND POLL] Stripe onramp fulfilled. Executing EIP-7702 transfer...`);
 
+    let kycLevel = "L0";
+    const resolvedFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
+    const isAch = resolvedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account";
+    
+    if (isAch) {
+      kycLevel = "L2";
+    } else if (cryptoCustomerId) {
+      try {
+        const custResponse = await fetch(
+          `https://api.stripe.com/v1/crypto/customers/${encodeURIComponent(cryptoCustomerId)}`,
+          {
+            method: "GET",
+            headers: {
+              "Authorization": `Bearer ${stripeKey}`,
+              "Stripe-Version": STRIPE_API_VERSION,
+            },
+          }
+        );
+        if (custResponse.ok) {
+          const customerData = await custResponse.json();
+          const verifications = customerData.verifications || [];
+          const kycVerified = verifications.find((v: any) => v.name === "kyc_verified");
+          const idDocVerified = verifications.find((v: any) => v.name === "id_document_verified");
+          
+          const kycTiers = customerData.kyc_tiers || [];
+          const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
+          const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+          const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
+          
+          const isOverallKycVerified = kycVerified?.status === "approved" ||
+                                       kycVerified?.status === "verified" ||
+                                       kycVerified?.status === "completed";
+          const isOverallIdVerified = idDocVerified?.status === "approved" ||
+                                      idDocVerified?.status === "verified" ||
+                                      idDocVerified?.status === "completed";
+          
+          const isL0Verified = l0Tier 
+            ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
+            : isOverallKycVerified;
+          const isL1Verified = l1Tier 
+            ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
+            : isOverallKycVerified;
+          const isL2Verified = l2Tier 
+            ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
+            : isOverallIdVerified;
+            
+          if (isL2Verified) kycLevel = "L2";
+          else if (isL1Verified) kycLevel = "L1";
+          else kycLevel = "L0";
+          console.log(`[BACKGROUND POLL] Customer KYC level resolved from Stripe: ${kycLevel}`);
+        }
+      } catch (kycFetchErr) {
+        console.warn("[BACKGROUND POLL] Failed to fetch customer KYC level:", kycFetchErr);
+      }
+    }
+
     const targetSplitAddress = isCreditCard
       ? splitAddress
       : (splitAddressCredit || splitAddress);
 
     // Execute transfer
-    const txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey);
+    const txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey, true, kycLevel);
 
     if (txHash) {
       finalTxHash = txHash;
@@ -315,6 +377,7 @@ async function runBackgroundPoll(params: {
           // Persist card funding if resolved
           receipt.isCreditCard = isCreditCard;
           receipt.detectedCardFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
+          receipt.kycLevel = kycLevel;
 
           let finalReceipt = receipt;
           try {

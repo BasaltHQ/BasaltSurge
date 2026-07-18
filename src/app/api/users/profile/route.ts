@@ -54,6 +54,7 @@ type Profile = {
     htmlBox?: string;
   };
   activeRing?: { type: 'platform' | 'merchant' | 'none'; wallet?: string };
+  kycLevel?: string;
 };
 
 export async function GET(req: NextRequest) {
@@ -198,6 +199,7 @@ export async function PUT(req: NextRequest) {
     const brandScopedId = brandKey ? `${wallet}:user:${String(brandKey).toLowerCase()}` : `${wallet}:user`;
 
     const updates: Partial<Profile> = {};
+    if (typeof body.kycLevel === 'string') updates.kycLevel = body.kycLevel.slice(0, 10);
     if (typeof body.pfpUrl === 'string') updates.pfpUrl = body.pfpUrl;
     if (typeof body.displayName === 'string') updates.displayName = body.displayName.slice(0, 64);
     if (typeof body.bio === 'string') updates.bio = body.bio.slice(0, 1000);

@@ -259,6 +259,7 @@ export async function POST(req: NextRequest) {
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
           ...(failureReason ? { failureReason } : {}),
+          ...(body.kycLevel ? { kycLevel: String(body.kycLevel).trim() } : {}),
         }
         : {
           id,
@@ -295,6 +296,7 @@ export async function POST(req: NextRequest) {
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
           ...(failureReason ? { failureReason } : {}),
+          ...(body.kycLevel ? { kycLevel: String(body.kycLevel).trim() } : {}),
         };
 
       // Track customerSessions if stripeSessionId or customerEmail or buyerWallet is available
