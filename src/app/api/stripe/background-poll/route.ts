@@ -217,6 +217,7 @@ async function runBackgroundPoll(params: {
 
   let resolvedStatus = "failed";
   let isCreditCard = detectedCardFunding === "credit";
+  let resolvedFunding = detectedCardFunding || null;
   let finalTxHash = "";
   let isDefinitiveFailure = false;
   let cryptoCustomerId = "";
@@ -264,7 +265,27 @@ async function runBackgroundPoll(params: {
             stripeFunding = "credit";
           }
         }
-        const resolvedFunding = stripeFunding || detectedCardFunding;
+
+        // Query database receipt to check if client has already stored the card funding type
+        let dbFunding = null;
+        try {
+          const container = await getContainer();
+          const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
+          const { resource: receipt } = await container.item(docId, merchantWallet).read();
+          if (receipt && Array.isArray(receipt.customerSessions)) {
+            for (const s of receipt.customerSessions) {
+              const funding = s.paymentMethodDetails?.card?.funding;
+              if (funding) {
+                dbFunding = funding;
+                break;
+              }
+            }
+          }
+        } catch (dbErr) {
+          console.warn("[BACKGROUND POLL] Failed to query database receipt for funding:", dbErr);
+        }
+
+        resolvedFunding = stripeFunding || dbFunding || detectedCardFunding || null;
         isCreditCard = resolvedFunding === "credit" || resolvedFunding === null || resolvedFunding === undefined;
         break;
       }
@@ -346,7 +367,7 @@ async function runBackgroundPoll(params: {
       }
     }
 
-    const targetSplitAddress = isCreditCard
+    const targetSplitAddress = (isCreditCard || resolvedFunding === "us_bank_account")
       ? splitAddress
       : (splitAddressCredit || splitAddress);
 

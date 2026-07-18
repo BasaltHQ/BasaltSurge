@@ -170,7 +170,14 @@ export type UseStripeEmbeddedOnrampProps = {
    */
   connectedWallet?: any;
   /** Callbacks */
-  onSuccess?: (result: { sessionId: string; txHash?: string; kycLevel?: string }) => void;
+  onSuccess?: (result: {
+    sessionId: string;
+    txHash?: string;
+    kycLevel?: string;
+    detectedCardFunding?: string;
+    isCreditCard?: boolean;
+    targetSplitAddress?: string;
+  }) => void;
   /** Error callback */
   onError?: (error: Error) => void;
   /** Step change callback */
@@ -1733,7 +1740,7 @@ export function useStripeEmbeddedOnramp({
 
     updateStep("transferring");
 
-    const targetSplitAddress = (isCreditCard || fundingTypeToUse === "credit")
+    const targetSplitAddress = (isCreditCard || fundingTypeToUse === "credit" || (fundingTypeToUse as any) === "us_bank_account")
       ? (splitAddress || "")
       : (splitAddressCredit || splitAddress || "");
 
@@ -1752,7 +1759,10 @@ export function useStripeEmbeddedOnramp({
       txHash,
       kycLevel: kycOccurredRef.current
         ? (kycTierRequired === "l2" ? "L2" : (kycTierRequired === "l1" ? "L1" : "L0"))
-        : "N/AKYC"
+        : "N/AKYC",
+      detectedCardFunding: fundingTypeToUse || (isCreditCard ? "credit" : "debit"),
+      isCreditCard: isCreditCard,
+      targetSplitAddress: targetSplitAddress,
     });
   }, [
     isEcommerceMode,

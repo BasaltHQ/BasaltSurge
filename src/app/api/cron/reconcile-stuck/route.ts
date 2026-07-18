@@ -453,7 +453,18 @@ export async function POST(req: NextRequest) {
         } else if (paymentMethod.includes("credit")) {
           cardFunding = "credit";
         }
-        const isCredit = cardFunding === "credit" || receipt.isCreditCard === true;
+
+        if (!cardFunding && Array.isArray(receipt.customerSessions)) {
+          for (const s of receipt.customerSessions) {
+            const funding = s.paymentMethodDetails?.card?.funding;
+            if (funding) {
+              cardFunding = funding;
+              break;
+            }
+          }
+        }
+
+        const isCredit = cardFunding === "us_bank_account" || cardFunding === "credit" || receipt.isCreditCard === true;
 
         // Resolve target split address
         let targetSplitAddress = splitAddress;

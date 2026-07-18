@@ -3840,7 +3840,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         paymentMethod: "stripe_headless",
         stripeSessionId: result.sessionId,
         customerEmail: shipEmail || headlessEmailInput || undefined,
-        detectedCardFunding: isAch ? "us_bank_account" : undefined,
+        detectedCardFunding: isAch ? "us_bank_account" : (result.detectedCardFunding || stripeDetectedFunding || undefined),
+        isCreditCard: typeof result.isCreditCard === "boolean" ? result.isCreditCard : (stripeDetectedFunding === "credit" ? true : (stripeDetectedFunding === "debit" ? false : undefined)),
         kycLevel: result.kycLevel,
       });
     },
