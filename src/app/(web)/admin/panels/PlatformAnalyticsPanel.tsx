@@ -21,7 +21,9 @@ import {
   FileText,
   Users,
   BarChart2,
-  Route
+  Route,
+  Minimize2,
+  Maximize2
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 import RollercoasterOverlay from "../components/RollercoasterOverlay";
@@ -113,6 +115,42 @@ export default function PlatformAnalyticsPanel() {
   const [scaleType, setScaleType] = useState<"linear" | "log">("linear");
   const [brandScale, setBrandScale] = useState<"linear" | "log">("linear");
   const [showCoaster, setShowCoaster] = useState(false);
+
+  // Minimization preferences
+  const [isMainChartMinimized, setIsMainChartMinimized] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("pp_admin_analytics_main_chart_minimized") === "true";
+    }
+    return false;
+  });
+  const [isThreeColumnMinimized, setIsThreeColumnMinimized] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("pp_admin_analytics_three_column_minimized") === "true";
+    }
+    return false;
+  });
+
+  const toggleMainChartMinimized = () => {
+    setIsMainChartMinimized(prev => {
+      const next = !prev;
+      localStorage.setItem("pp_admin_analytics_main_chart_minimized", String(next));
+      return next;
+    });
+  };
+
+  const toggleThreeColumnMinimized = () => {
+    setIsThreeColumnMinimized(prev => {
+      const next = !prev;
+      localStorage.setItem("pp_admin_analytics_three_column_minimized", String(next));
+      return next;
+    });
+  };
+
+  // Gnosis Safe states
+  const [safeBalanceHistory, setSafeBalanceHistory] = useState<any[]>([]);
+  const [safeTokenPrices, setSafeTokenPrices] = useState<Record<string, number>>({ USDC: 1, USDT: 1, cbBTC: 60000, cbXRP: 1.5, SOL: 180, ETH: 3400 });
+  const [safeLoading, setSafeLoading] = useState(false);
+  const [safeError, setSafeError] = useState<string | null>(null);
 
   // Filters
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
@@ -214,9 +252,36 @@ export default function PlatformAnalyticsPanel() {
     }
   }, [wallet, fetchLimit]);
 
+  const fetchSafeBalances = useCallback(async () => {
+    if (!wallet) return;
+    setSafeLoading(true);
+    setSafeError(null);
+    try {
+      const res = await fetch("/api/platform/safe-value", {
+        headers: {
+          "x-wallet": wallet,
+        },
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to load Gnosis Safe balances");
+      }
+      setSafeBalanceHistory(data.balanceHistory || []);
+      if (data.tokenPrices) {
+        setSafeTokenPrices(data.tokenPrices);
+      }
+    } catch (e: any) {
+      setSafeError(e?.message || "An unexpected error occurred loading Safe balances");
+    } finally {
+      setSafeLoading(false);
+    }
+  }, [wallet]);
+
   useEffect(() => {
     fetchAnalytics();
-  }, [fetchAnalytics]);
+    fetchSafeBalances();
+  }, [fetchAnalytics, fetchSafeBalances]);
 
   // Unique brandkeys for filtering dropdown (omitting "unknown")
   const allBrandKeys = useMemo(() => {
@@ -924,107 +989,150 @@ export default function PlatformAnalyticsPanel() {
       )}
 
       {/* Success Rate / Amount Earned Over Time - Line Chart (Full Row) */}
-      <div className="w-full glass-pane rounded-xl border border-white/5 p-5 flex flex-col min-h-0 mb-6">
+      <div className="w-full glass-pane rounded-xl border border-white/5 p-5 flex flex-col min-h-0 mb-6 transition-all duration-300">
         <div className="flex items-center justify-between mb-4 shrink-0">
-          <div>
-            <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
-              <Activity className="w-4 h-4 text-primary" />
-              <span>{chartMetric === "successRate" ? "Success Rate Over Time" : "Amount Earned Over Time"}</span>
-            </h3>
-            <p className="text-[10px] text-muted-foreground mt-0.5">
-              {chartMetric === "successRate"
-                ? "Daily transaction success rates (%) plotted chronologically. Hover over any legend item or line to focus it."
-                : "Daily aggregate volume ($) earned plotted chronologically. Hover over any legend item or line to focus it."}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* Metric Toggle */}
-            <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
-              {[
-                { label: "Success Rate", value: "successRate" },
-                { label: "Amount Earned", value: "amountEarned" }
-              ].map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setChartMetric(opt.value as any)}
-                  className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${chartMetric === opt.value
-                    ? "bg-primary text-white shadow-sm"
-                    : "text-muted-foreground hover:text-white"
-                    }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Scale Toggle */}
-            <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
-              {[
-                { label: "Linear", value: "linear" },
-                { label: "Log", value: "log" }
-              ].map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setScaleType(opt.value as any)}
-                  className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${scaleType === opt.value
-                    ? "bg-primary text-white shadow-sm"
-                    : "text-muted-foreground hover:text-white"
-                    }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Time Range Selector */}
-            <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
-              {[
-                { label: "Today", value: "today" },
-                { label: "Yesterday", value: "yesterday" },
-                { label: "Weekly", value: "weekly" },
-                { label: "Monthly", value: "monthly" },
-                { label: "All", value: "all" }
-              ].map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setTimeRange(opt.value)}
-                  className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${timeRange === opt.value
-                    ? "bg-primary text-white shadow-sm"
-                    : "text-muted-foreground hover:text-white"
-                    }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Rollercoaster Ride Button */}
+          <div className="flex items-center gap-2.5">
             <button
-              onClick={() => setShowCoaster(true)}
-              className="px-2.5 h-7 text-[10px] font-bold rounded-lg transition-all bg-primary/20 border border-primary/30 hover:border-primary/50 hover:bg-primary/30 text-primary hover:text-white flex items-center gap-1.5 shadow-sm active:scale-95"
+              onClick={toggleMainChartMinimized}
+              className="p-1.5 hover:bg-white/5 rounded-lg transition-all text-muted-foreground hover:text-white border border-white/5 bg-white/[0.02]"
+              title={isMainChartMinimized ? "Expand Chart" : "Minimize Chart"}
             >
-              <Route className="w-3.5 h-3.5" />
-              <span>Ride the Data</span>
+              {isMainChartMinimized ? (
+                <Maximize2 className="w-3.5 h-3.5" />
+              ) : (
+                <Minimize2 className="w-3.5 h-3.5" />
+              )}
             </button>
+            <div>
+              <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                <Activity className="w-4 h-4 text-primary" />
+                <span>{chartMetric === "successRate" ? "Success Rate Over Time" : "Amount Earned Over Time"}</span>
+              </h3>
+              {!isMainChartMinimized && (
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {chartMetric === "successRate"
+                    ? "Daily transaction success rates (%) plotted chronologically. Hover over any legend item or line to focus it."
+                    : "Daily aggregate volume ($) earned plotted chronologically. Hover over any legend item or line to focus it."}
+                </p>
+              )}
+            </div>
           </div>
+
+          {!isMainChartMinimized && (
+            <div className="flex items-center gap-3">
+              {/* Metric Toggle */}
+              <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+                {[
+                  { label: "Success Rate", value: "successRate" },
+                  { label: "Amount Earned", value: "amountEarned" }
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setChartMetric(opt.value as any)}
+                    className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${chartMetric === opt.value
+                      ? "bg-primary text-white shadow-sm"
+                      : "text-muted-foreground hover:text-white"
+                      }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Scale Toggle */}
+              <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+                {[
+                  { label: "Linear", value: "linear" },
+                  { label: "Log", value: "log" }
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setScaleType(opt.value as any)}
+                    className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${scaleType === opt.value
+                      ? "bg-primary text-white shadow-sm"
+                      : "text-muted-foreground hover:text-white"
+                      }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Time Range Selector */}
+              <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+                {[
+                  { label: "Today", value: "today" },
+                  { label: "Yesterday", value: "yesterday" },
+                  { label: "Weekly", value: "weekly" },
+                  { label: "Monthly", value: "monthly" },
+                  { label: "All", value: "all" }
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setTimeRange(opt.value)}
+                    className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${timeRange === opt.value
+                      ? "bg-primary text-white shadow-sm"
+                      : "text-muted-foreground hover:text-white"
+                      }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Rollercoaster Ride Button */}
+              <button
+                onClick={() => setShowCoaster(true)}
+                className="px-2.5 h-7 text-[10px] font-bold rounded-lg transition-all bg-primary/20 border border-primary/30 hover:border-primary/50 hover:bg-primary/30 text-primary hover:text-white flex items-center gap-1.5 shadow-sm active:scale-95"
+              >
+                <Route className="w-3.5 h-3.5" />
+                <span>Ride the Data</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Custom Interactive Line Chart */}
-        <div className="flex-1 flex flex-col min-h-[220px] mt-4">
-          <CustomInteractiveLineChart
-            data={chartTimeSeries}
-            brandKeys={selectedBrand !== "all" ? [selectedBrand] : allBrandKeys}
-            hoveredKey={hoveredLineKey}
-            setHoveredKey={setHoveredLineKey}
-            metricType={chartMetric}
-            scaleType={scaleType}
-          />
+        {!isMainChartMinimized && (
+          <div className="flex-1 flex flex-col min-h-[220px] mt-4 animate-in fade-in zoom-in-95 duration-200">
+            <CustomInteractiveLineChart
+              data={chartTimeSeries}
+              brandKeys={selectedBrand !== "all" ? [selectedBrand] : allBrandKeys}
+              hoveredKey={hoveredLineKey}
+              setHoveredKey={setHoveredLineKey}
+              metricType={chartMetric}
+              scaleType={scaleType}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* 3-Column Section Header */}
+      <div className="flex items-center justify-between mb-3 bg-white/[0.02] border border-white/5 px-4 py-2.5 rounded-xl">
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={toggleThreeColumnMinimized}
+            className="p-1.5 hover:bg-white/5 rounded-lg transition-all text-muted-foreground hover:text-white border border-white/5 bg-white/[0.02]"
+            title={isThreeColumnMinimized ? "Expand Metrics" : "Minimize Metrics"}
+          >
+            {isThreeColumnMinimized ? (
+              <Maximize2 className="w-3.5 h-3.5" />
+            ) : (
+              <Minimize2 className="w-3.5 h-3.5" />
+            )}
+          </button>
+          <div>
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider">Performance & Metrics Distribution</h4>
+          </div>
         </div>
+        {isThreeColumnMinimized && (
+          <span className="text-[10px] text-muted-foreground bg-white/5 px-2.5 py-0.5 rounded-full">Collapsed</span>
+        )}
       </div>
 
       {/* 3-Column Row: Status Distribution, Brand Performance, and Technical Failure Reasons */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+      {!isThreeColumnMinimized && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6 animate-in fade-in zoom-in-95 duration-200">
 
         {/* Transaction Status Distribution - Pie Chart */}
         <div className="glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between aspect-square w-full">
@@ -1436,11 +1544,48 @@ export default function PlatformAnalyticsPanel() {
                     <div className="text-xs text-muted-foreground text-center py-4">No failed transactions recorded.</div>
                   )}
                 </div>
-              </div>
             </div>
           </div>
         </div>
+      </div>
+    </div>
+    )}
 
+      {/* Gnosis Safe Wallet Portfolio Value Over Time Chart */}
+      <div className="w-full glass-pane rounded-xl border border-white/5 p-5 flex flex-col min-h-0 mb-6 transition-all duration-300">
+        <div className="flex items-center justify-between mb-4 shrink-0">
+          <div>
+            <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+              <Activity className="w-4 h-4 text-primary" />
+              <span>Gnosis Safe Wallet Value Over Time (0xacd...aa3f6e)</span>
+            </h3>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Platform Safe wallet balance history across USDC, USDT, cbBTC, cbXRP, SOL, and ETH (USD valuation). Indexes once an hour.
+            </p>
+          </div>
+          {safeLoading && (
+            <span className="text-[10px] text-muted-foreground bg-white/5 px-2 py-0.5 rounded flex items-center gap-1.5">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              <span>Syncing...</span>
+            </span>
+          )}
+        </div>
+
+        {safeError && (
+          <div className="text-xs text-rose-400 bg-rose-500/10 p-3 rounded-lg border border-rose-500/20 my-2">
+            {safeError}
+          </div>
+        )}
+
+        <div className="flex-1 flex flex-col min-h-[220px] mt-2">
+          {safeLoading && safeBalanceHistory.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">
+              Loading portfolio data from Thirdweb indexer...
+            </div>
+          ) : (
+            <SafeInteractiveLineChart data={safeBalanceHistory} tokenPrices={safeTokenPrices} />
+          )}
+        </div>
       </div>
 
       {/* Full-width Searchable and Detailed Diagnostics Investigation Feed */}
@@ -2973,6 +3118,304 @@ function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// PLATFORM GNOSIS SAFE VALUE OVER TIME CHART
+// ────────────────────────────────────────────────────────────────────────────
+
+interface SafeInteractiveLineChartProps {
+  data: any[];
+  tokenPrices: Record<string, number>;
+}
+
+function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChartProps) {
+  const N = data.length;
+  const totalWidth = 1000;
+  const totalHeight = 180;
+
+  // Active hover/highlight token (defaults to all/totalUsd)
+  const [hoveredToken, setHoveredToken] = useState<string | null>(null);
+
+  // Find max value in series for dynamic Y axis
+  const maxValInSeries = useMemo(() => {
+    if (data.length === 0) return 100;
+    return Math.max(...data.map(d => d.totalUsd || 10), 10);
+  }, [data]);
+
+  // Round maxVal to a clean upper bound
+  const maxAxisVal = useMemo(() => {
+    const val = maxValInSeries;
+    if (val <= 10) return 10;
+    const order = Math.pow(10, Math.floor(Math.log10(val)));
+    const normalized = val / order;
+    let rounded = 10;
+    if (normalized <= 1.2) rounded = 1.2;
+    else if (normalized <= 1.5) rounded = 1.5;
+    else if (normalized <= 2) rounded = 2;
+    else if (normalized <= 2.5) rounded = 2.5;
+    else if (normalized <= 3) rounded = 3;
+    else if (normalized <= 4) rounded = 4;
+    else if (normalized <= 5) rounded = 5;
+    else if (normalized <= 7.5) rounded = 7.5;
+    return rounded * order;
+  }, [maxValInSeries]);
+
+  const gridLevels = useMemo(() => {
+    return [0, 0.25, 0.5, 0.75, 1].map(pct => maxAxisVal * pct);
+  }, [maxAxisVal]);
+
+  const getCoords = (val: number, idx: number) => {
+    const x = N > 1 ? (idx / (N - 1)) * totalWidth : totalWidth / 2;
+    const y = 172 - (val / maxAxisVal) * 164;
+    return { x, y };
+  };
+
+  const getBezierPath = (points: { x: number; y: number }[]) => {
+    if (points.length === 0) return "";
+    if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+    if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+
+    let path = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i];
+      const p1 = points[i + 1];
+      const cp1x = p0.x + (p1.x - p0.x) / 3;
+      const cp1y = p0.y;
+      const cp2x = p1.x - (p1.x - p0.x) / 3;
+      const cp2y = p1.y;
+      path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p1.x} ${p1.y}`;
+    }
+    return path;
+  };
+
+  const tokenColors: Record<string, string> = {
+    totalUsd: "#ffffff",
+    USDC: "#2775ca",
+    USDT: "#26a17b",
+    cbBTC: "#f7931a",
+    cbXRP: "#4e5a64",
+    SOL: "#9945ff",
+    ETH: "#627eea",
+  };
+
+  // Tooltip state
+  const [hoveredNode, setHoveredNode] = useState<{
+    x: number;
+    y: number;
+    date: string;
+    token: string;
+    amount: number;
+    valUsd: number;
+  } | null>(null);
+
+  if (data.length === 0) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-xs text-muted-foreground select-none">
+        No safe balance data found.
+      </div>
+    );
+  }
+
+  // Tokens list to draw
+  const tokensList = ["totalUsd", "USDC", "USDT", "cbBTC", "cbXRP", "SOL", "ETH"];
+
+  return (
+    <div className="flex-1 flex flex-col relative w-full h-full justify-between pr-2">
+      {/* Legend overlay */}
+      <div className="flex items-center gap-3 mb-2 flex-wrap shrink-0">
+        {tokensList.map(t => {
+          const isSelected = hoveredToken === t;
+          const isAnySelected = hoveredToken !== null;
+          return (
+            <button
+              key={t}
+              onMouseEnter={() => setHoveredToken(t)}
+              onMouseLeave={() => setHoveredToken(null)}
+              className={`flex items-center gap-1.5 text-[10px] font-medium transition-all px-2 py-0.5 rounded border ${
+                isSelected
+                  ? "bg-white/10 text-white border-white/20"
+                  : isAnySelected
+                  ? "text-muted-foreground border-transparent opacity-40 hover:opacity-75"
+                  : "text-white/70 border-transparent hover:bg-white/5"
+              }`}
+            >
+              <div className="h-2 w-2 rounded-full" style={{ backgroundColor: tokenColors[t] }} />
+              <span>{t === "totalUsd" ? "Total Portfolio Value ($)" : t}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* SVG Canvas */}
+      <div className="relative flex-1 min-h-0 w-full select-none" onMouseLeave={() => setHoveredNode(null)}>
+        {/* Left Y-axis Grid Labels */}
+        <div className="absolute left-0 top-0 h-[172px] flex flex-col justify-between text-[9px] text-white/30 font-mono font-medium pointer-events-none select-none z-10 pl-2 pt-1.5">
+          {gridLevels.slice().reverse().map((lvl, idx) => (
+            <span key={idx}>
+              ${lvl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </span>
+          ))}
+        </div>
+
+        {/* SVG Drawing */}
+        <div className="w-full h-[180px] pl-12">
+          <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-full overflow-visible">
+            {/* Horizontal Grid lines */}
+            {gridLevels.map((lvl, idx) => {
+              const { y } = getCoords(lvl, 0);
+              return (
+                <line
+                  key={idx}
+                  x1="0"
+                  y1={y}
+                  x2={totalWidth}
+                  y2={y}
+                  stroke="rgba(255,255,255,0.04)"
+                  strokeWidth="1"
+                  strokeDasharray="4 4"
+                />
+              );
+            })}
+
+            {/* Paths */}
+            {tokensList.map(t => {
+              const isSelected = hoveredToken === t;
+              const isAnySelected = hoveredToken !== null;
+              const isTotal = t === "totalUsd";
+
+              // Build points array
+              const points = data.map((d, idx) => {
+                let val = 0;
+                if (isTotal) {
+                  val = d.totalUsd || 0;
+                } else {
+                  const amount = d[t] || 0;
+                  const price = tokenPrices[t] || 1;
+                  val = amount * price;
+                }
+                return getCoords(val, idx);
+              });
+
+              const pathString = getBezierPath(points);
+              const color = tokenColors[t];
+
+              return (
+                <g key={t}>
+                  {/* Subtle hover background path for easier activation */}
+                  <path
+                    d={pathString}
+                    fill="none"
+                    stroke="transparent"
+                    strokeWidth="12"
+                    className="cursor-pointer"
+                    onMouseEnter={() => setHoveredToken(t)}
+                    onMouseLeave={() => setHoveredToken(null)}
+                  />
+
+                  {/* Visual Line */}
+                  <path
+                    d={pathString}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={isSelected ? (isTotal ? 3.5 : 2.5) : isTotal ? 2 : 1.2}
+                    className="transition-all duration-200 pointer-events-none"
+                    style={{
+                      opacity: isSelected ? 1 : isAnySelected ? 0.15 : isTotal ? 0.8 : 0.45,
+                      filter: isSelected || isTotal ? `drop-shadow(0 0 4px ${color}80)` : "none",
+                    }}
+                  />
+
+                  {/* Render interactive nodes */}
+                  {data.map((d, idx) => {
+                    let val = 0;
+                    if (isTotal) {
+                      val = d.totalUsd || 0;
+                    } else {
+                      const amount = d[t] || 0;
+                      const price = tokenPrices[t] || 1;
+                      val = amount * price;
+                    }
+                    const { x, y } = getCoords(val, idx);
+                    const isNodeActive = isSelected && hoveredNode?.x === x + 48; // adjust for left padding offset
+
+                    return (
+                      <circle
+                        key={idx}
+                        cx={x}
+                        cy={y}
+                        r={isNodeActive ? 4.5 : isSelected ? 3 : 1.5}
+                        fill={color}
+                        stroke="#000"
+                        strokeWidth={isNodeActive ? 1.5 : 0.5}
+                        style={{
+                          opacity: isSelected ? 1 : isAnySelected ? 0 : isTotal ? 0.6 : 0.2,
+                        }}
+                        onMouseEnter={(e) => {
+                          const svgRect = e.currentTarget.ownerSVGElement?.getBoundingClientRect();
+                          if (!svgRect) return;
+                          const nodeRect = e.currentTarget.getBoundingClientRect();
+                          setHoveredNode({
+                            x: nodeRect.left - svgRect.left + 12 + window.scrollX,
+                            y: nodeRect.top - svgRect.top - 8 + window.scrollY,
+                            date: d.date,
+                            token: t,
+                            amount: isTotal ? 0 : d[t] || 0,
+                            valUsd: val,
+                          });
+                          setHoveredToken(t);
+                        }}
+                        className="transition-all duration-200 cursor-pointer"
+                      />
+                    );
+                  })}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+
+        {/* Bottom X-axis Labels */}
+        <div className="w-full pl-12 pr-2 flex justify-between text-[10px] text-white/40 font-sans font-medium select-none z-10">
+          {data.map((d, i) => {
+            const labelInterval = Math.max(1, Math.ceil(data.length / 8));
+            const shouldShowLabel = i === 0 || i === data.length - 1 || i % labelInterval === 0;
+            return (
+              <span key={i} className="text-center truncate" style={{ width: `${100 / data.length}%` }}>
+                {shouldShowLabel ? d.date : ""}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Hover Node Tooltip */}
+      {hoveredNode && (
+        <div
+          className="absolute z-50 bg-neutral-950 border border-white/10 rounded-lg p-2.5 shadow-2xl text-xs pointer-events-none -translate-x-1/2 -translate-y-full mb-3 transition-all duration-150 animate-in fade-in zoom-in-95 duration-100"
+          style={{ left: hoveredNode.x, top: hoveredNode.y }}
+        >
+          <div className="font-semibold text-white">{hoveredNode.date}</div>
+          <div className="text-[10px] text-muted-foreground mt-0.5 capitalize flex items-center gap-1.5">
+            <div className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tokenColors[hoveredNode.token] }} />
+            <span>{hoveredNode.token === "totalUsd" ? "Total Portfolio Value" : hoveredNode.token}</span>
+          </div>
+          <div className="text-[11px] font-bold text-primary mt-1.5 border-t border-white/5 pt-1">
+            {hoveredNode.token === "totalUsd" ? (
+              <div>Value: ${hoveredNode.valUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            ) : (
+              <>
+                <div>Value: ${hoveredNode.valUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-[10px] text-white/50 font-normal">
+                  Balance: {hoveredNode.amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {hoveredNode.token}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
