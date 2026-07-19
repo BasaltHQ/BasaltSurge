@@ -129,6 +129,12 @@ export default function PlatformAnalyticsPanel() {
     }
     return false;
   });
+  const [isSafeChartMinimized, setIsSafeChartMinimized] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("pp_admin_analytics_safe_chart_minimized") === "true";
+    }
+    return false;
+  });
 
   const toggleMainChartMinimized = () => {
     setIsMainChartMinimized(prev => {
@@ -142,6 +148,14 @@ export default function PlatformAnalyticsPanel() {
     setIsThreeColumnMinimized(prev => {
       const next = !prev;
       localStorage.setItem("pp_admin_analytics_three_column_minimized", String(next));
+      return next;
+    });
+  };
+
+  const toggleSafeChartMinimized = () => {
+    setIsSafeChartMinimized(prev => {
+      const next = !prev;
+      localStorage.setItem("pp_admin_analytics_safe_chart_minimized", String(next));
       return next;
     });
   };
@@ -989,8 +1003,10 @@ export default function PlatformAnalyticsPanel() {
       )}
 
       {/* Success Rate / Amount Earned Over Time - Line Chart (Full Row) */}
-      <div className="w-full glass-pane rounded-xl border border-white/5 p-5 flex flex-col min-h-0 mb-6 transition-all duration-300">
-        <div className="flex items-center justify-between mb-4 shrink-0">
+      <div className={`w-full glass-pane rounded-xl border border-white/5 flex flex-col min-h-0 mb-6 transition-all duration-300 ${
+        isMainChartMinimized ? "px-4 py-2.5" : "p-5"
+      }`}>
+        <div className={`flex items-center justify-between shrink-0 ${isMainChartMinimized ? "" : "mb-4"}`}>
           <div className="flex items-center gap-2.5">
             <button
               onClick={toggleMainChartMinimized}
@@ -1017,6 +1033,10 @@ export default function PlatformAnalyticsPanel() {
               )}
             </div>
           </div>
+
+          {isMainChartMinimized && (
+            <span className="text-[10px] text-muted-foreground bg-white/5 px-2.5 py-0.5 rounded-full">Collapsed</span>
+          )}
 
           {!isMainChartMinimized && (
             <div className="flex items-center gap-3">
@@ -1108,7 +1128,9 @@ export default function PlatformAnalyticsPanel() {
       </div>
 
       {/* 3-Column Section Header */}
-      <div className="flex items-center justify-between mb-3 bg-white/[0.02] border border-white/5 px-4 py-2.5 rounded-xl">
+      <div className={`flex items-center justify-between glass-pane border border-white/5 px-4 py-2.5 rounded-xl transition-all duration-300 ${
+        isThreeColumnMinimized ? "mb-6" : "mb-3"
+      }`}>
         <div className="flex items-center gap-2.5">
           <button
             onClick={toggleThreeColumnMinimized}
@@ -1121,8 +1143,9 @@ export default function PlatformAnalyticsPanel() {
               <Minimize2 className="w-3.5 h-3.5" />
             )}
           </button>
-          <div>
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider">Performance & Metrics Distribution</h4>
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-primary" />
+            <h4 className="text-sm font-semibold text-white">Performance & Metrics Distribution</h4>
           </div>
         </div>
         {isThreeColumnMinimized && (
@@ -1552,40 +1575,64 @@ export default function PlatformAnalyticsPanel() {
     )}
 
       {/* Gnosis Safe Wallet Portfolio Value Over Time Chart */}
-      <div className="w-full glass-pane rounded-xl border border-white/5 p-5 flex flex-col min-h-0 mb-6 transition-all duration-300">
-        <div className="flex items-center justify-between mb-4 shrink-0">
-          <div>
-            <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
-              <Activity className="w-4 h-4 text-primary" />
-              <span>Gnosis Safe Wallet Value Over Time (0xacd...aa3f6e)</span>
-            </h3>
-            <p className="text-[10px] text-muted-foreground mt-0.5">
-              Platform Safe wallet balance history across USDC, USDT, cbBTC, cbXRP, SOL, and ETH (USD valuation). Indexes once an hour.
-            </p>
+      <div className={`w-full glass-pane rounded-xl border border-white/5 flex flex-col min-h-0 mb-6 transition-all duration-300 ${
+        isSafeChartMinimized ? "px-4 py-2.5" : "p-5"
+      }`}>
+        <div className={`flex items-center justify-between shrink-0 ${isSafeChartMinimized ? "" : "mb-4"}`}>
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={toggleSafeChartMinimized}
+              className="p-1.5 hover:bg-white/5 rounded-lg transition-all text-muted-foreground hover:text-white border border-white/5 bg-white/[0.02]"
+              title={isSafeChartMinimized ? "Expand Chart" : "Minimize Chart"}
+            >
+              {isSafeChartMinimized ? (
+                <Maximize2 className="w-3.5 h-3.5" />
+              ) : (
+                <Minimize2 className="w-3.5 h-3.5" />
+              )}
+            </button>
+            <div>
+              <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                <Activity className="w-4 h-4 text-primary" />
+                <span>Gnosis Safe Wallet Value Over Time (0xacd...aa3f6e)</span>
+              </h3>
+              {!isSafeChartMinimized && (
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Platform Safe wallet balance history across USDC, USDT, cbBTC, cbXRP, SOL, and ETH (USD valuation). Indexes once an hour.
+                </p>
+              )}
+            </div>
           </div>
-          {safeLoading && (
-            <span className="text-[10px] text-muted-foreground bg-white/5 px-2 py-0.5 rounded flex items-center gap-1.5">
-              <RefreshCw className="w-3 h-3 animate-spin" />
-              <span>Syncing...</span>
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {isSafeChartMinimized && (
+              <span className="text-[10px] text-muted-foreground bg-white/5 px-2.5 py-0.5 rounded-full">Collapsed</span>
+            )}
+            {safeLoading && (
+              <span className="text-[10px] text-muted-foreground bg-white/5 px-2 py-0.5 rounded flex items-center gap-1.5">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                <span>Syncing...</span>
+              </span>
+            )}
+          </div>
         </div>
 
-        {safeError && (
+        {!isSafeChartMinimized && safeError && (
           <div className="text-xs text-rose-400 bg-rose-500/10 p-3 rounded-lg border border-rose-500/20 my-2">
             {safeError}
           </div>
         )}
 
-        <div className="flex-1 flex flex-col min-h-[300px] mt-2">
-          {safeLoading && safeBalanceHistory.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">
-              Loading portfolio data from Thirdweb indexer...
-            </div>
-          ) : (
-            <SafeInteractiveLineChart data={safeBalanceHistory} tokenPrices={safeTokenPrices} />
-          )}
-        </div>
+        {!isSafeChartMinimized && (
+          <div className="flex-1 flex flex-col min-h-[300px] mt-2 animate-in fade-in zoom-in-95 duration-200">
+            {safeLoading && safeBalanceHistory.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">
+                Loading portfolio data from Thirdweb indexer...
+              </div>
+            ) : (
+              <SafeInteractiveLineChart data={safeBalanceHistory} tokenPrices={safeTokenPrices} />
+            )}
+          </div>
+        )}
       </div>
 
       {/* Full-width Searchable and Detailed Diagnostics Investigation Feed */}
