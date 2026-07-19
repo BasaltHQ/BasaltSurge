@@ -467,7 +467,7 @@ export async function POST(req: NextRequest) {
         const isCredit = cardFunding === "us_bank_account" || cardFunding === "credit" || receipt.isCreditCard === true;
 
         // Resolve target split address
-        let targetSplitAddress = splitAddress;
+        let targetSplitAddress = "";
         try {
           const eventQuery = {
             query: "SELECT * FROM c WHERE c.type = 'payment_event_stripe_onramp' AND c.sessionId = @sessionId AND c.status = 'fulfillment_complete'",
