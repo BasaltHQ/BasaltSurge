@@ -3136,14 +3136,146 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
   const totalWidth = 1000;
   const totalHeight = 180;
 
-  // Active hover/highlight token (defaults to all/totalUsd)
   const [hoveredToken, setHoveredToken] = useState<string | null>(null);
+  const [activeTrend, setActiveTrend] = useState<"none" | "standard" | "conservative" | "aggressive" | "all">("none");
+
+  // Tooltip state
+  const [hoveredNode, setHoveredNode] = useState<{
+    x: number;
+    y: number;
+    date: string;
+    token: string;
+    amount: number;
+    valUsd: number;
+    isForecast?: boolean;
+  } | null>(null);
+
+  if (data.length === 0) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-xs text-muted-foreground select-none">
+        No safe balance data found.
+      </div>
+    );
+  }
+
+  // 1. Exponential Trend Calculations & Forecast
+  const predictions = useMemo(() => {
+    if (data.length < 2) return null;
+
+    const n = data.length;
+    let sumX = 0;
+    let sumY = 0;
+    let sumXY = 0;
+    let sumXX = 0;
+
+    for (let i = 0; i < n; i++) {
+      const x = i;
+      const y = Math.max(0.1, data[i].totalUsd || 0.1);
+      const lnY = Math.log(y);
+
+      sumX += x;
+      sumY += lnY;
+      sumXY += x * lnY;
+      sumXX += x * x;
+    }
+
+    const meanX = sumX / n;
+    const meanY = sumY / n;
+
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < n; i++) {
+      const x = i;
+      const y = Math.max(0.1, data[i].totalUsd || 0.1);
+      const lnY = Math.log(y);
+      num += (x - meanX) * (lnY - meanY);
+      den += (x - meanX) * (x - meanX);
+    }
+
+    const b = den === 0 ? 0 : num / den;
+    const A = meanY - b * meanX;
+    const a = Math.exp(A);
+
+    // Calculate R-squared (fit confidence)
+    let ssTot = 0;
+    let ssRes = 0;
+    for (let i = 0; i < n; i++) {
+      const x = i;
+      const y = Math.max(0.1, data[i].totalUsd || 0.1);
+      const lnY = Math.log(y);
+      const predictedLnY = A + b * x;
+      ssTot += (lnY - meanY) * (lnY - meanY);
+      ssRes += (lnY - predictedLnY) * (lnY - predictedLnY);
+    }
+    const rSquared = ssTot === 0 ? 1 : 1 - ssRes / ssTot;
+    const dailyGrowthRate = (Math.exp(b) - 1) * 100;
+
+    // Generate 7-day forecast
+    const forecastDays = 7;
+    const forecastPoints: any[] = [];
+    const lastDate = new Date(data[n - 1].date);
+
+    for (let i = 1; i <= forecastDays; i++) {
+      const x = n - 1 + i;
+      const fDate = new Date(lastDate);
+      fDate.setDate(fDate.getDate() + i);
+      const dateStr = fDate.toISOString().split("T")[0];
+
+      // Conservative Trend: dampens growth, amplifies decay
+      const bCons = b > 0 ? b * 0.5 : b * 1.4;
+      // Aggressive Trend: amplifies growth, dampens decay
+      const bAggr = b > 0 ? b * 1.5 : b * 0.6;
+
+      const standardVal = a * Math.exp(b * x);
+      const conservativeVal = a * Math.exp(bCons * x);
+      const aggressiveVal = a * Math.exp(bAggr * x);
+
+      forecastPoints.push({
+        date: dateStr,
+        standard: Math.max(0.1, standardVal),
+        conservative: Math.max(0.1, conservativeVal),
+        aggressive: Math.max(0.1, aggressiveVal),
+        xIndex: x,
+      });
+    }
+
+    return {
+      a,
+      b,
+      rSquared,
+      dailyGrowthRate,
+      forecastPoints,
+    };
+  }, [data]);
+
+  const showForecast = activeTrend !== "none" && predictions;
+  const displayLength = showForecast && predictions ? N + predictions.forecastPoints.length : N;
+
+  const displayDates = useMemo(() => {
+    const dates = data.map(d => d.date);
+    if (showForecast && predictions) {
+      predictions.forecastPoints.forEach(p => {
+        dates.push(p.date);
+      });
+    }
+    return dates;
+  }, [data, showForecast, predictions]);
 
   // Find max value in series for dynamic Y axis
   const maxValInSeries = useMemo(() => {
     if (data.length === 0) return 100;
-    return Math.max(...data.map(d => d.totalUsd || 10), 10);
-  }, [data]);
+    let max = Math.max(...data.map(d => d.totalUsd || 10), 10);
+    if (showForecast && predictions) {
+      const predMaxes = predictions.forecastPoints.map(p => {
+        if (activeTrend === "standard") return p.standard;
+        if (activeTrend === "conservative") return p.conservative;
+        if (activeTrend === "aggressive") return p.aggressive;
+        return Math.max(p.standard, p.conservative, p.aggressive);
+      });
+      max = Math.max(max, ...predMaxes);
+    }
+    return max;
+  }, [data, activeTrend, showForecast, predictions]);
 
   // Round maxVal to a clean upper bound
   const maxAxisVal = useMemo(() => {
@@ -3168,7 +3300,7 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
   }, [maxAxisVal]);
 
   const getCoords = (val: number, idx: number) => {
-    const x = N > 1 ? (idx / (N - 1)) * totalWidth : totalWidth / 2;
+    const x = displayLength > 1 ? (idx / (displayLength - 1)) * totalWidth : totalWidth / 2;
     const y = 172 - (val / maxAxisVal) * 164;
     return { x, y };
   };
@@ -3201,52 +3333,144 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
     ETH: "#627eea",
   };
 
-  // Tooltip state
-  const [hoveredNode, setHoveredNode] = useState<{
-    x: number;
-    y: number;
-    date: string;
-    token: string;
-    amount: number;
-    valUsd: number;
-  } | null>(null);
-
-  if (data.length === 0) {
-    return (
-      <div className="h-full w-full flex items-center justify-center text-xs text-muted-foreground select-none">
-        No safe balance data found.
-      </div>
-    );
-  }
-
-  // Tokens list to draw
   const tokensList = ["totalUsd", "USDC", "USDT", "cbBTC", "cbXRP", "SOL", "ETH"];
+  const isTrendVisible = showForecast && (hoveredToken === null || hoveredToken === "totalUsd");
+
+  // Compile points for standard, conservative, aggressive forecasts
+  const forecastPaths = useMemo(() => {
+    if (!predictions || !isTrendVisible) return null;
+    const lastVal = data[N - 1].totalUsd || 0;
+    const startPoint = getCoords(lastVal, N - 1);
+
+    const standardPoints = [startPoint];
+    const conservativePoints = [startPoint];
+    const aggressivePoints = [startPoint];
+
+    predictions.forecastPoints.forEach(p => {
+      standardPoints.push(getCoords(p.standard, p.xIndex));
+      conservativePoints.push(getCoords(p.conservative, p.xIndex));
+      aggressivePoints.push(getCoords(p.aggressive, p.xIndex));
+    });
+
+    return {
+      standardPoints,
+      conservativePoints,
+      aggressivePoints,
+    };
+  }, [predictions, isTrendVisible, data, N, maxAxisVal, displayLength]);
+
+  // Confidence area coordinates for SVG polygon
+  const confidenceAreaPoints = useMemo(() => {
+    if (!forecastPaths) return "";
+    const { conservativePoints, aggressivePoints } = forecastPaths;
+    const pointsList = [...aggressivePoints];
+    // Reverse conservative points to create a continuous closed loop polygon path
+    for (let i = conservativePoints.length - 1; i >= 0; i--) {
+      pointsList.push(conservativePoints[i]);
+    }
+    return pointsList.map(p => `${p.x},${p.y}`).join(" ");
+  }, [forecastPaths]);
 
   return (
     <div className="flex-1 flex flex-col relative w-full h-full justify-between pr-2">
-      {/* Legend overlay */}
-      <div className="flex items-center gap-3 mb-2 flex-wrap shrink-0">
-        {tokensList.map(t => {
-          const isSelected = hoveredToken === t;
-          const isAnySelected = hoveredToken !== null;
-          return (
+      {/* AI Predictive Analytics HUD */}
+      {activeTrend !== "none" && predictions && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-3 bg-purple-950/20 border border-purple-500/10 rounded-xl mb-4 text-[10px] text-white/80 animate-in fade-in slide-in-from-top-1 duration-300 font-mono shadow-[inset_0_0_12px_rgba(168,85,247,0.05)]">
+          <div>
+            <div className="text-white/40 uppercase tracking-widest text-[8px] font-bold">Trend Fit Confidence</div>
+            <div className="text-xs font-bold text-purple-300 mt-1 flex items-center gap-1.5">
+              <span>{(predictions.rSquared * 100).toFixed(1)}% (R²)</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-pulse" />
+            </div>
+            <div className="text-white/45 text-[8px] mt-0.5">Model: Log-Linearized Regression</div>
+          </div>
+          <div>
+            <div className="text-white/40 uppercase tracking-widest text-[8px] font-bold">Compound Daily Growth</div>
+            <div className={`text-xs font-bold mt-1 ${predictions.dailyGrowthRate >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              {predictions.dailyGrowthRate >= 0 ? "+" : ""}{predictions.dailyGrowthRate.toFixed(2)}%
+            </div>
+            <div className="text-white/45 text-[8px] mt-0.5">Calculated over token history</div>
+          </div>
+          <div>
+            <div className="text-white/40 uppercase tracking-widest text-[8px] font-bold">7D Target Projections</div>
+            <div className="text-[10px] font-bold text-white mt-0.5">
+              <div>Base: ${Math.round(predictions.forecastPoints[6].standard).toLocaleString()}</div>
+              <div className="text-[8px] text-white/50">
+                Range: ${Math.round(predictions.forecastPoints[6].conservative).toLocaleString()} - ${Math.round(predictions.forecastPoints[6].aggressive).toLocaleString()}
+              </div>
+            </div>
+          </div>
+          <div>
+            <div className="text-white/40 uppercase tracking-widest text-[8px] font-bold">System Sentiment</div>
+            <div className="mt-1">
+              {predictions.dailyGrowthRate > 0.05 ? (
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[8px] font-bold animate-pulse inline-block">
+                  PULSING ACCELERATION (BULLISH)
+                </span>
+              ) : predictions.dailyGrowthRate < -0.05 ? (
+                <span className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[8px] font-bold inline-block">
+                  CORRECTION ACTIVE (BEARISH)
+                </span>
+              ) : (
+                <span className="px-1.5 py-0.5 rounded bg-white/5 text-white/60 border border-white/10 text-[8px] font-bold inline-block">
+                  STABLE DRIFT (NEUTRAL)
+                </span>
+              )}
+            </div>
+            <div className="text-white/45 text-[8px] mt-0.5">Automatic hourly recalculation</div>
+          </div>
+        </div>
+      )}
+
+      {/* Legend and Trend Selectors */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-2 shrink-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          {tokensList.map(t => {
+            const isSelected = hoveredToken === t;
+            const isAnySelected = hoveredToken !== null;
+            return (
+              <button
+                key={t}
+                onMouseEnter={() => setHoveredToken(t)}
+                onMouseLeave={() => setHoveredToken(null)}
+                className={`flex items-center gap-1.5 text-[10px] font-medium transition-all px-2 py-0.5 rounded border ${
+                  isSelected
+                    ? "bg-white/10 text-white border-white/20"
+                    : isAnySelected
+                    ? "text-muted-foreground border-transparent opacity-40 hover:opacity-75"
+                    : "text-white/70 border-transparent hover:bg-white/5"
+                }`}
+              >
+                <div className="h-2 w-2 rounded-full" style={{ backgroundColor: tokenColors[t] }} />
+                <span>{t === "totalUsd" ? "Total Portfolio Value ($)" : t}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Predictive Settings */}
+        <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg select-none">
+          <span className="text-[9px] uppercase tracking-wider text-white/40 px-2 font-bold font-mono">Predictive HUD</span>
+          {[
+            { label: "OFF", value: "none" },
+            { label: "Standard", value: "standard" },
+            { label: "Conservative", value: "conservative" },
+            { label: "Aggressive", value: "aggressive" },
+            { label: "Tri-Variant", value: "all" },
+          ].map(opt => (
             <button
-              key={t}
-              onMouseEnter={() => setHoveredToken(t)}
-              onMouseLeave={() => setHoveredToken(null)}
-              className={`flex items-center gap-1.5 text-[10px] font-medium transition-all px-2 py-0.5 rounded border ${
-                isSelected
-                  ? "bg-white/10 text-white border-white/20"
-                  : isAnySelected
-                  ? "text-muted-foreground border-transparent opacity-40 hover:opacity-75"
-                  : "text-white/70 border-transparent hover:bg-white/5"
+              key={opt.value}
+              onClick={() => setActiveTrend(opt.value as any)}
+              className={`px-2 h-5 text-[9px] font-bold rounded transition-all uppercase font-mono ${
+                activeTrend === opt.value
+                  ? "bg-purple-500/20 text-purple-300 border border-purple-500/30 shadow-[0_0_8px_rgba(168,85,247,0.4)]"
+                  : "text-muted-foreground hover:text-white border border-transparent"
               }`}
             >
-              <div className="h-2 w-2 rounded-full" style={{ backgroundColor: tokenColors[t] }} />
-              <span>{t === "totalUsd" ? "Total Portfolio Value ($)" : t}</span>
+              {opt.label}
             </button>
-          );
-        })}
+          ))}
+        </div>
       </div>
 
       {/* SVG Canvas */}
@@ -3280,7 +3504,17 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
               );
             })}
 
-            {/* Paths */}
+            {/* Confidence Corridor Polygon */}
+            {isTrendVisible && activeTrend === "all" && confidenceAreaPoints && (
+              <polygon
+                points={confidenceAreaPoints}
+                fill="rgba(168, 85, 247, 0.05)"
+                stroke="none"
+                className="transition-all duration-300 pointer-events-none"
+              />
+            )}
+
+            {/* Historical Paths */}
             {tokensList.map(t => {
               const isSelected = hoveredToken === t;
               const isAnySelected = hoveredToken !== null;
@@ -3339,7 +3573,7 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
                       val = amount * price;
                     }
                     const { x, y } = getCoords(val, idx);
-                    const isNodeActive = isSelected && hoveredNode?.x === x + 48; // adjust for left padding offset
+                    const isNodeActive = isSelected && hoveredNode?.x === x + 48 && !hoveredNode?.isForecast;
 
                     return (
                       <circle
@@ -3361,9 +3595,10 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
                             x: nodeRect.left - svgRect.left + 12 + window.scrollX,
                             y: nodeRect.top - svgRect.top - 8 + window.scrollY,
                             date: d.date,
-                            token: t,
+                            token: t === "totalUsd" ? "Total Value" : t,
                             amount: isTotal ? 0 : d[t] || 0,
                             valUsd: val,
+                            isForecast: false,
                           });
                           setHoveredToken(t);
                         }}
@@ -3374,17 +3609,155 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
                 </g>
               );
             })}
+
+            {/* Predictive Forecast Paths */}
+            {isTrendVisible && forecastPaths && (
+              <>
+                {/* 1. Standard Trend Line */}
+                {(activeTrend === "standard" || activeTrend === "all") && (
+                  <g>
+                    <path
+                      d={getBezierPath(forecastPaths.standardPoints)}
+                      fill="none"
+                      stroke="#c084fc"
+                      strokeWidth="2"
+                      strokeDasharray="4 4"
+                      className="opacity-90 transition-all duration-300"
+                      style={{ filter: "drop-shadow(0 0 3px rgba(192,132,252,0.4))" }}
+                    />
+                    {predictions.forecastPoints.map((p, idx) => {
+                      const coords = getCoords(p.standard, p.xIndex);
+                      const isNodeActive = hoveredNode?.isForecast && hoveredNode?.x === coords.x + 48 && hoveredNode?.token === "Standard Forecast";
+                      return (
+                        <circle
+                          key={`f-std-${idx}`}
+                          cx={coords.x}
+                          cy={coords.y}
+                          r={isNodeActive ? 5 : 2.5}
+                          fill="#c084fc"
+                          stroke="#000"
+                          strokeWidth={isNodeActive ? 1.5 : 0.5}
+                          className="cursor-pointer transition-all duration-200"
+                          onMouseEnter={(e) => {
+                            const svgRect = e.currentTarget.ownerSVGElement?.getBoundingClientRect();
+                            if (!svgRect) return;
+                            const nodeRect = e.currentTarget.getBoundingClientRect();
+                            setHoveredNode({
+                              x: nodeRect.left - svgRect.left + 12 + window.scrollX,
+                              y: nodeRect.top - svgRect.top - 8 + window.scrollY,
+                              date: p.date,
+                              token: "Standard Forecast",
+                              amount: 0,
+                              valUsd: p.standard,
+                              isForecast: true,
+                            });
+                          }}
+                        />
+                      );
+                    })}
+                  </g>
+                )}
+
+                {/* 2. Conservative Trend Line */}
+                {(activeTrend === "conservative" || activeTrend === "all") && (
+                  <g>
+                    <path
+                      d={getBezierPath(forecastPaths.conservativePoints)}
+                      fill="none"
+                      stroke="#fbbf24"
+                      strokeWidth="1.5"
+                      strokeDasharray="3 3"
+                      className="opacity-75 transition-all duration-300"
+                    />
+                    {predictions.forecastPoints.map((p, idx) => {
+                      const coords = getCoords(p.conservative, p.xIndex);
+                      const isNodeActive = hoveredNode?.isForecast && hoveredNode?.x === coords.x + 48 && hoveredNode?.token === "Conservative Forecast";
+                      return (
+                        <circle
+                          key={`f-cons-${idx}`}
+                          cx={coords.x}
+                          cy={coords.y}
+                          r={isNodeActive ? 4.5 : 2}
+                          fill="#fbbf24"
+                          stroke="#000"
+                          strokeWidth={isNodeActive ? 1.5 : 0.5}
+                          className="cursor-pointer transition-all duration-200"
+                          onMouseEnter={(e) => {
+                            const svgRect = e.currentTarget.ownerSVGElement?.getBoundingClientRect();
+                            if (!svgRect) return;
+                            const nodeRect = e.currentTarget.getBoundingClientRect();
+                            setHoveredNode({
+                              x: nodeRect.left - svgRect.left + 12 + window.scrollX,
+                              y: nodeRect.top - svgRect.top - 8 + window.scrollY,
+                              date: p.date,
+                              token: "Conservative Forecast",
+                              amount: 0,
+                              valUsd: p.conservative,
+                              isForecast: true,
+                            });
+                          }}
+                        />
+                      );
+                    })}
+                  </g>
+                )}
+
+                {/* 3. Aggressive Trend Line */}
+                {(activeTrend === "aggressive" || activeTrend === "all") && (
+                  <g>
+                    <path
+                      d={getBezierPath(forecastPaths.aggressivePoints)}
+                      fill="none"
+                      stroke="#34d399"
+                      strokeWidth="1.5"
+                      strokeDasharray="3 3"
+                      className="opacity-75 transition-all duration-300"
+                    />
+                    {predictions.forecastPoints.map((p, idx) => {
+                      const coords = getCoords(p.aggressive, p.xIndex);
+                      const isNodeActive = hoveredNode?.isForecast && hoveredNode?.x === coords.x + 48 && hoveredNode?.token === "Aggressive Forecast";
+                      return (
+                        <circle
+                          key={`f-aggr-${idx}`}
+                          cx={coords.x}
+                          cy={coords.y}
+                          r={isNodeActive ? 4.5 : 2}
+                          fill="#34d399"
+                          stroke="#000"
+                          strokeWidth={isNodeActive ? 1.5 : 0.5}
+                          className="cursor-pointer transition-all duration-200"
+                          onMouseEnter={(e) => {
+                            const svgRect = e.currentTarget.ownerSVGElement?.getBoundingClientRect();
+                            if (!svgRect) return;
+                            const nodeRect = e.currentTarget.getBoundingClientRect();
+                            setHoveredNode({
+                              x: nodeRect.left - svgRect.left + 12 + window.scrollX,
+                              y: nodeRect.top - svgRect.top - 8 + window.scrollY,
+                              date: p.date,
+                              token: "Aggressive Forecast",
+                              amount: 0,
+                              valUsd: p.aggressive,
+                              isForecast: true,
+                            });
+                          }}
+                        />
+                      );
+                    })}
+                  </g>
+                )}
+              </>
+            )}
           </svg>
         </div>
 
         {/* Bottom X-axis Labels */}
         <div className="w-full pl-12 pr-2 flex justify-between text-[10px] text-white/40 font-sans font-medium select-none z-10">
-          {data.map((d, i) => {
-            const labelInterval = Math.max(1, Math.ceil(data.length / 8));
-            const shouldShowLabel = i === 0 || i === data.length - 1 || i % labelInterval === 0;
+          {displayDates.map((date, i) => {
+            const labelInterval = Math.max(1, Math.ceil(displayDates.length / 8));
+            const shouldShowLabel = i === 0 || i === displayDates.length - 1 || i % labelInterval === 0;
             return (
-              <span key={i} className="text-center truncate" style={{ width: `${100 / data.length}%` }}>
-                {shouldShowLabel ? d.date : ""}
+              <span key={i} className="text-center truncate" style={{ width: `${100 / displayDates.length}%` }}>
+                {shouldShowLabel ? date : ""}
               </span>
             );
           })}
@@ -3397,21 +3770,24 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
           className="absolute z-50 bg-neutral-950 border border-white/10 rounded-lg p-2.5 shadow-2xl text-xs pointer-events-none -translate-x-1/2 -translate-y-full mb-3 transition-all duration-150 animate-in fade-in zoom-in-95 duration-100"
           style={{ left: hoveredNode.x, top: hoveredNode.y }}
         >
-          <div className="font-semibold text-white">{hoveredNode.date}</div>
+          <div className="font-semibold text-white">
+            {hoveredNode.date}
+            {hoveredNode.isForecast && (
+              <span className="text-[9px] bg-purple-500/10 text-purple-300 border border-purple-500/20 px-1 py-0.5 rounded ml-2 font-mono uppercase">
+                Forecasted
+              </span>
+            )}
+          </div>
           <div className="text-[10px] text-muted-foreground mt-0.5 capitalize flex items-center gap-1.5">
-            <div className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tokenColors[hoveredNode.token] }} />
-            <span>{hoveredNode.token === "totalUsd" ? "Total Portfolio Value" : hoveredNode.token}</span>
+            <div className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: hoveredNode.isForecast ? (hoveredNode.token.startsWith("Standard") ? "#c084fc" : hoveredNode.token.startsWith("Conservative") ? "#fbbf24" : "#34d399") : tokenColors[hoveredNode.token === "Total Value" ? "totalUsd" : hoveredNode.token] || "#fff" }} />
+            <span>{hoveredNode.token}</span>
           </div>
           <div className="text-[11px] font-bold text-primary mt-1.5 border-t border-white/5 pt-1">
-            {hoveredNode.token === "totalUsd" ? (
-              <div>Value: ${hoveredNode.valUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-            ) : (
-              <>
-                <div>Value: ${hoveredNode.valUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div className="text-[10px] text-white/50 font-normal">
-                  Balance: {hoveredNode.amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {hoveredNode.token}
-                </div>
-              </>
+            <div>Value: ${hoveredNode.valUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            {!hoveredNode.isForecast && hoveredNode.token !== "Total Value" && (
+              <div className="text-[10px] text-white/50 font-normal">
+                Balance: {hoveredNode.amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {hoveredNode.token}
+              </div>
             )}
           </div>
         </div>

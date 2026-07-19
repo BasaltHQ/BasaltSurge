@@ -2,14 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { resolveWalletRole } from "@/lib/authz";
 import { chain, serverClient } from "@/lib/thirdweb/server";
-import { getContract, prepareEvent, getContractEvents } from "thirdweb";
-import { getRpcClient, eth_blockNumber, eth_getBlockByNumber, eth_getBalance } from "thirdweb/rpc";
+import { getRpcClient, eth_blockNumber, eth_getBalance } from "thirdweb/rpc";
 import { fetchEthUsd, fetchBtcUsd, fetchXrpUsd, fetchSolUsd } from "@/lib/eth";
 import * as crypto from "node:crypto";
 
 export const dynamic = 'force-dynamic';
 
-const SAFE_ADDRESS = "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e".toLowerCase();
+const SAFE_ADDRESS = "0xaCDAa0314000a1d10f3e9EF1B88e986A72AA3f6e".toLowerCase() as `0x${string}`;
 
 // Supported tokens and their decimals
 const TOKENS: Record<string, { address: string; decimals: number }> = {
@@ -35,24 +34,6 @@ const TOKENS: Record<string, { address: string; decimals: number }> = {
   },
 };
 
-const blockTimestampCache = new Map<bigint, number>();
-
-async function getBlockTimestamp(rpcRequest: any, blockNumber: bigint): Promise<number> {
-  if (blockTimestampCache.has(blockNumber)) {
-    return blockTimestampCache.get(blockNumber)!;
-  }
-  try {
-    const block = await eth_getBlockByNumber(rpcRequest, {
-      blockNumber,
-      includeTransactions: false,
-    });
-    const ts = Number(block.timestamp) * 1000;
-    blockTimestampCache.set(blockNumber, ts);
-    return ts;
-  } catch (e) {
-    return Date.now();
-  }
-}
 
 export async function GET(req: NextRequest) {
   const correlationId = crypto.randomUUID();
@@ -64,6 +45,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 403 });
     }
 
+    const forceLive = req.nextUrl.searchParams.get("live") === "true";
     const container = await getContainer();
     const docId = "platform_safe_index";
 
@@ -75,7 +57,7 @@ export async function GET(req: NextRequest) {
     } catch {}
 
     const oneHour = 60 * 60 * 1000;
-    if (cachedDoc && (Date.now() - (cachedDoc.lastIndexedAt || 0) < oneHour)) {
+    if (!forceLive && cachedDoc && (Date.now() - (cachedDoc.lastIndexedAt || 0) < oneHour)) {
       return NextResponse.json({
         ok: true,
         balanceHistory: cachedDoc.balanceHistory || [],
@@ -104,128 +86,63 @@ export async function GET(req: NextRequest) {
       ETH: ethPrice,
     };
 
-    // 4. Determine Block Ranges
+    // 4. Fetch all ERC-20 transfers from Blockscout
+    const tokenContractAddresses = Object.fromEntries(
+      Object.entries(TOKENS).map(([symbol, info]) => [info.address.toLowerCase(), { symbol, decimals: info.decimals }])
+    );
+
+    const mergedTransfers: any[] = [];
     const rpcRequest = getRpcClient({ client: serverClient, chain });
     const latestBlock = await eth_blockNumber(rpcRequest);
-    
-    // Starting block: approx Jan 1, 2026.
-    const START_BLOCK = BigInt(process.env.NEXT_PUBLIC_CHAIN_ID === "84532" ? 1 : 12000000); 
-    const fromBlock = cachedDoc?.lastIndexedBlock ? BigInt(cachedDoc.lastIndexedBlock + 1) : START_BLOCK;
 
-    const newTransfers: any[] = [];
-
-    if (latestBlock >= fromBlock) {
-      console.log(`[SAFE VALUE] Fetching transfer events from block ${fromBlock} to ${latestBlock}...`);
-      const promises: Promise<void>[] = [];
-
-      for (const symbol of Object.keys(TOKENS)) {
-        const tokenInfo = TOKENS[symbol];
-        const tokenContract = getContract({
-          client: serverClient,
-          chain,
-          address: tokenInfo.address,
-        });
-
-        // 1. Incoming transfers
-        promises.push(
-          getContractEvents({
-            contract: tokenContract,
-            events: [
-              prepareEvent({
-                signature: "event Transfer(address indexed from, address indexed to, uint256 value)",
-                filters: { to: SAFE_ADDRESS },
-              })
-            ],
-            fromBlock,
-            toBlock: latestBlock,
-          }).then(async (events) => {
-            for (const ev of events) {
-              const ts = await getBlockTimestamp(rpcRequest, ev.blockNumber);
-              const args = ev.args as any;
-              const valRaw = Number(args.value);
-              const value = valRaw / Math.pow(10, tokenInfo.decimals);
-              newTransfers.push({
-                hash: ev.transactionHash,
-                blockNumber: Number(ev.blockNumber),
-                timestamp: ts,
-                token: symbol,
-                value,
-                valueUsd: value * tokenPrices[symbol],
-                from: args.from,
-                to: args.to,
-                type: "in",
-              });
-            }
-          }).catch((err) => {
-            console.error(`[SAFE VALUE] Failed to fetch incoming transfers for ${symbol}:`, err);
-          })
-        );
-
-        // 2. Outgoing transfers
-        promises.push(
-          getContractEvents({
-            contract: tokenContract,
-            events: [
-              prepareEvent({
-                signature: "event Transfer(address indexed from, address indexed to, uint256 value)",
-                filters: { from: SAFE_ADDRESS },
-              })
-            ],
-            fromBlock,
-            toBlock: latestBlock,
-          }).then(async (events) => {
-            for (const ev of events) {
-              const ts = await getBlockTimestamp(rpcRequest, ev.blockNumber);
-              const args = ev.args as any;
-              const valRaw = Number(args.value);
-              const value = valRaw / Math.pow(10, tokenInfo.decimals);
-              newTransfers.push({
-                hash: ev.transactionHash,
-                blockNumber: Number(ev.blockNumber),
-                timestamp: ts,
-                token: symbol,
-                value,
-                valueUsd: value * tokenPrices[symbol],
-                from: args.from,
-                to: args.to,
-                type: "out",
-              });
-            }
-          }).catch((err) => {
-            console.error(`[SAFE VALUE] Failed to fetch outgoing transfers for ${symbol}:`, err);
-          })
-        );
+    try {
+      const blockscoutUrl = `${process.env.BLOCKSCOUT_API_URL || "https://base.blockscout.com/api"}?module=account&action=tokentx&address=${SAFE_ADDRESS}&apikey=${process.env.BLOCKSCOUT_API_KEY || "10e3997e-fb11-479d-acb9-a690cdb5f536"}`;
+      const bsRes = await fetch(blockscoutUrl);
+      const bsData = await bsRes.json();
+      if (bsData.status === "1" && Array.isArray(bsData.result)) {
+        for (const item of bsData.result) {
+          const contractAddressLower = item.contractAddress.toLowerCase();
+          const match = tokenContractAddresses[contractAddressLower];
+          if (match) {
+            const value = Number(item.value) / Math.pow(10, match.decimals);
+            mergedTransfers.push({
+              hash: item.hash,
+              blockNumber: Number(item.blockNumber),
+              timestamp: Number(item.timeStamp) * 1000,
+              token: match.symbol,
+              value,
+              valueUsd: value * tokenPrices[match.symbol],
+              from: item.from.toLowerCase(),
+              to: item.to.toLowerCase(),
+              type: item.to.toLowerCase() === SAFE_ADDRESS ? "in" : "out",
+            });
+          }
+        }
       }
-
-      await Promise.all(promises);
+    } catch (err) {
+      console.error("[SAFE VALUE] Failed to fetch transfers from Blockscout:", err);
     }
 
-    // 5. Merge and sort
-    const existingTransfers = cachedDoc?.transfers || [];
-    const mergedTransfers = [...existingTransfers, ...newTransfers];
-    
     // Sort chronologically
     mergedTransfers.sort((a: any, b: any) => a.timestamp - b.timestamp);
+
+    // 5. Merge with native ETH balance from RPC
+    let currentEthBalance = 0;
+    try {
+      const balWei = await eth_getBalance(rpcRequest, { address: SAFE_ADDRESS });
+      currentEthBalance = Number(balWei) / 1e18;
+    } catch {}
 
     // 6. Compute running totals and Daily Timeseries
     const dailyBalances: Record<string, Record<string, number>> = {};
     const runningBalances: Record<string, number> = {
       USDC: 0,
       USDT: 0,
-      runningBtc: 0,
       cbBTC: 0,
       cbXRP: 0,
       SOL: 0,
-      ETH: 0,
+      ETH: currentEthBalance,
     };
-
-    // Include native ETH balance
-    let currentEthBalance = 0;
-    try {
-      const balWei = await eth_getBalance(rpcRequest, { address: SAFE_ADDRESS });
-      currentEthBalance = Number(balWei) / 1e18;
-    } catch {}
-    runningBalances.ETH = currentEthBalance;
 
     for (const tx of mergedTransfers) {
       const date = new Date(tx.timestamp).toISOString().split("T")[0];
@@ -252,6 +169,26 @@ export async function GET(req: NextRequest) {
       };
     }
 
+    // If there were no ERC-20 transfers at all, seed with today's current balances so the chart is not empty
+    const todayStr = new Date().toISOString().split("T")[0];
+    if (Object.keys(dailyBalances).length === 0) {
+      dailyBalances[todayStr] = {
+        USDC: runningBalances.USDC,
+        USDT: runningBalances.USDT,
+        cbBTC: runningBalances.cbBTC,
+        cbXRP: runningBalances.cbXRP,
+        SOL: runningBalances.SOL,
+        ETH: runningBalances.ETH,
+        totalUsd: 
+          (runningBalances.USDC * tokenPrices.USDC) +
+          (runningBalances.USDT * tokenPrices.USDT) +
+          (runningBalances.cbBTC * tokenPrices.cbBTC) +
+          (runningBalances.cbXRP * tokenPrices.cbXRP) +
+          (runningBalances.SOL * tokenPrices.SOL) +
+          (runningBalances.ETH * tokenPrices.ETH),
+      };
+    }
+
     // Convert daily balances to sorted array
     const balanceHistory = Object.keys(dailyBalances).map((date) => ({
       date,
@@ -259,8 +196,8 @@ export async function GET(req: NextRequest) {
     })).sort((a: any, b: any) => a.date.localeCompare(b.date));
 
     // Fill missing days to ensure a continuous line chart
+    const filledHistory: any[] = [];
     if (balanceHistory.length > 0) {
-      const filledHistory: any[] = [];
       let currentPoint = balanceHistory[0];
       filledHistory.push(currentPoint);
 
@@ -284,34 +221,27 @@ export async function GET(req: NextRequest) {
         filledHistory.push(currentPoint);
         nextDate.setDate(nextDate.getDate() + 1);
       }
-
-      // Upsert Document back to Cosmos DB
-      const updatedDoc = {
-        id: docId,
-        wallet: docId, // partition key
-        type: "platform_safe_index",
-        lastIndexedBlock: Number(latestBlock),
-        transfers: mergedTransfers,
-        balanceHistory: filledHistory,
-        tokenPrices,
-        lastIndexedAt: Date.now(),
-      };
-
-      await container.items.upsert(updatedDoc);
-
-      return NextResponse.json({
-        ok: true,
-        balanceHistory: filledHistory,
-        tokenPrices,
-        lastIndexedAt: updatedDoc.lastIndexedAt,
-        source: "live",
-      });
     }
+
+    // Upsert Document back to database
+    const updatedDoc = {
+      id: docId,
+      wallet: docId, // partition key
+      type: "platform_safe_index",
+      lastIndexedBlock: Number(latestBlock),
+      transfers: mergedTransfers,
+      balanceHistory: filledHistory,
+      tokenPrices,
+      lastIndexedAt: Date.now(),
+    };
+
+    await container.items.upsert(updatedDoc);
 
     return NextResponse.json({
       ok: true,
-      balanceHistory: [],
-      lastIndexedAt: Date.now(),
+      balanceHistory: filledHistory,
+      tokenPrices,
+      lastIndexedAt: updatedDoc.lastIndexedAt,
       source: "live",
     });
   } catch (err: any) {
