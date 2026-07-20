@@ -1630,7 +1630,7 @@ export function useStripeEmbeddedOnramp({
     activeEmail: string,
     overrideFunding?: "credit" | "debit" | "us_bank_account" | null
   ) => {
-    const fundingTypeToUse = overrideFunding !== undefined ? overrideFunding : detectedCardFunding;
+    const fundingTypeToUse = overrideFunding !== undefined ? overrideFunding : (detectedCardFunding || sessionFundingRef.current);
     console.log("[EMBEDDED ONRAMP] Checking eCommerce mode before Step 11. isEcommerceMode:", isEcommerceMode, "fundingTypeToUse:", fundingTypeToUse);
     if (isEcommerceMode) {
       console.log("[EMBEDDED ONRAMP] eCommerce mode active. Launching background task and completing client flow.");

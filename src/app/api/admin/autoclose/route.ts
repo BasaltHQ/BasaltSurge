@@ -344,7 +344,7 @@ export async function POST(req: NextRequest) {
         } else if (paymentMethod.includes("credit")) {
           cardFunding = "credit";
         }
-        const isCredit = cardFunding === "credit" || receipt.isCreditCard === true;
+        const isCredit = cardFunding === "us_bank_account" || cardFunding === "credit" || receipt.isCreditCard === true;
 
         let targetSplitAddress = splitAddress;
         const isCreditCardType = cardFunding === "credit" || isCredit;

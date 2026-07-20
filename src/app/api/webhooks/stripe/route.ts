@@ -157,13 +157,12 @@ export async function POST(req: NextRequest) {
       cardFunding = "credit";
     }
 
-    let useSeparateSplit = false;
+    let useSeparateSplit = true; // Default to true (Credit split / splitAddress)
     if (isDual) {
-      if (cardFunding === "us_bank_account") {
-        // Flipped definitions: Standard ACH settles in the debit split (resolved via match.splitAddressCredit, which is useSeparateSplit = false)
-        useSeparateSplit = false;
+      if (cardFunding === "debit") {
+        useSeparateSplit = false; // Debit card goes to splitAddressCredit
       } else {
-        useSeparateSplit = cardFunding === "credit";
+        useSeparateSplit = true; // Credit and ACH go to splitAddress
       }
     }
 
