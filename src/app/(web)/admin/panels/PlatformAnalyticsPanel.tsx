@@ -27,6 +27,38 @@ import {
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 import RollercoasterOverlay from "../components/RollercoasterOverlay";
+import { formatYMDInTimeZone, getDayRangeForYmdInTz, zonedTimeToUtcDate } from "@/lib/timezone";
+
+const SYSTEM_TIMEZONE = "America/Los_Angeles";
+const DYNAMIC_TIMEZONE = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
+
+function getPacificComponents(date: Date) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: SYSTEM_TIMEZONE,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false
+  });
+  const parts = formatter.formatToParts(date);
+  const map: Record<string, string> = {};
+  for (const p of parts) map[p.type] = p.value;
+  
+  const dtf = new Intl.DateTimeFormat("en-US", { timeZone: SYSTEM_TIMEZONE, weekday: "short" });
+  const dayName = dtf.format(date);
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const day = dayNames.indexOf(dayName);
+  
+  return {
+    year: Number(map.year),
+    month: Number(map.month),
+    date: Number(map.day),
+    day
+  };
+}
 
 interface Stat {
   totalCreated: number;
@@ -170,6 +202,16 @@ export default function PlatformAnalyticsPanel() {
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [timeRange, setTimeRange] = useState<string>("all");
+  const [customStartDate, setCustomStartDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().split("T")[0];
+  });
+  const [customEndDate, setCustomEndDate] = useState<string>(() => {
+    return new Date().toISOString().split("T")[0];
+  });
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState<number>(0);
+  const [selectedMonthOffset, setSelectedMonthOffset] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [kycFilter, setKycFilter] = useState<string>("all");
 
@@ -197,6 +239,7 @@ export default function PlatformAnalyticsPanel() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(25);
   const [successRateMode, setSuccessRateMode] = useState<"integration" | "process">("integration");
+  const [timezoneMode, setTimezoneMode] = useState<"system" | "dynamic">("system");
   const [fetchLimit, setFetchLimit] = useState<number | "all">(500);
 
   // Reset page when filters change
@@ -244,9 +287,11 @@ export default function PlatformAnalyticsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/platform/analytics?limit=${fetchLimit}`, {
+      const clientTz = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
+      const res = await fetch(`/api/platform/analytics?limit=${fetchLimit}&timezoneMode=${timezoneMode}`, {
         headers: {
           "x-wallet": wallet,
+          "x-client-timezone": clientTz
         },
         cache: "no-store",
       });
@@ -264,7 +309,7 @@ export default function PlatformAnalyticsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [wallet, fetchLimit]);
+  }, [wallet, fetchLimit, timezoneMode]);
 
   const fetchSafeBalances = useCallback(async () => {
     if (!wallet) return;
@@ -319,6 +364,26 @@ export default function PlatformAnalyticsPanel() {
     return colors[idx % colors.length];
   }, [brandColors]);
 
+  // Helper to resolve Monday-to-Sunday date range for a given week offset in System Time (Pacific)
+  const getWeekRange = useCallback((offset: number) => {
+    const now = new Date();
+    const { year, month, date, day } = getPacificComponents(now);
+    // Monday of this week (day: 0 is Sunday, so diff to Monday is 1 if Mon, -6 if Sun)
+    const diff = date - day + (day === 0 ? -6 : 1);
+    const start = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, diff + offset * 7, 0, 0, 0, 0);
+    const end = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, diff + offset * 7 + 6, 23, 59, 59, 999);
+    return { start, end };
+  }, []);
+
+  // Helper to resolve month boundaries for a given month offset in System Time (Pacific)
+  const getMonthRange = useCallback((offset: number) => {
+    const now = new Date();
+    const { year, month } = getPacificComponents(now);
+    const start = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month + offset, 1, 0, 0, 0, 0);
+    const end = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month + offset + 1, 0, 23, 59, 59, 999);
+    return { start, end };
+  }, []);
+
   // Base Filter & Search Receipts (excluding selected combo)
   const baseFilteredReceipts = useMemo(() => {
     return recentReceipts.filter(r => {
@@ -330,21 +395,28 @@ export default function PlatformAnalyticsPanel() {
       let matchesTime = true;
       if (r.createdAt && timeRange !== "all") {
         const itemTime = new Date(r.createdAt).getTime();
-        const startOfToday = new Date();
-        startOfToday.setHours(0, 0, 0, 0);
-        const startOfTodayMs = startOfToday.getTime();
+        const now = new Date();
+        const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
+        const { start: todayStart } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
+        const startOfTodayMs = todayStart.getTime();
 
         if (timeRange === "today") {
           matchesTime = itemTime >= startOfTodayMs;
         } else if (timeRange === "yesterday") {
-          const startOfYesterdayMs = startOfTodayMs - 24 * 60 * 60 * 1000;
+          const { year, month, date } = getPacificComponents(now);
+          const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
+          const startOfYesterdayMs = yesterdayStart.getTime();
           matchesTime = itemTime >= startOfYesterdayMs && itemTime < startOfTodayMs;
         } else if (timeRange === "weekly") {
-          const startOfSevenDaysAgoMs = startOfTodayMs - 7 * 24 * 60 * 60 * 1000;
-          matchesTime = itemTime >= startOfSevenDaysAgoMs;
+          const { start, end } = getWeekRange(selectedWeekOffset);
+          matchesTime = itemTime >= start.getTime() && itemTime <= end.getTime();
         } else if (timeRange === "monthly") {
-          const startOfThirtyDaysAgoMs = startOfTodayMs - 30 * 24 * 60 * 60 * 1000;
-          matchesTime = itemTime >= startOfThirtyDaysAgoMs;
+          const { start, end } = getMonthRange(selectedMonthOffset);
+          matchesTime = itemTime >= start.getTime() && itemTime <= end.getTime();
+        } else if (timeRange === "custom") {
+          const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStartDate);
+          const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEndDate);
+          matchesTime = itemTime >= start.getTime() && itemTime <= end.getTime();
         }
       }
 
@@ -495,22 +567,109 @@ export default function PlatformAnalyticsPanel() {
 
   // Compute dynamic stats based on filtered list to make HUD react to filters
   const dynamicStats = useMemo(() => {
-    const totalCreated = baseFilteredReceipts.length;
+    // If there is a search query, status filter, or KYC filter, we must use baseFilteredReceipts (client-side subset)
+    const hasComplexFilters = searchQuery.trim() !== "" || statusFilter !== "all" || kycFilter !== "all";
+
+    if (hasComplexFilters) {
+      const totalCreated = baseFilteredReceipts.length;
+      let totalPaid = 0;
+      let totalFailed = 0;
+      let totalGmv = 0;
+      let totalFees = 0;
+      const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
+
+      baseFilteredReceipts.forEach(r => {
+        if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
+          totalPaid++;
+          totalGmv += r.totalUsd;
+          totalFees += r.platformFee || 0;
+        } else if (r.status === "failed") {
+          totalFailed++;
+        }
+
+        const funding = String(r.cardFunding || "").toLowerCase();
+        if (funding === "us_bank_account") cardTypes.bank++;
+        else if (funding === "credit") cardTypes.credit++;
+        else if (funding === "debit") cardTypes.debit++;
+        else cardTypes.unknown++;
+      });
+
+      const successRate = totalCreated > 0 ? (totalPaid / totalCreated) * 100 : 0;
+      const aov = totalPaid > 0 ? totalGmv / totalPaid : 0;
+
+      return {
+        totalCreated,
+        totalPaid,
+        totalFailed,
+        successRate: +successRate.toFixed(1),
+        totalGmv: +totalGmv.toFixed(2),
+        totalFees: +totalFees.toFixed(2),
+        aov: +aov.toFixed(2),
+        cardTypes
+      };
+    }
+
+    // Otherwise, aggregate dynamic stats directly from dailySeries which covers the entire database history!
+    let totalCreated = 0;
     let totalPaid = 0;
     let totalFailed = 0;
     let totalGmv = 0;
     let totalFees = 0;
     const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
 
-    baseFilteredReceipts.forEach(r => {
-      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
-        totalPaid++;
-        totalGmv += r.totalUsd;
-        totalFees += r.platformFee || 0;
-      } else if (r.status === "failed") {
-        totalFailed++;
-      }
+    const now = new Date();
+    const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
+    const { start: todayStart } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
+    const startOfTodayMs = todayStart.getTime();
 
+    let startMs = 0;
+    let endMs = Infinity;
+
+    if (timeRange === "today") {
+      startMs = startOfTodayMs;
+    } else if (timeRange === "yesterday") {
+      const { year, month, date } = getPacificComponents(now);
+      const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
+      startMs = yesterdayStart.getTime();
+      endMs = startOfTodayMs;
+    } else if (timeRange === "weekly") {
+      const { start, end } = getWeekRange(selectedWeekOffset);
+      startMs = start.getTime();
+      endMs = end.getTime();
+    } else if (timeRange === "monthly") {
+      const { start, end } = getMonthRange(selectedMonthOffset);
+      startMs = start.getTime();
+      endMs = end.getTime();
+    } else if (timeRange === "custom") {
+      const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStartDate);
+      const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEndDate);
+      startMs = start.getTime();
+      endMs = end.getTime();
+    }
+
+    dailySeries.forEach(day => {
+      if (day.timestamp < startMs || day.timestamp >= endMs) return;
+
+      if (selectedBrand === "all") {
+        totalCreated += day.allTotal || 0;
+        totalPaid += day.allPaid || 0;
+        totalFailed += day.allFailed || 0;
+        totalGmv += day.allGmv || 0;
+        totalFees += day.allFees || 0;
+      } else {
+        const b = day.brands?.[selectedBrand];
+        if (b) {
+          totalCreated += b.total || 0;
+          totalPaid += b.paid || 0;
+          totalFailed += b.failed || 0;
+          totalGmv += b.gmv || 0;
+          totalFees += b.fees || 0;
+        }
+      }
+    });
+
+    // Populate cardTypes from baseFilteredReceipts as a fallback profile
+    baseFilteredReceipts.forEach(r => {
       const funding = String(r.cardFunding || "").toLowerCase();
       if (funding === "us_bank_account") cardTypes.bank++;
       else if (funding === "credit") cardTypes.credit++;
@@ -531,7 +690,7 @@ export default function PlatformAnalyticsPanel() {
       aov: +aov.toFixed(2),
       cardTypes
     };
-  }, [baseFilteredReceipts]);
+  }, [baseFilteredReceipts, dailySeries, timeRange, selectedBrand, searchQuery, statusFilter, kycFilter, customStartDate, customEndDate, selectedWeekOffset, selectedMonthOffset, getWeekRange, getMonthRange]);
 
   const hasActiveFilters = useMemo(() => {
     return (
@@ -602,24 +761,32 @@ export default function PlatformAnalyticsPanel() {
 
     const filteredDays = dailySeries.filter(day => {
       if (timeRange === "all") return true;
-      const startOfToday = new Date();
-      startOfToday.setHours(0, 0, 0, 0);
-      const startOfTodayMs = startOfToday.getTime();
+      const now = new Date();
+      const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
+      const { start: todayStart } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
+      const startOfTodayMs = todayStart.getTime();
 
       if (timeRange === "today") {
         return day.timestamp >= startOfTodayMs;
       }
       if (timeRange === "yesterday") {
-        const startOfYesterdayMs = startOfTodayMs - 24 * 60 * 60 * 1000;
+        const { year, month, date } = getPacificComponents(now);
+        const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
+        const startOfYesterdayMs = yesterdayStart.getTime();
         return day.timestamp >= startOfYesterdayMs && day.timestamp < startOfTodayMs;
       }
       if (timeRange === "weekly") {
-        const startOfSevenDaysAgoMs = startOfTodayMs - 7 * 24 * 60 * 60 * 1000;
-        return day.timestamp >= startOfSevenDaysAgoMs;
+        const { start, end } = getWeekRange(selectedWeekOffset);
+        return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
       }
       if (timeRange === "monthly") {
-        const startOfThirtyDaysAgoMs = startOfTodayMs - 30 * 24 * 60 * 60 * 1000;
-        return day.timestamp >= startOfThirtyDaysAgoMs;
+        const { start, end } = getMonthRange(selectedMonthOffset);
+        return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
+      }
+      if (timeRange === "custom") {
+        const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStartDate);
+        const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEndDate);
+        return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
       }
       return true;
     });
@@ -723,28 +890,23 @@ export default function PlatformAnalyticsPanel() {
     lastYearToDateEnd.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
     const lastYearToDateEndMs = lastYearToDateEnd.getTime();
 
-    // Helper to calculate stats for a range
-    const getRangeStats = (startMs: number, endMs?: number) => {
+    // Helper to calculate stats for a range using dailySeries (all-time database aggregate)
+    const getSeriesRangeStats = (startMs: number, endMs?: number) => {
       let paidCount = 0;
       let failedCount = 0;
       let totalCount = 0;
       let gmv = 0;
       let fees = 0;
 
-      recentReceipts.forEach(r => {
-        if (!r.createdAt) return;
-        const t = new Date(r.createdAt).getTime();
-        if (t < startMs) return;
-        if (endMs !== undefined && t >= endMs) return;
+      dailySeries.forEach(day => {
+        if (day.timestamp < startMs) return;
+        if (endMs !== undefined && day.timestamp >= endMs) return;
 
-        totalCount++;
-        if (["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status)) {
-          paidCount++;
-          gmv += r.totalUsd || 0;
-          fees += (typeof r.platformFee === "number" ? r.platformFee : 0);
-        } else if (r.status === "failed") {
-          failedCount++;
-        }
+        totalCount += day.allTotal || 0;
+        paidCount += day.allPaid || 0;
+        failedCount += day.allFailed || 0;
+        gmv += day.allGmv || 0;
+        fees += day.allFees || 0;
       });
 
       const denom = successRateMode === "integration" ? totalCount : (paidCount + failedCount);
@@ -753,14 +915,14 @@ export default function PlatformAnalyticsPanel() {
       return { paidCount, totalCount, successRate, gmv, fees };
     };
 
-    const todayStats = getRangeStats(startOfTodayMs);
-    const yesterdayStats = getRangeStats(startOfYesterdayMs, startOfTodayMs);
+    const todayStats = getSeriesRangeStats(startOfTodayMs);
+    const yesterdayStats = getSeriesRangeStats(startOfYesterdayMs, startOfTodayMs);
     
-    const mtdThisMonth = getRangeStats(startOfThisMonthMs);
-    const mtdLastMonth = getRangeStats(startOfLastMonthMs, lastMonthToDateEndMs);
+    const mtdThisMonth = getSeriesRangeStats(startOfThisMonthMs);
+    const mtdLastMonth = getSeriesRangeStats(startOfLastMonthMs, lastMonthToDateEndMs);
 
-    const ytdThisYear = getRangeStats(startOfThisYearMs);
-    const ytdLastYear = getRangeStats(startOfLastYearMs, lastYearToDateEndMs);
+    const ytdThisYear = getSeriesRangeStats(startOfThisYearMs);
+    const ytdLastYear = getSeriesRangeStats(startOfLastYearMs, lastYearToDateEndMs);
 
     const pctChange = (current: number, previous: number) => {
       if (previous === 0) return current > 0 ? 100 : 0;
@@ -777,7 +939,7 @@ export default function PlatformAnalyticsPanel() {
       gmvChangeMtd: pctChange(mtdThisMonth.gmv, mtdLastMonth.gmv),
       feesChangeYtd: pctChange(ytdThisYear.fees, ytdLastYear.fees),
     };
-  }, [recentReceipts, successRateMode]);
+  }, [dailySeries, successRateMode]);
 
   // Overall status distribution dataset for the DonutChart
   const statusPieData = useMemo(() => {
@@ -861,13 +1023,40 @@ export default function PlatformAnalyticsPanel() {
           </p>
         </div>
 
-        <button
-          onClick={fetchAnalytics}
-          className="h-9 px-3 rounded-lg border border-white/5 hover:bg-white/5 text-xs font-medium text-white/80 transition-colors flex items-center gap-1.5"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Refresh Metrics</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex bg-white/5 p-0.5 rounded-lg border border-white/5 h-9 items-center">
+            <button
+              onClick={() => setTimezoneMode("system")}
+              className={`px-3 py-1 rounded-md text-xs font-semibold h-full transition-all ${
+                timezoneMode === "system"
+                  ? "bg-primary text-white shadow"
+                  : "text-muted-foreground hover:text-white"
+              }`}
+              title="Fixed server timezone (America/Los_Angeles)"
+            >
+              System Time (PT)
+            </button>
+            <button
+              onClick={() => setTimezoneMode("dynamic")}
+              className={`px-3 py-1 rounded-md text-xs font-semibold h-full transition-all ${
+                timezoneMode === "dynamic"
+                  ? "bg-primary text-white shadow"
+                  : "text-muted-foreground hover:text-white"
+              }`}
+              title="Your local browser timezone"
+            >
+              Dynamic
+            </button>
+          </div>
+
+          <button
+            onClick={fetchAnalytics}
+            className="h-9 px-3 rounded-lg border border-white/5 hover:bg-white/5 text-xs font-medium text-white/80 transition-colors flex items-center gap-1.5"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Refresh Metrics</span>
+          </button>
+        </div>
       </div>
 
       {/* Calculation Mode Selector Tabs */}
@@ -1079,25 +1268,93 @@ export default function PlatformAnalyticsPanel() {
               </div>
 
               {/* Time Range Selector */}
-              <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
-                {[
-                  { label: "Today", value: "today" },
-                  { label: "Yesterday", value: "yesterday" },
-                  { label: "Weekly", value: "weekly" },
-                  { label: "Monthly", value: "monthly" },
-                  { label: "All", value: "all" }
-                ].map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setTimeRange(opt.value)}
-                    className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${timeRange === opt.value
-                      ? "bg-primary text-white shadow-sm"
-                      : "text-muted-foreground hover:text-white"
-                      }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
+                <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+                  {[
+                    { label: "Today", value: "today" },
+                    { label: "Yesterday", value: "yesterday" },
+                    { label: "Weekly", value: "weekly" },
+                    { label: "Monthly", value: "monthly" },
+                    { label: "All", value: "all" },
+                    { label: "Custom", value: "custom" }
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setTimeRange(opt.value)}
+                      className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${timeRange === opt.value
+                        ? "bg-primary text-white shadow-sm"
+                        : "text-muted-foreground hover:text-white"
+                        }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom Date Pickers */}
+                {timeRange === "custom" && (
+                  <div className="flex items-center gap-1 bg-white/5 border border-white/5 px-2 py-0.5 rounded-lg h-7">
+                    <input
+                      type="date"
+                      value={customStartDate}
+                      onChange={e => setCustomStartDate(e.target.value)}
+                      className="bg-transparent border-0 text-[10px] text-white/90 focus:outline-none w-24 [color-scheme:dark]"
+                    />
+                    <span className="text-[9px] text-muted-foreground uppercase">to</span>
+                    <input
+                      type="date"
+                      value={customEndDate}
+                      onChange={e => setCustomEndDate(e.target.value)}
+                      className="bg-transparent border-0 text-[10px] text-white/90 focus:outline-none w-24 [color-scheme:dark]"
+                    />
+                  </div>
+                )}
+
+                {/* Weekly/Monthly Pagination */}
+                {(timeRange === "weekly" || timeRange === "monthly") && (
+                  <div className="flex items-center gap-2 bg-white/5 border border-white/5 px-2 py-0.5 rounded-lg h-7">
+                    <button
+                      onClick={() => {
+                        if (timeRange === "weekly") {
+                          setSelectedWeekOffset(prev => prev - 1);
+                        } else {
+                          setSelectedMonthOffset(prev => prev - 1);
+                        }
+                      }}
+                      className="text-muted-foreground hover:text-white text-xs font-bold px-1 transition-colors"
+                      title="Previous"
+                    >
+                      &lt;
+                    </button>
+                    <span className="text-[10px] text-white font-medium select-none">
+                      {timeRange === "weekly" ? (
+                        (() => {
+                          const { start, end } = getWeekRange(selectedWeekOffset);
+                          return `Week of ${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+                        })()
+                      ) : (
+                        (() => {
+                          const { start } = getMonthRange(selectedMonthOffset);
+                          return start.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+                        })()
+                      )}
+                    </span>
+                    <button
+                      onClick={() => {
+                        if (timeRange === "weekly") {
+                          setSelectedWeekOffset(prev => Math.min(0, prev + 1));
+                        } else {
+                          setSelectedMonthOffset(prev => Math.min(0, prev + 1));
+                        }
+                      }}
+                      disabled={timeRange === "weekly" ? selectedWeekOffset >= 0 : selectedMonthOffset >= 0}
+                      className="text-muted-foreground hover:text-white disabled:opacity-30 disabled:pointer-events-none text-xs font-bold px-1 transition-colors"
+                      title="Next"
+                    >
+                      &gt;
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Rollercoaster Ride Button */}
@@ -1700,7 +1957,71 @@ export default function PlatformAnalyticsPanel() {
                 <option value="yesterday" className="bg-neutral-900">Yesterday</option>
                 <option value="weekly" className="bg-neutral-900">Weekly</option>
                 <option value="monthly" className="bg-neutral-900">Monthly</option>
+                <option value="custom" className="bg-neutral-900">Custom Range</option>
               </select>
+
+              {timeRange === "custom" && (
+                <div className="flex items-center gap-1.5 bg-white/5 border border-white/5 px-2 py-1 rounded-lg h-9">
+                  <input
+                    type="date"
+                    value={customStartDate}
+                    onChange={e => setCustomStartDate(e.target.value)}
+                    className="bg-transparent border-0 text-xs text-white/90 focus:outline-none w-28 [color-scheme:dark]"
+                  />
+                  <span className="text-[10px] text-muted-foreground uppercase">to</span>
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    onChange={e => setCustomEndDate(e.target.value)}
+                    className="bg-transparent border-0 text-xs text-white/90 focus:outline-none w-28 [color-scheme:dark]"
+                  />
+                </div>
+              )}
+
+              {(timeRange === "weekly" || timeRange === "monthly") && (
+                <div className="flex items-center gap-2 bg-white/5 border border-white/5 px-2.5 py-1 rounded-lg h-9">
+                  <button
+                    onClick={() => {
+                      if (timeRange === "weekly") {
+                        setSelectedWeekOffset(prev => prev - 1);
+                      } else {
+                        setSelectedMonthOffset(prev => prev - 1);
+                      }
+                    }}
+                    className="text-muted-foreground hover:text-white text-sm font-bold px-1 transition-colors"
+                    title="Previous"
+                  >
+                    &lt;
+                  </button>
+                  <span className="text-xs text-white font-medium select-none">
+                    {timeRange === "weekly" ? (
+                      (() => {
+                        const { start, end } = getWeekRange(selectedWeekOffset);
+                        return `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+                      })()
+                    ) : (
+                      (() => {
+                        const { start } = getMonthRange(selectedMonthOffset);
+                        return start.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+                      })()
+                    )}
+                  </span>
+                  <button
+                    onClick={() => {
+                      if (timeRange === "weekly") {
+                        setSelectedWeekOffset(prev => Math.min(0, prev + 1));
+                      } else {
+                        setSelectedMonthOffset(prev => Math.min(0, prev + 1));
+                      }
+                    }}
+                    disabled={timeRange === "weekly" ? selectedWeekOffset >= 0 : selectedMonthOffset >= 0}
+                    className="text-muted-foreground hover:text-white disabled:opacity-30 disabled:pointer-events-none text-sm font-bold px-1 transition-colors"
+                    title="Next"
+                  >
+                    &gt;
+                  </button>
+                </div>
+              )}
 
               <select
                 value={fetchLimit}
@@ -1801,7 +2122,8 @@ export default function PlatformAnalyticsPanel() {
                         <tr className={`hover:bg-white/5 transition-colors ${isExpanded ? "bg-white/5" : ""}`}>
                           <td className="py-3 px-4 font-mono font-medium text-white">{r.receiptId}</td>
                           <td className="py-3 px-3 text-muted-foreground whitespace-nowrap">
-                            {r.createdAt ? new Date(r.createdAt).toLocaleString(undefined, {
+                            {r.createdAt ? new Date(r.createdAt).toLocaleString("en-US", {
+                              timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE,
                               month: "short",
                               day: "numeric",
                               hour: "2-digit",
@@ -2133,7 +2455,9 @@ export default function PlatformAnalyticsPanel() {
                                           <div className="space-y-1">
                                             <div className="text-muted-foreground text-[10px] uppercase font-medium">Created At</div>
                                             <div className="text-white/90">
-                                              {new Date(r.createdAt).toLocaleString()}
+                                              {new Date(r.createdAt).toLocaleString("en-US", {
+                                                timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
+                                              })}
                                             </div>
                                           </div>
 
@@ -2251,7 +2575,9 @@ export default function PlatformAnalyticsPanel() {
                                           {expandedLogs[r.receiptId].map((log, idx) => (
                                             <div key={idx} className="p-2.5 space-y-1">
                                               <div className="flex items-center justify-between text-muted-foreground text-[10px]">
-                                                <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
+                                                <span>{new Date(log.createdAt).toLocaleTimeString("en-US", {
+                                                   timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
+                                                 })}</span>
                                                 <span className={`px-1 rounded text-[9px] uppercase font-semibold ${log.level === "error" ? "bg-red-500/15 text-red-400" :
                                                   log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
                                                     "bg-blue-500/15 text-blue-400"
@@ -2366,7 +2692,9 @@ export default function PlatformAnalyticsPanel() {
                                                   {uniqueSessions.map((session: any, idx: number) => (
                                                     <tr key={idx} className="hover:bg-white/[0.02]">
                                                       <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
-                                                        {session.createdAt ? new Date(session.createdAt).toLocaleString() : "N/A"}
+                                                        {session.createdAt ? new Date(session.createdAt).toLocaleString("en-US", {
+                                                           timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
+                                                         }) : "N/A"}
                                                       </td>
                                                       <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
                                                       <td className="py-3 px-4 font-mono text-[11px] text-white/80 select-all" title={session.walletAddress}>

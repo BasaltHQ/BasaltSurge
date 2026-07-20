@@ -1944,6 +1944,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
   const [achSpeed, setAchSpeed] = useState<"standard" | "instant">("standard");
+  const [showLimitWarning, setShowLimitWarning] = useState(false);
+  const [limitWarningInfo, setLimitWarningInfo] = useState<{ limit: number; total: number; method: string } | null>(null);
+  const [hasWarnedLimit, setHasWarnedLimit] = useState(false);
 
   // Fee from admin config
   const [processingFeePct, setProcessingFeePct] = useState<number>(0);
@@ -3792,9 +3795,33 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     achEnabled: !!(partnerAchEnabled && merchantAchEnabled),
     onCardDetected: (card) => {
       if (card) {
+        // 1. Immediately block AMEX and Discover transactions
+        const brandLower = String(card.brand || "").toLowerCase();
+        if (brandLower === "amex" || brandLower === "discover" || brandLower === "american express") {
+          setDisplayError("We do not accept American Express (AMEX) or Discover cards. Please select a Visa, Mastercard, or bank account to complete your payment.");
+          resetHeadlessOnramp();
+          return;
+        }
+
         setDetectedCardFunding(card.funding);
         setDetectedCardBrand(card.brand);
         setDetectedCardLast4(card.last4);
+
+        // 2. Spending limit check if limits are already loaded
+        const methodType = card.funding === "us_bank_account" ? "us_bank_account" : "card";
+        const limitEntry = (headlessOnrampLimits || []).find((l: any) => l.payment_method_type === methodType);
+        if (limitEntry) {
+          const limitInDollars = limitEntry.amount / 100;
+          if (totalUsd > limitInDollars && !hasWarnedLimit) {
+            setLimitWarningInfo({
+              limit: limitInDollars,
+              total: totalUsd,
+              method: card.funding === "us_bank_account" ? "bank account" : "card"
+            });
+            setShowLimitWarning(true);
+          }
+        }
+
         postStatus("payment_method_detected", {
           stripeSessionId: headlessSessionId || undefined,
           customerEmail: shipEmail || headlessEmailInput || undefined,
@@ -3816,6 +3843,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     },
     onStepChange: (newStep) => {
       console.log("[STRIPE HEADLESS] Step changed:", newStep);
+      if (newStep === "idle") {
+        setHasWarnedLimit(false);
+        setLimitWarningInfo(null);
+        setShowLimitWarning(false);
+      }
       postStatus(`onramp_${newStep}`, {
         stripeSessionId: headlessSessionId || undefined,
         customerEmail: shipEmail || headlessEmailInput || undefined,
@@ -3868,6 +3900,24 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       setHeadlessInitiated(false);
     },
   });
+
+  // Dynamic Spending Limit Monitor: Trigger warning modal when receipt total exceeds payment method limit
+  useEffect(() => {
+    if (!detectedCardFunding || !headlessOnrampLimits || hasWarnedLimit) return;
+    const methodType = detectedCardFunding === "us_bank_account" ? "us_bank_account" : "card";
+    const limitEntry = (headlessOnrampLimits || []).find((l: any) => l.payment_method_type === methodType);
+    if (limitEntry) {
+      const limitInDollars = limitEntry.amount / 100;
+      if (totalUsd > limitInDollars) {
+        setLimitWarningInfo({
+          limit: limitInDollars,
+          total: totalUsd,
+          method: detectedCardFunding === "us_bank_account" ? "bank account" : "card"
+        });
+        setShowLimitWarning(true);
+      }
+    }
+  }, [detectedCardFunding, headlessOnrampLimits, hasWarnedLimit, totalUsd]);
 
   useEffect(() => {
     if (headlessSessionId) {
@@ -7582,6 +7632,54 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 style={{ backgroundColor: theme.primaryColor || '#635BFF' }}
               >
                 Close & Try Again
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Limit Warning Modal */}
+      {showLimitWarning && limitWarningInfo && typeof window !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm grid place-items-center p-4 animate-in fade-in text-left">
+          <div className={`rounded-2xl max-w-sm w-full p-6 relative shadow-2xl border transition-all duration-300 ${
+            isLightText 
+              ? 'bg-neutral-900 border-white/10 text-white' 
+              : 'bg-white border-black/10 text-black'
+          }`}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-amber-500/10 rounded-full flex items-center justify-center text-amber-500 border border-amber-500/20">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
+              </div>
+              <h2 className={`text-lg font-bold ${isLightText ? 'text-white' : 'text-neutral-900'}`}>Transaction Limit Warning</h2>
+            </div>
+            
+            <p className={`text-sm mb-6 leading-relaxed ${isLightText ? 'text-neutral-300' : 'text-neutral-600'}`}>
+              Your transaction total of <strong>{formatCurrency(limitWarningInfo.total, "USD")}</strong> exceeds the suggested limit of <strong>{formatCurrency(limitWarningInfo.limit, "USD")}</strong> for this {limitWarningInfo.method} payment method. 
+              <br/><br/>
+              The transaction may not complete, or you may be required to complete additional verification (KYC). Would you like to proceed anyway or cancel to choose a different payment method?
+            </p>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setHasWarnedLimit(true);
+                  setShowLimitWarning(false);
+                }}
+                className={`flex-1 px-4 py-3 font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all shadow-md text-center text-sm bg-amber-500 text-white`}
+              >
+                Proceed
+              </button>
+              <button
+                onClick={() => {
+                  setShowLimitWarning(false);
+                  resetHeadlessOnramp();
+                }}
+                className={`flex-1 px-4 py-3 font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all shadow-md text-center text-sm border border-neutral-300 dark:border-neutral-700 ${
+                  isLightText ? 'text-white hover:bg-neutral-800' : 'text-neutral-700 hover:bg-neutral-100'
+                }`}
+              >
+                Cancel
               </button>
             </div>
           </div>

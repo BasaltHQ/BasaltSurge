@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { resolveWalletRole } from "@/lib/authz";
+import { formatYMDInTimeZone, getDayRangeForYmdInTz } from "@/lib/timezone";
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,10 @@ export async function GET(req: NextRequest) {
         limit = parsed;
       }
     }
+
+    const timezoneMode = req.nextUrl.searchParams.get("timezoneMode") || "system";
+    const clientTimezone = req.headers.get("x-client-timezone") || "America/Los_Angeles";
+    const targetTimezone = timezoneMode === "dynamic" ? clientTimezone : "America/Los_Angeles";
 
     // 2. Fetch receipts and logs using MongoDB projection for performance if available
     if ((container as any).getCollection) {
@@ -321,15 +326,26 @@ export async function GET(req: NextRequest) {
       allFailed: number;
       allTotal: number;
       allGmv: number;
-      brands: Record<string, { paid: number; failed: number; total: number; gmv: number }>
+      allFees: number;
+      brands: Record<string, { paid: number; failed: number; total: number; gmv: number; fees: number }>
     }> = {};
 
     for (const r of allReceiptsLight) {
       if (!r.createdAt) continue;
       const d = new Date(r.createdAt);
-      // Group by absolute date string (e.g. "Jul 12")
-      const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-      const dayStartTimestamp = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      // Group by absolute date string (e.g. "Jul 12") formatted in target timezone
+      const dateParts = new Intl.DateTimeFormat("en-US", {
+        timeZone: targetTimezone,
+        month: "short",
+        day: "numeric",
+      }).formatToParts(d);
+      const monthPart = dateParts.find(p => p.type === "month")?.value || "";
+      const dayPart = dateParts.find(p => p.type === "day")?.value || "";
+      const dateStr = `${monthPart} ${dayPart}`;
+
+      const ymd = formatYMDInTimeZone(targetTimezone, d);
+      const { start } = getDayRangeForYmdInTz(targetTimezone, ymd);
+      const dayStartTimestamp = start.getTime();
 
       if (!dailySeriesMap[dateStr]) {
         dailySeriesMap[dateStr] = {
@@ -339,6 +355,7 @@ export async function GET(req: NextRequest) {
           allFailed: 0,
           allTotal: 0,
           allGmv: 0,
+          allFees: 0,
           brands: {}
         };
       }
@@ -350,22 +367,25 @@ export async function GET(req: NextRequest) {
       const isPaid = ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status);
       const isFailed = status === "failed";
       const paymentGmv = isPaid ? Number(r.totalUsd || 0) : 0;
+      const paymentFees = isPaid ? Number(r.amountPlatformMinor || 0) / 100 : 0;
       
       if (isPaid) {
         g.allPaid++;
         g.allGmv += paymentGmv;
+        g.allFees += paymentFees;
       } else if (isFailed) {
         g.allFailed++;
       }
 
       const bKey = r.brandKey || "unknown";
       if (!g.brands[bKey]) {
-        g.brands[bKey] = { paid: 0, failed: 0, total: 0, gmv: 0 };
+        g.brands[bKey] = { paid: 0, failed: 0, total: 0, gmv: 0, fees: 0 };
       }
       g.brands[bKey].total++;
       if (isPaid) {
         g.brands[bKey].paid++;
         g.brands[bKey].gmv += paymentGmv;
+        g.brands[bKey].fees += paymentFees;
       } else if (isFailed) {
         g.brands[bKey].failed++;
       }

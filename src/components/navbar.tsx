@@ -367,6 +367,7 @@ export function Navbar() {
                         // Do NOT show AuthModal - that asks for signature/login which we don't want yet
                     } else if (!me?.authed || (me?.wallet && String(me.wallet).toLowerCase() !== w)) {
                         // Approved User -> PROCEED TO LOGIN/SIGNING
+                        setShowAccessPending(false); // Clear any stale blocked state immediately since they are approved
                         // Check if they have already accepted the legal documents
                         fetch(`/api/legal-read-status?wallet=${encodeURIComponent(w)}`)
                             .then(r => r.ok ? r.json() : null)
