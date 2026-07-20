@@ -348,7 +348,7 @@ export async function POST(req: NextRequest) {
 
         let targetSplitAddress = splitAddress;
         const isCreditCardType = cardFunding === "credit" || isCredit;
-        const isDual = siteConfig?.isDualSplitEnabled || false;
+        const isDual = !!splitAddressCredit && splitAddressCredit !== splitAddress;
         if (isDual && !isCreditCardType && splitAddressCredit) {
           targetSplitAddress = splitAddressCredit;
         } else {

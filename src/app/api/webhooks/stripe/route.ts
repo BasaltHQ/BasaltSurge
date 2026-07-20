@@ -48,7 +48,7 @@ async function resolveMerchantFromMetadata(
   metadata: any,
   container: any,
   brandKey: string,
-  useSeparateSplit = false
+  cardFunding = ""
 ): Promise<{ merchantWallet?: string; splitAddress?: string; fundingType?: string } | null> {
   // First try metadata
   const mw = String(metadata?.merchantWallet || "").toLowerCase();
@@ -61,32 +61,29 @@ async function resolveMerchantFromMetadata(
       const { resources } = await container.items.query(spec).fetchAll();
       const match = resources?.[0];
       if (match) {
-        let splitAddress: string;
-        if (useSeparateSplit) {
-          const splitTop = String(match.splitAddress || '').toLowerCase();
-          const splitObj = String(match.split?.address || '').toLowerCase();
-          const splitCfgTop = String(match.config?.splitAddress || '').toLowerCase();
-          const splitCfgObj = String(match.config?.split?.address || '').toLowerCase();
-          splitAddress = splitTop || splitObj || splitCfgTop || splitCfgObj || mw;
-        } else {
-          const splitCreditTop = String(match.splitAddressCredit || '').toLowerCase();
-          const splitCreditObj = String(match.splitCredit?.address || '').toLowerCase();
-          const splitAddressCreditResolved = splitCreditTop || splitCreditObj;
+        const splitTop = String(match.splitAddress || '').toLowerCase();
+        const splitObj = String(match.split?.address || '').toLowerCase();
+        const splitCfgTop = String(match.config?.splitAddress || '').toLowerCase();
+        const splitCfgObj = String(match.config?.split?.address || '').toLowerCase();
+        const splitAddressResolved = splitTop || splitObj || splitCfgTop || splitCfgObj || mw;
 
-          const splitTop = String(match.splitAddress || '').toLowerCase();
-          const splitObj = String(match.split?.address || '').toLowerCase();
-          const splitCfgTop = String(match.config?.splitAddress || '').toLowerCase();
-          const splitCfgObj = String(match.config?.split?.address || '').toLowerCase();
-          const splitAddressResolved = splitTop || splitObj || splitCfgTop || splitCfgObj || mw;
+        const splitCreditTop = String(match.splitAddressCredit || '').toLowerCase();
+        const splitCreditObj = String(match.splitCredit?.address || '').toLowerCase();
+        const splitAddressCreditResolved = splitCreditTop || splitCreditObj;
 
-          splitAddress = splitAddressCreditResolved || splitAddressResolved;
+        const isDual = !!splitAddressCreditResolved && splitAddressCreditResolved !== splitAddressResolved;
+
+        let splitAddress = splitAddressResolved;
+        if (isDual && cardFunding === "debit") {
+          splitAddress = splitAddressCreditResolved;
         }
-        return { merchantWallet: mw, splitAddress, fundingType: useSeparateSplit ? "credit" : "debit" };
+
+        return { merchantWallet: mw, splitAddress, fundingType: cardFunding || "credit" };
       }
     } catch (e) {
       console.error('[STRIPE WEBHOOK] Error resolving merchant:', e);
     }
-    return { merchantWallet: mw, splitAddress: mw, fundingType: useSeparateSplit ? "credit" : "debit" };
+    return { merchantWallet: mw, splitAddress: mw, fundingType: cardFunding || "credit" };
   }
   return null;
 }
@@ -157,17 +154,8 @@ export async function POST(req: NextRequest) {
       cardFunding = "credit";
     }
 
-    let useSeparateSplit = true; // Default to true (Credit split / splitAddress)
-    if (isDual) {
-      if (cardFunding === "debit") {
-        useSeparateSplit = false; // Debit card goes to splitAddressCredit
-      } else {
-        useSeparateSplit = true; // Credit and ACH go to splitAddress
-      }
-    }
-
     // Resolve merchant context from metadata
-    const context = await resolveMerchantFromMetadata(metadata, container, brandKey, useSeparateSplit);
+    const context = await resolveMerchantFromMetadata(metadata, container, brandKey, cardFunding);
     const merchantWallet = context?.merchantWallet;
     const splitAddress = context?.splitAddress;
 
@@ -179,7 +167,7 @@ export async function POST(req: NextRequest) {
         brandKey,
         merchantWallet,
         splitAddress,
-        fundingType: context?.fundingType || (useSeparateSplit ? "credit" : "debit"),
+        fundingType: context?.fundingType || cardFunding || "credit",
         sessionId,
         status,
         stripeEventType: type,

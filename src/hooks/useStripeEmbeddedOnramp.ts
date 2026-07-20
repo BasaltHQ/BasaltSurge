@@ -1402,7 +1402,7 @@ export function useStripeEmbeddedOnramp({
     
     const execute = async (amt?: number): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
       try {
-        const fundingTypeToUse = funding !== undefined ? funding : detectedCardFunding;
+        const fundingTypeToUse = funding !== undefined ? funding : (detectedCardFunding || sessionFundingRef.current);
         const settlementSpeed = (fundingTypeToUse === "credit" || fundingTypeToUse === "debit") ? "instant" : "standard";
 
 
@@ -1713,7 +1713,7 @@ export function useStripeEmbeddedOnramp({
           fundsDelivered = true;
           const method = statusData.paymentMethod || null;
           const funding = statusData.paymentDetails?.card?.funding || null;
-          let resolvedFunding = funding || detectedCardFunding;
+          let resolvedFunding = funding || detectedCardFunding || sessionFundingRef.current;
           if (!resolvedFunding && method) {
             const methodLower = String(method).toLowerCase();
             if (methodLower.includes("debit")) {
