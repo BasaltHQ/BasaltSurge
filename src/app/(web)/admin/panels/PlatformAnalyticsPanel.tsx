@@ -2296,7 +2296,6 @@ export default function PlatformAnalyticsPanel() {
 
                                     // 4. Stage 2: Customer Identified
                                     const customerIdentified = statusList.includes("buyer_logged_in") ||
-                                      statusList.includes("checkout_initialized") ||
                                       statusList.includes("checkout_session_created") ||
                                       !!r.customerEmail ||
                                       !!r.stripeEmail ||
