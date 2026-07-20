@@ -3,6 +3,7 @@ import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth } from "@/lib/auth";
 import { isPlatformSuperAdmin } from "@/lib/authz";
 import { getBrandKey } from "@/config/brands";
+import { POST as runAutoclose } from "../../cron/autoclose/route";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,121 @@ export async function GET(req: NextRequest) {
     }
 
     const isPlatform = brandKey === "portalpay" || brandKey === "basaltsurge";
+
+    const { searchParams } = new URL(req.url);
+    const action = searchParams.get("action");
+    if (action === "inspect") {
+      const brandsParam = searchParams.get("brands") || "";
+      const selectedBrands = brandsParam.split(",").map(b => b.trim().toLowerCase()).filter(Boolean);
+      if (selectedBrands.length === 0) {
+        return NextResponse.json({ ok: true, splitsCount: 0, balances: { USDC: 0, USDT: 0, ETH: 0 }, totalUsdcEquivalent: 0 });
+      }
+
+      // Query site configs to find splits for these brands
+      const siteConfigContainer = await getContainer();
+      const querySpec = {
+        query: "SELECT c.id, c.brandKey, c.config, c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitHistory FROM c WHERE c.type = 'site_config'",
+      };
+      const { resources: allSiteConfigs } = await siteConfigContainer.items.query(querySpec).fetchAll();
+
+      const splitAddresses = new Set<string>();
+      const isValidHexAddress = (addr: any) =>
+        typeof addr === "string" && /^0x[a-f0-9]{40}$/i.test(addr.trim());
+
+      for (const doc of allSiteConfigs || []) {
+        let docBrand = doc?.brandKey || doc?.config?.brandKey || "";
+        if (!docBrand && doc?.id?.startsWith("site:config:")) {
+          const match = /^site:config:(.+)$/.exec(doc.id);
+          if (match) docBrand = match[1];
+        }
+        docBrand = String(docBrand || "").trim().toLowerCase();
+        if (!docBrand || docBrand === "portalpay") {
+          docBrand = "basaltsurge";
+        }
+
+        if (selectedBrands.includes(docBrand)) {
+          const addMapping = (addr: any) => {
+            if (isValidHexAddress(addr)) splitAddresses.add(addr.toLowerCase());
+          };
+          addMapping(doc?.splitAddress);
+          addMapping(doc?.splitAddressCredit);
+          addMapping(doc?.split?.address);
+          addMapping(doc?.config?.split?.address);
+          addMapping(doc?.config?.splitAddress);
+          if (Array.isArray(doc.splitHistory)) {
+            for (const h of doc.splitHistory) {
+              addMapping(h?.address);
+            }
+          }
+        }
+      }
+
+      const uniqueSplits = Array.from(splitAddresses);
+      if (uniqueSplits.length === 0) {
+        return NextResponse.json({ ok: true, splitsCount: 0, balances: { USDC: 0, USDT: 0, ETH: 0 }, totalUsdcEquivalent: 0 });
+      }
+
+      // Query balances on chain
+      const { chain, serverClient } = await import("@/lib/thirdweb/server");
+      const { getRpcClient, eth_getBalance } = await import("thirdweb/rpc");
+      const rpc = getRpcClient({ client: serverClient, chain });
+
+      const USDC = (process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").toLowerCase();
+      const USDT = (process.env.NEXT_PUBLIC_BASE_USDT_ADDRESS || "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2").toLowerCase();
+
+      const addrToTopic = (addr: string): string =>
+        "000000000000000000000000" + addr.replace(/^0x/, "");
+
+      const erc20BalanceOf = async (token: string, targetWallet: string): Promise<bigint> => {
+        try {
+          const data = ("0x70a08231" + addrToTopic(targetWallet)) as `0x${string}`;
+          const { eth_call } = await import("thirdweb/rpc");
+          const r = await eth_call(rpc, { to: token as `0x${string}`, data });
+          const h = (String(r || "0x0")).startsWith("0x") ? String(r) : ("0x" + String(r));
+          return BigInt(h);
+        } catch {
+          return BigInt(0);
+        }
+      };
+
+      let totalUsdc = BigInt(0);
+      let totalUsdt = BigInt(0);
+      let totalEth = BigInt(0);
+
+      // Check balances in parallel
+      await Promise.all(
+        uniqueSplits.map(async (splitAddr) => {
+          const [usdcBal, usdtBal, ethWei] = await Promise.all([
+            erc20BalanceOf(USDC, splitAddr),
+            erc20BalanceOf(USDT, splitAddr),
+            eth_getBalance(rpc, { address: splitAddr as `0x${string}` }).catch(() => "0x0").then(BigInt)
+          ]);
+          totalUsdc += usdcBal;
+          totalUsdt += usdtBal;
+          totalEth += ethWei;
+        })
+      );
+
+      // Format balances
+      const usdcFormatted = Number(totalUsdc) / 1e6;
+      const usdtFormatted = Number(totalUsdt) / 1e6;
+      const ethFormatted = Number(totalEth) / 1e18;
+
+      // Estimate total USDC equivalent (approximating ETH to USD, e.g. $3000/ETH)
+      const ethPriceUsd = 3000; 
+      const totalUsdcEquivalent = usdcFormatted + usdtFormatted + (ethFormatted * ethPriceUsd);
+
+      return NextResponse.json({
+        ok: true,
+        splitsCount: uniqueSplits.length,
+        balances: {
+          USDC: +usdcFormatted.toFixed(2),
+          USDT: +usdtFormatted.toFixed(2),
+          ETH: +ethFormatted.toFixed(6)
+        },
+        totalUsdcEquivalent: +totalUsdcEquivalent.toFixed(2)
+      });
+    }
 
     // 3. Query the runs from Cosmos DB
     // Partition key is the SCA address: 0x6c28067a2D4F10013FbBb8534aCd76Ab43A4fF9f
@@ -86,7 +202,25 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ ok: true, runs: filteredRuns, pendingAch });
+    let allBrands: string[] = [];
+    try {
+      const siteConfigContainer = await getContainer();
+      const brandsQuery = {
+        query: "SELECT DISTINCT VALUE c.brandKey FROM c WHERE c.type = 'site_config'"
+      };
+      const { resources: brandsList } = await siteConfigContainer.items.query(brandsQuery).fetchAll();
+      // Filter out empty, clean up duplicates, and restrict to valid brand key formats (alphanumeric and hyphens only) to ignore test injection payloads
+      const cleaned = (brandsList || [])
+        .map(b => String(b || "").trim().toLowerCase())
+        .filter(b => /^[a-z0-9-]+$/.test(b) && b.length >= 2 && b.length <= 30);
+      // Map portalpay to basaltsurge for consistency
+      const mapped = cleaned.map(b => b === "portalpay" ? "basaltsurge" : b);
+      allBrands = Array.from(new Set(mapped));
+    } catch (brandErr) {
+      console.warn("[api/admin/autoclose] Failed to fetch brand keys:", brandErr);
+    }
+
+    return NextResponse.json({ ok: true, runs: filteredRuns, pendingAch, allBrands });
   } catch (e: any) {
     console.error("[api/admin/autoclose] GET error:", e);
     return NextResponse.json({ error: e.message || "Failed to retrieve runs" }, { status: 500 });
@@ -294,7 +428,9 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Gate manually triggering to Platform Super Admins only
-    if (!isPlatformSuperAdmin(caller.wallet)) {
+    const { resolveAdminRole } = await import("@/lib/authz-server");
+    const adminRole = await resolveAdminRole(caller.wallet);
+    if (adminRole !== "platform_super_admin") {
       return NextResponse.json(
         { error: "Forbidden: Only platform master administrators can trigger manual runs." },
         { status: 403 }
@@ -310,17 +446,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const cronUrl = `${req.nextUrl.origin}/api/cron/autoclose`;
+    const { searchParams: postParams } = new URL(req.url);
+    let brandKeysStr = postParams.get("brandKeys") || postParams.get("brand_keys") || "";
+    if (!brandKeysStr) {
+      try {
+        const bodyParams = await req.json().catch(() => ({}));
+        brandKeysStr = bodyParams.brandKeys || bodyParams.brand_keys || "";
+      } catch {}
+    }
+
+    let cronUrl = `${req.nextUrl.origin}/api/cron/autoclose?cronSecret=${encodeURIComponent(cronSecret)}&manual=true&force=true`;
+    if (brandKeysStr) {
+      cronUrl += `&brandKeys=${encodeURIComponent(brandKeysStr)}`;
+    }
     console.log(`[api/admin/autoclose] Manual close trigger by ${caller.wallet}. Requesting: ${cronUrl}`);
 
-    const res = await fetch(cronUrl, {
-      method: "POST",
-      headers: {
-        "x-cron-secret": cronSecret,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ manual: true }),
-    });
+    let res;
+    try {
+      // Try direct function invocation first to bypass loopback DNS/SSL/network restrictions
+      const mockReq = new NextRequest(cronUrl, {
+        method: "GET",
+      });
+      res = await runAutoclose(mockReq);
+    } catch (directErr: any) {
+      console.warn(`[api/admin/autoclose] Direct invocation failed, falling back to fetch:`, directErr);
+      res = await fetch(cronUrl, {
+        method: "GET",
+      });
+    }
 
     if (!res.ok) {
       const errorText = await res.text();

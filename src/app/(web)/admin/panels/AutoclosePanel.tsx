@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useBrand } from "@/contexts/BrandContext";
 import { useActiveAccount } from "thirdweb/react";
 import { 
@@ -18,7 +19,8 @@ import {
   TrendingUp,
   Activity,
   Award,
-  RefreshCw
+  RefreshCw,
+  X
 } from "lucide-react";
 import { isPlatformSuperAdmin } from "@/lib/authz";
 import TruncatedAddress from "@/components/truncated-address";
@@ -62,6 +64,27 @@ export default function AutoclosePanel() {
   const [loading, setLoading] = useState(true);
   const [runs, setRuns] = useState<Run[]>([]);
   const [pendingAch, setPendingAch] = useState<any[]>([]);
+
+  // Brand selector & estimate modal states
+  const [allBrands, setAllBrands] = useState<string[]>([]);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
+  const [estimating, setEstimating] = useState(false);
+  const [estimatedBalances, setEstimatedBalances] = useState<{
+    splitsCount: number;
+    balances: { USDC: number; USDT: number; ETH: number };
+    totalUsdcEquivalent: number;
+  } | null>(null);
+  const [estimateError, setEstimateError] = useState("");
+
+  // HUD balances states
+  const [hudBalances, setHudBalances] = useState<{
+    splitsCount: number;
+    balances: { USDC: number; USDT: number; ETH: number };
+    totalUsdcEquivalent: number;
+  } | null>(null);
+  const [loadingHud, setLoadingHud] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   // Pending ACH Search & Sorting
   const [achSearch, setAchSearch] = useState("");
@@ -205,6 +228,24 @@ export default function AutoclosePanel() {
     return nextUTC.getTime();
   };
 
+  const loadHudBalances = async (brandsToQuery: string[]) => {
+    if (brandsToQuery.length === 0) return;
+    try {
+      setLoadingHud(true);
+      const res = await fetch(`/api/admin/autoclose?action=inspect&brands=${encodeURIComponent(brandsToQuery.join(","))}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ok) {
+          setHudBalances(data);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to load HUD balances:", err);
+    } finally {
+      setLoadingHud(false);
+    }
+  };
+
   // 1. Fetch runs history
   const loadRuns = async () => {
     try {
@@ -217,6 +258,16 @@ export default function AutoclosePanel() {
       const data = await res.json();
       setRuns(data.runs || []);
       setPendingAch(data.pendingAch || []);
+      
+      const brandsList = Array.isArray(data.allBrands) ? data.allBrands : [];
+      setAllBrands(brandsList);
+
+      // Trigger HUD load depending on platform or partner context
+      const isPlatformCtx = brandKey === "portalpay" || brandKey === "basaltsurge";
+      const targetBrands = isPlatformCtx ? brandsList : [brandKey];
+      if (targetBrands.length > 0) {
+        loadHudBalances(targetBrands);
+      }
     } catch (err: any) {
       setError(err?.message || "Failed to load autoclose runs");
     } finally {
@@ -225,6 +276,7 @@ export default function AutoclosePanel() {
   };
 
   useEffect(() => {
+    setMounted(true);
     loadRuns();
   }, [brandKey]);
 
@@ -270,6 +322,51 @@ export default function AutoclosePanel() {
         throw new Error(data?.error || "Failed to execute manual run");
       }
       setSuccess("Daily close settlement executed successfully!");
+      loadRuns(); // Reload history
+    } catch (err: any) {
+      setError(err?.message || "Failed to trigger manual settlement");
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  const inspectBrandSplits = async () => {
+    if (selectedBrands.length === 0) return;
+    try {
+      setEstimating(true);
+      setEstimateError("");
+      setEstimatedBalances(null);
+      const res = await fetch(`/api/admin/autoclose?action=inspect&brands=${encodeURIComponent(selectedBrands.join(","))}`);
+      if (!res.ok) throw new Error("Failed to inspect split balances");
+      const data = await res.json();
+      if (data.ok) {
+        setEstimatedBalances(data);
+      } else {
+        throw new Error(data.error || "Failed to inspect split balances");
+      }
+    } catch (err: any) {
+      setEstimateError(err.message || "Failed to query balances");
+    } finally {
+      setEstimating(false);
+    }
+  };
+
+  const executeAutocloseForBrands = async () => {
+    try {
+      setTriggering(true);
+      setError("");
+      setSuccess("");
+      const res = await fetch("/api/admin/autoclose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brandKeys: selectedBrands.join(",") })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to execute manual close");
+      }
+      setSuccess("Daily close settlement executed successfully for selected brands!");
+      setShowCloseModal(false);
       loadRuns(); // Reload history
     } catch (err: any) {
       setError(err?.message || "Failed to trigger manual settlement");
@@ -373,7 +470,12 @@ export default function AutoclosePanel() {
           </div>
           {isSuper && (
             <button
-              onClick={triggerManualClose}
+              onClick={() => {
+                setSelectedBrands(allBrands.length > 0 ? [...allBrands] : ["basaltsurge"]);
+                setEstimatedBalances(null);
+                setEstimateError("");
+                setShowCloseModal(true);
+              }}
               disabled={triggering}
               className="px-4 py-2.5 rounded-xl bg-primary text-black font-semibold text-sm transition-all hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
             >
@@ -385,6 +487,63 @@ export default function AutoclosePanel() {
               <span>Trigger Now</span>
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Potential Close HUD */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-5 flex flex-col justify-between min-h-[110px]">
+          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Active Splits</span>
+          {loadingHud ? (
+            <div className="h-6 w-16 bg-foreground/10 animate-pulse rounded mt-2" />
+          ) : (
+            <span className="text-2xl font-bold text-white mt-1">
+              {hudBalances?.splitsCount || 0}
+            </span>
+          )}
+          <span className="text-[10px] text-muted-foreground mt-1">Split contracts indexed</span>
+        </div>
+
+        <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-5 flex flex-col justify-between min-h-[110px]">
+          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">USDC Balance</span>
+          {loadingHud ? (
+            <div className="h-6 w-24 bg-foreground/10 animate-pulse rounded mt-2" />
+          ) : (
+            <span className="text-2xl font-bold text-white mt-1">
+              ${(hudBalances?.balances.USDC || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+            </span>
+          )}
+          <span className="text-[10px] text-muted-foreground mt-1">Unsettled USDC</span>
+        </div>
+
+        <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-5 flex flex-col justify-between min-h-[110px]">
+          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">USDT Balance</span>
+          {loadingHud ? (
+            <div className="h-6 w-24 bg-foreground/10 animate-pulse rounded mt-2" />
+          ) : (
+            <span className="text-2xl font-bold text-white mt-1">
+              ${(hudBalances?.balances.USDT || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+            </span>
+          )}
+          <span className="text-[10px] text-muted-foreground mt-1">Unsettled USDT</span>
+        </div>
+
+        <div className="relative overflow-hidden rounded-2xl border border-primary/20 bg-primary/[0.02] p-5 flex flex-col justify-between min-h-[110px] shadow-[inset_0_1px_1px_rgba(255,255,255,0.05),0_0_24px_rgba(53,255,124,0.03)]">
+          <div className="flex items-center justify-between w-full">
+            <span className="text-[10px] text-primary uppercase font-bold tracking-wider">Potential Close Value</span>
+            <Activity className="w-3.5 h-3.5 text-primary animate-pulse" />
+          </div>
+          {loadingHud ? (
+            <div className="h-7 w-28 bg-primary/20 animate-pulse rounded mt-2" />
+          ) : (
+            <span className="text-2xl font-bold text-primary mt-1">
+              ${(hudBalances?.totalUsdcEquivalent || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}
+            </span>
+          )}
+          <div className="flex items-center gap-1.5 mt-1 text-[10px] text-muted-foreground">
+            <span>Includes:</span>
+            <span className="font-semibold text-white">{(hudBalances?.balances.ETH || 0).toFixed(4)} ETH</span>
+          </div>
         </div>
       </div>
 
@@ -918,6 +1077,187 @@ export default function AutoclosePanel() {
           </div>
         )}
       </div>
+
+      {/* Bespoke Manual Close Modal */}
+      {mounted && showCloseModal && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 backdrop-blur-md bg-black/75 transition-all duration-300 animate-fadeIn">
+          <div className="relative w-full max-w-xl overflow-hidden rounded-3xl border border-foreground/10 bg-[#0c0d0e] p-6 text-white shadow-2xl transition-all transform scale-100 flex flex-col gap-6">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-foreground/5 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
+                  <Play className="w-5 h-5 fill-current" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold tracking-tight text-white">Manual Close Settlement</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">Select brands to calculate balances and trigger close settlement.</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCloseModal(false)}
+                className="p-1.5 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-muted-foreground hover:text-white transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Brand Keys List */}
+            <div className="space-y-3">
+              <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Select Brand Integrations</span>
+              <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto p-1.5 rounded-2xl border border-foreground/5 bg-foreground/[0.01]">
+                {allBrands.map((brandKeyOption) => {
+                  const isSelected = selectedBrands.includes(brandKeyOption);
+                  return (
+                    <button
+                      key={brandKeyOption}
+                      type="button"
+                      onClick={() => {
+                        if (isSelected) {
+                          setSelectedBrands(prev => prev.filter(b => b !== brandKeyOption));
+                        } else {
+                          setSelectedBrands(prev => [...prev, brandKeyOption]);
+                        }
+                        setEstimatedBalances(null);
+                        setEstimateError("");
+                      }}
+                      className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-all flex items-center gap-1.5 ${
+                        isSelected
+                          ? `bg-primary/10 border-primary text-primary shadow-[0_0_12px_rgba(53,255,124,0.1)]`
+                          : "bg-foreground/[0.02] border-foreground/10 text-muted-foreground hover:border-foreground/20 hover:text-white"
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? "bg-primary animate-ping" : "bg-muted-foreground"}`} />
+                      {brandKeyOption}
+                    </button>
+                  );
+                })}
+
+                {allBrands.length === 0 && (
+                  <span className="text-xs text-muted-foreground italic p-2">No brand integrations found.</span>
+                )}
+              </div>
+              
+              <div className="flex justify-between items-center text-[10px] text-muted-foreground px-1">
+                <span>{selectedBrands.length} selected</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedBrands.length === allBrands.length) {
+                      setSelectedBrands([]);
+                    } else {
+                      setSelectedBrands([...allBrands]);
+                    }
+                    setEstimatedBalances(null);
+                    setEstimateError("");
+                  }}
+                  className="hover:underline hover:text-white transition-all font-semibold"
+                >
+                  {selectedBrands.length === allBrands.length ? "Deselect All" : "Select All"}
+                </button>
+              </div>
+            </div>
+
+            {/* Action and Estimation Area */}
+            <div className="rounded-2xl border border-foreground/5 bg-foreground/[0.01] p-4 flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Split Index & Balances</span>
+                <button
+                  type="button"
+                  disabled={estimating || selectedBrands.length === 0}
+                  onClick={inspectBrandSplits}
+                  className="px-3 py-1.5 rounded-lg border border-foreground/10 hover:border-foreground/20 bg-foreground/5 hover:bg-foreground/10 text-xs font-semibold text-white transition-all disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {estimating ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-3 h-3" />
+                  )}
+                  <span>Calculate Potential Close</span>
+                </button>
+              </div>
+
+              {estimating && (
+                <div className="py-8 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                  <Activity className="w-8 h-8 text-primary animate-pulse" />
+                  <span className="text-xs animate-pulse">Scanning splits and fetching blockchain balances...</span>
+                </div>
+              )}
+
+              {estimateError && (
+                <div className="text-xs font-medium text-rose-400 bg-rose-500/5 p-3 rounded-xl border border-rose-500/10 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+                  <span>{estimateError}</span>
+                </div>
+              )}
+
+              {!estimating && !estimateError && estimatedBalances && (
+                <div className="space-y-3.5 animate-fadeIn">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground border-b border-foreground/5 pb-2">
+                    <span>Active Split Contracts Found:</span>
+                    <span className="font-semibold text-white">{estimatedBalances.splitsCount}</span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="flex flex-col p-2.5 rounded-xl border border-foreground/5 bg-foreground/[0.02]">
+                      <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">USDC</span>
+                      <span className="text-sm font-bold text-white mt-1">${estimatedBalances.balances.USDC.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                    </div>
+                    <div className="flex flex-col p-2.5 rounded-xl border border-foreground/5 bg-foreground/[0.02]">
+                      <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">USDT</span>
+                      <span className="text-sm font-bold text-white mt-1">${estimatedBalances.balances.USDT.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                    </div>
+                    <div className="flex flex-col p-2.5 rounded-xl border border-foreground/5 bg-foreground/[0.02]">
+                      <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">ETH</span>
+                      <span className="text-sm font-bold text-white mt-1">{estimatedBalances.balances.ETH.toFixed(4)} ETH</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3 rounded-xl border border-primary/20 bg-primary/[0.03] mt-2">
+                    <div className="flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-primary" />
+                      <span className="text-xs font-semibold text-white">Estimated Close Value (USD):</span>
+                    </div>
+                    <span className="text-base font-bold text-primary">${estimatedBalances.totalUsdcEquivalent.toLocaleString(undefined, {minimumFractionDigits: 2})}</span>
+                  </div>
+                </div>
+              )}
+
+              {!estimating && !estimatedBalances && !estimateError && (
+                <div className="py-6 text-center text-xs text-muted-foreground italic border border-dashed border-foreground/10 rounded-2xl">
+                  Click "Calculate Potential Close" to view estimated balances across the selected brands' split contracts.
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-3 border-t border-foreground/5 pt-4">
+              <button
+                type="button"
+                onClick={() => setShowCloseModal(false)}
+                className="px-4 py-2.5 rounded-xl border border-foreground/10 hover:border-foreground/20 hover:bg-foreground/5 text-xs font-semibold text-white transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={triggering || selectedBrands.length === 0}
+                onClick={executeAutocloseForBrands}
+                className="px-5 py-2.5 rounded-xl bg-primary text-black font-semibold text-xs transition-all hover:opacity-90 disabled:opacity-50 flex items-center gap-2 shadow-[0_0_24px_rgba(53,255,124,0.15)]"
+              >
+                {triggering ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                )}
+                <span>Confirm & Close {selectedBrands.length} Brand(s)</span>
+              </button>
+            </div>
+            
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
