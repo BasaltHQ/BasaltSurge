@@ -3,6 +3,7 @@ import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth } from "@/lib/auth";
 import { isPlatformSuperAdmin } from "@/lib/authz";
 import { getBrandKey } from "@/config/brands";
+import { POST as runAutoclose } from "../../cron/autoclose/route";
 
 export const dynamic = "force-dynamic";
 
@@ -294,7 +295,9 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Gate manually triggering to Platform Super Admins only
-    if (!isPlatformSuperAdmin(caller.wallet)) {
+    const { resolveAdminRole } = await import("@/lib/authz-server");
+    const adminRole = await resolveAdminRole(caller.wallet);
+    if (adminRole !== "platform_super_admin") {
       return NextResponse.json(
         { error: "Forbidden: Only platform master administrators can trigger manual runs." },
         { status: 403 }
@@ -310,17 +313,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const cronUrl = `${req.nextUrl.origin}/api/cron/autoclose`;
+    const cronUrl = `${req.nextUrl.origin}/api/cron/autoclose?cronSecret=${encodeURIComponent(cronSecret)}&manual=true&force=true`;
     console.log(`[api/admin/autoclose] Manual close trigger by ${caller.wallet}. Requesting: ${cronUrl}`);
 
-    const res = await fetch(cronUrl, {
-      method: "POST",
-      headers: {
-        "x-cron-secret": cronSecret,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ manual: true }),
-    });
+    let res;
+    try {
+      // Try direct function invocation first to bypass loopback DNS/SSL/network restrictions
+      const mockReq = new NextRequest(cronUrl, {
+        method: "GET",
+      });
+      res = await runAutoclose(mockReq);
+    } catch (directErr: any) {
+      console.warn(`[api/admin/autoclose] Direct invocation failed, falling back to fetch:`, directErr);
+      res = await fetch(cronUrl, {
+        method: "GET",
+      });
+    }
 
     if (!res.ok) {
       const errorText = await res.text();
