@@ -170,6 +170,16 @@ export default function PlatformAnalyticsPanel() {
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [timeRange, setTimeRange] = useState<string>("all");
+  const [customStartDate, setCustomStartDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().split("T")[0];
+  });
+  const [customEndDate, setCustomEndDate] = useState<string>(() => {
+    return new Date().toISOString().split("T")[0];
+  });
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState<number>(0);
+  const [selectedMonthOffset, setSelectedMonthOffset] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [kycFilter, setKycFilter] = useState<string>("all");
 
@@ -319,6 +329,34 @@ export default function PlatformAnalyticsPanel() {
     return colors[idx % colors.length];
   }, [brandColors]);
 
+  // Helper to resolve Monday-to-Sunday date range for a given week offset
+  const getWeekRange = useCallback((offset: number) => {
+    const now = new Date();
+    const day = now.getDay();
+    // Monday of this week (getDay() 0 is Sunday, so diff to Monday is 1 if Mon, -6 if Sun)
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(now.getFullYear(), now.getMonth(), diff + offset * 7);
+    monday.setHours(0, 0, 0, 0);
+
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+
+    return { start: monday, end: sunday };
+  }, []);
+
+  // Helper to resolve month boundaries for a given month offset
+  const getMonthRange = useCallback((offset: number) => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
+    end.setHours(23, 59, 59, 999);
+
+    return { start, end };
+  }, []);
+
   // Base Filter & Search Receipts (excluding selected combo)
   const baseFilteredReceipts = useMemo(() => {
     return recentReceipts.filter(r => {
@@ -340,11 +378,17 @@ export default function PlatformAnalyticsPanel() {
           const startOfYesterdayMs = startOfTodayMs - 24 * 60 * 60 * 1000;
           matchesTime = itemTime >= startOfYesterdayMs && itemTime < startOfTodayMs;
         } else if (timeRange === "weekly") {
-          const startOfSevenDaysAgoMs = startOfTodayMs - 7 * 24 * 60 * 60 * 1000;
-          matchesTime = itemTime >= startOfSevenDaysAgoMs;
+          const { start, end } = getWeekRange(selectedWeekOffset);
+          matchesTime = itemTime >= start.getTime() && itemTime <= end.getTime();
         } else if (timeRange === "monthly") {
-          const startOfThirtyDaysAgoMs = startOfTodayMs - 30 * 24 * 60 * 60 * 1000;
-          matchesTime = itemTime >= startOfThirtyDaysAgoMs;
+          const { start, end } = getMonthRange(selectedMonthOffset);
+          matchesTime = itemTime >= start.getTime() && itemTime <= end.getTime();
+        } else if (timeRange === "custom") {
+          const start = new Date(customStartDate);
+          start.setHours(0, 0, 0, 0);
+          const end = new Date(customEndDate);
+          end.setHours(23, 59, 59, 999);
+          matchesTime = itemTime >= start.getTime() && itemTime <= end.getTime();
         }
       }
 
@@ -495,22 +539,108 @@ export default function PlatformAnalyticsPanel() {
 
   // Compute dynamic stats based on filtered list to make HUD react to filters
   const dynamicStats = useMemo(() => {
-    const totalCreated = baseFilteredReceipts.length;
+    // If there is a search query, status filter, or KYC filter, we must use baseFilteredReceipts (client-side subset)
+    const hasComplexFilters = searchQuery.trim() !== "" || statusFilter !== "all" || kycFilter !== "all";
+
+    if (hasComplexFilters) {
+      const totalCreated = baseFilteredReceipts.length;
+      let totalPaid = 0;
+      let totalFailed = 0;
+      let totalGmv = 0;
+      let totalFees = 0;
+      const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
+
+      baseFilteredReceipts.forEach(r => {
+        if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
+          totalPaid++;
+          totalGmv += r.totalUsd;
+          totalFees += r.platformFee || 0;
+        } else if (r.status === "failed") {
+          totalFailed++;
+        }
+
+        const funding = String(r.cardFunding || "").toLowerCase();
+        if (funding === "us_bank_account") cardTypes.bank++;
+        else if (funding === "credit") cardTypes.credit++;
+        else if (funding === "debit") cardTypes.debit++;
+        else cardTypes.unknown++;
+      });
+
+      const successRate = totalCreated > 0 ? (totalPaid / totalCreated) * 100 : 0;
+      const aov = totalPaid > 0 ? totalGmv / totalPaid : 0;
+
+      return {
+        totalCreated,
+        totalPaid,
+        totalFailed,
+        successRate: +successRate.toFixed(1),
+        totalGmv: +totalGmv.toFixed(2),
+        totalFees: +totalFees.toFixed(2),
+        aov: +aov.toFixed(2),
+        cardTypes
+      };
+    }
+
+    // Otherwise, aggregate dynamic stats directly from dailySeries which covers the entire database history!
+    let totalCreated = 0;
     let totalPaid = 0;
     let totalFailed = 0;
     let totalGmv = 0;
     let totalFees = 0;
     const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
 
-    baseFilteredReceipts.forEach(r => {
-      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
-        totalPaid++;
-        totalGmv += r.totalUsd;
-        totalFees += r.platformFee || 0;
-      } else if (r.status === "failed") {
-        totalFailed++;
-      }
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayMs = startOfToday.getTime();
 
+    let startMs = 0;
+    let endMs = Infinity;
+
+    if (timeRange === "today") {
+      startMs = startOfTodayMs;
+    } else if (timeRange === "yesterday") {
+      startMs = startOfTodayMs - 24 * 60 * 60 * 1000;
+      endMs = startOfTodayMs;
+    } else if (timeRange === "weekly") {
+      const { start, end } = getWeekRange(selectedWeekOffset);
+      startMs = start.getTime();
+      endMs = end.getTime();
+    } else if (timeRange === "monthly") {
+      const { start, end } = getMonthRange(selectedMonthOffset);
+      startMs = start.getTime();
+      endMs = end.getTime();
+    } else if (timeRange === "custom") {
+      const start = new Date(customStartDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(customEndDate);
+      end.setHours(23, 59, 59, 999);
+      startMs = start.getTime();
+      endMs = end.getTime();
+    }
+
+    dailySeries.forEach(day => {
+      if (day.timestamp < startMs || day.timestamp >= endMs) return;
+
+      if (selectedBrand === "all") {
+        totalCreated += day.allTotal || 0;
+        totalPaid += day.allPaid || 0;
+        totalFailed += day.allFailed || 0;
+        totalGmv += day.allGmv || 0;
+        totalFees += day.allFees || 0;
+      } else {
+        const b = day.brands?.[selectedBrand];
+        if (b) {
+          totalCreated += b.total || 0;
+          totalPaid += b.paid || 0;
+          totalFailed += b.failed || 0;
+          totalGmv += b.gmv || 0;
+          totalFees += b.fees || 0;
+        }
+      }
+    });
+
+    // Populate cardTypes from baseFilteredReceipts as a fallback profile
+    baseFilteredReceipts.forEach(r => {
       const funding = String(r.cardFunding || "").toLowerCase();
       if (funding === "us_bank_account") cardTypes.bank++;
       else if (funding === "credit") cardTypes.credit++;
@@ -531,7 +661,7 @@ export default function PlatformAnalyticsPanel() {
       aov: +aov.toFixed(2),
       cardTypes
     };
-  }, [baseFilteredReceipts]);
+  }, [baseFilteredReceipts, dailySeries, timeRange, selectedBrand, searchQuery, statusFilter, kycFilter, customStartDate, customEndDate, selectedWeekOffset, selectedMonthOffset, getWeekRange, getMonthRange]);
 
   const hasActiveFilters = useMemo(() => {
     return (
@@ -614,12 +744,19 @@ export default function PlatformAnalyticsPanel() {
         return day.timestamp >= startOfYesterdayMs && day.timestamp < startOfTodayMs;
       }
       if (timeRange === "weekly") {
-        const startOfSevenDaysAgoMs = startOfTodayMs - 7 * 24 * 60 * 60 * 1000;
-        return day.timestamp >= startOfSevenDaysAgoMs;
+        const { start, end } = getWeekRange(selectedWeekOffset);
+        return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
       }
       if (timeRange === "monthly") {
-        const startOfThirtyDaysAgoMs = startOfTodayMs - 30 * 24 * 60 * 60 * 1000;
-        return day.timestamp >= startOfThirtyDaysAgoMs;
+        const { start, end } = getMonthRange(selectedMonthOffset);
+        return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
+      }
+      if (timeRange === "custom") {
+        const start = new Date(customStartDate);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(customEndDate);
+        end.setHours(23, 59, 59, 999);
+        return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
       }
       return true;
     });
@@ -723,28 +860,23 @@ export default function PlatformAnalyticsPanel() {
     lastYearToDateEnd.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
     const lastYearToDateEndMs = lastYearToDateEnd.getTime();
 
-    // Helper to calculate stats for a range
-    const getRangeStats = (startMs: number, endMs?: number) => {
+    // Helper to calculate stats for a range using dailySeries (all-time database aggregate)
+    const getSeriesRangeStats = (startMs: number, endMs?: number) => {
       let paidCount = 0;
       let failedCount = 0;
       let totalCount = 0;
       let gmv = 0;
       let fees = 0;
 
-      recentReceipts.forEach(r => {
-        if (!r.createdAt) return;
-        const t = new Date(r.createdAt).getTime();
-        if (t < startMs) return;
-        if (endMs !== undefined && t >= endMs) return;
+      dailySeries.forEach(day => {
+        if (day.timestamp < startMs) return;
+        if (endMs !== undefined && day.timestamp >= endMs) return;
 
-        totalCount++;
-        if (["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status)) {
-          paidCount++;
-          gmv += r.totalUsd || 0;
-          fees += (typeof r.platformFee === "number" ? r.platformFee : 0);
-        } else if (r.status === "failed") {
-          failedCount++;
-        }
+        totalCount += day.allTotal || 0;
+        paidCount += day.allPaid || 0;
+        failedCount += day.allFailed || 0;
+        gmv += day.allGmv || 0;
+        fees += day.allFees || 0;
       });
 
       const denom = successRateMode === "integration" ? totalCount : (paidCount + failedCount);
@@ -753,14 +885,14 @@ export default function PlatformAnalyticsPanel() {
       return { paidCount, totalCount, successRate, gmv, fees };
     };
 
-    const todayStats = getRangeStats(startOfTodayMs);
-    const yesterdayStats = getRangeStats(startOfYesterdayMs, startOfTodayMs);
+    const todayStats = getSeriesRangeStats(startOfTodayMs);
+    const yesterdayStats = getSeriesRangeStats(startOfYesterdayMs, startOfTodayMs);
     
-    const mtdThisMonth = getRangeStats(startOfThisMonthMs);
-    const mtdLastMonth = getRangeStats(startOfLastMonthMs, lastMonthToDateEndMs);
+    const mtdThisMonth = getSeriesRangeStats(startOfThisMonthMs);
+    const mtdLastMonth = getSeriesRangeStats(startOfLastMonthMs, lastMonthToDateEndMs);
 
-    const ytdThisYear = getRangeStats(startOfThisYearMs);
-    const ytdLastYear = getRangeStats(startOfLastYearMs, lastYearToDateEndMs);
+    const ytdThisYear = getSeriesRangeStats(startOfThisYearMs);
+    const ytdLastYear = getSeriesRangeStats(startOfLastYearMs, lastYearToDateEndMs);
 
     const pctChange = (current: number, previous: number) => {
       if (previous === 0) return current > 0 ? 100 : 0;
@@ -777,7 +909,7 @@ export default function PlatformAnalyticsPanel() {
       gmvChangeMtd: pctChange(mtdThisMonth.gmv, mtdLastMonth.gmv),
       feesChangeYtd: pctChange(ytdThisYear.fees, ytdLastYear.fees),
     };
-  }, [recentReceipts, successRateMode]);
+  }, [dailySeries, successRateMode]);
 
   // Overall status distribution dataset for the DonutChart
   const statusPieData = useMemo(() => {
@@ -1079,25 +1211,93 @@ export default function PlatformAnalyticsPanel() {
               </div>
 
               {/* Time Range Selector */}
-              <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
-                {[
-                  { label: "Today", value: "today" },
-                  { label: "Yesterday", value: "yesterday" },
-                  { label: "Weekly", value: "weekly" },
-                  { label: "Monthly", value: "monthly" },
-                  { label: "All", value: "all" }
-                ].map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setTimeRange(opt.value)}
-                    className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${timeRange === opt.value
-                      ? "bg-primary text-white shadow-sm"
-                      : "text-muted-foreground hover:text-white"
-                      }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
+                <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+                  {[
+                    { label: "Today", value: "today" },
+                    { label: "Yesterday", value: "yesterday" },
+                    { label: "Weekly", value: "weekly" },
+                    { label: "Monthly", value: "monthly" },
+                    { label: "All", value: "all" },
+                    { label: "Custom", value: "custom" }
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setTimeRange(opt.value)}
+                      className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${timeRange === opt.value
+                        ? "bg-primary text-white shadow-sm"
+                        : "text-muted-foreground hover:text-white"
+                        }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom Date Pickers */}
+                {timeRange === "custom" && (
+                  <div className="flex items-center gap-1 bg-white/5 border border-white/5 px-2 py-0.5 rounded-lg h-7">
+                    <input
+                      type="date"
+                      value={customStartDate}
+                      onChange={e => setCustomStartDate(e.target.value)}
+                      className="bg-transparent border-0 text-[10px] text-white/90 focus:outline-none w-24 [color-scheme:dark]"
+                    />
+                    <span className="text-[9px] text-muted-foreground uppercase">to</span>
+                    <input
+                      type="date"
+                      value={customEndDate}
+                      onChange={e => setCustomEndDate(e.target.value)}
+                      className="bg-transparent border-0 text-[10px] text-white/90 focus:outline-none w-24 [color-scheme:dark]"
+                    />
+                  </div>
+                )}
+
+                {/* Weekly/Monthly Pagination */}
+                {(timeRange === "weekly" || timeRange === "monthly") && (
+                  <div className="flex items-center gap-2 bg-white/5 border border-white/5 px-2 py-0.5 rounded-lg h-7">
+                    <button
+                      onClick={() => {
+                        if (timeRange === "weekly") {
+                          setSelectedWeekOffset(prev => prev - 1);
+                        } else {
+                          setSelectedMonthOffset(prev => prev - 1);
+                        }
+                      }}
+                      className="text-muted-foreground hover:text-white text-xs font-bold px-1 transition-colors"
+                      title="Previous"
+                    >
+                      &lt;
+                    </button>
+                    <span className="text-[10px] text-white font-medium select-none">
+                      {timeRange === "weekly" ? (
+                        (() => {
+                          const { start, end } = getWeekRange(selectedWeekOffset);
+                          return `Week of ${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+                        })()
+                      ) : (
+                        (() => {
+                          const { start } = getMonthRange(selectedMonthOffset);
+                          return start.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+                        })()
+                      )}
+                    </span>
+                    <button
+                      onClick={() => {
+                        if (timeRange === "weekly") {
+                          setSelectedWeekOffset(prev => Math.min(0, prev + 1));
+                        } else {
+                          setSelectedMonthOffset(prev => Math.min(0, prev + 1));
+                        }
+                      }}
+                      disabled={timeRange === "weekly" ? selectedWeekOffset >= 0 : selectedMonthOffset >= 0}
+                      className="text-muted-foreground hover:text-white disabled:opacity-30 disabled:pointer-events-none text-xs font-bold px-1 transition-colors"
+                      title="Next"
+                    >
+                      &gt;
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Rollercoaster Ride Button */}
@@ -1700,7 +1900,71 @@ export default function PlatformAnalyticsPanel() {
                 <option value="yesterday" className="bg-neutral-900">Yesterday</option>
                 <option value="weekly" className="bg-neutral-900">Weekly</option>
                 <option value="monthly" className="bg-neutral-900">Monthly</option>
+                <option value="custom" className="bg-neutral-900">Custom Range</option>
               </select>
+
+              {timeRange === "custom" && (
+                <div className="flex items-center gap-1.5 bg-white/5 border border-white/5 px-2 py-1 rounded-lg h-9">
+                  <input
+                    type="date"
+                    value={customStartDate}
+                    onChange={e => setCustomStartDate(e.target.value)}
+                    className="bg-transparent border-0 text-xs text-white/90 focus:outline-none w-28 [color-scheme:dark]"
+                  />
+                  <span className="text-[10px] text-muted-foreground uppercase">to</span>
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    onChange={e => setCustomEndDate(e.target.value)}
+                    className="bg-transparent border-0 text-xs text-white/90 focus:outline-none w-28 [color-scheme:dark]"
+                  />
+                </div>
+              )}
+
+              {(timeRange === "weekly" || timeRange === "monthly") && (
+                <div className="flex items-center gap-2 bg-white/5 border border-white/5 px-2.5 py-1 rounded-lg h-9">
+                  <button
+                    onClick={() => {
+                      if (timeRange === "weekly") {
+                        setSelectedWeekOffset(prev => prev - 1);
+                      } else {
+                        setSelectedMonthOffset(prev => prev - 1);
+                      }
+                    }}
+                    className="text-muted-foreground hover:text-white text-sm font-bold px-1 transition-colors"
+                    title="Previous"
+                  >
+                    &lt;
+                  </button>
+                  <span className="text-xs text-white font-medium select-none">
+                    {timeRange === "weekly" ? (
+                      (() => {
+                        const { start, end } = getWeekRange(selectedWeekOffset);
+                        return `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+                      })()
+                    ) : (
+                      (() => {
+                        const { start } = getMonthRange(selectedMonthOffset);
+                        return start.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+                      })()
+                    )}
+                  </span>
+                  <button
+                    onClick={() => {
+                      if (timeRange === "weekly") {
+                        setSelectedWeekOffset(prev => Math.min(0, prev + 1));
+                      } else {
+                        setSelectedMonthOffset(prev => Math.min(0, prev + 1));
+                      }
+                    }}
+                    disabled={timeRange === "weekly" ? selectedWeekOffset >= 0 : selectedMonthOffset >= 0}
+                    className="text-muted-foreground hover:text-white disabled:opacity-30 disabled:pointer-events-none text-sm font-bold px-1 transition-colors"
+                    title="Next"
+                  >
+                    &gt;
+                  </button>
+                </div>
+              )}
 
               <select
                 value={fetchLimit}
