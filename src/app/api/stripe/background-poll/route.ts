@@ -272,12 +272,16 @@ async function runBackgroundPoll(params: {
           const container = await getContainer();
           const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
           const { resource: receipt } = await container.item(docId, merchantWallet).read();
-          if (receipt && Array.isArray(receipt.customerSessions)) {
-            for (const s of receipt.customerSessions) {
-              const funding = s.paymentMethodDetails?.card?.funding;
-              if (funding) {
-                dbFunding = funding;
-                break;
+          if (receipt) {
+            if (receipt.detectedCardFunding) {
+              dbFunding = receipt.detectedCardFunding;
+            } else if (Array.isArray(receipt.customerSessions)) {
+              for (const s of receipt.customerSessions) {
+                const funding = s.paymentMethodDetails?.card?.funding;
+                if (funding) {
+                  dbFunding = funding;
+                  break;
+                }
               }
             }
           }
