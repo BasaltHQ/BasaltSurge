@@ -95,6 +95,15 @@ export async function POST(req: NextRequest) {
         }
       } catch {}
     }
+
+    let targetBrands: string[] | null = null;
+    try {
+      const url = new URL(req.url);
+      const bkParam = url.searchParams.get("brandKeys") || url.searchParams.get("brand_keys");
+      if (bkParam) {
+        targetBrands = bkParam.split(",").map(b => b.trim().toLowerCase()).filter(Boolean);
+      }
+    } catch {}
     if (!cronSecret) {
       cronSecret = body.cronSecret;
     }
@@ -219,18 +228,20 @@ export async function POST(req: NextRequest) {
         docBrand = "basaltsurge";
       }
 
-      // Filter splits based on container scope:
-      // - Partner containers: ONLY process splits belonging to their own brand Key
-      // - Platform containers: ONLY process platform splits (basaltsurge, portalpay, or empty)
-      const isPlatformBrand = docBrand === "basaltsurge" || docBrand === "portalpay";
+      // Filter splits based on brand filter list (if provided) or container scope
       let shouldProcess = false;
-      if (isPlatformContainer) {
-        if (isPlatformBrand) {
-          shouldProcess = true;
-        }
+      if (targetBrands) {
+        shouldProcess = targetBrands.includes(docBrand);
       } else {
-        if (docBrand === currentBrandKey) {
-          shouldProcess = true;
+        const isPlatformBrand = docBrand === "basaltsurge" || docBrand === "portalpay";
+        if (isPlatformContainer) {
+          if (isPlatformBrand) {
+            shouldProcess = true;
+          }
+        } else {
+          if (docBrand === currentBrandKey) {
+            shouldProcess = true;
+          }
         }
       }
 
