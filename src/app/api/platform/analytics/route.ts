@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { resolveWalletRole } from "@/lib/authz";
+import { formatYMDInTimeZone, getDayRangeForYmdInTz } from "@/lib/timezone";
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,10 @@ export async function GET(req: NextRequest) {
         limit = parsed;
       }
     }
+
+    const timezoneMode = req.nextUrl.searchParams.get("timezoneMode") || "system";
+    const clientTimezone = req.headers.get("x-client-timezone") || "America/Los_Angeles";
+    const targetTimezone = timezoneMode === "dynamic" ? clientTimezone : "America/Los_Angeles";
 
     // 2. Fetch receipts and logs using MongoDB projection for performance if available
     if ((container as any).getCollection) {
@@ -328,9 +333,19 @@ export async function GET(req: NextRequest) {
     for (const r of allReceiptsLight) {
       if (!r.createdAt) continue;
       const d = new Date(r.createdAt);
-      // Group by absolute date string (e.g. "Jul 12")
-      const dateStr = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-      const dayStartTimestamp = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      // Group by absolute date string (e.g. "Jul 12") formatted in target timezone
+      const dateParts = new Intl.DateTimeFormat("en-US", {
+        timeZone: targetTimezone,
+        month: "short",
+        day: "numeric",
+      }).formatToParts(d);
+      const monthPart = dateParts.find(p => p.type === "month")?.value || "";
+      const dayPart = dateParts.find(p => p.type === "day")?.value || "";
+      const dateStr = `${monthPart} ${dayPart}`;
+
+      const ymd = formatYMDInTimeZone(targetTimezone, d);
+      const { start } = getDayRangeForYmdInTz(targetTimezone, ymd);
+      const dayStartTimestamp = start.getTime();
 
       if (!dailySeriesMap[dateStr]) {
         dailySeriesMap[dateStr] = {

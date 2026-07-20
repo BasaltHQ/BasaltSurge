@@ -27,6 +27,38 @@ import {
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 import RollercoasterOverlay from "../components/RollercoasterOverlay";
+import { formatYMDInTimeZone, getDayRangeForYmdInTz, zonedTimeToUtcDate } from "@/lib/timezone";
+
+const SYSTEM_TIMEZONE = "America/Los_Angeles";
+const DYNAMIC_TIMEZONE = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
+
+function getPacificComponents(date: Date) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: SYSTEM_TIMEZONE,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false
+  });
+  const parts = formatter.formatToParts(date);
+  const map: Record<string, string> = {};
+  for (const p of parts) map[p.type] = p.value;
+  
+  const dtf = new Intl.DateTimeFormat("en-US", { timeZone: SYSTEM_TIMEZONE, weekday: "short" });
+  const dayName = dtf.format(date);
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const day = dayNames.indexOf(dayName);
+  
+  return {
+    year: Number(map.year),
+    month: Number(map.month),
+    date: Number(map.day),
+    day
+  };
+}
 
 interface Stat {
   totalCreated: number;
@@ -207,6 +239,7 @@ export default function PlatformAnalyticsPanel() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(25);
   const [successRateMode, setSuccessRateMode] = useState<"integration" | "process">("integration");
+  const [timezoneMode, setTimezoneMode] = useState<"system" | "dynamic">("system");
   const [fetchLimit, setFetchLimit] = useState<number | "all">(500);
 
   // Reset page when filters change
@@ -254,9 +287,11 @@ export default function PlatformAnalyticsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/platform/analytics?limit=${fetchLimit}`, {
+      const clientTz = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
+      const res = await fetch(`/api/platform/analytics?limit=${fetchLimit}&timezoneMode=${timezoneMode}`, {
         headers: {
           "x-wallet": wallet,
+          "x-client-timezone": clientTz
         },
         cache: "no-store",
       });
@@ -274,7 +309,7 @@ export default function PlatformAnalyticsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [wallet, fetchLimit]);
+  }, [wallet, fetchLimit, timezoneMode]);
 
   const fetchSafeBalances = useCallback(async () => {
     if (!wallet) return;
@@ -329,31 +364,23 @@ export default function PlatformAnalyticsPanel() {
     return colors[idx % colors.length];
   }, [brandColors]);
 
-  // Helper to resolve Monday-to-Sunday date range for a given week offset
+  // Helper to resolve Monday-to-Sunday date range for a given week offset in System Time (Pacific)
   const getWeekRange = useCallback((offset: number) => {
     const now = new Date();
-    const day = now.getDay();
-    // Monday of this week (getDay() 0 is Sunday, so diff to Monday is 1 if Mon, -6 if Sun)
-    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-    const monday = new Date(now.getFullYear(), now.getMonth(), diff + offset * 7);
-    monday.setHours(0, 0, 0, 0);
-
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    sunday.setHours(23, 59, 59, 999);
-
-    return { start: monday, end: sunday };
+    const { year, month, date, day } = getPacificComponents(now);
+    // Monday of this week (day: 0 is Sunday, so diff to Monday is 1 if Mon, -6 if Sun)
+    const diff = date - day + (day === 0 ? -6 : 1);
+    const start = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, diff + offset * 7, 0, 0, 0, 0);
+    const end = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, diff + offset * 7 + 6, 23, 59, 59, 999);
+    return { start, end };
   }, []);
 
-  // Helper to resolve month boundaries for a given month offset
+  // Helper to resolve month boundaries for a given month offset in System Time (Pacific)
   const getMonthRange = useCallback((offset: number) => {
     const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth() + offset, 1);
-    start.setHours(0, 0, 0, 0);
-
-    const end = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
-    end.setHours(23, 59, 59, 999);
-
+    const { year, month } = getPacificComponents(now);
+    const start = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month + offset, 1, 0, 0, 0, 0);
+    const end = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month + offset + 1, 0, 23, 59, 59, 999);
     return { start, end };
   }, []);
 
@@ -368,14 +395,17 @@ export default function PlatformAnalyticsPanel() {
       let matchesTime = true;
       if (r.createdAt && timeRange !== "all") {
         const itemTime = new Date(r.createdAt).getTime();
-        const startOfToday = new Date();
-        startOfToday.setHours(0, 0, 0, 0);
-        const startOfTodayMs = startOfToday.getTime();
+        const now = new Date();
+        const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
+        const { start: todayStart } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
+        const startOfTodayMs = todayStart.getTime();
 
         if (timeRange === "today") {
           matchesTime = itemTime >= startOfTodayMs;
         } else if (timeRange === "yesterday") {
-          const startOfYesterdayMs = startOfTodayMs - 24 * 60 * 60 * 1000;
+          const { year, month, date } = getPacificComponents(now);
+          const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
+          const startOfYesterdayMs = yesterdayStart.getTime();
           matchesTime = itemTime >= startOfYesterdayMs && itemTime < startOfTodayMs;
         } else if (timeRange === "weekly") {
           const { start, end } = getWeekRange(selectedWeekOffset);
@@ -384,10 +414,8 @@ export default function PlatformAnalyticsPanel() {
           const { start, end } = getMonthRange(selectedMonthOffset);
           matchesTime = itemTime >= start.getTime() && itemTime <= end.getTime();
         } else if (timeRange === "custom") {
-          const start = new Date(customStartDate);
-          start.setHours(0, 0, 0, 0);
-          const end = new Date(customEndDate);
-          end.setHours(23, 59, 59, 999);
+          const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStartDate);
+          const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEndDate);
           matchesTime = itemTime >= start.getTime() && itemTime <= end.getTime();
         }
       }
@@ -589,9 +617,10 @@ export default function PlatformAnalyticsPanel() {
     let totalFees = 0;
     const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
 
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOfTodayMs = startOfToday.getTime();
+    const now = new Date();
+    const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
+    const { start: todayStart } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
+    const startOfTodayMs = todayStart.getTime();
 
     let startMs = 0;
     let endMs = Infinity;
@@ -599,7 +628,9 @@ export default function PlatformAnalyticsPanel() {
     if (timeRange === "today") {
       startMs = startOfTodayMs;
     } else if (timeRange === "yesterday") {
-      startMs = startOfTodayMs - 24 * 60 * 60 * 1000;
+      const { year, month, date } = getPacificComponents(now);
+      const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
+      startMs = yesterdayStart.getTime();
       endMs = startOfTodayMs;
     } else if (timeRange === "weekly") {
       const { start, end } = getWeekRange(selectedWeekOffset);
@@ -610,10 +641,8 @@ export default function PlatformAnalyticsPanel() {
       startMs = start.getTime();
       endMs = end.getTime();
     } else if (timeRange === "custom") {
-      const start = new Date(customStartDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(customEndDate);
-      end.setHours(23, 59, 59, 999);
+      const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStartDate);
+      const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEndDate);
       startMs = start.getTime();
       endMs = end.getTime();
     }
@@ -732,15 +761,18 @@ export default function PlatformAnalyticsPanel() {
 
     const filteredDays = dailySeries.filter(day => {
       if (timeRange === "all") return true;
-      const startOfToday = new Date();
-      startOfToday.setHours(0, 0, 0, 0);
-      const startOfTodayMs = startOfToday.getTime();
+      const now = new Date();
+      const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
+      const { start: todayStart } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
+      const startOfTodayMs = todayStart.getTime();
 
       if (timeRange === "today") {
         return day.timestamp >= startOfTodayMs;
       }
       if (timeRange === "yesterday") {
-        const startOfYesterdayMs = startOfTodayMs - 24 * 60 * 60 * 1000;
+        const { year, month, date } = getPacificComponents(now);
+        const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
+        const startOfYesterdayMs = yesterdayStart.getTime();
         return day.timestamp >= startOfYesterdayMs && day.timestamp < startOfTodayMs;
       }
       if (timeRange === "weekly") {
@@ -752,10 +784,8 @@ export default function PlatformAnalyticsPanel() {
         return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
       }
       if (timeRange === "custom") {
-        const start = new Date(customStartDate);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(customEndDate);
-        end.setHours(23, 59, 59, 999);
+        const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStartDate);
+        const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEndDate);
         return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
       }
       return true;
@@ -993,13 +1023,40 @@ export default function PlatformAnalyticsPanel() {
           </p>
         </div>
 
-        <button
-          onClick={fetchAnalytics}
-          className="h-9 px-3 rounded-lg border border-white/5 hover:bg-white/5 text-xs font-medium text-white/80 transition-colors flex items-center gap-1.5"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          <span>Refresh Metrics</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex bg-white/5 p-0.5 rounded-lg border border-white/5 h-9 items-center">
+            <button
+              onClick={() => setTimezoneMode("system")}
+              className={`px-3 py-1 rounded-md text-xs font-semibold h-full transition-all ${
+                timezoneMode === "system"
+                  ? "bg-primary text-white shadow"
+                  : "text-muted-foreground hover:text-white"
+              }`}
+              title="Fixed server timezone (America/Los_Angeles)"
+            >
+              System Time (PT)
+            </button>
+            <button
+              onClick={() => setTimezoneMode("dynamic")}
+              className={`px-3 py-1 rounded-md text-xs font-semibold h-full transition-all ${
+                timezoneMode === "dynamic"
+                  ? "bg-primary text-white shadow"
+                  : "text-muted-foreground hover:text-white"
+              }`}
+              title="Your local browser timezone"
+            >
+              Dynamic
+            </button>
+          </div>
+
+          <button
+            onClick={fetchAnalytics}
+            className="h-9 px-3 rounded-lg border border-white/5 hover:bg-white/5 text-xs font-medium text-white/80 transition-colors flex items-center gap-1.5"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Refresh Metrics</span>
+          </button>
+        </div>
       </div>
 
       {/* Calculation Mode Selector Tabs */}
@@ -2065,7 +2122,8 @@ export default function PlatformAnalyticsPanel() {
                         <tr className={`hover:bg-white/5 transition-colors ${isExpanded ? "bg-white/5" : ""}`}>
                           <td className="py-3 px-4 font-mono font-medium text-white">{r.receiptId}</td>
                           <td className="py-3 px-3 text-muted-foreground whitespace-nowrap">
-                            {r.createdAt ? new Date(r.createdAt).toLocaleString(undefined, {
+                            {r.createdAt ? new Date(r.createdAt).toLocaleString("en-US", {
+                              timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE,
                               month: "short",
                               day: "numeric",
                               hour: "2-digit",
@@ -2397,7 +2455,9 @@ export default function PlatformAnalyticsPanel() {
                                           <div className="space-y-1">
                                             <div className="text-muted-foreground text-[10px] uppercase font-medium">Created At</div>
                                             <div className="text-white/90">
-                                              {new Date(r.createdAt).toLocaleString()}
+                                              {new Date(r.createdAt).toLocaleString("en-US", {
+                                                timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
+                                              })}
                                             </div>
                                           </div>
 
@@ -2515,7 +2575,9 @@ export default function PlatformAnalyticsPanel() {
                                           {expandedLogs[r.receiptId].map((log, idx) => (
                                             <div key={idx} className="p-2.5 space-y-1">
                                               <div className="flex items-center justify-between text-muted-foreground text-[10px]">
-                                                <span>{new Date(log.createdAt).toLocaleTimeString()}</span>
+                                                <span>{new Date(log.createdAt).toLocaleTimeString("en-US", {
+                                                   timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
+                                                 })}</span>
                                                 <span className={`px-1 rounded text-[9px] uppercase font-semibold ${log.level === "error" ? "bg-red-500/15 text-red-400" :
                                                   log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
                                                     "bg-blue-500/15 text-blue-400"
@@ -2630,7 +2692,9 @@ export default function PlatformAnalyticsPanel() {
                                                   {uniqueSessions.map((session: any, idx: number) => (
                                                     <tr key={idx} className="hover:bg-white/[0.02]">
                                                       <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
-                                                        {session.createdAt ? new Date(session.createdAt).toLocaleString() : "N/A"}
+                                                        {session.createdAt ? new Date(session.createdAt).toLocaleString("en-US", {
+                                                           timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
+                                                         }) : "N/A"}
                                                       </td>
                                                       <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
                                                       <td className="py-3 px-4 font-mono text-[11px] text-white/80 select-all" title={session.walletAddress}>
