@@ -430,7 +430,7 @@ export default function PlatformAnalyticsPanel() {
 
       return matchesBrand && matchesStatus && matchesQuery && matchesTime;
     });
-  }, [recentReceipts, selectedBrand, statusFilter, searchQuery, timeRange]);
+  }, [recentReceipts, selectedBrand, statusFilter, searchQuery, timeRange, selectedWeekOffset, selectedMonthOffset, customStartDate, customEndDate, getWeekRange, getMonthRange]);
 
   // Final filtered receipts (including selected error combo filter)
   const filteredReceipts = useMemo(() => {
@@ -722,7 +722,63 @@ export default function PlatformAnalyticsPanel() {
   }, [displayStats, successRateMode]);
 
   const displayedBrandStats = useMemo(() => {
-    return brandStats.filter(b => b.brandKey !== "unknown").map(b => {
+    const now = new Date();
+    const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
+    const { start: todayStart } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
+    const startOfTodayMs = todayStart.getTime();
+
+    let startMs = 0;
+    let endMs = Infinity;
+
+    if (timeRange === "today") {
+      startMs = startOfTodayMs;
+    } else if (timeRange === "yesterday") {
+      const { year, month, date } = getPacificComponents(now);
+      const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
+      startMs = yesterdayStart.getTime();
+      endMs = startOfTodayMs;
+    } else if (timeRange === "weekly") {
+      const { start, end } = getWeekRange(selectedWeekOffset);
+      startMs = start.getTime();
+      endMs = end.getTime();
+    } else if (timeRange === "monthly") {
+      const { start, end } = getMonthRange(selectedMonthOffset);
+      startMs = start.getTime();
+      endMs = end.getTime();
+    } else if (timeRange === "custom") {
+      const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStartDate);
+      const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEndDate);
+      startMs = start.getTime();
+      endMs = end.getTime();
+    }
+
+    const brandMap: Record<string, { brandKey: string; total: number; paid: number; failed: number; gmv: number; fees: number }> = {};
+    allBrandKeys.forEach(bk => {
+      brandMap[bk] = { brandKey: bk, total: 0, paid: 0, failed: 0, gmv: 0, fees: 0 };
+    });
+
+    dailySeries.forEach(day => {
+      if (day.timestamp < startMs || day.timestamp >= endMs) return;
+
+      if (day.brands) {
+        Object.entries(day.brands).forEach(([bk, b]: [string, any]) => {
+          if (bk === "unknown") return;
+          if (!brandMap[bk]) {
+            brandMap[bk] = { brandKey: bk, total: 0, paid: 0, failed: 0, gmv: 0, fees: 0 };
+          }
+          brandMap[bk].total += b.total || 0;
+          brandMap[bk].paid += b.paid || 0;
+          brandMap[bk].failed += b.failed || 0;
+          brandMap[bk].gmv += b.gmv || 0;
+          brandMap[bk].fees += b.fees || 0;
+        });
+      }
+    });
+
+    const list = Object.values(brandMap).filter(b => b.brandKey !== "unknown");
+    list.sort((a, b) => b.gmv - a.gmv);
+
+    return list.map(b => {
       let sr = 0;
       if (successRateMode === "integration") {
         sr = b.total > 0 ? (b.paid / b.total) * 100 : 0;
@@ -738,7 +794,7 @@ export default function PlatformAnalyticsPanel() {
           : `${b.paid} paid / ${b.paid + b.failed} finished`
       };
     });
-  }, [brandStats, successRateMode]);
+  }, [allBrandKeys, dailySeries, timeRange, successRateMode, selectedWeekOffset, selectedMonthOffset, customStartDate, customEndDate, getWeekRange, getMonthRange]);
 
   const maxBrandGmv = useMemo(() => {
     return Math.max(...displayedBrandStats.map(b => b.gmv), 1);
@@ -847,7 +903,7 @@ export default function PlatformAnalyticsPanel() {
       return [{ label: "No Data", aggregate: 0 }];
     }
     return list;
-  }, [dailySeries, allBrandKeys, timeRange, successRateMode, chartMetric]);
+  }, [dailySeries, allBrandKeys, timeRange, successRateMode, chartMetric, selectedWeekOffset, selectedMonthOffset, customStartDate, customEndDate, getWeekRange, getMonthRange]);
 
   // DTD, MTD, YTD comparisons
   const comparisons = useMemo(() => {
@@ -1372,14 +1428,25 @@ export default function PlatformAnalyticsPanel() {
         {/* Custom Interactive Line Chart */}
         {!isMainChartMinimized && (
           <div className="flex-1 flex flex-col min-h-[220px] mt-4 animate-in fade-in zoom-in-95 duration-200">
-            <CustomInteractiveLineChart
-              data={chartTimeSeries}
-              brandKeys={selectedBrand !== "all" ? [selectedBrand] : allBrandKeys}
-              hoveredKey={hoveredLineKey}
-              setHoveredKey={setHoveredLineKey}
-              metricType={chartMetric}
-              scaleType={scaleType}
-            />
+            {chartTimeSeries.length === 1 || timeRange === "today" || timeRange === "yesterday" ? (
+              <CustomInteractiveBarChart
+                data={chartTimeSeries}
+                brandKeys={selectedBrand !== "all" ? [selectedBrand] : allBrandKeys}
+                hoveredKey={hoveredLineKey}
+                setHoveredKey={setHoveredLineKey}
+                metricType={chartMetric}
+                scaleType={scaleType}
+              />
+            ) : (
+              <CustomInteractiveLineChart
+                data={chartTimeSeries}
+                brandKeys={selectedBrand !== "all" ? [selectedBrand] : allBrandKeys}
+                hoveredKey={hoveredLineKey}
+                setHoveredKey={setHoveredLineKey}
+                metricType={chartMetric}
+                scaleType={scaleType}
+              />
+            )}
           </div>
         )}
       </div>
@@ -3383,6 +3450,366 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
       </div>
 
       {/* Floating Node Readout Tooltip (HTML overlay) */}
+      {hoveredNode && (
+        <div
+          className="absolute z-50 bg-neutral-950 border border-white/10 rounded-lg p-2.5 shadow-2xl text-xs pointer-events-none -translate-x-1/2 -translate-y-full mb-3 transition-all duration-150 animate-in fade-in zoom-in-95 duration-100"
+          style={{ left: hoveredNode.x, top: hoveredNode.y }}
+        >
+          <div className="font-semibold text-white">{hoveredNode.date}</div>
+          <div className="text-[10px] text-muted-foreground mt-0.5 capitalize flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full" style={{
+              backgroundColor: hoveredNode.bk === "aggregate" ? "#c084fc" : getBrandColor(hoveredNode.bk, brandKeys.indexOf(hoveredNode.bk))
+            }} />
+            <span>{hoveredNode.bk === "aggregate" ? "Platform Aggregate" : hoveredNode.bk}</span>
+          </div>
+          <div className="text-[11px] font-bold text-primary mt-1.5 border-t border-white/5 pt-1 flex flex-col gap-0.5">
+            {metricType === "successRate" ? (
+              <>
+                <div>Success Rate: {hoveredNode.val}%</div>
+                <div className="text-[10px] text-white/50 font-normal">
+                  Volume: {hoveredNode.paid} paid / {hoveredNode.total} total
+                </div>
+              </>
+            ) : (
+              <>
+                <div>Volume Earned: ${hoveredNode.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-[10px] text-white/50 font-normal">
+                  Details: {hoveredNode.paid} paid transactions
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface CustomInteractiveBarChartProps {
+  data: any[];
+  brandKeys: string[];
+  hoveredKey: string | null;
+  setHoveredKey: (key: string | null) => void;
+  metricType: "successRate" | "amountEarned";
+  scaleType: "linear" | "log";
+}
+
+function CustomInteractiveBarChart({
+  data,
+  brandKeys,
+  hoveredKey,
+  setHoveredKey,
+  metricType,
+  scaleType
+}: CustomInteractiveBarChartProps) {
+  const totalWidth = 1000;
+  const totalHeight = 180;
+
+  const maxValInSeries = useMemo(() => {
+    if (metricType === "successRate") return 100;
+    const dayData = data[0];
+    if (!dayData) return 10;
+    const values = [dayData.aggregate || 0];
+    brandKeys.forEach(bk => {
+      if (typeof dayData[bk] === "number") values.push(dayData[bk]);
+    });
+    return Math.max(...values, 10);
+  }, [data, brandKeys, metricType]);
+
+  const maxAxisVal = useMemo(() => {
+    if (metricType === "successRate") return 100;
+    const val = maxValInSeries;
+    if (val <= 10) return 10;
+    const order = Math.pow(10, Math.floor(Math.log10(val)));
+    const normalized = val / order;
+    let rounded = 10;
+    if (normalized <= 1.2) rounded = 1.2;
+    else if (normalized <= 1.5) rounded = 1.5;
+    else if (normalized <= 2) rounded = 2;
+    else if (normalized <= 2.5) rounded = 2.5;
+    else if (normalized <= 3) rounded = 3;
+    else if (normalized <= 4) rounded = 4;
+    else if (normalized <= 5) rounded = 5;
+    else if (normalized <= 7.5) rounded = 7.5;
+    return rounded * order;
+  }, [maxValInSeries, metricType]);
+
+  const gridLevels = useMemo(() => {
+    if (scaleType === "linear") {
+      return [0, 0.25, 0.5, 0.75, 1].map(pct => maxAxisVal * pct);
+    } else {
+      const levels = [0];
+      let current = 1;
+      while (current <= maxAxisVal) {
+        levels.push(current);
+        current *= 10;
+      }
+      if (levels[levels.length - 1] < maxAxisVal) {
+        levels.push(maxAxisVal);
+      }
+      return levels;
+    }
+  }, [scaleType, maxAxisVal]);
+
+  const brandColors: Record<string, string> = {
+    aggregate: "#c084fc",
+    aipowerpay: "#38bdf8",
+    basaltsurge: "#fb7185",
+  };
+
+  const getBrandColor = (key: string, idx: number) => {
+    if (brandColors[key]) return brandColors[key];
+    const colors = ["#34d399", "#fbbf24", "#a78bfa", "#22d3ee", "#f472b6", "#fb923c"];
+    return colors[idx % colors.length];
+  };
+
+  const [hoveredNode, setHoveredNode] = useState<{
+    bk: string;
+    date: string;
+    val: number;
+    paid: number;
+    total: number;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const handleMouseEnterNode = (
+    e: React.MouseEvent<SVGRectElement>,
+    bk: string,
+    date: string,
+    val: number,
+    details: { paid: number; total: number }
+  ) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const parentEl = e.currentTarget.closest(".chart-container-card");
+    if (!parentEl) return;
+    const parentRect = parentEl.getBoundingClientRect();
+
+    const x = rect.left - parentRect.left + rect.width / 2;
+    const y = rect.top - parentRect.top;
+
+    setHoveredNode({
+      bk,
+      date,
+      val,
+      paid: details.paid,
+      total: details.total,
+      x,
+      y
+    });
+  };
+
+  const formatYLabel = (val: number) => {
+    if (metricType === "successRate") return `${val.toFixed(0)}%`;
+    if (val >= 1000) return `$${(val / 1000).toFixed(1).replace(".0", "")}k`;
+    return `$${val.toFixed(0)}`;
+  };
+
+  const dayData = data[0];
+  const bars = useMemo(() => {
+    if (!dayData || dayData.label === "No Data") return [];
+    
+    const list = [
+      {
+        key: "aggregate",
+        label: "Platform Aggregate",
+        val: dayData.aggregate || 0,
+        color: "#c084fc",
+        details: dayData.aggregateDetails || { paid: 0, total: 0 }
+      }
+    ];
+
+    brandKeys.forEach((bk, idx) => {
+      if (dayData[bk] !== undefined && dayData[bk] !== null) {
+        list.push({
+          key: bk,
+          label: bk,
+          val: dayData[bk],
+          color: getBrandColor(bk, idx),
+          details: dayData[`${bk}Details`] || { paid: 0, total: 0 }
+        });
+      }
+    });
+    return list;
+  }, [dayData, brandKeys]);
+
+  const barCount = bars.length;
+  const paddingLeft = 40;
+  const paddingRight = 40;
+  const chartWidth = totalWidth - paddingLeft - paddingRight;
+  const barWidth = Math.min(80, chartWidth / (barCount * 1.6));
+  const spacing = (chartWidth - barWidth * barCount) / (barCount + 1);
+
+  const getCoords = (val: number) => {
+    let y = 172;
+    if (scaleType === "linear") {
+      y = 172 - (val / maxAxisVal) * 164;
+    } else {
+      const logVal = Math.log10(val + 1);
+      const logMax = Math.log10(maxAxisVal + 1);
+      y = 172 - (logVal / logMax) * 164;
+    }
+    return y;
+  };
+
+  return (
+    <div className="relative w-full space-y-4 chart-container-card">
+      <div className="flex flex-wrap items-center gap-3 select-none">
+        <div
+          onMouseEnter={() => setHoveredKey("aggregate")}
+          onMouseLeave={() => setHoveredKey(null)}
+          className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${
+            hoveredKey === "aggregate" ? "bg-white/10 scale-[1.03] text-white" :
+            hoveredKey !== null ? "opacity-30" : "text-white/80 hover:text-white"
+          }`}
+        >
+          <div className="h-2.5 w-2.5 rounded-full bg-[#c084fc] shadow-[0_0_8px_rgba(192,132,252,0.6)]" />
+          <span className="font-semibold font-sans">Platform Aggregate</span>
+        </div>
+
+        {brandKeys.map((bk, i) => {
+          const color = getBrandColor(bk, i);
+          const isHovered = hoveredKey === bk;
+          const isDimmed = hoveredKey !== null && !isHovered;
+
+          return (
+            <div
+              key={bk}
+              onMouseEnter={() => setHoveredKey(bk)}
+              onMouseLeave={() => setHoveredKey(null)}
+              className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${
+                isHovered ? "bg-white/10 scale-[1.03] text-white" :
+                isDimmed ? "opacity-30" : "text-white/80 hover:text-white"
+              }`}
+            >
+              <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }} />
+              <span className="font-sans">{bk}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="relative flex-1 min-h-0 w-full bg-black/30 border border-white/5 rounded-xl p-4 flex flex-col gap-3">
+        <div className="relative flex-1 min-h-0 w-full pl-12 pr-2">
+          {/* Y-Axis Labels */}
+          <div className="absolute top-[4.4%] bottom-[4.4%] left-2 flex flex-col justify-between text-[10px] text-white/40 font-sans font-medium pointer-events-none select-none z-10 py-0.5 w-10">
+            {gridLevels.slice().reverse().map(lvl => {
+              let yPct = 0;
+              if (scaleType === "linear") {
+                yPct = (lvl / maxAxisVal) * 100;
+              } else {
+                const logVal = Math.log10(lvl + 1);
+                const logMax = Math.log10(maxAxisVal + 1);
+                yPct = (logVal / logMax) * 100;
+              }
+              return (
+                <span
+                  key={lvl}
+                  className="absolute left-0 -translate-y-1/2"
+                  style={{ top: `${100 - yPct}%` }}
+                >
+                  {formatYLabel(lvl)}
+                </span>
+              );
+            })}
+          </div>
+
+          <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
+            <defs>
+              {bars.map(bar => (
+                <linearGradient key={`grad-${bar.key}`} id={`grad-${bar.key}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={bar.color} stopOpacity={0.4} />
+                  <stop offset="100%" stopColor={bar.color} stopOpacity={0.05} />
+                </linearGradient>
+              ))}
+            </defs>
+
+            {/* Grid lines */}
+            {gridLevels.map(lvl => {
+              const y = getCoords(lvl);
+              return (
+                <line
+                  key={lvl}
+                  x1="0"
+                  y1={y}
+                  x2={totalWidth}
+                  y2={y}
+                  stroke="rgba(255,255,255,0.04)"
+                  strokeWidth="1"
+                />
+              );
+            })}
+
+            {/* Draw Bars */}
+            {bars.map((bar, i) => {
+              const yCoords = getCoords(bar.val);
+              const barHeight = Math.max(2, 172 - yCoords);
+              const x = paddingLeft + spacing + i * (barWidth + spacing);
+              const isHovered = hoveredKey === bar.key;
+              const isDimmed = hoveredKey !== null && !isHovered;
+
+              return (
+                <g key={bar.key}>
+                  <rect
+                    x={x}
+                    y={yCoords}
+                    width={barWidth}
+                    height={barHeight}
+                    fill={`url(#grad-${bar.key})`}
+                    stroke={bar.color}
+                    strokeWidth={isHovered ? "2" : "1.2"}
+                    strokeOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.75"}
+                    fillOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.85"}
+                    rx="6"
+                    className="transition-all duration-200 cursor-pointer"
+                    onMouseEnter={(e) => {
+                      setHoveredKey(bar.key);
+                      handleMouseEnterNode(e, bar.key, dayData.label, bar.val, bar.details);
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredKey(null);
+                      setHoveredNode(null);
+                    }}
+                  />
+                  
+                  {/* Subtle top cap for glow */}
+                  {bar.val > 0 && (
+                    <line
+                      x1={x}
+                      y1={yCoords}
+                      x2={x + barWidth}
+                      y2={yCoords}
+                      stroke={bar.color}
+                      strokeWidth={isHovered ? "3" : "1.8"}
+                      strokeOpacity={isHovered ? "1" : isDimmed ? "0.2" : "0.9"}
+                      className="transition-all duration-200"
+                    />
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+
+        {/* X-axis Labels */}
+        <div className="relative w-full pl-12 pr-2 h-5 text-[10px] text-white/40 font-sans font-medium select-none z-10 mt-1">
+          {bars.map((bar, i) => {
+            const x = paddingLeft + spacing + i * (barWidth + spacing);
+            const labelXCenter = x + barWidth / 2;
+            const pct = (labelXCenter / totalWidth) * 100;
+            return (
+              <span
+                key={bar.key}
+                className="absolute -translate-x-1/2 text-center truncate text-[10px] text-white/50"
+                style={{ left: `${pct}%` }}
+              >
+                {bar.label === "Platform Aggregate" ? "Platform Avg" : bar.label}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
       {hoveredNode && (
         <div
           className="absolute z-50 bg-neutral-950 border border-white/10 rounded-lg p-2.5 shadow-2xl text-xs pointer-events-none -translate-x-1/2 -translate-y-full mb-3 transition-all duration-150 animate-in fade-in zoom-in-95 duration-100"
