@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useBrand } from "@/contexts/BrandContext";
 import { useActiveAccount } from "thirdweb/react";
 import { 
@@ -83,6 +84,7 @@ export default function AutoclosePanel() {
     totalUsdcEquivalent: number;
   } | null>(null);
   const [loadingHud, setLoadingHud] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   // Pending ACH Search & Sorting
   const [achSearch, setAchSearch] = useState("");
@@ -274,6 +276,7 @@ export default function AutoclosePanel() {
   };
 
   useEffect(() => {
+    setMounted(true);
     loadRuns();
   }, [brandKey]);
 
@@ -1076,8 +1079,8 @@ export default function AutoclosePanel() {
       </div>
 
       {/* Bespoke Manual Close Modal */}
-      {showCloseModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-md bg-black/60 transition-all duration-300 animate-fadeIn">
+      {mounted && showCloseModal && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 backdrop-blur-md bg-black/75 transition-all duration-300 animate-fadeIn">
           <div className="relative w-full max-w-xl overflow-hidden rounded-3xl border border-foreground/10 bg-[#0c0d0e] p-6 text-white shadow-2xl transition-all transform scale-100 flex flex-col gap-6">
             
             {/* Header */}
@@ -1252,7 +1255,8 @@ export default function AutoclosePanel() {
             </div>
             
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -209,8 +209,10 @@ export async function GET(req: NextRequest) {
         query: "SELECT DISTINCT VALUE c.brandKey FROM c WHERE c.type = 'site_config'"
       };
       const { resources: brandsList } = await siteConfigContainer.items.query(brandsQuery).fetchAll();
-      // Filter out empty and clean up duplicates
-      const cleaned = (brandsList || []).map(b => String(b || "").trim().toLowerCase()).filter(Boolean);
+      // Filter out empty, clean up duplicates, and restrict to valid brand key formats (alphanumeric and hyphens only) to ignore test injection payloads
+      const cleaned = (brandsList || [])
+        .map(b => String(b || "").trim().toLowerCase())
+        .filter(b => /^[a-z0-9-]+$/.test(b) && b.length >= 2 && b.length <= 30);
       // Map portalpay to basaltsurge for consistency
       const mapped = cleaned.map(b => b === "portalpay" ? "basaltsurge" : b);
       allBrands = Array.from(new Set(mapped));
