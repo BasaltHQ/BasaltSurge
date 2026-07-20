@@ -32,69 +32,87 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
 // Cache and variables for dynamic partner domains from DB
 export let DYNAMIC_PARTNER_DOMAINS: Record<string, string> = {};
 let lastDynamicDomainsFetch = 0;
-const DYNAMIC_DOMAINS_TTL = 30000; // 30 seconds
+const DYNAMIC_DOMAINS_TTL = 10 * 60 * 1000; // 10 minutes cache TTL to prevent Cosmos DB stampedes
+let dynamicDomainsPromise: Promise<Record<string, string>> | null = null;
 
 export async function getDynamicPartnerDomains(): Promise<Record<string, string>> {
   const now = Date.now();
-  if (now - lastDynamicDomainsFetch < DYNAMIC_DOMAINS_TTL) {
+  
+  // 1. Return cached domains if still within TTL and cache is not empty
+  if (now - lastDynamicDomainsFetch < DYNAMIC_DOMAINS_TTL && Object.keys(DYNAMIC_PARTNER_DOMAINS).length > 0) {
     return DYNAMIC_PARTNER_DOMAINS;
   }
 
-  const domains: Record<string, string> = {};
-  try {
-    const c = await getContainer();
-    const query = {
-      query: "SELECT c.wallet, c.type, c.appUrl, c.containerFqdn, c.params FROM c WHERE c.type = 'brand_config' OR c.type = 'brand_deploy_params'",
-      parameters: [],
-    };
-    const { resources } = await c.items.query<any>(query, { maxItemCount: 2000 }).fetchAll();
+  // 2. Coalesce concurrent requests: if a fetch is already in progress, await the same promise
+  if (dynamicDomainsPromise) {
+    return dynamicDomainsPromise;
+  }
 
-    if (resources && Array.isArray(resources)) {
-      for (const doc of resources) {
-        const brandKey = String(doc.wallet || "").toLowerCase().trim();
-        if (!brandKey) continue;
+  // 3. Launch a single database query to load the mappings
+  dynamicDomainsPromise = (async () => {
+    const domains: Record<string, string> = {};
+    try {
+      console.log("[brand-config] Fetching dynamic partner domains from Cosmos DB...");
+      const c = await getContainer();
+      const query = {
+        query: "SELECT c.wallet, c.type, c.appUrl, c.containerFqdn, c.params FROM c WHERE c.type = 'brand_config' OR c.type = 'brand_deploy_params'",
+        parameters: [],
+      };
+      const { resources } = await c.items.query<any>(query, { maxItemCount: 2000 }).fetchAll();
 
-        const addDomain = (urlOrFqdn: string) => {
-          try {
-            let hostname = urlOrFqdn.trim().toLowerCase();
-            if (hostname.includes("://")) {
-              hostname = new URL(hostname).hostname;
-            } else {
-              hostname = hostname.split(":")[0];
-            }
-            if (hostname && hostname !== "localhost" && hostname !== "127.0.0.1") {
-              domains[hostname] = brandKey;
-              if (hostname.startsWith("www.")) {
-                domains[hostname.substring(4)] = brandKey;
+      if (resources && Array.isArray(resources)) {
+        for (const doc of resources) {
+          const brandKey = String(doc.wallet || "").toLowerCase().trim();
+          if (!brandKey) continue;
+
+          const addDomain = (urlOrFqdn: string) => {
+            try {
+              let hostname = urlOrFqdn.trim().toLowerCase();
+              if (hostname.includes("://")) {
+                hostname = new URL(hostname).hostname;
               } else {
-                domains[`www.${hostname}`] = brandKey;
+                hostname = hostname.split(":")[0];
               }
+              if (hostname && hostname !== "localhost" && hostname !== "127.0.0.1") {
+                domains[hostname] = brandKey;
+                if (hostname.startsWith("www.")) {
+                  domains[hostname.substring(4)] = brandKey;
+                } else {
+                  domains[`www.${hostname}`] = brandKey;
+                }
+              }
+            } catch {
+              // ignore invalid domains
             }
-          } catch {
-            // ignore invalid domains
-          }
-        };
+          };
 
-        if (doc.type === "brand_config") {
-          if (doc.containerFqdn) addDomain(doc.containerFqdn);
-          if (doc.appUrl) addDomain(doc.appUrl);
-        } else if (doc.type === "brand_deploy_params") {
-          const doms = doc.params?.domains;
-          if (Array.isArray(doms)) {
-            for (const d of doms) {
-              if (typeof d === "string") addDomain(d);
+          if (doc.type === "brand_config") {
+            if (doc.containerFqdn) addDomain(doc.containerFqdn);
+            if (doc.appUrl) addDomain(doc.appUrl);
+          } else if (doc.type === "brand_deploy_params") {
+            const doms = doc.params?.domains;
+            if (Array.isArray(doms)) {
+              for (const d of doms) {
+                if (typeof d === "string") addDomain(d);
+              }
             }
           }
         }
       }
+      DYNAMIC_PARTNER_DOMAINS = domains;
+      lastDynamicDomainsFetch = Date.now();
+      return domains;
+    } catch (err) {
+      console.error("[brand-config] Failed to fetch dynamic partner domains:", err);
+      // Resilient fallback: return existing cache on error instead of resetting it
+      return DYNAMIC_PARTNER_DOMAINS || {};
+    } finally {
+      // Clear promise reference once finished so future expired requests trigger fresh query
+      dynamicDomainsPromise = null;
     }
-    DYNAMIC_PARTNER_DOMAINS = domains;
-    lastDynamicDomainsFetch = now;
-  } catch (err) {
-    console.error("[brand-config] Failed to fetch dynamic partner domains:", err);
-    return DYNAMIC_PARTNER_DOMAINS || {};
-  }
-  return DYNAMIC_PARTNER_DOMAINS;
+  })();
+
+  return dynamicDomainsPromise;
 }
 
 // Main platform hostnames that should NOT be treated as partner containers (without subdomains)

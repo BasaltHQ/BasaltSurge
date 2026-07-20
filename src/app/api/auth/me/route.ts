@@ -7,7 +7,14 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    // Validate auth via cookie/JWT
+    // Warm dynamic partner domains cache (non-blocking lookup prep)
+    try {
+      const { getDynamicPartnerDomains } = await import("@/lib/brand-config");
+      await getDynamicPartnerDomains();
+    } catch (e) {
+      console.error("[AuthMe] Failed to pre-warm dynamic partner domains:", e);
+    }
+
     // Validate auth via cookie/JWT
     let wallet = await getAuthenticatedWallet(req);
     let sessionAuthed = !!wallet;

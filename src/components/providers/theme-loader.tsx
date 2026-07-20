@@ -292,6 +292,37 @@ export function ThemeLoader() {
             } catch { }
           }
 
+          // Self-Healing Fallback: If brandKey is platform-default or empty, but we are on a custom domain,
+          // fetch dynamic domains to resolve the partner brand.
+          const isPlatformBrandKey = !bk || bk.toLowerCase() === "basaltsurge" || bk.toLowerCase() === "portalpay";
+          const isPlatformHost = (() => {
+            if (typeof window === "undefined") return true;
+            const h = window.location.hostname.toLowerCase();
+            return h === "localhost" || h === "127.0.0.1" ||
+              h.endsWith("basaltsurge.app") ||
+              h.endsWith("portalpay.app") ||
+              h.endsWith("basaltsurge.azurewebsites.net") ||
+              h.endsWith("surge.basalthq.com");
+          })();
+
+          if (isPlatformBrandKey && !isPlatformHost) {
+            try {
+              console.log("[ThemeLoader] Custom domain detected with platform brandKey. Resolving dynamic domains...");
+              const domainsRes = await fetch("/api/partner-domains");
+              if (domainsRes.ok) {
+                const domains = await domainsRes.json();
+                const h = window.location.hostname.toLowerCase();
+                if (domains && domains[h]) {
+                  bk = domains[h];
+                  isPartnerContainer = true;
+                  console.log("[ThemeLoader] Dynamic self-healing resolved brandKey to:", bk);
+                }
+              }
+            } catch (e) {
+              console.error("[ThemeLoader] Dynamic self-healing domain lookup failed:", e);
+            }
+          }
+
           if (bk) {
             const pj = await cachedFetch(`/api/platform/brands/${encodeURIComponent(bk)}/config`, { cache: "no-store" });
             const bc = (pj?.brand?.colors || {}) as any;
