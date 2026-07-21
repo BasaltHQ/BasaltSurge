@@ -807,8 +807,6 @@ export default function PlatformAnalyticsPanel() {
   // Base Filter & Search Receipts (excluding selected combo)
   const baseFilteredReceipts = useMemo(() => {
     return recentReceipts.filter(r => {
-      if (r.brandKey === "unknown") return false;
-
       const matchesBrand = selectedBrand === "all" || r.brandKey === selectedBrand;
       const matchesStatus = statusFilter === "all" || r.status === statusFilter;
 
@@ -2747,10 +2745,25 @@ export default function PlatformAnalyticsPanel() {
                               </div>
                             )}
 
-                            <div className="text-xs font-mono truncate bg-white/[0.03] px-2.5 py-1.5 rounded-xl border border-white/5 flex items-center justify-between">
-                              <span className="text-white/40 uppercase text-[9px] font-bold">Brand Container:</span>
-                              <span className="text-white/90 font-bold truncate max-w-[180px]">{r.brandKey}</span>
-                            </div>
+                            {(() => {
+                              const bColor = getBrandColor(r.brandKey, allBrandKeys.indexOf(r.brandKey));
+                              return (
+                                <div className="text-xs font-mono truncate bg-white/[0.03] px-2.5 py-1.5 rounded-xl border border-white/5 flex items-center justify-between">
+                                  <span className="text-white/40 uppercase text-[9px] font-bold">Brand Container:</span>
+                                  <span
+                                    className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border inline-flex items-center gap-1.5 shrink-0"
+                                    style={{
+                                      backgroundColor: `${bColor}20`,
+                                      borderColor: `${bColor}45`,
+                                      color: bColor
+                                    }}
+                                  >
+                                    <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: bColor, boxShadow: `0 0 6px ${bColor}` }} />
+                                    <span className="truncate max-w-[150px]">{r.brandKey}</span>
+                                  </span>
+                                </div>
+                              );
+                            })()}
 
                             <div className="text-xs font-mono text-white/70 truncate bg-white/[0.03] px-2.5 py-1.5 rounded-xl border border-white/5 flex items-center justify-between">
                               <span className="text-white/40 uppercase text-[9px] font-bold">Buyer Email:</span>
@@ -3115,8 +3128,24 @@ export default function PlatformAnalyticsPanel() {
                               {r.merchantName || r.brandName || r.brandKey}
                             </div>
                             {r.merchantName && r.merchantName !== r.brandKey && (
-                              <div className="text-[10px] text-white/40 font-semibold truncate max-w-[150px]">
-                                Container: <span className="text-emerald-400/90 font-bold">{r.brandKey}</span>
+                              <div className="text-[10px] text-white/40 font-semibold truncate max-w-[170px] flex items-center gap-1 mt-0.5">
+                                <span>Container:</span>
+                                {(() => {
+                                  const bColor = getBrandColor(r.brandKey, allBrandKeys.indexOf(r.brandKey));
+                                  return (
+                                    <span
+                                      className="font-bold text-[9px] inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border shrink-0"
+                                      style={{
+                                        backgroundColor: `${bColor}20`,
+                                        borderColor: `${bColor}45`,
+                                        color: bColor
+                                      }}
+                                    >
+                                      <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: bColor, boxShadow: `0 0 6px ${bColor}` }} />
+                                      <span className="truncate max-w-[100px]">{r.brandKey}</span>
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             )}
                           </td>
@@ -4064,9 +4093,22 @@ export default function PlatformAnalyticsPanel() {
                           {mr.merchantName}
                         </span>
                       )}
-                      <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-white/10 text-white/80 border border-white/10">
-                        Container: {mr.brandKey}
-                      </span>
+                      {(() => {
+                        const bColor = getBrandColor(mr.brandKey, allBrandKeys.indexOf(mr.brandKey));
+                        return (
+                          <span
+                            className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border inline-flex items-center gap-1.5"
+                            style={{
+                              backgroundColor: `${bColor}20`,
+                              borderColor: `${bColor}45`,
+                              color: bColor
+                            }}
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: bColor, boxShadow: `0 0 6px ${bColor}` }} />
+                            <span>Container: {mr.brandKey}</span>
+                          </span>
+                        );
+                      })()}
                       <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                         ${mr.totalUsd.toFixed(2)}
                       </span>
