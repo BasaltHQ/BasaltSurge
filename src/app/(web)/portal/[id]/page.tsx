@@ -2389,6 +2389,119 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [headlessPhoneInput, setHeadlessPhoneInput] = useState('');
   const [headlessInitiated, setHeadlessInitiated] = useState(false);
 
+  const COUNTRY_OPTIONS = [
+    { code: "US", name: "United States" },
+    { code: "CA", name: "Canada" },
+    { code: "GB", name: "United Kingdom" },
+    { code: "AU", name: "Australia" },
+    { code: "AT", name: "Austria" },
+    { code: "BE", name: "Belgium" },
+    { code: "BG", name: "Bulgaria" },
+    { code: "HR", name: "Croatia" },
+    { code: "CY", name: "Cyprus" },
+    { code: "CZ", name: "Czech Republic" },
+    { code: "DK", name: "Denmark" },
+    { code: "EE", name: "Estonia" },
+    { code: "FI", name: "Finland" },
+    { code: "FR", name: "France" },
+    { code: "DE", name: "Germany" },
+    { code: "GR", name: "Greece" },
+    { code: "HK", name: "Hong Kong" },
+    { code: "HU", name: "Hungary" },
+    { code: "IE", name: "Ireland" },
+    { code: "IT", name: "Italy" },
+    { code: "JP", name: "Japan" },
+    { code: "LV", name: "Latvia" },
+    { code: "LT", name: "Lithuania" },
+    { code: "LU", name: "Luxembourg" },
+    { code: "MT", name: "Malta" },
+    { code: "MX", name: "Mexico" },
+    { code: "NL", name: "Netherlands" },
+    { code: "NZ", name: "New Zealand" },
+    { code: "NO", name: "Norway" },
+    { code: "PL", name: "Poland" },
+    { code: "PT", name: "Portugal" },
+    { code: "RO", name: "Romania" },
+    { code: "SG", name: "Singapore" },
+    { code: "SK", name: "Slovakia" },
+    { code: "SI", name: "Slovenia" },
+    { code: "ES", name: "Spain" },
+    { code: "SE", name: "Sweden" },
+    { code: "CH", name: "Switzerland" },
+    { code: "AE", name: "United Arab Emirates" },
+  ];
+
+  const US_STATE_OPTIONS = [
+    { code: "AL", name: "Alabama" },
+    { code: "AK", name: "Alaska" },
+    { code: "AZ", name: "Arizona" },
+    { code: "AR", name: "Arkansas" },
+    { code: "CA", name: "California" },
+    { code: "CO", name: "Colorado" },
+    { code: "CT", name: "Connecticut" },
+    { code: "DE", name: "Delaware" },
+    { code: "FL", name: "Florida" },
+    { code: "GA", name: "Georgia" },
+    { code: "HI", name: "Hawaii" },
+    { code: "ID", name: "Idaho" },
+    { code: "IL", name: "Illinois" },
+    { code: "IN", name: "Indiana" },
+    { code: "IA", name: "Iowa" },
+    { code: "KS", name: "Kansas" },
+    { code: "KY", name: "Kentucky" },
+    { code: "LA", name: "Louisiana" },
+    { code: "ME", name: "Maine" },
+    { code: "MD", name: "Maryland" },
+    { code: "MA", name: "Massachusetts" },
+    { code: "MI", name: "Michigan" },
+    { code: "MN", name: "Minnesota" },
+    { code: "MS", name: "Mississippi" },
+    { code: "MO", name: "Missouri" },
+    { code: "MT", name: "Montana" },
+    { code: "NE", name: "Nebraska" },
+    { code: "NV", name: "Nevada" },
+    { code: "NH", name: "New Hampshire" },
+    { code: "NJ", name: "New Jersey" },
+    { code: "NM", name: "New Mexico" },
+    { code: "NY", name: "New York" },
+    { code: "NC", name: "North Carolina" },
+    { code: "ND", name: "North Dakota" },
+    { code: "OH", name: "Ohio" },
+    { code: "OK", name: "Oklahoma" },
+    { code: "OR", name: "Oregon" },
+    { code: "PA", name: "Pennsylvania" },
+    { code: "RI", name: "Rhode Island" },
+    { code: "SC", name: "South Carolina" },
+    { code: "SD", name: "South Dakota" },
+    { code: "TN", name: "Tennessee" },
+    { code: "TX", name: "Texas" },
+    { code: "UT", name: "Utah" },
+    { code: "VT", name: "Vermont" },
+    { code: "VA", name: "Virginia" },
+    { code: "WA", name: "Washington" },
+    { code: "WV", name: "West Virginia" },
+    { code: "WI", name: "Wisconsin" },
+    { code: "WY", name: "Wyoming" },
+    { code: "DC", name: "District of Columbia" },
+    { code: "PR", name: "Puerto Rico" },
+  ];
+
+  const CA_PROVINCE_OPTIONS = [
+    { code: "AB", name: "Alberta" },
+    { code: "BC", name: "British Columbia" },
+    { code: "MB", name: "Manitoba" },
+    { code: "NB", name: "New Brunswick" },
+    { code: "NL", name: "Newfoundland and Labrador" },
+    { code: "NS", name: "Nova Scotia" },
+    { code: "NT", name: "Northwest Territories" },
+    { code: "NU", name: "Nunavut" },
+    { code: "ON", name: "Ontario" },
+    { code: "PE", name: "Prince Edward Island" },
+    { code: "QC", name: "Quebec" },
+    { code: "SK", name: "Saskatchewan" },
+    { code: "YT", name: "Yukon" },
+  ];
+
   const [shipLine1, setShipLine1] = useState('');
   const [shipLine2, setShipLine2] = useState('');
   const [shipCity, setShipCity] = useState('');
@@ -6622,11 +6735,58 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                                 <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Address Line 2 (optional)" value={shipLine2} onChange={(e) => setShipLine2(e.target.value)} />
                                                 <div className="grid grid-cols-2 gap-2">
                                                   <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="City *" value={shipCity} onChange={(e) => setShipCity(e.target.value)} />
-                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="State/Province" value={shipState} onChange={(e) => setShipState(e.target.value)} />
+                                                  {shipCountry === "US" ? (
+                                                    <select
+                                                      className={`w-full h-9 px-3 py-1 rounded-lg border text-sm appearance-none cursor-pointer ${isLightText ? 'border-white/10 bg-zinc-900 text-white' : 'border-black/10 bg-white text-black'}`}
+                                                      value={shipState || ""}
+                                                      onChange={(e) => setShipState(e.target.value)}
+                                                    >
+                                                      <option value="" disabled className={isLightText ? "bg-zinc-900 text-white/50" : "bg-white text-black/50"}>
+                                                        Select State *
+                                                      </option>
+                                                      {US_STATE_OPTIONS.map((s) => (
+                                                        <option key={s.code} value={s.code} className={isLightText ? "bg-zinc-900 text-white" : "bg-white text-black"}>
+                                                          {s.name} ({s.code})
+                                                        </option>
+                                                      ))}
+                                                    </select>
+                                                  ) : shipCountry === "CA" ? (
+                                                    <select
+                                                      className={`w-full h-9 px-3 py-1 rounded-lg border text-sm appearance-none cursor-pointer ${isLightText ? 'border-white/10 bg-zinc-900 text-white' : 'border-black/10 bg-white text-black'}`}
+                                                      value={shipState || ""}
+                                                      onChange={(e) => setShipState(e.target.value)}
+                                                    >
+                                                      <option value="" disabled className={isLightText ? "bg-zinc-900 text-white/50" : "bg-white text-black/50"}>
+                                                        Select Province *
+                                                      </option>
+                                                      {CA_PROVINCE_OPTIONS.map((p) => (
+                                                        <option key={p.code} value={p.code} className={isLightText ? "bg-zinc-900 text-white" : "bg-white text-black"}>
+                                                          {p.name} ({p.code})
+                                                        </option>
+                                                      ))}
+                                                    </select>
+                                                  ) : (
+                                                    <input
+                                                      className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`}
+                                                      placeholder="State / Province"
+                                                      value={shipState}
+                                                      onChange={(e) => setShipState(e.target.value)}
+                                                    />
+                                                  )}
                                                 </div>
                                                 <div className="grid grid-cols-2 gap-2">
                                                   <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="ZIP / Postal *" value={shipZip} onChange={(e) => setShipZip(e.target.value)} />
-                                                  <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Country" value={shipCountry} onChange={(e) => setShipCountry(e.target.value.toUpperCase().slice(0, 2))} maxLength={2} />
+                                                  <select
+                                                     className={`w-full h-9 px-3 py-1 rounded-lg border text-sm appearance-none cursor-pointer ${isLightText ? 'border-white/10 bg-zinc-900 text-white' : 'border-black/10 bg-white text-black'}`}
+                                                     value={shipCountry || "US"}
+                                                     onChange={(e) => setShipCountry(e.target.value)}
+                                                   >
+                                                     {COUNTRY_OPTIONS.map((c) => (
+                                                       <option key={c.code} value={c.code} className={isLightText ? "bg-zinc-900 text-white" : "bg-white text-black"}>
+                                                         {c.name} ({c.code})
+                                                       </option>
+                                                     ))}
+                                                   </select>
                                                 </div>
                                               </div>
 
@@ -7310,7 +7470,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                             </div>
                                             <div className="grid grid-cols-2 gap-2">
                                               <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="ZIP / Postal *" value={shipZip} onChange={(e) => setShipZip(e.target.value)} />
-                                              <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="Country" value={shipCountry} onChange={(e) => setShipCountry(e.target.value.toUpperCase().slice(0, 2))} maxLength={2} />
+                                              <select
+                                                 className={`w-full h-9 px-3 py-1 rounded-lg border text-sm appearance-none cursor-pointer ${isLightText ? 'border-white/10 bg-zinc-900 text-white' : 'border-black/10 bg-white text-black'}`}
+                                                 value={shipCountry || "US"}
+                                                 onChange={(e) => setShipCountry(e.target.value)}
+                                               >
+                                                 {COUNTRY_OPTIONS.map((c) => (
+                                                   <option key={c.code} value={c.code} className={isLightText ? "bg-zinc-900 text-white" : "bg-white text-black"}>
+                                                     {c.name} ({c.code})
+                                                   </option>
+                                                 ))}
+                                               </select>
                                             </div>
                                           </div>
                                           <div>
