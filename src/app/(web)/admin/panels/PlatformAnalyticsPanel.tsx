@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useActiveAccount } from "thirdweb/react";
 import {
   LineChart,
@@ -23,10 +24,15 @@ import {
   BarChart2,
   Route,
   Minimize2,
-  Maximize2
+  Maximize2,
+  Cpu,
+  Terminal,
+  Database,
+  RotateCcw
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 import RollercoasterOverlay from "../components/RollercoasterOverlay";
+import SideScrollerRollercoaster from "../components/SideScrollerRollercoaster";
 import { formatYMDInTimeZone, getDayRangeForYmdInTz, zonedTimeToUtcDate } from "@/lib/timezone";
 
 const SYSTEM_TIMEZONE = "America/Los_Angeles";
@@ -126,6 +132,346 @@ interface ReceiptInfo {
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
   return r.kycLevel || "L0";
 };
+
+const LOADING_STAGES = [
+  { label: "Connecting to Analytics Gateway", detail: "Establishing secure session with platform API..." },
+  { label: "Querying MongoDB Receipts", detail: "Fetching transaction history from 'surge' database..." },
+  { label: "Syncing Gnosis Safe Reserves", detail: "Reading multi-asset treasury balances..." },
+  { label: "Calculating Failure Heatmaps", detail: "Analyzing conversion rates & failure reasons..." },
+  { label: "Finalizing Dashboard UI", detail: "Rendering chart visualizations & controls..." },
+];
+
+function AnalyticsPageLoadingState() {
+  const [progress, setProgress] = useState(15);
+  const [currentStageIdx, setCurrentStageIdx] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setProgress(prev => {
+        if (prev >= 95) return 95;
+        const next = prev + Math.floor(Math.random() * 8) + 4;
+        const capped = Math.min(next, 95);
+        if (capped > 75) setCurrentStageIdx(3);
+        else if (capped > 50) setCurrentStageIdx(2);
+        else if (capped > 25) setCurrentStageIdx(1);
+        return capped;
+      });
+    }, 180);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  const currentStage = LOADING_STAGES[currentStageIdx] || LOADING_STAGES[0];
+  const radius = 50;
+  const circumference = 2 * Math.PI * radius; // Approx 314.16
+  const strokeDashoffset = circumference - (circumference * progress) / 100;
+
+  return (
+    <div className="relative w-[calc(100%+2rem)] sm:w-[calc(100%+3rem)] lg:w-[calc(100%+4rem)] -mx-4 sm:-mx-6 lg:-mx-8 -mt-6 sm:-mt-8 h-[calc(100vh-88px)] max-h-[calc(100vh-88px)] p-6 flex flex-col justify-between overflow-hidden text-left bg-zinc-950 text-white animate-in fade-in duration-300">
+      
+      {/* Background Cyber Mesh Grid */}
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff03_1px,transparent_1px),linear-gradient(to_bottom,#ffffff03_1px,transparent_1px)] bg-[size:3rem_3rem] pointer-events-none" />
+      <div className="absolute -top-32 -left-32 w-[500px] h-[500px] bg-primary/10 rounded-full blur-[140px] pointer-events-none" />
+      <div className="absolute -bottom-32 -right-32 w-[500px] h-[500px] bg-purple-500/10 rounded-full blur-[140px] pointer-events-none" />
+
+      {/* Top Header Telemetry Banner (Flush Edge-to-Edge) */}
+      <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3.5 border-b border-white/10 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/20 via-purple-500/20 to-emerald-500/20 border border-primary/40 flex items-center justify-center text-primary shadow-[0_0_20px_rgba(59,130,246,0.4)]">
+            <Activity className="w-5 h-5 animate-pulse text-primary" />
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-widest font-mono font-bold text-primary flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <span>SYSTEM TELEMETRY INITIALIZING • NODE #1</span>
+            </div>
+            <h2 className="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5 bg-gradient-to-r from-white via-white to-purple-300 bg-clip-text text-transparent">
+              Platform Analytics Engine
+            </h2>
+          </div>
+        </div>
+
+        {/* Live Gateway Diagnostics Chips */}
+        <div className="flex flex-wrap items-center gap-2 bg-white/[0.03] border border-white/10 p-1.5 rounded-xl text-[11px] font-mono">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04]">
+            <span className="text-white/40">LATENCY:</span>
+            <span className="text-emerald-400 font-bold">14ms</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04]">
+            <span className="text-white/40">GATEWAY:</span>
+            <span className="text-primary font-bold">ONLINE</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04]">
+            <span className="text-white/40">MONGO (surge):</span>
+            <span className="text-purple-400 font-bold">SYNCING</span>
+          </div>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04]">
+            <span className="text-white/40">SAFE TREASURY:</span>
+            <span className="text-emerald-400 font-bold">READY</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Center Section: Grid (Radial Gauge + Pipeline Stages) */}
+      <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-6 items-center shrink-0 my-1">
+        
+        {/* Left Column: Centerpiece Radial HUD Gauge */}
+        <div className="lg:col-span-5 flex flex-col items-center justify-center p-4 rounded-2xl bg-white/[0.02] border border-white/10 relative overflow-visible shadow-xl backdrop-blur-xl">
+          <div className="relative w-36 h-36 flex items-center justify-center overflow-visible">
+            {/* Outer Spinning Decorative Tick Lines */}
+            <div className="absolute inset-0 rounded-full border border-dashed border-primary/30 animate-[spin_15s_linear_infinite]" />
+            <div className="absolute -inset-1.5 rounded-full border border-purple-500/20 animate-[spin_25s_linear_infinite_reverse]" />
+
+            {/* Radial Progress SVG Gauge */}
+            <svg className="w-full h-full transform -rotate-90 overflow-visible" viewBox="0 0 130 130">
+              <circle
+                cx="65"
+                cy="65"
+                r={radius}
+                className="stroke-zinc-800/80"
+                strokeWidth="8"
+                fill="transparent"
+              />
+              <circle
+                cx="65"
+                cy="65"
+                r={radius}
+                className="stroke-primary transition-all duration-300 ease-out"
+                strokeWidth="8"
+                strokeDasharray={circumference}
+                strokeDashoffset={strokeDashoffset}
+                strokeLinecap="round"
+                fill="transparent"
+                style={{
+                  filter: "drop-shadow(0 0 10px rgba(59, 130, 246, 0.9)) drop-shadow(0 0 18px rgba(168, 85, 247, 0.5))",
+                }}
+              />
+            </svg>
+
+            {/* Central Dynamic Numeric Counter */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-center select-none">
+              <span className="text-3xl font-black text-white font-mono tracking-tight drop-shadow-[0_0_12px_rgba(255,255,255,0.6)]">
+                {progress}%
+              </span>
+              <span className="text-[9px] uppercase tracking-widest text-primary font-bold font-mono mt-0.5 bg-primary/10 px-2 py-0.5 rounded-full border border-primary/30">
+                INITIALIZED
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-3 text-center space-y-0.5">
+            <div className="text-xs font-bold text-white flex items-center justify-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-ping" />
+              <span>{currentStage.label}</span>
+            </div>
+            <div className="text-[10px] text-muted-foreground max-w-xs truncate">{currentStage.detail}</div>
+          </div>
+        </div>
+
+        {/* Right Column: Compact Command Pipeline Checklist */}
+        <div className="lg:col-span-7 space-y-2">
+          <div className="text-[10px] font-mono font-bold text-white/50 uppercase tracking-widest flex items-center justify-between pb-0.5">
+            <span>EXECUTION PIPELINE STAGES</span>
+            <span>STATUS DISPATCH</span>
+          </div>
+
+          {LOADING_STAGES.map((stg, idx) => {
+            const isDone = idx < currentStageIdx;
+            const isCurrent = idx === currentStageIdx;
+
+            return (
+              <div
+                key={idx}
+                className={`p-2.5 rounded-xl border transition-all duration-300 flex items-center justify-between gap-3 ${
+                  isCurrent
+                    ? "bg-primary/15 border-primary/50 shadow-[0_0_20px_rgba(59,130,246,0.2)]"
+                    : isDone
+                    ? "bg-white/[0.03] border-emerald-500/25 text-white/90"
+                    : "bg-white/[0.01] border-white/5 text-white/30"
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  {isDone ? (
+                    <div className="w-6 h-6 rounded-lg bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(16,185,129,0.3)]">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    </div>
+                  ) : isCurrent ? (
+                    <div className="w-6 h-6 rounded-lg bg-primary/25 border border-primary/50 flex items-center justify-center shrink-0 shadow-[0_0_12px_rgba(59,130,246,0.4)]">
+                      <RefreshCw className="w-3.5 h-3.5 text-primary animate-spin" />
+                    </div>
+                  ) : (
+                    <div className="w-6 h-6 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+                      <span className="text-[10px] font-mono text-white/30 font-bold">{idx + 1}</span>
+                    </div>
+                  )}
+                  <div className="truncate">
+                    <div className={`text-xs font-bold truncate ${isDone ? "text-white" : isCurrent ? "text-white" : "text-white/40"}`}>
+                      {stg.label}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground truncate hidden sm:block">
+                      {stg.detail}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="shrink-0 font-mono text-[9px] font-bold">
+                  {isDone && <span className="text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-lg border border-emerald-500/30">READY</span>}
+                  {isCurrent && <span className="text-primary bg-primary/20 px-2 py-0.5 rounded-lg border border-primary/40 animate-pulse">EXECUTING</span>}
+                  {!isDone && !isCurrent && <span className="text-white/30 px-2 py-0.5">QUEUED</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Deployment Engine Progress Bar */}
+      <div className="relative z-10 space-y-1.5 shrink-0 my-1">
+        <div className="flex items-center justify-between text-[11px] font-mono font-bold">
+          <span className="text-white/70 uppercase tracking-wider flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 text-primary animate-spin" />
+            <span>OVERALL TELEMETRY DEPLOYMENT ENGINE</span>
+          </span>
+          <span className="text-primary text-xs">{progress}% COMPLETE</span>
+        </div>
+
+        <div className="h-3.5 w-full bg-zinc-900/90 rounded-full border border-white/15 p-0.5 shadow-inner overflow-hidden relative">
+          <div
+            className="h-full bg-gradient-to-r from-primary via-purple-500 to-emerald-400 rounded-full transition-all duration-300 shadow-[0_0_20px_rgba(59,130,246,0.9)] relative"
+            style={{ width: `${progress}%` }}
+          >
+            <div className="absolute right-0 top-0 bottom-0 w-3 bg-white rounded-full animate-pulse shadow-[0_0_12px_#ffffff]" />
+          </div>
+        </div>
+
+        {/* Metric Tick Marks */}
+        <div className="flex items-center justify-between text-[9px] text-white/40 font-mono font-bold px-1">
+          <span>0% (IDLE)</span>
+          <span>25% (GATEWAY)</span>
+          <span>50% (MONGO)</span>
+          <span>75% (SAFE)</span>
+          <span>100% (READY)</span>
+        </div>
+      </div>
+
+      {/* LOWER SECTION: Industrial-Grade High-Tech Telemetry Metrics Grid & Terminal Log Feed */}
+      <div className="relative z-10 shrink-0 pt-2 border-t border-white/10 space-y-3">
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-primary animate-pulse" />
+            <span className="text-xs font-extrabold text-white font-mono tracking-tight uppercase">
+              Real-Time System Telemetry & Pipeline Metrics
+            </span>
+          </div>
+          <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+            <span>TELEMETRY METRICS ACTIVE</span>
+          </span>
+        </div>
+
+        {/* 4-Column High-Tech Telemetry Cards Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          
+          {/* Card 1: MongoDB 'surge' Database Metadata */}
+          <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/10 space-y-1.5 backdrop-blur-xl shadow-lg relative overflow-hidden">
+            <div className="flex items-center justify-between text-[10px] font-mono font-bold text-white/50">
+              <span className="flex items-center gap-1.5 text-purple-400">
+                <Database className="w-3.5 h-3.5" />
+                <span>MONGODB (surge)</span>
+              </span>
+              <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">ONLINE</span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm font-black font-mono text-white tracking-tight">surge <span className="text-[10px] font-normal text-white/40">database</span></span>
+              <span className="text-[10px] font-mono text-primary font-bold">14ms latency</span>
+            </div>
+            <div className="text-[9px] text-white/40 font-mono truncate">receipts collection (skynetpod)</div>
+            <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden relative mt-1">
+              <div className="h-full bg-purple-500 rounded-full w-[100%]" />
+            </div>
+          </div>
+
+          {/* Card 2: Stripe Onramp Headless Regional Scope */}
+          <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/10 space-y-1.5 backdrop-blur-xl shadow-lg relative overflow-hidden">
+            <div className="flex items-center justify-between text-[10px] font-mono font-bold text-white/50">
+              <span className="flex items-center gap-1.5 text-primary">
+                <Sliders className="w-3.5 h-3.5" />
+                <span>STRIPE ONRAMP</span>
+              </span>
+              <span className="text-primary bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">EU + US SCOPE</span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm font-black font-mono text-white tracking-tight">$10,000 <span className="text-[10px] font-normal text-white/40">max limit</span></span>
+              <span className="text-[10px] font-mono text-emerald-400 font-bold">ACTIVE</span>
+            </div>
+            <div className="text-[9px] text-white/40 font-mono truncate">skynetpod merchant brand scope</div>
+            <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden relative mt-1">
+              <div className="h-full bg-primary rounded-full w-[100%]" />
+            </div>
+          </div>
+
+          {/* Card 3: Gnosis Safe Treasury Reserves */}
+          <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/10 space-y-1.5 backdrop-blur-xl shadow-lg relative overflow-hidden">
+            <div className="flex items-center justify-between text-[10px] font-mono font-bold text-white/50">
+              <span className="flex items-center gap-1.5 text-emerald-400">
+                <Building2 className="w-3.5 h-3.5" />
+                <span>GNOSIS SAFE</span>
+              </span>
+              <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">ON-CHAIN</span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm font-black font-mono text-white tracking-tight">3 ASSETS <span className="text-[10px] font-normal text-white/40">USDC/USDT</span></span>
+              <span className="text-[10px] font-mono text-emerald-400 font-bold">100% SYNCED</span>
+            </div>
+            <div className="text-[9px] text-white/40 font-mono truncate">Multi-sig reserve verification</div>
+            <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden relative mt-1">
+              <div className="h-full bg-emerald-400 rounded-full w-[100%]" />
+            </div>
+          </div>
+
+          {/* Card 4: Failure Heatmap Matrix AI */}
+          <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/10 space-y-1.5 backdrop-blur-xl shadow-lg relative overflow-hidden">
+            <div className="flex items-center justify-between text-[10px] font-mono font-bold text-white/50">
+              <span className="flex items-center gap-1.5 text-rose-400">
+                <BarChart2 className="w-3.5 h-3.5" />
+                <span>HEATMAP ENGINE</span>
+              </span>
+              <span className="text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">5x5 GRID</span>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm font-black font-mono text-white tracking-tight">5 CATEGORIES <span className="text-[10px] font-normal text-white/40">25 combos</span></span>
+              <span className="text-[10px] font-mono text-purple-400 font-bold">SYNTHESIZED</span>
+            </div>
+            <div className="text-[9px] text-white/40 font-mono truncate">Payment & gateway exceptions</div>
+            <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden relative mt-1">
+              <div className="h-full bg-rose-500 rounded-full w-[100%]" />
+            </div>
+          </div>
+
+        </div>
+
+        {/* Live Animated Console Terminal Stream Line */}
+        <div className="rounded-xl bg-black/60 border border-white/10 p-2.5 flex items-center justify-between text-[11px] font-mono shadow-inner">
+          <div className="flex items-center gap-2.5 truncate">
+            <Terminal className="w-4 h-4 text-primary shrink-0 animate-pulse" />
+            <span className="text-white/40">[0.180s]</span>
+            <span className="text-emerald-400 font-bold truncate">
+              [UI_DISPATCH] All platform telemetry streams verified • Instantiating TradingView charts & drawer controls...
+            </span>
+          </div>
+          <span className="text-[10px] text-white/40 shrink-0 font-bold hidden sm:block">BUFFER: 512 KB</span>
+        </div>
+
+      </div>
+
+      {/* DYNAMIC HEIGHT BOTTOM MODULE: Dynamic 2D Side-Scrolling Rollercoaster Chart Animation */}
+      <div className="flex-1 min-h-0 w-full mt-2.5">
+        <SideScrollerRollercoaster />
+      </div>
+
+    </div>
+  );
+}
 
 export default function PlatformAnalyticsPanel() {
   const account = useActiveAccount();
@@ -228,12 +574,29 @@ export default function PlatformAnalyticsPanel() {
     }
   };
 
-  // Investigation target / Expanded receipt ID
-  const [expandedReceiptId, setExpandedReceiptId] = useState<string | null>(null);
+  // Investigation target / Expanded receipt IDs set (supports multiple simultaneous rows!)
+  const [expandedReceiptIds, setExpandedReceiptIds] = useState<Set<string>>(new Set());
+  const [flippedReceiptIds, setFlippedReceiptIds] = useState<Set<string>>(new Set());
+  const [mobileCardActiveTab, setMobileCardActiveTab] = useState<Record<string, string | null>>({});
+  const [mobileDrawerReceipt, setMobileDrawerReceipt] = useState<any | null>(null);
+  const [activeTabMap, setActiveTabMap] = useState<Record<string, string>>({});
   const [expandedLogs, setExpandedLogs] = useState<Record<string, any[]>>({});
   const [loadingLogs, setLoadingLogs] = useState<Record<string, boolean>>({});
   const [refreshingLimits, setRefreshingLimits] = useState<Record<string, boolean>>({});
   const [refreshLimitsStatus, setRefreshLimitsStatus] = useState<Record<string, string>>({});
+
+  const toggleFlipCard = (receiptId: string) => {
+    setFlippedReceiptIds(prev => {
+      const next = new Set(prev);
+      if (next.has(receiptId)) {
+        next.delete(receiptId);
+      } else {
+        next.add(receiptId);
+        fetchReceiptLogs(receiptId);
+      }
+      return next;
+    });
+  };
 
   const enrichCustomerLimits = useCallback(async (receiptId: string) => {
     if (!wallet || refreshingLimits[receiptId]) return;
@@ -308,16 +671,32 @@ export default function PlatformAnalyticsPanel() {
     }
   }, [wallet, expandedLogs]);
 
-  const [activeTab, setActiveTab] = useState<string>("overview");
-
   const handleExpandReceipt = (receiptId: string) => {
-    if (expandedReceiptId === receiptId) {
-      setExpandedReceiptId(null);
-    } else {
-      setExpandedReceiptId(receiptId);
-      setActiveTab("overview");
-      fetchReceiptLogs(receiptId);
-    }
+    setExpandedReceiptIds(prev => {
+      const next = new Set(prev);
+      if (next.has(receiptId)) {
+        next.delete(receiptId);
+      } else {
+        next.add(receiptId);
+        fetchReceiptLogs(receiptId);
+      }
+      return next;
+    });
+  };
+
+  const handleExpandAll = (receiptIds: string[]) => {
+    setExpandedReceiptIds(prev => {
+      const next = new Set(prev);
+      receiptIds.forEach(id => {
+        next.add(id);
+        fetchReceiptLogs(id);
+      });
+      return next;
+    });
+  };
+
+  const handleCollapseAll = () => {
+    setExpandedReceiptIds(new Set());
   };
 
   const fetchAnalytics = useCallback(async () => {
@@ -1077,12 +1456,7 @@ export default function PlatformAnalyticsPanel() {
   };
 
   if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
-        <RefreshCw className="w-8 h-8 text-primary animate-spin opacity-80" />
-        <span className="text-sm text-muted-foreground">Aggregating platform metrics...</span>
-      </div>
-    );
+    return <AnalyticsPageLoadingState />;
   }
 
   if (error) {
@@ -1106,24 +1480,29 @@ export default function PlatformAnalyticsPanel() {
     <div className="w-full space-y-6 pb-24 admin-panel-enter">
 
       {/* Title Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-            <LineChart className="w-5 h-5 text-primary" />
-            <span>Platform Analytics</span>
-          </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Monitor real-time success rates, transaction volumes, and perform technical diagnostics.
-          </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur-xl shadow-xl">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 shadow-inner">
+            <LineChart className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2">
+              <span>Platform Analytics</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20">Live</span>
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Real-time success rates, transaction volumes, and technical diagnostics.
+            </p>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex bg-white/5 p-0.5 rounded-lg border border-white/5 h-9 items-center">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex bg-white/[0.04] p-1 rounded-xl border border-white/10 h-10 items-center">
             <button
               onClick={() => setTimezoneMode("system")}
-              className={`px-3 py-1 rounded-md text-xs font-semibold h-full transition-all ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold h-full transition-all duration-200 ${
                 timezoneMode === "system"
-                  ? "bg-primary text-white shadow"
+                  ? "bg-primary text-white shadow-md shadow-primary/20"
                   : "text-muted-foreground hover:text-white"
               }`}
               title="Fixed server timezone (America/Los_Angeles)"
@@ -1132,9 +1511,9 @@ export default function PlatformAnalyticsPanel() {
             </button>
             <button
               onClick={() => setTimezoneMode("dynamic")}
-              className={`px-3 py-1 rounded-md text-xs font-semibold h-full transition-all ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold h-full transition-all duration-200 ${
                 timezoneMode === "dynamic"
-                  ? "bg-primary text-white shadow"
+                  ? "bg-primary text-white shadow-md shadow-primary/20"
                   : "text-muted-foreground hover:text-white"
               }`}
               title="Your local browser timezone"
@@ -1145,7 +1524,7 @@ export default function PlatformAnalyticsPanel() {
 
           <button
             onClick={fetchAnalytics}
-            className="h-9 px-3 rounded-lg border border-white/5 hover:bg-white/5 text-xs font-medium text-white/80 transition-colors flex items-center gap-1.5"
+            className="h-10 px-4 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-xs font-semibold text-white/90 transition-all duration-200 flex items-center gap-2 shadow-sm hover:scale-[1.02] active:scale-[0.98]"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Refresh Metrics</span>
@@ -1154,12 +1533,12 @@ export default function PlatformAnalyticsPanel() {
       </div>
 
       {/* Calculation Mode Selector Tabs */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-white/5 pb-4 gap-3">
-        <div className="flex bg-white/5 p-1 rounded-lg border border-white/5">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-2xl border border-white/10 bg-zinc-950/60 backdrop-blur-xl gap-3">
+        <div className="flex bg-white/[0.04] p-1 rounded-xl border border-white/10 w-full sm:w-auto">
           <button
             onClick={() => setSuccessRateMode("integration")}
-            className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all ${successRateMode === "integration"
-                ? "bg-primary text-white shadow"
+            className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200 ${successRateMode === "integration"
+                ? "bg-primary text-white shadow-md shadow-primary/20"
                 : "text-muted-foreground hover:text-white"
               }`}
           >
@@ -1167,51 +1546,51 @@ export default function PlatformAnalyticsPanel() {
           </button>
           <button
             onClick={() => setSuccessRateMode("process")}
-            className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all ${successRateMode === "process"
-                ? "bg-primary text-white shadow"
+            className={`flex-1 sm:flex-initial px-4 py-2 rounded-lg text-xs font-semibold transition-all duration-200 ${successRateMode === "process"
+                ? "bg-primary text-white shadow-md shadow-primary/20"
                 : "text-muted-foreground hover:text-white"
               }`}
           >
-            Process Rate (Success / Paid+Failed)
+            Process Rate (Paid / Finished)
           </button>
         </div>
-        <div className="text-[11px] text-muted-foreground max-w-md leading-relaxed">
+        <div className="text-[11.5px] text-muted-foreground max-w-md leading-relaxed">
           {successRateMode === "integration"
-            ? "Calculates success rate across all initialized checkouts (reflects abandonment rates)."
-            : "Refined metric focusing on actual payment attempts, filtering out empty/unsubmitted sessions."
+            ? "Calculates success rate across all initialized checkouts (reflects total user intent & abandonment rates)."
+            : "Refined metric focusing on submitted payment attempts, filtering out empty/unsubmitted sessions."
           }
         </div>
       </div>
 
       {/* Analytics Grid HUD */}
       {displayStats && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
 
-          <div className="glass-pane rounded-xl border border-white/5 p-4 flex flex-col justify-between">
+          <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
             <div>
-              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Platform Success Rate</span>
-              <div className="text-2xl font-bold mt-1 text-white tracking-tight flex items-baseline gap-2">
+              <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">Success Rate</span>
+              <div className="text-2xl sm:text-3xl font-extrabold mt-1 text-white tracking-tight flex items-baseline justify-between gap-2">
                 <span>{displayedSuccessRate}%</span>
-                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${displayedSuccessRate >= 85 ? "bg-emerald-500/10 text-emerald-400" :
-                  displayedSuccessRate >= 70 ? "bg-amber-500/10 text-amber-400" :
-                    "bg-red-500/10 text-red-400"
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${displayedSuccessRate >= 85 ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
+                  displayedSuccessRate >= 70 ? "bg-amber-500/15 text-amber-400 border-amber-500/30" :
+                    "bg-rose-500/15 text-rose-400 border-rose-500/30"
                   }`}>
                   {displayedSuccessRate >= 85 ? "Optimal" : displayedSuccessRate >= 70 ? "Warning" : "Critical"}
                 </span>
               </div>
             </div>
-            <div className="mt-2 text-[10px] border-t border-white/5 pt-2 space-y-1">
+            <div className="mt-4 text-[11px] border-t border-white/5 pt-2.5 space-y-1">
               <div className="flex justify-between text-muted-foreground">
                 <span>DTD:</span>
                 <span className="font-semibold text-white/95">
-                  Today {comparisons.today.successRate.toFixed(1)}% vs Yesterday {comparisons.yesterday.successRate.toFixed(1)}%
+                  Today {comparisons.today.successRate.toFixed(1)}% vs Yest {comparisons.yesterday.successRate.toFixed(1)}%
                 </span>
               </div>
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Total:</span>
-                <span>
+                <span className="font-semibold text-white/90">
                   {successRateMode === "integration" ? (
-                    `${displayStats.totalPaid} paid / ${displayStats.totalCreated} total intents`
+                    `${displayStats.totalPaid} paid / ${displayStats.totalCreated} intents`
                   ) : (
                     `${displayStats.totalPaid} paid / ${displayStats.totalPaid + displayStats.totalFailed} finished`
                   )}
@@ -1220,17 +1599,17 @@ export default function PlatformAnalyticsPanel() {
             </div>
           </div>
 
-          <div className="glass-pane rounded-xl border border-white/5 p-4 flex flex-col justify-between">
+          <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
             <div>
-              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Gross Transaction Volume</span>
-              <div className="text-2xl font-bold mt-1 text-white tracking-tight">
+              <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">Gross Volume (GMV)</span>
+              <div className="text-2xl sm:text-3xl font-extrabold mt-1 text-white tracking-tight">
                 ${displayStats.totalGmv.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
-            <div className="mt-2 text-[10px] border-t border-white/5 pt-2 space-y-1">
+            <div className="mt-4 text-[11px] border-t border-white/5 pt-2.5 space-y-1">
               <div className="flex justify-between text-muted-foreground">
                 <span>MTD GMV vs Last MTD:</span>
-                <span className={`font-semibold ${comparisons.gmvChangeMtd >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                <span className={`font-bold ${comparisons.gmvChangeMtd >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                   ${comparisons.mtdThisMonth.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({comparisons.gmvChangeMtd >= 0 ? "+" : ""}{comparisons.gmvChangeMtd.toFixed(1)}%)
                 </span>
               </div>
@@ -1241,90 +1620,93 @@ export default function PlatformAnalyticsPanel() {
             </div>
           </div>
 
-          <div className="glass-pane rounded-xl border border-white/5 p-4 flex flex-col justify-between">
+          <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
             <div>
-              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Platform Revenue (Fees)</span>
-              <div className="text-2xl font-bold mt-1 text-white tracking-tight">
+              <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">Platform Revenue (Fees)</span>
+              <div className="text-2xl sm:text-3xl font-extrabold mt-1 text-white tracking-tight">
                 ${displayStats.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
-            <div className="mt-2 text-[10px] border-t border-white/5 pt-2 space-y-1">
+            <div className="mt-4 text-[11px] border-t border-white/5 pt-2.5 space-y-1">
               <div className="flex justify-between text-muted-foreground">
                 <span>YTD Fees vs Last YTD:</span>
-                <span className={`font-semibold ${comparisons.feesChangeYtd >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                <span className={`font-bold ${comparisons.feesChangeYtd >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
                   ${comparisons.ytdThisYear.fees.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({comparisons.feesChangeYtd >= 0 ? "+" : ""}{comparisons.feesChangeYtd.toFixed(1)}%)
                 </span>
               </div>
               <div className="text-muted-foreground flex justify-between">
                 <span>Fee Basis:</span>
-                <span>Derived from BPS config</span>
+                <span className="font-medium text-white/80">BPS Config Model</span>
               </div>
             </div>
           </div>
 
-          <div className="glass-pane rounded-xl border border-white/5 p-4 flex flex-col justify-between">
+          <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
             <div>
-              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Card Funding Profile</span>
-              <div className="grid grid-cols-3 gap-2 mt-2">
-                <div className="bg-white/5 rounded-lg p-1.5 text-center">
-                  <div className="text-xs text-muted-foreground">Credit</div>
-                  <div className="text-sm font-bold text-white">{displayStats.cardTypes.credit}</div>
+              <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">Card Funding Profile</span>
+              <div className="grid grid-cols-3 gap-2 mt-2.5">
+                <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
+                  <div className="text-[10px] text-muted-foreground font-medium">Credit</div>
+                  <div className="text-base font-bold text-white mt-0.5">{displayStats.cardTypes.credit}</div>
                 </div>
-                <div className="bg-white/5 rounded-lg p-1.5 text-center">
-                  <div className="text-xs text-muted-foreground">Debit</div>
-                  <div className="text-sm font-bold text-white">{displayStats.cardTypes.debit}</div>
+                <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
+                  <div className="text-[10px] text-muted-foreground font-medium">Debit</div>
+                  <div className="text-base font-bold text-white mt-0.5">{displayStats.cardTypes.debit}</div>
                 </div>
-                <div className="bg-white/5 rounded-lg p-1.5 text-center">
-                  <div className="text-xs text-muted-foreground">Bank</div>
-                  <div className="text-sm font-bold text-white">{displayStats.cardTypes.bank || 0}</div>
+                <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
+                  <div className="text-[10px] text-muted-foreground font-medium">Bank</div>
+                  <div className="text-base font-bold text-white mt-0.5">{displayStats.cardTypes.bank || 0}</div>
                 </div>
               </div>
+            </div>
+            <div className="mt-2 text-[10px] text-muted-foreground text-center">
+              Categorized via BIN & Card metadata
             </div>
           </div>
 
         </div>
       )}
 
-      {/* Success Rate / Amount Earned Over Time - Line Chart (Full Row) */}
-      <div className={`w-full glass-pane rounded-xl border border-white/5 flex flex-col min-h-0 mb-6 transition-all duration-300 ${
-        isMainChartMinimized ? "px-4 py-2.5" : "p-5"
+      {/* Success Rate / Amount Earned Over Time - Line Chart Card */}
+      <div className={`w-full glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur-xl shadow-xl transition-all duration-300 ${
+        isMainChartMinimized ? "px-5 py-3" : "p-5 sm:p-6"
       }`}>
-        <div className={`flex items-center justify-between shrink-0 ${isMainChartMinimized ? "" : "mb-4"}`}>
-          <div className="flex items-center gap-2.5">
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 ${isMainChartMinimized ? "" : "mb-5"}`}>
+          <div className="flex items-center gap-3">
             <button
               onClick={toggleMainChartMinimized}
-              className="p-1.5 hover:bg-white/5 rounded-lg transition-all text-muted-foreground hover:text-white border border-white/5 bg-white/[0.02]"
+              className="p-2 hover:bg-white/[0.08] rounded-xl transition-all text-muted-foreground hover:text-white border border-white/10 bg-white/[0.04] shadow-sm"
               title={isMainChartMinimized ? "Expand Chart" : "Minimize Chart"}
             >
               {isMainChartMinimized ? (
-                <Maximize2 className="w-3.5 h-3.5" />
+                <Maximize2 className="w-4 h-4" />
               ) : (
-                <Minimize2 className="w-3.5 h-3.5" />
+                <Minimize2 className="w-4 h-4" />
               )}
             </button>
             <div>
-              <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
                 <Activity className="w-4 h-4 text-primary" />
                 <span>{chartMetric === "successRate" ? "Success Rate Over Time" : "Amount Earned Over Time"}</span>
               </h3>
               {!isMainChartMinimized && (
-                <p className="text-[10px] text-muted-foreground mt-0.5">
+                <p className="text-xs text-muted-foreground mt-0.5">
                   {chartMetric === "successRate"
-                    ? "Daily transaction success rates (%) plotted chronologically. Hover over any legend item or line to focus it."
-                    : "Daily aggregate volume ($) earned plotted chronologically. Hover over any legend item or line to focus it."}
+                    ? "Daily transaction success rates (%) plotted chronologically."
+                    : "Daily aggregate volume ($) earned plotted chronologically."}
                 </p>
               )}
             </div>
           </div>
 
           {isMainChartMinimized && (
-            <span className="text-[10px] text-muted-foreground bg-white/5 px-2.5 py-0.5 rounded-full">Collapsed</span>
+            <span className="text-xs text-muted-foreground bg-white/[0.06] px-3 py-1 rounded-full font-medium border border-white/5">Collapsed</span>
           )}
 
           {!isMainChartMinimized && (
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2.5">
               {/* Metric Toggle */}
-              <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+              <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl">
                 {[
                   { label: "Success Rate", value: "successRate" },
                   { label: "Amount Earned", value: "amountEarned" }
@@ -1332,7 +1714,7 @@ export default function PlatformAnalyticsPanel() {
                   <button
                     key={opt.value}
                     onClick={() => setChartMetric(opt.value as any)}
-                    className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${chartMetric === opt.value
+                    className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${chartMetric === opt.value
                       ? "bg-primary text-white shadow-sm"
                       : "text-muted-foreground hover:text-white"
                       }`}
@@ -1343,7 +1725,7 @@ export default function PlatformAnalyticsPanel() {
               </div>
 
               {/* Scale Toggle */}
-              <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+              <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl">
                 {[
                   { label: "Linear", value: "linear" },
                   { label: "Log", value: "log" }
@@ -1351,7 +1733,7 @@ export default function PlatformAnalyticsPanel() {
                   <button
                     key={opt.value}
                     onClick={() => setScaleType(opt.value as any)}
-                    className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${scaleType === opt.value
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all ${scaleType === opt.value
                       ? "bg-primary text-white shadow-sm"
                       : "text-muted-foreground hover:text-white"
                       }`}
@@ -1362,8 +1744,8 @@ export default function PlatformAnalyticsPanel() {
               </div>
 
               {/* Time Range Selector */}
-              <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap">
-                <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl">
                   {[
                     { label: "Today", value: "today" },
                     { label: "Yesterday", value: "yesterday" },
@@ -1375,7 +1757,7 @@ export default function PlatformAnalyticsPanel() {
                     <button
                       key={opt.value}
                       onClick={() => setTimeRange(opt.value)}
-                      className={`px-2 h-6 text-[10px] font-medium rounded-md transition-all ${timeRange === opt.value
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all ${timeRange === opt.value
                         ? "bg-primary text-white shadow-sm"
                         : "text-muted-foreground hover:text-white"
                         }`}
@@ -1387,26 +1769,26 @@ export default function PlatformAnalyticsPanel() {
 
                 {/* Custom Date Pickers */}
                 {timeRange === "custom" && (
-                  <div className="flex items-center gap-1 bg-white/5 border border-white/5 px-2 py-0.5 rounded-lg h-7">
+                  <div className="flex items-center gap-1.5 bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl h-9">
                     <input
                       type="date"
                       value={customStartDate}
                       onChange={e => setCustomStartDate(e.target.value)}
-                      className="bg-transparent border-0 text-[10px] text-white/90 focus:outline-none w-24 [color-scheme:dark]"
+                      className="bg-transparent border-0 text-xs text-white/90 focus:outline-none w-28 [color-scheme:dark]"
                     />
-                    <span className="text-[9px] text-muted-foreground uppercase">to</span>
+                    <span className="text-[10px] text-muted-foreground uppercase">to</span>
                     <input
                       type="date"
                       value={customEndDate}
                       onChange={e => setCustomEndDate(e.target.value)}
-                      className="bg-transparent border-0 text-[10px] text-white/90 focus:outline-none w-24 [color-scheme:dark]"
+                      className="bg-transparent border-0 text-xs text-white/90 focus:outline-none w-28 [color-scheme:dark]"
                     />
                   </div>
                 )}
 
                 {/* Weekly/Monthly Pagination */}
                 {(timeRange === "weekly" || timeRange === "monthly") && (
-                  <div className="flex items-center gap-2 bg-white/5 border border-white/5 px-2 py-0.5 rounded-lg h-7">
+                  <div className="flex items-center gap-2 bg-white/[0.04] border border-white/10 px-3 py-1 rounded-xl h-9">
                     <button
                       onClick={() => {
                         if (timeRange === "weekly") {
@@ -1420,11 +1802,11 @@ export default function PlatformAnalyticsPanel() {
                     >
                       &lt;
                     </button>
-                    <span className="text-[10px] text-white font-medium select-none">
+                    <span className="text-xs text-white font-medium select-none">
                       {timeRange === "weekly" ? (
                         (() => {
                           const { start, end } = getWeekRange(selectedWeekOffset);
-                          return `Week of ${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+                          return `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
                         })()
                       ) : (
                         (() => {
@@ -1454,9 +1836,9 @@ export default function PlatformAnalyticsPanel() {
               {/* Rollercoaster Ride Button */}
               <button
                 onClick={() => setShowCoaster(true)}
-                className="px-2.5 h-7 text-[10px] font-bold rounded-lg transition-all bg-primary/20 border border-primary/30 hover:border-primary/50 hover:bg-primary/30 text-primary hover:text-white flex items-center gap-1.5 shadow-sm active:scale-95"
+                className="px-3 h-9 text-xs font-bold rounded-xl transition-all duration-200 bg-primary/20 border border-primary/30 hover:border-primary/50 hover:bg-primary/30 text-primary hover:text-white flex items-center gap-1.5 shadow-sm active:scale-95"
               >
-                <Route className="w-3.5 h-3.5" />
+                <Route className="w-4 h-4" />
                 <span>Ride the Data</span>
               </button>
             </div>
@@ -1465,7 +1847,7 @@ export default function PlatformAnalyticsPanel() {
 
         {/* Custom Interactive Line Chart */}
         {!isMainChartMinimized && (
-          <div className="flex-1 flex flex-col min-h-[220px] mt-4 animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex-1 flex flex-col min-h-[240px] sm:min-h-[280px] mt-4 animate-in fade-in zoom-in-95 duration-200">
             {chartTimeSeries.length === 1 || timeRange === "today" || timeRange === "yesterday" ? (
               <CustomInteractiveBarChart
                 data={chartTimeSeries}
@@ -1490,13 +1872,13 @@ export default function PlatformAnalyticsPanel() {
       </div>
 
       {/* 3-Column Section Header */}
-      <div className={`flex items-center justify-between glass-pane border border-white/5 px-4 py-2.5 rounded-xl transition-all duration-300 ${
-        isThreeColumnMinimized ? "mb-6" : "mb-3"
+      <div className={`flex items-center justify-between glass-pane border border-white/10 bg-zinc-950/80 px-5 py-3 rounded-2xl transition-all duration-300 ${
+        isThreeColumnMinimized ? "mb-6" : "mb-4"
       }`}>
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-3">
           <button
             onClick={toggleThreeColumnMinimized}
-            className="p-1.5 hover:bg-white/5 rounded-lg transition-all text-muted-foreground hover:text-white border border-white/5 bg-white/[0.02]"
+            className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-all text-muted-foreground hover:text-white border border-white/10 bg-white/[0.04]"
             title={isThreeColumnMinimized ? "Expand Metrics" : "Minimize Metrics"}
           >
             {isThreeColumnMinimized ? (
@@ -1505,13 +1887,13 @@ export default function PlatformAnalyticsPanel() {
               <Minimize2 className="w-3.5 h-3.5" />
             )}
           </button>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-primary" />
-            <h4 className="text-sm font-semibold text-white">Performance & Metrics Distribution</h4>
+            <h4 className="text-sm font-bold text-white">Performance & Metrics Distribution</h4>
           </div>
         </div>
         {isThreeColumnMinimized && (
-          <span className="text-[10px] text-muted-foreground bg-white/5 px-2.5 py-0.5 rounded-full">Collapsed</span>
+          <span className="text-xs text-muted-foreground bg-white/[0.06] px-3 py-1 rounded-full font-medium border border-white/5">Collapsed</span>
         )}
       </div>
 
@@ -1520,26 +1902,26 @@ export default function PlatformAnalyticsPanel() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6 animate-in fade-in zoom-in-95 duration-200">
 
         {/* Transaction Status Distribution - Pie Chart */}
-        <div className="glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between aspect-square w-full">
+        <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between min-h-[360px] sm:min-h-[380px] w-full shadow-xl">
           <div className="flex flex-col h-full justify-between">
             <div className="flex-shrink-0">
-              <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-1.5">
+              <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-primary" />
                 <span>Status Distribution</span>
               </h3>
-              <p className="text-[10px] text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 Breakdown of successful, failed, and pending checkouts.
               </p>
             </div>
 
-            <div className="flex-1 flex items-center justify-center min-h-0">
+            <div className="flex-1 flex items-center justify-center min-h-0 py-4">
               <CustomLargeDonutChart data={statusPieData} />
             </div>
           </div>
         </div>
 
         {/* Brand Performance - Flippable Card */}
-        <div className="relative [perspective:1000px] aspect-square w-full">
+        <div className="relative [perspective:1000px] min-h-[360px] sm:min-h-[380px] w-full">
           <div
             className="relative w-full h-full duration-500 transition-transform"
             style={{
@@ -1549,22 +1931,22 @@ export default function PlatformAnalyticsPanel() {
           >
             {/* Front Face: Bar Chart */}
             <div
-              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between"
+              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between shadow-xl"
               style={{ backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden" }}
             >
               <div className="flex flex-col h-full justify-between">
-                <div className="flex items-center justify-between flex-shrink-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                <div className="flex items-center justify-between flex-shrink-0 gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
                       <BarChart2 className="w-4 h-4 text-primary" />
                       <span>Brand Performance</span>
                     </h3>
                     
                     {/* Toggle Metric Switch */}
-                    <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 p-0.5 rounded">
+                    <div className="flex items-center p-0.5 bg-white/[0.04] border border-white/10 rounded-lg">
                       <button
                         onClick={() => setBrandMetric("successRate")}
-                        className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${brandMetric === "successRate"
+                        className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${brandMetric === "successRate"
                           ? "bg-primary text-white"
                           : "text-muted-foreground hover:text-white"
                           }`}
@@ -1573,7 +1955,7 @@ export default function PlatformAnalyticsPanel() {
                       </button>
                       <button
                         onClick={() => setBrandMetric("amountEarned")}
-                        className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${brandMetric === "amountEarned"
+                        className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${brandMetric === "amountEarned"
                           ? "bg-primary text-white"
                           : "text-muted-foreground hover:text-white"
                           }`}
@@ -1583,10 +1965,10 @@ export default function PlatformAnalyticsPanel() {
                     </div>
 
                     {/* Toggle Scale Switch */}
-                    <div className="flex items-center gap-0.5 bg-white/5 border border-white/5 p-0.5 rounded">
+                    <div className="flex items-center p-0.5 bg-white/[0.04] border border-white/10 rounded-lg">
                       <button
                         onClick={() => setBrandScale("linear")}
-                        className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${brandScale === "linear"
+                        className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${brandScale === "linear"
                           ? "bg-primary text-white"
                           : "text-muted-foreground hover:text-white"
                           }`}
@@ -1595,7 +1977,7 @@ export default function PlatformAnalyticsPanel() {
                       </button>
                       <button
                         onClick={() => setBrandScale("log")}
-                        className={`px-1.5 py-0.5 text-[8px] font-medium rounded transition-all ${brandScale === "log"
+                        className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${brandScale === "log"
                           ? "bg-primary text-white"
                           : "text-muted-foreground hover:text-white"
                           }`}
@@ -1607,10 +1989,10 @@ export default function PlatformAnalyticsPanel() {
 
                   <button
                     onClick={() => setBpFlipped(true)}
-                    className="text-[10px] font-medium text-muted-foreground hover:text-white transition-colors bg-white/5 border border-white/5 px-2 py-0.5 rounded flex items-center gap-1"
+                    className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl flex items-center gap-1.5"
                   >
-                    <RefreshCw className="w-2.5 h-2.5" />
-                    <span>View Table</span>
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Table</span>
                   </button>
                 </div>
 
@@ -1619,7 +2001,6 @@ export default function PlatformAnalyticsPanel() {
                     const brandIdx = allBrandKeys.indexOf(b.brandKey);
                     const color = getBrandColor(b.brandKey, brandIdx);
                     
-                    // Determine width percentage dynamically with linear or logarithmic scaling
                     let widthPct = 0;
                     if (brandMetric === "successRate") {
                       if (brandScale === "linear") {
@@ -1637,8 +2018,8 @@ export default function PlatformAnalyticsPanel() {
 
                     return (
                       <div key={b.brandKey} className="space-y-2">
-                        <div className="flex justify-between items-center text-sm">
-                          <span className="font-semibold text-white/95">{b.brandKey}</span>
+                        <div className="flex justify-between items-center text-xs sm:text-sm">
+                          <span className="font-bold text-white/95">{b.brandKey}</span>
                           <span className="text-muted-foreground text-xs font-medium">
                             {brandMetric === "successRate" ? (
                               <>
@@ -1673,7 +2054,7 @@ export default function PlatformAnalyticsPanel() {
 
             {/* Back Face: Table List */}
             <div
-              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between"
+              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between shadow-xl"
               style={{
                 backfaceVisibility: "hidden",
                 WebkitBackfaceVisibility: "hidden",
@@ -1682,33 +2063,33 @@ export default function PlatformAnalyticsPanel() {
             >
               <div className="flex flex-col h-full justify-between">
                 <div className="flex items-center justify-between flex-shrink-0">
-                  <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
                     <Building2 className="w-4 h-4 text-primary" />
-                    <span>Brand Performance</span>
+                    <span>Brand Details</span>
                   </h3>
                   <button
                     onClick={() => setBpFlipped(false)}
-                    className="text-[10px] font-medium text-muted-foreground hover:text-white transition-colors bg-white/5 border border-white/5 px-2 py-0.5 rounded flex items-center gap-1"
+                    className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl flex items-center gap-1.5"
                   >
-                    <RefreshCw className="w-2.5 h-2.5" />
-                    <span>View Chart</span>
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Chart</span>
                   </button>
                 </div>
 
                 <div className="space-y-3 overflow-y-auto pr-1 flex-1 min-h-0 mt-3">
                   {displayedBrandStats.map(b => (
-                    <div key={b.brandKey} className="border-b border-white/5 pb-2 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
+                    <div key={b.brandKey} className="border-b border-white/5 pb-2.5 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
                       <div>
-                        <div className="font-semibold text-white/90">{b.brandKey}</div>
-                        <div className="text-muted-foreground text-[10px] mt-1">
+                        <div className="font-bold text-white">{b.brandKey}</div>
+                        <div className="text-muted-foreground text-[10px] mt-0.5">
                           {b.sessionsText}
                         </div>
                       </div>
                       <div className="text-right">
                         <div className="font-bold text-white">${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-                        <div className={`text-[10px] font-medium mt-0.5 ${b.successRate >= 80 ? "text-emerald-400" :
+                        <div className={`text-[10px] font-bold mt-0.5 ${b.successRate >= 80 ? "text-emerald-400" :
                           b.successRate >= 60 ? "text-amber-400" :
-                            "text-red-400"
+                            "text-rose-400"
                           }`}>
                           {b.successRate}% SR
                         </div>
@@ -1725,7 +2106,7 @@ export default function PlatformAnalyticsPanel() {
         </div>
 
         {/* Technical Failure Reasons - Flippable Card */}
-        <div className="relative [perspective:1000px] aspect-square w-full">
+        <div className="relative [perspective:1000px] min-h-[360px] sm:min-h-[380px] w-full">
           <div
             className="relative w-full h-full duration-500 transition-transform"
             style={{
@@ -1735,35 +2116,34 @@ export default function PlatformAnalyticsPanel() {
           >
             {/* Front Face: Heatmap */}
             <div
-              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between"
+              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between shadow-xl"
               style={{ backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden" }}
             >
               <div className="flex flex-col h-full relative justify-between">
                 <div className="flex items-center justify-between flex-shrink-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
-                      <Activity className="w-4 h-4 text-red-400" />
-                      <span>Failure Combination Heatmap</span>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <Activity className="w-4 h-4 text-rose-400" />
+                      <span>Failure Heatmap</span>
                     </h3>
                     {selectedErrorCombo && (
-                      <span className="text-[9px] text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded border border-red-500/20 animate-pulse">
-                        Filter Active
+                      <span className="text-[9px] text-rose-400 bg-rose-500/15 px-2 py-0.5 rounded-full border border-rose-500/30 animate-pulse font-bold">
+                        Filtered
                       </span>
                     )}
                   </div>
                   <button
                     onClick={() => setTfrFlipped(true)}
-                    className="text-[10px] font-medium text-muted-foreground hover:text-white transition-colors bg-white/5 border border-white/5 px-2 py-0.5 rounded flex items-center gap-1"
+                    className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl flex items-center gap-1.5"
                   >
-                    <RefreshCw className="w-2.5 h-2.5" />
-                    <span>View List</span>
+                    <RefreshCw className="w-3 h-3" />
+                    <span>List</span>
                   </button>
                 </div>
 
                 {failureCombinations.topReasons.length > 0 ? (
                   <div className="flex flex-col items-center justify-center flex-1 py-1 min-h-0 relative mt-2">
                     <svg viewBox="0 0 300 280" className="w-full h-[90%] overflow-visible select-none">
-                      {/* Grid Header Labels */}
                       {failureCombinations.topReasons.map((_, idx) => (
                         <text
                           key={idx}
@@ -1776,29 +2156,30 @@ export default function PlatformAnalyticsPanel() {
                         </text>
                       ))}
 
-                      {/* Grid Rows */}
                       {failureCombinations.topReasons.map((reasonA, idxA) => {
                         const y = 25 + idxA * 50;
                         return (
                           <g key={idxA}>
-                            {/* Row Label */}
                             <text
                               x="16"
-                              y={y + 25}
+                              y={y + 26}
                               className="fill-white/40 text-[10px] font-bold font-sans"
                               textAnchor="middle"
                             >
                               E{idxA + 1}
                             </text>
 
-                            {/* Cells */}
                             {failureCombinations.topReasons.map((reasonB, idxB) => {
                               const x = 34 + idxB * 52;
                               const val = failureCombinations.matrix[idxA][idxB];
                               const maxVal = Math.max(...failureCombinations.matrix.map(row => Math.max(...row)), 1);
                               const opacity = val > 0 ? 0.15 + (val / maxVal) * 0.85 : 0.02;
                               const isDiagonal = idxA === idxB;
-                              const isSelected = selectedErrorCombo && selectedErrorCombo[0] === reasonA && selectedErrorCombo[1] === reasonB;
+
+                              const isSelected = selectedErrorCombo && (
+                                (selectedErrorCombo[0] === reasonA && selectedErrorCombo[1] === reasonB) ||
+                                (selectedErrorCombo[0] === reasonB && selectedErrorCombo[1] === reasonA)
+                              );
 
                               return (
                                 <g key={idxB}>
@@ -1806,29 +2187,11 @@ export default function PlatformAnalyticsPanel() {
                                     x={x}
                                     y={y}
                                     width="44"
-                                    height="40"
-                                    rx="6"
-                                    className={`transition-all duration-300 cursor-pointer ${
-                                      isSelected 
-                                        ? "stroke-red-400 stroke-2" 
-                                        : "hover:stroke-red-400/80 stroke-1"
-                                    }`}
-                                    stroke={isSelected ? "#ef4444" : val > 0 ? "rgba(239, 68, 68, 0.3)" : "rgba(255,255,255,0.04)"}
-                                    fill={val > 0 ? `rgba(239, 68, 68, ${opacity})` : "rgba(255, 255, 255, 0.01)"}
-                                    onMouseEnter={(e) => {
-                                      const rect = e.currentTarget.getBoundingClientRect();
-                                      const container = e.currentTarget.ownerSVGElement?.getBoundingClientRect();
-                                      if (container) {
-                                        setHoveredHeatmapCell({
-                                          x: rect.left - container.left + rect.width / 2,
-                                          y: rect.top - container.top - 8,
-                                          reasonA,
-                                          reasonB,
-                                          val
-                                        });
-                                      }
-                                    }}
-                                    onMouseLeave={() => setHoveredHeatmapCell(null)}
+                                    height="44"
+                                    rx="8"
+                                    className={`cursor-pointer transition-all duration-200 ${isSelected ? "stroke-2 stroke-primary" : "hover:stroke-1 hover:stroke-white/40"}`}
+                                    fill={val > 0 ? (isDiagonal ? "#fb7185" : "#f43f5e") : "#27272a"}
+                                    fillOpacity={opacity}
                                     onClick={() => {
                                       if (isSelected) {
                                         setSelectedErrorCombo(null);
@@ -1836,17 +2199,17 @@ export default function PlatformAnalyticsPanel() {
                                         setSelectedErrorCombo([reasonA, reasonB]);
                                       }
                                     }}
+                                    onMouseEnter={() => setHoveredHeatmapCell({ x, y, reasonA, reasonB, val })}
+                                    onMouseLeave={() => setHoveredHeatmapCell(null)}
                                   />
-                                  {val > 0 && (
-                                    <text
-                                      x={x + 22}
-                                      y={y + 25}
-                                      className="fill-white text-[11px] font-bold font-sans pointer-events-none"
-                                      textAnchor="middle"
-                                    >
-                                      {val}
-                                    </text>
-                                  )}
+                                  <text
+                                    x={x + 22}
+                                    y={y + 26}
+                                    className={`text-[10px] font-bold font-mono pointer-events-none ${val > 0 ? "fill-white" : "fill-white/20"}`}
+                                    textAnchor="middle"
+                                  >
+                                    {val}
+                                  </text>
                                 </g>
                               );
                             })}
@@ -1855,44 +2218,54 @@ export default function PlatformAnalyticsPanel() {
                       })}
                     </svg>
 
-                    {/* Interactive hover tooltip (HTML Overlay) */}
+                    {/* Interactive Glassmorphic Hover Tooltip for Heatmap Cells */}
                     {hoveredHeatmapCell && (
                       <div
-                        className="absolute z-50 bg-neutral-950 border border-white/10 rounded-lg p-2.5 shadow-2xl text-[10px] pointer-events-none -translate-x-1/2 -translate-y-full mb-2 transition-all duration-100 max-w-[200px]"
-                        style={{ left: hoveredHeatmapCell.x, top: hoveredHeatmapCell.y }}
+                        className="absolute z-50 bg-zinc-950/95 border border-rose-500/30 rounded-xl p-3 shadow-2xl backdrop-blur-xl text-xs pointer-events-none -translate-x-1/2 -translate-y-full mb-3 animate-in fade-in zoom-in-95 duration-150 max-w-xs w-64"
+                        style={{
+                          left: `calc(11% + ${(hoveredHeatmapCell.x / 300) * 100}%)`,
+                          top: `calc(8% + ${(hoveredHeatmapCell.y / 280) * 100}%)`,
+                        }}
                       >
-                        <div className="font-bold text-white mb-1">
-                          {hoveredHeatmapCell.reasonA === hoveredHeatmapCell.reasonB 
-                            ? "Error Frequency" 
-                            : "Co-occurring Combo"}
+                        <div className="flex items-center justify-between border-b border-white/10 pb-1.5 mb-1.5">
+                          <span className="font-mono text-[10px] font-bold text-rose-400 uppercase tracking-wider flex items-center gap-1">
+                            <Activity className="w-3 h-3 text-rose-400" />
+                            <span>Failure Cell</span>
+                          </span>
+                          <span className="text-[10px] font-mono font-bold text-white bg-rose-500/20 px-1.5 py-0.5 rounded border border-rose-500/30">
+                            {hoveredHeatmapCell.val} {hoveredHeatmapCell.val === 1 ? "occurrence" : "occurrences"}
+                          </span>
                         </div>
-                        <div className="text-red-400 font-semibold mb-1">
-                          Occurrences: {hoveredHeatmapCell.val}
-                        </div>
-                        <div className="text-white/70 leading-relaxed break-words font-medium">
-                          {hoveredHeatmapCell.reasonA === hoveredHeatmapCell.reasonB ? (
-                            <span>{hoveredHeatmapCell.reasonA}</span>
-                          ) : (
-                            <div className="space-y-1">
-                              <div>• {hoveredHeatmapCell.reasonA}</div>
-                              <div>• {hoveredHeatmapCell.reasonB}</div>
+
+                        <div className="space-y-1">
+                          <div className="text-[11px] font-bold text-white leading-tight">
+                            {hoveredHeatmapCell.reasonA}
+                          </div>
+                          {hoveredHeatmapCell.reasonA !== hoveredHeatmapCell.reasonB && (
+                            <div className="text-[10px] text-muted-foreground border-t border-white/5 pt-1 mt-1">
+                              <span className="text-white/40">Co-occurring: </span>
+                              <span className="text-white/80 font-semibold">{hoveredHeatmapCell.reasonB}</span>
                             </div>
                           )}
+                        </div>
+
+                        <div className="text-[9px] text-emerald-400 font-mono font-medium mt-2 pt-1 border-t border-white/5 flex items-center gap-1">
+                          <span>💡 Click cell to filter diagnostics feed</span>
                         </div>
                       </div>
                     )}
                   </div>
                 ) : (
-                  <div className="text-xs text-muted-foreground text-center py-8 flex-1 flex items-center justify-center">
-                    No failed transactions recorded.
+                  <div className="flex flex-col items-center justify-center flex-1 text-xs text-muted-foreground">
+                    No failure combinations recorded.
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Back Face: List */}
+            {/* Back Face: Error List */}
             <div
-              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-xl border border-white/5 p-5 flex flex-col justify-between"
+              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between shadow-xl"
               style={{
                 backfaceVisibility: "hidden",
                 WebkitBackfaceVisibility: "hidden",
@@ -1901,94 +2274,107 @@ export default function PlatformAnalyticsPanel() {
             >
               <div className="flex flex-col h-full justify-between">
                 <div className="flex items-center justify-between flex-shrink-0">
-                  <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
-                    <XCircle className="w-4 h-4 text-red-400" />
-                    <span>Technical Failure Reasons</span>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-400" />
+                    <span>Top Failure Reasons</span>
                   </h3>
                   <button
                     onClick={() => setTfrFlipped(false)}
-                    className="text-[10px] font-medium text-muted-foreground hover:text-white transition-colors bg-white/5 border border-white/5 px-2 py-0.5 rounded flex items-center gap-1"
+                    className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl flex items-center gap-1.5"
                   >
-                    <RefreshCw className="w-2.5 h-2.5" />
-                    <span>View Heatmap</span>
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Heatmap</span>
                   </button>
                 </div>
 
                 <div className="space-y-3 overflow-y-auto pr-1 flex-1 min-h-0 mt-3">
                   {failureReasons.map((fr, idx) => (
-                    <div key={idx} className="flex items-start justify-between text-xs border-b border-white/5 pb-2 last:border-b-0 last:pb-0 gap-2">
-                      <span className="text-white/70 font-medium break-words leading-relaxed max-w-[80%]">
+                    <div key={idx} className="border-b border-white/5 pb-2.5 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
+                      <div className="font-semibold text-white/90 truncate max-w-[200px]" title={fr.reason}>
                         {fr.reason}
-                      </span>
-                      <span className="font-bold text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded text-[10px] flex-shrink-0">
-                        {fr.count} times
+                      </div>
+                      <span className="font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full text-[10px] border border-rose-500/20">
+                        {fr.count} occurrences
                       </span>
                     </div>
                   ))}
                   {failureReasons.length === 0 && (
-                    <div className="text-xs text-muted-foreground text-center py-4">No failed transactions recorded.</div>
+                    <div className="text-xs text-muted-foreground text-center py-4">No logged errors found.</div>
                   )}
                 </div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    </div>
-    )}
 
-      {/* Gnosis Safe Wallet Portfolio Value Over Time Chart */}
-      <div className={`w-full glass-pane rounded-xl border border-white/5 flex flex-col min-h-0 mb-6 transition-all duration-300 ${
-        isSafeChartMinimized ? "px-4 py-2.5" : "p-5"
+        </div>
+      )}
+
+      {/* Gnosis Safe Reserves Value Over Time Chart Card */}
+      <div className={`w-full glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur-xl shadow-xl transition-all duration-300 ${
+        isSafeChartMinimized ? "px-5 py-3 mb-6" : "p-5 sm:p-6 mb-6"
       }`}>
-        <div className={`flex items-center justify-between shrink-0 ${isSafeChartMinimized ? "" : "mb-4"}`}>
-          <div className="flex items-center gap-2.5">
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 ${isSafeChartMinimized ? "" : "mb-5"}`}>
+          <div className="flex items-center gap-3">
             <button
               onClick={toggleSafeChartMinimized}
-              className="p-1.5 hover:bg-white/5 rounded-lg transition-all text-muted-foreground hover:text-white border border-white/5 bg-white/[0.02]"
+              className="p-2 hover:bg-white/[0.08] rounded-xl transition-all text-muted-foreground hover:text-white border border-white/10 bg-white/[0.04] shadow-sm"
               title={isSafeChartMinimized ? "Expand Chart" : "Minimize Chart"}
             >
               {isSafeChartMinimized ? (
-                <Maximize2 className="w-3.5 h-3.5" />
+                <Maximize2 className="w-4 h-4" />
               ) : (
-                <Minimize2 className="w-3.5 h-3.5" />
+                <Minimize2 className="w-4 h-4" />
               )}
             </button>
             <div>
-              <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
-                <Activity className="w-4 h-4 text-primary" />
-                <span>Gnosis Safe Wallet Value Over Time (0xacd...aa3f6e)</span>
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-emerald-400" />
+                <span>Gnosis Safe Reserves & Treasury Growth</span>
               </h3>
               {!isSafeChartMinimized && (
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  Platform Safe wallet balance history across USDC, USDT, cbBTC, cbXRP, SOL, and ETH (USD valuation). Indexes once an hour.
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Real-time on-chain treasury balances, token allocations, and exponential trajectory forecast models.
                 </p>
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {isSafeChartMinimized && (
-              <span className="text-[10px] text-muted-foreground bg-white/5 px-2.5 py-0.5 rounded-full">Collapsed</span>
-            )}
-            {safeLoading && (
-              <span className="text-[10px] text-muted-foreground bg-white/5 px-2 py-0.5 rounded flex items-center gap-1.5">
-                <RefreshCw className="w-3 h-3 animate-spin" />
-                <span>Syncing...</span>
-              </span>
-            )}
-          </div>
+
+          {isSafeChartMinimized && (
+            <span className="text-xs text-muted-foreground bg-white/[0.06] px-3 py-1 rounded-full font-medium border border-white/5">Collapsed</span>
+          )}
+
+          {!isSafeChartMinimized && (
+            <div className="flex items-center gap-2.5">
+              <button
+                onClick={fetchSafeBalances}
+                disabled={safeLoading}
+                className="h-9 px-4 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-xs font-semibold text-white/90 transition-all flex items-center gap-2 shadow-sm active:scale-95 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${safeLoading ? "animate-spin" : ""}`} />
+                <span>Sync Safe Balances</span>
+              </button>
+            </div>
+          )}
         </div>
 
-        {!isSafeChartMinimized && safeError && (
-          <div className="text-xs text-rose-400 bg-rose-500/10 p-3 rounded-lg border border-rose-500/20 my-2">
-            {safeError}
-          </div>
-        )}
-
         {!isSafeChartMinimized && (
-          <div className="flex-1 flex flex-col min-h-[300px] mt-2 animate-in fade-in zoom-in-95 duration-200">
-            {safeLoading && safeBalanceHistory.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground">
-                Loading portfolio data from Thirdweb indexer...
+          <div className="flex-1 flex flex-col min-h-[360px] sm:min-h-[420px] mt-4 animate-in fade-in zoom-in-95 duration-200">
+            {safeLoading ? (
+              <div className="flex flex-col items-center justify-center min-h-[220px] gap-2">
+                <RefreshCw className="w-6 h-6 text-emerald-400 animate-spin opacity-80" />
+                <span className="text-xs text-muted-foreground font-medium">Syncing Gnosis Safe treasury balances...</span>
+              </div>
+            ) : safeError ? (
+              <div className="flex flex-col items-center justify-center min-h-[200px] p-4 text-center border border-rose-500/20 bg-rose-500/5 rounded-2xl">
+                <AlertCircle className="w-8 h-8 text-rose-400 mb-2" />
+                <span className="text-xs text-rose-400 font-semibold">{safeError}</span>
+                <button
+                  onClick={fetchSafeBalances}
+                  className="mt-3 px-3.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold transition-all"
+                >
+                  Retry Sync
+                </button>
               </div>
             ) : (
               <SafeInteractiveLineChart data={safeBalanceHistory} tokenPrices={safeTokenPrices} />
@@ -2000,31 +2386,31 @@ export default function PlatformAnalyticsPanel() {
       {/* Full-width Searchable and Detailed Diagnostics Investigation Feed */}
       <div className="space-y-4">
 
-        <div className="glass-pane rounded-xl border border-white/5 p-4 space-y-4">
+        <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-4 sm:p-5 space-y-4 shadow-xl backdrop-blur-xl">
 
           {/* Filter Toolbar */}
-          <div className="flex flex-col sm:flex-row items-center gap-3">
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3 sm:gap-4">
 
             {/* Search Bar */}
             <div className="relative flex-1 w-full">
-              <Search className="absolute left-3 top-2.5 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-3.5 top-3 w-4 h-4 text-muted-foreground" />
               <input
                 type="text"
-                placeholder="Search receipt ID, email, session ID..."
+                placeholder="Search receipt ID, email, session ID, tx hash..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full h-9 pl-9 pr-4 rounded-lg bg-white/5 border border-white/5 focus:border-primary/50 text-xs text-white placeholder:text-muted-foreground focus:outline-none transition-colors"
+                className="w-full h-10 pl-10 pr-4 rounded-xl bg-white/[0.04] border border-white/10 focus:border-primary/60 text-xs text-white placeholder:text-muted-foreground focus:outline-none transition-all shadow-sm"
               />
             </div>
 
             {/* Filters Dropdown */}
-            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
               <select
                 value={selectedBrand}
                 onChange={e => setSelectedBrand(e.target.value)}
-                className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
+                className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
               >
-                <option value="all" className="bg-neutral-900">All Brandkeys</option>
+                <option value="all" className="bg-neutral-900">All Brands</option>
                 {allBrandKeys.map(bk => (
                   <option key={bk} value={bk} className="bg-neutral-900">{bk}</option>
                 ))}
@@ -2033,7 +2419,7 @@ export default function PlatformAnalyticsPanel() {
               <select
                 value={statusFilter}
                 onChange={e => setStatusFilter(e.target.value)}
-                className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
+                className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
               >
                 <option value="all" className="bg-neutral-900">All Statuses</option>
                 <option value="paid" className="bg-neutral-900">Paid Only</option>
@@ -2044,9 +2430,9 @@ export default function PlatformAnalyticsPanel() {
               <select
                 value={kycFilter}
                 onChange={e => setKycFilter(e.target.value)}
-                className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
+                className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
               >
-                <option value="all" className="bg-neutral-900">All KYC Levels</option>
+                <option value="all" className="bg-neutral-900">All KYC Tiers</option>
                 <option value="L0" className="bg-neutral-900">L0 (Base)</option>
                 <option value="L1" className="bg-neutral-900">L1 (Demographics)</option>
                 <option value="L2" className="bg-neutral-900">L2 (ID Verified)</option>
@@ -2055,7 +2441,7 @@ export default function PlatformAnalyticsPanel() {
               <select
                 value={timeRange}
                 onChange={e => setTimeRange(e.target.value)}
-                className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
+                className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
               >
                 <option value="all" className="bg-neutral-900">All Time</option>
                 <option value="today" className="bg-neutral-900">Today</option>
@@ -2066,7 +2452,7 @@ export default function PlatformAnalyticsPanel() {
               </select>
 
               {timeRange === "custom" && (
-                <div className="flex items-center gap-1.5 bg-white/5 border border-white/5 px-2 py-1 rounded-lg h-9">
+                <div className="flex items-center gap-1.5 bg-white/[0.04] border border-white/10 px-3 py-1 rounded-xl h-10">
                   <input
                     type="date"
                     value={customStartDate}
@@ -2084,7 +2470,7 @@ export default function PlatformAnalyticsPanel() {
               )}
 
               {(timeRange === "weekly" || timeRange === "monthly") && (
-                <div className="flex items-center gap-2 bg-white/5 border border-white/5 px-2.5 py-1 rounded-lg h-9">
+                <div className="flex items-center gap-2 bg-white/[0.04] border border-white/10 px-3 py-1 rounded-xl h-10">
                   <button
                     onClick={() => {
                       if (timeRange === "weekly") {
@@ -2134,7 +2520,7 @@ export default function PlatformAnalyticsPanel() {
                   const val = e.target.value;
                   setFetchLimit(val === "all" ? "all" : Number(val));
                 }}
-                className="h-9 px-3 rounded-lg bg-white/5 border border-white/5 text-xs text-white/80 focus:outline-none flex-1 sm:flex-initial"
+                className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
               >
                 <option value={500} className="bg-neutral-900">500 Records</option>
                 <option value={1000} className="bg-neutral-900">1000 Records</option>
@@ -2146,87 +2532,424 @@ export default function PlatformAnalyticsPanel() {
           </div>
 
           {/* Receipts Table */}
-          <div className="border border-white/5 rounded-lg overflow-hidden">
+          <div className="border border-white/10 rounded-2xl overflow-hidden bg-zinc-950/80 shadow-2xl">
             {fetchLimit !== "all" && stats && stats.totalCreated > recentReceipts.length && (
-              <div className="flex flex-col sm:flex-row items-center justify-between bg-amber-500/10 border-b border-white/5 px-4 py-2.5 gap-2 text-xs text-amber-400 font-medium">
-                <span className="flex items-center gap-1.5">
+              <div className="flex flex-col sm:flex-row items-center justify-between bg-amber-500/10 border-b border-white/10 px-4 py-3 gap-2 text-xs text-amber-400 font-semibold">
+                <span className="flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                  <span>Only the most recent {recentReceipts.length} records are fetched from the database (total: {stats.totalCreated}).</span>
+                  <span>Showing {recentReceipts.length} records of {stats.totalCreated} total intents.</span>
                 </span>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2.5">
                   <button
                     onClick={() => setFetchLimit(prev => (prev === "all" ? "all" : prev + 500))}
-                    className="hover:text-white transition-colors bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded border border-white/5 text-[10px] font-semibold"
+                    className="hover:text-white transition-colors bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg border border-white/10 text-xs font-bold"
                   >
                     Load More (+500)
                   </button>
                   <button
                     onClick={() => setFetchLimit("all")}
-                    className="hover:text-white transition-colors bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded border border-white/5 text-[10px] font-semibold"
+                    className="hover:text-white transition-colors bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg border border-white/10 text-xs font-bold"
                   >
                     Load All
                   </button>
                 </div>
               </div>
             )}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs text-white/80">
-                <thead className="bg-white/5 text-muted-foreground font-semibold uppercase tracking-wider text-[10px] border-b border-white/5 select-none">
+            {/* Mobile 3D Flip-Card Grid (Visible on md:hidden) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 md:hidden p-3.5 border-b border-white/10">
+              {paginatedReceipts.map(r => {
+                const isFlipped = flippedReceiptIds.has(r.receiptId);
+                const isExpanded = expandedReceiptIds.has(r.receiptId);
+                const isSettled = ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status);
+
+                return (
+                  <div
+                    key={`mobile-card-${r.receiptId}`}
+                    className="w-full min-h-[385px] h-[385px] select-none"
+                    style={{ perspective: "1000px" }}
+                  >
+                    <div
+                      className="relative w-full h-full transition-transform duration-500"
+                      style={{
+                        transformStyle: "preserve-3d",
+                        transform: isFlipped ? "rotateY(180deg)" : "rotateY(0deg)",
+                      }}
+                    >
+                      {/* FRONT OF CARD (Receipt Summary) */}
+                      <div
+                        className="absolute inset-0 w-full h-full rounded-2xl bg-zinc-900/90 border border-white/10 p-4 flex flex-col justify-between shadow-xl backdrop-blur-xl"
+                        style={{ backfaceVisibility: "hidden" }}
+                      >
+                        <div>
+                          {/* Card Header Row */}
+                          <div className="flex items-center justify-between gap-2 pb-3 border-b border-white/10">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-black text-sm text-white">{r.receiptId}</span>
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-white/10 text-white/80 border border-white/10">
+                                {r.brandKey}
+                              </span>
+                            </div>
+                            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold border inline-flex items-center gap-1 ${
+                              isSettled
+                                ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                                : r.status === "failed"
+                                ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                                : "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                            }`}>
+                              {isSettled && <CheckCircle2 className="w-2.5 h-2.5" />}
+                              {r.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
+                              <span>{r.status}</span>
+                            </span>
+                          </div>
+
+                          {/* Card Main Body */}
+                          <div className="my-3 space-y-2.5">
+                            <div className="flex items-baseline justify-between">
+                              <span className="text-2xl font-black font-mono text-white tracking-tight">${r.totalUsd.toFixed(2)}</span>
+                              <span className="text-[10px] font-mono text-white/50">
+                                {r.createdAt ? new Date(r.createdAt).toLocaleString("en-US", {
+                                  timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE,
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit"
+                                }) : "N/A"}
+                              </span>
+                            </div>
+
+                            <div className="text-xs font-mono text-white/70 truncate bg-white/[0.03] p-2 rounded-xl border border-white/5">
+                              <span className="text-white/40">Buyer Email:</span> {r.email || "N/A"}
+                            </div>
+
+                            <div className="flex items-center justify-between text-[11px] font-mono pt-1">
+                              <span className="text-white/40">KYC Verification:</span>
+                              <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] border ${
+                                r.kycLevel === "L2" ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
+                                r.kycLevel === "L1" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+                                "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
+                              }`}>
+                                Level {r.kycLevel}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Card Action Buttons */}
+                        <div className="flex items-center gap-2 pt-2 border-t border-white/10">
+                          <button
+                            onClick={() => toggleFlipCard(r.receiptId)}
+                            className="flex-1 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 font-mono text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Flip to Investigate</span>
+                          </button>
+                          <button
+                            onClick={() => setMobileDrawerReceipt(r)}
+                            className="px-3.5 py-2 rounded-xl text-xs font-bold font-mono border border-primary/40 bg-primary text-white shadow-md shadow-primary/20 transition-all"
+                          >
+                            Full Drawer
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* BACK OF CARD (Interactive Investigation Menu & Tab Views) */}
+                      <div
+                        className="absolute inset-0 w-full h-full rounded-2xl bg-zinc-950 border border-purple-500/40 p-3.5 flex flex-col justify-between shadow-2xl backdrop-blur-xl overflow-y-auto"
+                        style={{
+                          backfaceVisibility: "hidden",
+                          transform: "rotateY(180deg)",
+                        }}
+                      >
+                        {(() => {
+                          const activeSubTab = mobileCardActiveTab[r.receiptId] || null;
+                          const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined"].includes(String(r.status || "").toLowerCase());
+                          const statusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
+                          const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
+                          const currentStatus = String(r.status || "").toLowerCase();
+
+                          const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
+                          const customerIdentified = statusList.includes("buyer_logged_in") || statusList.includes("checkout_session_created") || !!r.email;
+                          const paymentMethodSelected = !!r.cardFunding || statusList.includes("payment_method_detected");
+                          const kycTriggered = statusList.some(s => s.includes("kyc"));
+                          const kycCompleted = (kycTriggered && isSettled);
+                          const kycFailed = kycTriggered && currentStatus === "failed";
+
+                          const steps = [
+                            { id: "opened", label: "Opened", status: linkOpened ? "completed" : "upcoming" },
+                            { id: "identified", label: "Identified", status: customerIdentified ? "completed" : (linkOpened ? "active" : "upcoming") },
+                            { id: "payment", label: "Payment", status: paymentMethodSelected ? "completed" : (customerIdentified ? "active" : "upcoming") },
+                            { id: "kyc", label: "KYC", status: kycFailed ? "failed" : (kycCompleted ? "completed" : (kycTriggered ? "active" : "skipped")) },
+                            { id: "settlement", label: "Settlement", status: isSettled ? "completed" : (currentStatus === "failed" ? "failed" : "active") }
+                          ];
+
+                          if (activeSubTab === null) {
+                            // ── MENU VIEW (Initial Back Face) ──────────────────────
+                            return (
+                              <div className="flex flex-col justify-between h-full space-y-2">
+                                <div>
+                                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                                    <div className="flex items-center gap-1.5 text-purple-400 text-xs font-mono font-bold">
+                                      <Activity className="w-3.5 h-3.5 animate-pulse" />
+                                      <span>INVESTIGATION MENU</span>
+                                    </div>
+                                    <button
+                                      onClick={() => toggleFlipCard(r.receiptId)}
+                                      className="p-1 rounded-lg bg-white/10 text-white/70 hover:text-white"
+                                      title="Flip back"
+                                    >
+                                      <RotateCcw className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+
+                                  {/* Badass Stepper Mini Preview Bar */}
+                                  <div className="my-2.5 p-2 rounded-xl bg-black/40 border border-white/10 relative overflow-hidden">
+                                    <div className="text-[8px] font-mono font-bold text-white/40 uppercase mb-1.5 flex items-center justify-between">
+                                      <span>FUNNEL TRAJECTORY STEPPER</span>
+                                      <span className="text-emerald-400 font-bold">{isSettled ? "100% COMPLETE" : "IN PROGRESS"}</span>
+                                    </div>
+                                    <div className="relative flex items-center justify-between px-1">
+                                      <div className="absolute left-3 right-3 top-[10px] h-0.5 bg-white/10 -z-0">
+                                        <div className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-300 shadow-[0_0_8px_#10b981]" style={{ width: isSettled ? "100%" : "60%" }} />
+                                      </div>
+                                      {steps.map((st, idx) => (
+                                        <div key={st.id} className="relative z-10 flex flex-col items-center">
+                                          <div className={`w-5 h-5 rounded-full flex items-center justify-center border text-[8px] font-bold ${
+                                            st.status === "completed" ? "bg-emerald-500/20 border-emerald-400 text-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.5)]" :
+                                            st.status === "failed" ? "bg-rose-500/20 border-rose-400 text-rose-400" :
+                                            st.status === "active" ? "bg-primary/20 border-primary text-primary animate-pulse shadow-[0_0_6px_rgba(59,130,246,0.5)]" :
+                                            "bg-zinc-900 border-white/20 text-white/30"
+                                          }`}>
+                                            {st.status === "completed" ? <CheckCircle2 className="w-3 h-3" /> : st.status === "failed" ? <XCircle className="w-3 h-3" /> : idx + 1}
+                                          </div>
+                                          <span className="text-[7px] font-mono text-white/60 mt-0.5">{st.label}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  {/* Menu Item Options */}
+                                  <div className="space-y-1.5 text-[11px] font-mono">
+                                    {[
+                                      { id: "overview", label: "Overview & Funnel Trajectory", icon: Sliders, color: "text-emerald-400" },
+                                      { id: "items", label: "Items Ordered", icon: FileText, color: "text-blue-400" },
+                                      { id: "origin", label: "Initialization & Origin", icon: Chrome, color: "text-purple-400" },
+                                      { id: "logs", label: "Client Diagnostic Logs", icon: Activity, color: "text-amber-400" },
+                                      { id: "customers", label: "Customer Metadata", icon: Users, color: "text-teal-400" },
+                                    ].map(tab => {
+                                      const Icon = tab.icon;
+                                      return (
+                                        <button
+                                          key={tab.id}
+                                          onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: tab.id }))}
+                                          className="w-full p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 flex items-center justify-between text-white/90 text-left transition-all active:scale-[0.98]"
+                                        >
+                                          <div className="flex items-center gap-2">
+                                            <Icon className={`w-3.5 h-3.5 ${tab.color}`} />
+                                            <span className="font-semibold text-[11px]">{tab.label}</span>
+                                          </div>
+                                          <span className="text-white/40 text-xs font-bold">›</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* Menu Footer Controls */}
+                                <div className="flex items-center gap-2 pt-2 border-t border-white/10">
+                                  <button
+                                    onClick={() => toggleFlipCard(r.receiptId)}
+                                    className="flex-1 py-1.5 rounded-xl bg-white/10 text-white text-xs font-mono font-bold flex items-center justify-center gap-1.5"
+                                  >
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                    <span>Flip Back</span>
+                                  </button>
+                                  <button
+                                    onClick={() => setMobileDrawerReceipt(r)}
+                                    className="flex-1 py-1.5 rounded-xl bg-primary text-white text-xs font-mono font-bold shadow-md shadow-primary/20"
+                                  >
+                                    Full Drawer 🚀
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          // ── SUB-TAB DETAIL VIEW ──────────────────────────────────
+                          return (
+                            <div className="flex flex-col justify-between h-full space-y-2">
+                              <div>
+                                <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                                  <button
+                                    onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: null }))}
+                                    className="text-xs font-mono font-bold text-primary flex items-center gap-1 hover:underline"
+                                  >
+                                    <span>‹ Back to Menu</span>
+                                  </button>
+                                  <span className="text-[10px] font-mono text-white/50 uppercase font-bold">{activeSubTab}</span>
+                                </div>
+
+                                {/* Sub-Tab Details */}
+                                {activeSubTab === "overview" && (
+                                  <div className="my-2 space-y-2 text-[10px] font-mono">
+                                    <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
+                                      <div className="text-[8px] text-white/40 font-bold uppercase">Stripe Session ID</div>
+                                      <div className="text-white truncate">{r.stripeSessionId || "N/A"}</div>
+                                    </div>
+                                    <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
+                                      <div className="text-[8px] text-white/40 font-bold uppercase">On-Chain Tx Hash</div>
+                                      <div className="text-emerald-400 truncate">{r.transactionHash || "N/A"}</div>
+                                    </div>
+                                    {r.failureReason && (
+                                      <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300">
+                                        <span className="font-bold">Failure Reason:</span> {r.failureReason}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {activeSubTab === "items" && (
+                                  <div className="my-2 space-y-1.5 text-[10px] font-mono">
+                                    {Array.isArray(r.items) && r.items.length > 0 ? (
+                                      r.items.map((it: any, idx: number) => (
+                                        <div key={idx} className="p-2 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between">
+                                          <span className="font-bold text-white truncate max-w-[140px]">{it.label || "Item"}</span>
+                                          <span className="text-emerald-400 font-extrabold">${((it.priceUsd || 0) * (it.quantity || 1)).toFixed(2)}</span>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <div className="text-white/40 text-center py-4">No line items recorded</div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {activeSubTab === "origin" && (
+                                  <div className="my-2 space-y-2 text-[10px] font-mono">
+                                    <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
+                                      <div className="text-[8px] text-white/40 font-bold uppercase">Parent URL / Origin</div>
+                                      <div className="text-primary truncate">{r.parentUrl || "Direct Link"}</div>
+                                    </div>
+                                    <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
+                                      <div className="text-[8px] text-white/40 font-bold uppercase">Integration Mode</div>
+                                      <div className="text-white font-bold">{r.parentUrl ? "Embedded Checkout (Iframe)" : "Direct Hosted Link"}</div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {(activeSubTab === "logs" || activeSubTab === "customers") && (
+                                  <div className="my-2 p-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-[10px] font-mono text-white/70 space-y-1">
+                                    <div className="text-white font-bold">Email: {r.email || "N/A"}</div>
+                                    <div className="text-white/50">KYC Status: Level {r.kycLevel}</div>
+                                    <div className="text-primary font-bold mt-1">Tap Full Drawer to view live logs & detailed telemetry payload.</div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Sub-Tab Footer */}
+                              <div className="flex items-center gap-2 pt-2 border-t border-white/10">
+                                <button
+                                  onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: null }))}
+                                  className="flex-1 py-1.5 rounded-xl bg-white/10 text-white text-xs font-mono font-bold flex items-center justify-center gap-1.5"
+                                >
+                                  <span>‹ Back Menu</span>
+                                </button>
+                                <button
+                                  onClick={() => setMobileDrawerReceipt(r)}
+                                  className="flex-1 py-1.5 rounded-xl bg-primary text-white text-xs font-mono font-bold shadow-md shadow-primary/20"
+                                >
+                                  Full Drawer 🚀
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop Receipts Table (Hidden on Mobile) */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left text-xs text-white/90 min-w-[850px]">
+                <thead className="bg-white/[0.04] text-muted-foreground font-bold uppercase tracking-wider text-[10px] border-b border-white/10 select-none">
                   <tr>
                     <th
                       onClick={() => handleSort("receiptId")}
-                      className="py-2.5 px-4 cursor-pointer hover:text-white transition-colors"
+                      className="py-3.5 px-4 cursor-pointer hover:text-white transition-colors"
                     >
                       Receipt ID {sortKey === "receiptId" && (sortDirection === "asc" ? " ▲" : " ▼")}
                     </th>
                     <th
                       onClick={() => handleSort("createdAt")}
-                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
                     >
                       Date {sortKey === "createdAt" && (sortDirection === "asc" ? " ▲" : " ▼")}
                     </th>
                     <th
                       onClick={() => handleSort("brandKey")}
-                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
                     >
                       Brand {sortKey === "brandKey" && (sortDirection === "asc" ? " ▲" : " ▼")}
                     </th>
                     <th
                       onClick={() => handleSort("totalUsd")}
-                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
                     >
                       Amount {sortKey === "totalUsd" && (sortDirection === "asc" ? " ▲" : " ▼")}
                     </th>
-                    <th className="py-2.5 px-3">Buyer Email</th>
+                    <th className="py-3.5 px-3">Buyer Email</th>
                     <th
                       onClick={() => handleSort("stripeSessionId")}
-                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
                     >
                       Session ID {sortKey === "stripeSessionId" && (sortDirection === "asc" ? " ▲" : " ▼")}
                     </th>
                     <th
                       onClick={() => handleSort("status")}
-                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
                     >
                       Status {sortKey === "status" && (sortDirection === "asc" ? " ▲" : " ▼")}
                     </th>
                     <th
                       onClick={() => handleSort("kycLevel")}
-                      className="py-2.5 px-3 cursor-pointer hover:text-white transition-colors"
+                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
                     >
-                      KYC Level {sortKey === "kycLevel" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                      KYC {sortKey === "kycLevel" && (sortDirection === "asc" ? " ▲" : " ▼")}
                     </th>
-                    <th className="py-2.5 px-4 text-right">Investigation</th>
+                    <th className="py-3.5 px-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <span>Investigation</span>
+                        {expandedReceiptIds.size > 0 ? (
+                          <button
+                            onClick={handleCollapseAll}
+                            className="text-[9px] font-mono font-bold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 px-2 py-0.5 rounded border border-rose-500/20 transition-all uppercase tracking-wider"
+                            title="Collapse all open investigation rows"
+                          >
+                            Collapse All ({expandedReceiptIds.size})
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleExpandAll(paginatedReceipts.map(r => r.receiptId))}
+                            className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/20 transition-all uppercase tracking-wider"
+                            title="Expand all rows on current page"
+                          >
+                            Expand Page
+                          </button>
+                        )}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {paginatedReceipts.map(r => {
-                    const isExpanded = expandedReceiptId === r.receiptId;
+                    const isExpanded = expandedReceiptIds.has(r.receiptId);
+                    const rowActiveTab = activeTabMap[r.receiptId] || "overview";
                     return (
                       <React.Fragment key={r.receiptId}>
-                        <tr className={`hover:bg-white/5 transition-colors ${isExpanded ? "bg-white/5" : ""}`}>
-                          <td className="py-3 px-4 font-mono font-medium text-white">{r.receiptId}</td>
-                          <td className="py-3 px-3 text-muted-foreground whitespace-nowrap">
+                        <tr className={`hover:bg-white/[0.04] transition-colors ${isExpanded ? "bg-white/[0.05]" : ""}`}>
+                          <td className="py-3.5 px-4 font-mono font-bold text-white">{r.receiptId}</td>
+                          <td className="py-3.5 px-3 text-muted-foreground whitespace-nowrap">
                             {r.createdAt ? new Date(r.createdAt).toLocaleString("en-US", {
                               timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE,
                               month: "short",
@@ -2235,10 +2958,10 @@ export default function PlatformAnalyticsPanel() {
                               minute: "2-digit"
                             }) : "N/A"}
                           </td>
-                          <td className="py-3 px-3 font-mono font-medium text-white">{r.brandKey}</td>
-                          <td className="py-3 px-3 font-semibold text-white">${r.totalUsd.toFixed(2)}</td>
-                          <td className="py-3 px-3 max-w-[140px] truncate" title={r.email}>{r.email}</td>
-                          <td className="py-3 px-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={r.stripeSessionId || "N/A"}>
+                          <td className="py-3.5 px-3 font-mono font-semibold text-white">{r.brandKey}</td>
+                          <td className="py-3.5 px-3 font-extrabold text-white">${r.totalUsd.toFixed(2)}</td>
+                          <td className="py-3.5 px-3 max-w-[140px] truncate font-medium" title={r.email}>{r.email}</td>
+                          <td className="py-3.5 px-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={r.stripeSessionId || "N/A"}>
                             {r.stripeSessionId ? (
                               <a
                                 href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
@@ -2253,28 +2976,32 @@ export default function PlatformAnalyticsPanel() {
                               "N/A"
                             )}
                           </td>
-                          <td className="py-3 px-3">
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold inline-flex items-center gap-1 ${["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) ? "bg-emerald-500/10 text-emerald-400" :
-                              r.status === "failed" ? "bg-red-500/10 text-red-400" :
-                                "bg-amber-500/10 text-amber-400"
+                          <td className="py-3.5 px-3">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
+                              r.status === "failed" ? "bg-rose-500/15 text-rose-400 border-rose-500/30" :
+                                "bg-amber-500/15 text-amber-400 border-amber-500/30"
                               }`}>
-                              {["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) && <CheckCircle2 className="w-2.5 h-2.5" />}
-                              {r.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
+                              {["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) && <CheckCircle2 className="w-3 h-3" />}
+                              {r.status === "failed" && <XCircle className="w-3 h-3" />}
                               <span>{r.status}</span>
                             </span>
                           </td>
-                          <td className="py-3 px-3">
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${r.kycLevel === "L2" ? "bg-purple-500/10 text-purple-400 border-purple-500/20" :
-                              r.kycLevel === "L1" ? "bg-blue-500/10 text-blue-400 border-blue-500/20" :
-                                "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
+                          <td className="py-3.5 px-3">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${r.kycLevel === "L2" ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
+                              r.kycLevel === "L1" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+                                "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
                               }`}>
                               {r.kycLevel}
                             </span>
                           </td>
-                          <td className="py-3 px-4 text-right">
+                          <td className="py-3.5 px-4 text-right">
                             <button
                               onClick={() => handleExpandReceipt(r.receiptId)}
-                              className="px-2.5 h-7 rounded border border-white/5 hover:bg-white/5 text-[10px] font-medium transition-all"
+                              className={`px-3 py-1 rounded-xl border text-xs font-semibold transition-all duration-200 shadow-sm ${
+                                isExpanded
+                                  ? "bg-primary text-white border-primary shadow-primary/20"
+                                  : "border-white/10 hover:bg-white/[0.08] text-white/90"
+                              }`}
                             >
                               {isExpanded ? "Close" : "Investigate"}
                             </button>
@@ -2284,16 +3011,20 @@ export default function PlatformAnalyticsPanel() {
                         {/* Expanded Technical Investigation Detail panel */}
                         {isExpanded && (() => {
                           const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status);
-                          const isCredit = String(r.cardFunding || "").toLowerCase() === "credit";
-                          const actualSplitAddress = isCredit ? (r.splitAddressCredit || r.splitAddress) : (r.splitAddress || r.splitAddressCredit);
+                          const funding = String(r.cardFunding || "").toLowerCase();
+                          const isDebit = funding === "debit";
+                          const actualSplitAddress = isDebit
+                            ? (r.splitAddressCredit || r.splitAddress)
+                            : (r.splitAddress || r.splitAddressCredit);
+                          const splitBadgeLabel = isDebit ? "Debit Split" : "Credit Split";
 
                           return (
                             <tr>
-                              <td colSpan={9} className="bg-neutral-900/60 p-4 border-t border-b border-white/5">
-                                <div className="space-y-4">
+                              <td colSpan={9} className="bg-zinc-950 p-4 sm:p-5 border-t border-b border-white/10">
+                                <div className="space-y-5">
 
-                                  {/* Tabs Navigation */}
-                                  <div className="flex items-center gap-1 border-b border-white/5 pb-2">
+                                  {/* Horizontal Scrollable Tabs Navigation */}
+                                  <div className="flex items-center gap-1.5 border-b border-white/10 pb-3 overflow-x-auto scrollbar-none">
                                     {[
                                       { id: "overview", label: "Overview", icon: Sliders },
                                       { id: "items", label: "Items Ordered", icon: FileText },
@@ -2302,14 +3033,14 @@ export default function PlatformAnalyticsPanel() {
                                       { id: "customers", label: "Customer Metadata", icon: Users }
                                     ].map(tab => {
                                       const Icon = tab.icon;
-                                      const isActive = activeTab === tab.id;
+                                      const isActive = rowActiveTab === tab.id;
                                       return (
                                         <button
                                           key={tab.id}
-                                          onClick={() => setActiveTab(tab.id)}
-                                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${isActive
-                                            ? "bg-primary text-white shadow-sm"
-                                            : "text-muted-foreground hover:text-white hover:bg-white/5"
+                                          onClick={() => setActiveTabMap(prev => ({ ...prev, [r.receiptId]: tab.id }))}
+                                          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap ${isActive
+                                            ? "bg-primary text-white shadow-md shadow-primary/20"
+                                            : "text-muted-foreground hover:text-white hover:bg-white/[0.05]"
                                             }`}
                                         >
                                           <Icon className="w-3.5 h-3.5" />
@@ -2320,33 +3051,26 @@ export default function PlatformAnalyticsPanel() {
                                   </div>
 
                                   {/* Tab 1: Overview & Meta */}
-                                  {activeTab === "overview" && (() => {
-                                    // 1. Extract status history
+                                  {rowActiveTab === "overview" && (() => {
                                     const statusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
                                     const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
                                     const currentStatus = String(r.status || "").toLowerCase();
 
-                                    // 2. Identify payment details from customer sessions or receipt fields
                                     const hasSessionId = !!r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.stripeSessionId));
-
-                                    // 3. Stage 1: Link Opened
                                     const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
 
-                                    // 4. Stage 2: Customer Identified
                                     const customerIdentified = statusList.includes("buyer_logged_in") ||
                                       statusList.includes("checkout_session_created") ||
                                       !!r.customerEmail ||
                                       !!r.stripeEmail ||
                                       (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.email));
 
-                                    // 5. Stage 3: Payment Method Selected
                                     const paymentMethodSelected = !!r.cardFunding ||
                                       statusList.includes("payment_method_detected") ||
                                       statusList.includes("onramp_confirming_fees") ||
                                       statusList.includes("onramp_checking_out") ||
                                       (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.paymentMethodDetails));
 
-                                    // 6. Stage 4: KYC / Verification
                                     const kycTriggered = statusList.some(s => s.includes("kyc") || s.includes("verifying")) ||
                                       String(r.failureReason || "").toLowerCase().includes("verification") ||
                                       String(r.failureReason || "").toLowerCase().includes("kyc");
@@ -2364,12 +3088,10 @@ export default function PlatformAnalyticsPanel() {
                                         String(r.failureReason || "").toLowerCase().includes("kyc") ||
                                         statusList.includes("onramp_verifying_identity"));
 
-                                    // 7. Stage 5: Settlement
                                     const settlementSuccess = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined"].includes(currentStatus);
                                     const settlementAwaiting = ["paid - ach pending", "ach_pending", "awaiting_funds", "onramp_awaiting_funds"].includes(currentStatus);
                                     const settlementFailed = currentStatus === "failed";
 
-                                    // Compute Intent Level
                                     let intentLevel: "Low" | "Medium" | "High" = "Low";
                                     if (paymentMethodSelected || kycTriggered || currentStatus === "failed" || settlementSuccess || settlementAwaiting) {
                                       intentLevel = "High";
@@ -2377,7 +3099,6 @@ export default function PlatformAnalyticsPanel() {
                                       intentLevel = "Medium";
                                     }
 
-                                    // Determine details of detected payment method if available
                                     let pmText = "Selecting payment";
                                     if (String(r.cardFunding || "").toLowerCase() === "us_bank_account") {
                                       pmText = "Bank Transfer (ACH)";
@@ -2429,80 +3150,112 @@ export default function PlatformAnalyticsPanel() {
                                     ];
 
                                     return (
-                                      <div className="space-y-4 animate-in fade-in duration-200">
+                                      <div className="space-y-5 animate-in fade-in duration-200">
                                         {/* Funnel Progress Stepper Panel */}
-                                        <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4">
-                                          <div className="flex items-center justify-between mb-4">
-                                            <div className="flex items-center gap-2">
-                                              <span className="text-white/40 text-[10px] uppercase font-bold tracking-wider">User Funnel</span>
-                                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${intentLevel === "High" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                                                  intentLevel === "Medium" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20" :
-                                                    "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20"
-                                                }`}>
-                                                {intentLevel} Intent
-                                              </span>
+                                        <div className="relative overflow-hidden bg-gradient-to-r from-zinc-950/90 via-zinc-900/80 to-zinc-950/90 border border-white/10 rounded-2xl p-5 sm:p-6 shadow-2xl backdrop-blur-xl">
+                                          {/* Ambient Glow Background */}
+                                          <div className={`absolute inset-0 bg-gradient-to-r ${
+                                            settlementSuccess ? "from-emerald-500/10 via-teal-500/5 to-emerald-500/10" :
+                                            settlementFailed ? "from-rose-500/10 via-rose-500/5 to-rose-500/10" :
+                                            "from-amber-500/10 via-primary/5 to-purple-500/10"
+                                          } pointer-events-none transition-all duration-500`} />
+
+                                          <div className="relative z-10 flex items-center justify-between mb-6">
+                                            <div className="flex items-center gap-3">
+                                              <div className="w-8 h-8 rounded-xl bg-white/[0.05] border border-white/10 flex items-center justify-center text-white/80">
+                                                <Route className="w-4 h-4 text-primary" />
+                                              </div>
+                                              <div>
+                                                <span className="text-white/90 text-xs uppercase font-extrabold tracking-wider">User Funnel Trajectory</span>
+                                                <div className="text-[10px] text-muted-foreground">Dynamic Multi-Stage Diagnostic</div>
+                                              </div>
                                             </div>
-                                            <div className="text-[10px] text-muted-foreground">
-                                              Dynamic Funnel Analysis
+
+                                            <div className="flex items-center gap-2">
+                                              <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border shadow-md ${
+                                                intentLevel === "High" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 shadow-emerald-500/10" :
+                                                intentLevel === "Medium" ? "bg-amber-500/15 text-amber-400 border-amber-500/30 shadow-amber-500/10" :
+                                                "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
+                                              }`}>
+                                                {intentLevel} Intent Level
+                                              </span>
                                             </div>
                                           </div>
 
                                           {/* Stepper progress track */}
-                                          <div className="flex items-center justify-between w-full relative px-6 py-2">
-                                            {/* Track Background */}
-                                            <div className="absolute left-12 right-12 top-[22px] h-[2px] bg-white/5 -z-0" />
+                                          <div className="relative z-10 overflow-x-auto scrollbar-none py-3">
+                                            <div className="flex items-center justify-between min-w-[640px] w-full relative px-8">
+                                              {/* Track Background Bar (Aligned to circle centers) */}
+                                              <div className="absolute left-[88px] right-[88px] top-[16px] h-2 bg-zinc-900/90 rounded-full border border-white/10 shadow-inner -z-0" />
 
-                                            {/* Track Active Progress Line */}
-                                            <div
-                                              className="absolute left-[48px] top-[22px] h-[2px] bg-emerald-500/30 transition-all duration-500 -z-0"
-                                              style={{
-                                                width: `${settlementSuccess ? "100%" :
-                                                    (kycCompleted || kycFailed) ? "75%" :
-                                                      paymentMethodSelected ? "50%" :
-                                                        customerIdentified ? "25%" : "0%"
-                                                  }`,
-                                                maxWidth: 'calc(100% - 96px)'
-                                              }}
-                                            />
+                                              {/* Track Active Progress Line with Neon Glow */}
+                                              {(() => {
+                                                const progressPct = settlementSuccess ? 100 :
+                                                  (kycCompleted || kycFailed) ? 75 :
+                                                    paymentMethodSelected ? 50 :
+                                                      customerIdentified ? 25 : 0;
 
-                                            {steps.map((step, idx) => {
-                                              let dotColor = "bg-zinc-900 text-zinc-500 border border-zinc-700";
-                                              let icon = <span>{idx + 1}</span>;
-
-                                              if (step.status === "completed") {
-                                                dotColor = "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30";
-                                                icon = <CheckCircle2 className="w-3.5 h-3.5" />;
-                                              } else if (step.status === "active") {
-                                                dotColor = "bg-amber-500/10 text-amber-400 border border-amber-500/30 animate-pulse";
-                                                icon = <RefreshCw className="w-3 h-3 animate-spin" />;
-                                              } else if (step.status === "failed") {
-                                                dotColor = "bg-red-500/10 text-red-400 border border-red-500/30";
-                                                icon = <XCircle className="w-3.5 h-3.5" />;
-                                              } else if (step.status === "skipped") {
-                                                dotColor = "bg-zinc-800 text-zinc-400 border border-dashed border-zinc-700";
-                                                icon = <span className="text-[8px] font-bold font-mono text-zinc-400">N/A</span>;
-                                              }
-
-                                              return (
-                                                <div key={step.id} className="flex flex-col items-center relative z-10 w-24">
-                                                  <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold ${dotColor} bg-neutral-950`}>
-                                                    {icon}
+                                                return (
+                                                  <div
+                                                    className={`absolute left-[88px] top-[16px] h-2 rounded-full transition-all duration-700 ease-out -z-0 shadow-[0_0_20px_rgba(16,185,129,0.5)] ${
+                                                      settlementFailed ? "bg-gradient-to-r from-rose-600 via-rose-500 to-rose-400 shadow-rose-500/50" :
+                                                      "bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-300"
+                                                    }`}
+                                                    style={{
+                                                      width: `calc((100% - 176px) * ${progressPct / 100})`,
+                                                    }}
+                                                  >
+                                                    {progressPct > 0 && progressPct < 100 && (
+                                                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-[0_0_12px_#ffffff] animate-pulse" />
+                                                    )}
                                                   </div>
-                                                  <span className="mt-2 text-[10px] font-semibold text-white/90 whitespace-nowrap">{step.label}</span>
-                                                  <span className="text-[9px] text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis max-w-[90px]" title={step.description}>
-                                                    {step.description}
-                                                  </span>
-                                                </div>
-                                              );
-                                            })}
+                                                );
+                                              })()}
+
+                                              {steps.map((step, idx) => {
+                                                let nodeStyle = "bg-zinc-900 text-zinc-500 border-white/10 shadow-inner";
+                                                let badgeStyle = "bg-white/[0.04] text-white/50 border-white/5";
+                                                let icon = <span className="text-xs font-extrabold">{idx + 1}</span>;
+
+                                                if (step.status === "completed") {
+                                                  nodeStyle = "bg-gradient-to-br from-emerald-500 to-teal-600 text-white border-emerald-400/80 shadow-[0_0_15px_rgba(16,185,129,0.5)] scale-105";
+                                                  badgeStyle = "bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-bold";
+                                                  icon = <CheckCircle2 className="w-4 h-4 text-white" />;
+                                                } else if (step.status === "active") {
+                                                  nodeStyle = "bg-gradient-to-br from-amber-400 to-amber-600 text-white border-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.6)] animate-pulse scale-110";
+                                                  badgeStyle = "bg-amber-500/15 text-amber-300 border-amber-500/30 font-bold";
+                                                  icon = <RefreshCw className="w-4 h-4 animate-spin text-white" />;
+                                                } else if (step.status === "failed") {
+                                                  nodeStyle = "bg-gradient-to-br from-rose-500 to-rose-700 text-white border-rose-400 shadow-[0_0_18px_rgba(244,63,94,0.6)] scale-105";
+                                                  badgeStyle = "bg-rose-500/15 text-rose-300 border-rose-500/30 font-bold";
+                                                  icon = <XCircle className="w-4 h-4 text-white" />;
+                                                } else if (step.status === "skipped") {
+                                                  nodeStyle = "bg-zinc-900 text-zinc-400 border-dashed border-zinc-700";
+                                                  badgeStyle = "bg-white/[0.02] text-zinc-500 border-white/5";
+                                                  icon = <span className="text-[9px] font-bold font-mono text-zinc-400">N/A</span>;
+                                                }
+
+                                                return (
+                                                  <div key={step.id} className="flex flex-col items-center relative z-10 w-28 group">
+                                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${nodeStyle} bg-zinc-950`}>
+                                                      {icon}
+                                                    </div>
+                                                    <span className="mt-2.5 text-xs font-extrabold text-white tracking-wide whitespace-nowrap group-hover:text-primary transition-colors">{step.label}</span>
+                                                    <span className={`mt-1 px-2 py-0.5 rounded-full text-[10px] border whitespace-nowrap overflow-hidden text-ellipsis max-w-[110px] text-center ${badgeStyle}`} title={step.description}>
+                                                      {step.description}
+                                                    </span>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
                                           </div>
                                         </div>
 
                                         {/* Metadata Grid */}
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 text-xs mt-1">
-                                          <div className="space-y-1">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Stripe Session ID</div>
-                                            <div className="flex items-center gap-1">
+                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Stripe Session ID</div>
+                                            <div className="flex items-center gap-1.5 pt-0.5">
                                               <span className="font-mono text-white/90 truncate max-w-[160px]">
                                                 {r.stripeSessionId || "N/A"}
                                               </span>
@@ -2512,7 +3265,7 @@ export default function PlatformAnalyticsPanel() {
                                                     onClick={() => handleCopy(r.stripeSessionId!, `stripe-${r.receiptId}`)}
                                                     className="text-muted-foreground hover:text-white transition-colors"
                                                   >
-                                                    <Copy className="w-3 h-3" />
+                                                    <Copy className="w-3.5 h-3.5" />
                                                   </button>
                                                   <a
                                                     href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
@@ -2520,17 +3273,17 @@ export default function PlatformAnalyticsPanel() {
                                                     rel="noopener noreferrer"
                                                     className="text-muted-foreground hover:text-white transition-colors"
                                                   >
-                                                    <ExternalLink className="w-3 h-3" />
+                                                    <ExternalLink className="w-3.5 h-3.5" />
                                                   </a>
                                                 </>
                                               )}
-                                              {copySuccess[`stripe-${r.receiptId}`] && <span className="text-[10px] text-emerald-400">Copied!</span>}
+                                              {copySuccess[`stripe-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
                                             </div>
                                           </div>
 
-                                          <div className="space-y-1">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">On-chain Tx Hash</div>
-                                            <div className="flex items-center gap-1">
+                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">On-chain Tx Hash</div>
+                                            <div className="flex items-center gap-1.5 pt-0.5">
                                               <span className="font-mono text-white/90 truncate max-w-[160px]">
                                                 {r.transactionHash || "N/A"}
                                               </span>
@@ -2540,7 +3293,7 @@ export default function PlatformAnalyticsPanel() {
                                                     onClick={() => handleCopy(r.transactionHash!, `tx-${r.receiptId}`)}
                                                     className="text-muted-foreground hover:text-white transition-colors"
                                                   >
-                                                    <Copy className="w-3 h-3" />
+                                                    <Copy className="w-3.5 h-3.5" />
                                                   </button>
                                                   <a
                                                     href={`https://basescan.org/tx/${r.transactionHash}`}
@@ -2548,51 +3301,51 @@ export default function PlatformAnalyticsPanel() {
                                                     rel="noopener noreferrer"
                                                     className="text-muted-foreground hover:text-white transition-colors"
                                                   >
-                                                    <ExternalLink className="w-3 h-3" />
+                                                    <ExternalLink className="w-3.5 h-3.5" />
                                                   </a>
                                                 </>
                                               )}
-                                              {copySuccess[`tx-${r.receiptId}`] && <span className="text-[10px] text-emerald-400">Copied!</span>}
+                                              {copySuccess[`tx-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
                                             </div>
                                           </div>
 
-                                          <div className="space-y-1">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Created At</div>
-                                            <div className="text-white/90">
+                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Created At</div>
+                                            <div className="text-white/90 font-medium pt-0.5">
                                               {new Date(r.createdAt).toLocaleString("en-US", {
                                                 timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
                                               })}
                                             </div>
                                           </div>
 
-                                          <div className="space-y-1">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Card Funding</div>
-                                            <div className="text-white/90 capitalize">
+                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Card Funding</div>
+                                            <div className="text-white/90 font-medium capitalize pt-0.5">
                                               {String(r.cardFunding || "").toLowerCase() === "us_bank_account" ? "Bank Transfer (ACH)" : (r.cardFunding || "unknown / N/A")}
                                             </div>
                                           </div>
 
-                                          <div className="space-y-1">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-medium">Client IP</div>
-                                            <div className="text-white/90 font-mono">
+                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Client IP</div>
+                                            <div className="text-white/90 font-mono pt-0.5">
                                               {r.ipAddress || "N/A"}
                                             </div>
                                           </div>
                                         </div>
 
                                         {String(r.cardFunding || "").toLowerCase() === "us_bank_account" && (
-                                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 mt-2 bg-white/[0.01] border border-white/5 rounded-xl p-3">
+                                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 mt-2 bg-white/[0.02] border border-white/10 rounded-2xl p-4">
                                             <div className="space-y-1">
-                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">Last ACH Poll</div>
-                                              <div className="text-white/90 text-xs">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Last ACH Poll</div>
+                                              <div className="text-white/90 text-xs font-medium">
                                                 {r.lastPolledAt ? new Date(r.lastPolledAt).toLocaleString() : "Never"}
                                               </div>
                                             </div>
                                             <div className="space-y-1">
-                                              <div className="text-muted-foreground text-[10px] uppercase font-medium">ACH Status</div>
-                                              <div className="flex items-center gap-1.5 mt-0.5">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                                                <span className="text-amber-400 font-semibold uppercase tracking-wider text-[10px]">
+                                              <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">ACH Status</div>
+                                              <div className="flex items-center gap-2 mt-0.5">
+                                                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                                                <span className="text-amber-400 font-bold uppercase tracking-wider text-xs">
                                                   {r.stripeSessionStatus || "Pending"}
                                                 </span>
                                               </div>
@@ -2601,16 +3354,20 @@ export default function PlatformAnalyticsPanel() {
                                         )}
 
                                         {/* Intended / Actual Split Address */}
-                                        <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
+                                        <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4">
+                                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2">
                                             {isSettled ? "Settled Split Address" : "Intended Split Addresses"}
                                           </div>
                                           {isSettled ? (
-                                            <div className="flex items-center gap-2 font-mono text-white text-xs">
-                                              <span className="font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded text-[9px] uppercase">
-                                                {isCredit ? "Credit Split" : "Standard Split"}
+                                            <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
+                                              <span className={`font-bold border px-2 py-0.5 rounded-full text-[10px] uppercase ${
+                                                isDebit
+                                                  ? "text-purple-400 bg-purple-500/15 border-purple-500/30"
+                                                  : "text-emerald-400 bg-emerald-500/15 border-emerald-500/30"
+                                              }`}>
+                                                {splitBadgeLabel}
                                               </span>
-                                              <span className="truncate">{actualSplitAddress || "N/A"}</span>
+                                              <span className="truncate max-w-full">{actualSplitAddress || "N/A"}</span>
                                               {actualSplitAddress && (
                                                 <button
                                                   onClick={() => handleCopy(actualSplitAddress, `split-${r.receiptId}`)}
@@ -2619,13 +3376,13 @@ export default function PlatformAnalyticsPanel() {
                                                   <Copy className="w-3.5 h-3.5" />
                                                 </button>
                                               )}
-                                              {copySuccess[`split-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
+                                              {copySuccess[`split-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
                                             </div>
                                           ) : (
-                                            <div className="space-y-1.5">
-                                              <div className="flex items-center gap-2 font-mono text-white text-xs">
-                                                <span className="text-muted-foreground w-28">Standard Split:</span>
-                                                <span className="truncate">{r.splitAddress || "N/A"}</span>
+                                            <div className="space-y-2">
+                                              <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
+                                                <span className="text-muted-foreground w-28 font-medium">Standard Split:</span>
+                                                <span className="truncate max-w-full">{r.splitAddress || "N/A"}</span>
                                                 {r.splitAddress && (
                                                   <button
                                                     onClick={() => handleCopy(r.splitAddress!, `split-std-${r.receiptId}`)}
@@ -2634,19 +3391,19 @@ export default function PlatformAnalyticsPanel() {
                                                     <Copy className="w-3.5 h-3.5" />
                                                   </button>
                                                 )}
-                                                {copySuccess[`split-std-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
+                                                {copySuccess[`split-std-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
                                               </div>
                                               {r.splitAddressCredit && r.splitAddressCredit !== r.splitAddress && (
-                                                <div className="flex items-center gap-2 font-mono text-white text-xs">
-                                                  <span className="text-muted-foreground w-28">Credit Split:</span>
-                                                  <span className="truncate">{r.splitAddressCredit}</span>
+                                                <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
+                                                  <span className="text-muted-foreground w-28 font-medium">Credit Split:</span>
+                                                  <span className="truncate max-w-full">{r.splitAddressCredit}</span>
                                                   <button
                                                     onClick={() => handleCopy(r.splitAddressCredit!, `split-cred-${r.receiptId}`)}
                                                     className="text-muted-foreground hover:text-white transition-colors"
                                                   >
                                                     <Copy className="w-3.5 h-3.5" />
                                                   </button>
-                                                  {copySuccess[`split-cred-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-normal">Copied!</span>}
+                                                  {copySuccess[`split-cred-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
                                                 </div>
                                               )}
                                             </div>
@@ -2654,11 +3411,11 @@ export default function PlatformAnalyticsPanel() {
                                         </div>
 
                                         {r.status === "failed" && (
-                                          <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/10 rounded-lg text-xs text-red-400">
-                                            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                          <div className="flex items-start gap-3 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-xs text-rose-400">
+                                            <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
                                             <div>
-                                              <div className="font-semibold">Decline / Failure Diagnosis</div>
-                                              <div className="mt-0.5 leading-relaxed">{r.failureReason || "Abandoned Checkout Session"}</div>
+                                              <div className="font-bold">Decline / Failure Diagnosis</div>
+                                              <div className="mt-1 leading-relaxed">{r.failureReason || "Abandoned Checkout Session"}</div>
                                             </div>
                                           </div>
                                         )}
@@ -2667,31 +3424,31 @@ export default function PlatformAnalyticsPanel() {
                                   })()}
 
                                   {/* Tab 4: Client Logs */}
-                                  {activeTab === "logs" && (
+                                  {rowActiveTab === "logs" && (
                                     <div className="space-y-2 animate-in fade-in duration-200 mt-1">
                                       {loadingLogs[r.receiptId] ? (
-                                        <div className="text-xs text-muted-foreground p-4 text-center flex items-center justify-center gap-2">
-                                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+                                        <div className="text-xs text-muted-foreground p-6 text-center flex items-center justify-center gap-2">
+                                          <RefreshCw className="w-4 h-4 animate-spin text-primary" />
                                           <span>Fetching logs from database...</span>
                                         </div>
                                       ) : (expandedLogs[r.receiptId] && expandedLogs[r.receiptId].length > 0) ? (
-                                        <div className="bg-black/25 border border-white/5 rounded-lg divide-y divide-white/5 max-h-[220px] overflow-y-auto font-mono text-[11px] leading-relaxed">
+                                        <div className="bg-black/40 border border-white/10 rounded-2xl divide-y divide-white/5 max-h-[260px] overflow-y-auto font-mono text-xs leading-relaxed">
                                           {expandedLogs[r.receiptId].map((log, idx) => (
-                                            <div key={idx} className="p-2.5 space-y-1">
+                                            <div key={idx} className="p-3 space-y-1 hover:bg-white/[0.02]">
                                               <div className="flex items-center justify-between text-muted-foreground text-[10px]">
                                                 <span>{new Date(log.createdAt).toLocaleTimeString("en-US", {
                                                    timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
                                                  })}</span>
-                                                <span className={`px-1 rounded text-[9px] uppercase font-semibold ${log.level === "error" ? "bg-red-500/15 text-red-400" :
-                                                  log.level === "warn" ? "bg-amber-500/15 text-amber-400" :
-                                                    "bg-blue-500/15 text-blue-400"
+                                                <span className={`px-2 py-0.5 rounded-full text-[9px] uppercase font-bold ${log.level === "error" ? "bg-rose-500/20 text-rose-400 border border-rose-500/30" :
+                                                  log.level === "warn" ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" :
+                                                    "bg-blue-500/20 text-blue-400 border border-blue-500/30"
                                                   }`}>
                                                   {log.level}
                                                 </span>
                                               </div>
-                                              <div className="text-white/80 whitespace-pre-wrap">{log.message}</div>
+                                              <div className="text-white/90 whitespace-pre-wrap">{log.message}</div>
                                               {log.userAgent && (
-                                                <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                                                <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-1">
                                                   <Smartphone className="w-3 h-3" />
                                                   <span>UA: {parseUserAgent(log.userAgent)}</span>
                                                 </div>
@@ -2700,7 +3457,7 @@ export default function PlatformAnalyticsPanel() {
                                           ))}
                                         </div>
                                       ) : (
-                                        <div className="text-xs text-muted-foreground p-3 border border-white/5 border-dashed rounded-lg text-center">
+                                        <div className="text-xs text-muted-foreground p-5 border border-white/10 border-dashed rounded-2xl text-center">
                                           No Client logs matched for this transaction. (Indicates they either completed seamlessly without errors or left early).
                                         </div>
                                       )}
@@ -2708,13 +3465,13 @@ export default function PlatformAnalyticsPanel() {
                                   )}
 
                                   {/* Tab 5: Customer Metadata */}
-                                  {activeTab === "customers" && (
+                                  {rowActiveTab === "customers" && (
                                     <div className="space-y-4 animate-in fade-in duration-200 mt-1">
-                                      <div className="flex items-center justify-between pb-1">
-                                        <div className="text-xs font-semibold text-white/90 flex items-center gap-2">
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1">
+                                        <div className="text-xs font-bold text-white/90 flex flex-wrap items-center gap-2">
                                           <span>Customer Sessions & Limits Metadata</span>
                                           {refreshLimitsStatus[r.receiptId] && (
-                                            <span className={`text-[11px] font-normal ${refreshLimitsStatus[r.receiptId].startsWith("Error") ? "text-rose-400" : "text-emerald-400"} animate-in fade-in`}>
+                                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${refreshLimitsStatus[r.receiptId].startsWith("Error") ? "bg-rose-500/15 text-rose-400 border-rose-500/30" : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"} animate-in fade-in`}>
                                               {refreshLimitsStatus[r.receiptId]}
                                             </span>
                                           )}
@@ -2723,16 +3480,15 @@ export default function PlatformAnalyticsPanel() {
                                           type="button"
                                           onClick={() => enrichCustomerLimits(r.receiptId)}
                                           disabled={refreshingLimits[r.receiptId]}
-                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all disabled:opacity-50"
+                                          className="text-xs font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 disabled:opacity-50 self-start sm:self-auto shadow-sm"
                                         >
-                                          <RefreshCw className={`w-3.5 h-3.5 ${refreshingLimits[r.receiptId] ? "animate-spin" : ""}`} />
-                                          <span>{refreshingLimits[r.receiptId] ? "Enriching Limits..." : "Refresh Customer Limits"}</span>
+                                          <RefreshCw className={`w-3.5 h-3.5 ${refreshingLimits[r.receiptId] ? "animate-spin text-primary" : ""}`} />
+                                          <span>{refreshingLimits[r.receiptId] ? "Enriching Limits..." : "Enrich & Sync Limits"}</span>
                                         </button>
                                       </div>
+
                                       {(() => {
                                         const sessions = r.customerSessions || [];
-                                        
-                                        // Merge duplicate customer sessions in UI
                                         const sessionsByStripeId: Record<string, any> = {};
                                         const sessionsByEmail: Record<string, any> = {};
                                         const residualSessions: any[] = [];
@@ -2799,114 +3555,115 @@ export default function PlatformAnalyticsPanel() {
 
                                         if (uniqueSessions.length > 0) {
                                           return (
-                                            <div className="bg-black/25 border border-white/5 rounded-lg overflow-hidden">
-                                              <table className="w-full text-left border-collapse text-xs">
-                                                <thead>
-                                                  <tr className="bg-white/5 border-b border-white/5 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
-                                                    <th className="py-2.5 px-4">Date/Time</th>
-                                                    <th className="py-2.5 px-4">Customer Email</th>
-                                                    <th className="py-2.5 px-4">Wallet Address</th>
-                                                    <th className="py-2.5 px-4">Stripe Session ID</th>
-                                                    <th className="py-2.5 px-4">Payment Method</th>
-                                                    <th className="py-2.5 px-4 text-right">Limits Metadata</th>
-                                                  </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-white/5">
-                                                  {uniqueSessions.map((session: any, idx: number) => (
-                                                    <tr key={idx} className="hover:bg-white/[0.02]">
-                                                      <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
-                                                        {session.createdAt ? new Date(session.createdAt).toLocaleString("en-US", {
-                                                           timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
-                                                         }) : "N/A"}
-                                                      </td>
-                                                      <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
-                                                      <td className="py-3 px-4 font-mono text-[11px] text-white/80 select-all" title={session.walletAddress}>
-                                                        {session.walletAddress ? (
-                                                          <span className="flex items-center gap-1">
-                                                            <span>{session.walletAddress.slice(0, 8)}...{session.walletAddress.slice(-6)}</span>
-                                                          </span>
-                                                        ) : (
-                                                          "N/A"
-                                                        )}
-                                                      </td>
-                                                      <td className="py-3 px-4 font-mono text-[11px] text-muted-foreground select-all" title={session.stripeSessionId}>
-                                                        {session.stripeSessionId ? (
-                                                          <a
-                                                            href={`https://dashboard.stripe.com/crypto/onramp_sessions/${session.stripeSessionId}`}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="hover:text-primary hover:underline inline-flex items-center gap-1"
-                                                          >
-                                                            <span>{session.stripeSessionId.slice(0, 12)}...</span>
-                                                            <ExternalLink className="w-2.5 h-2.5" />
-                                                          </a>
-                                                        ) : (
-                                                          "N/A"
-                                                        )}
-                                                      </td>
-                                                      <td className="py-3 px-4 text-white/95 text-[11px]">
-                                                        {(() => {
-                                                          const pm = session.paymentMethodDetails;
-                                                          if (!pm) return <span className="text-muted-foreground/50">N/A</span>;
-                                                          if (pm.type === "card") {
-                                                            const card = pm.card || pm.payment_details?.card || pm.paymentDetails?.card;
-                                                            if (!card) return <span>Card</span>;
-                                                            const walletType = card.wallet && (typeof card.wallet === "object" ? card.wallet.type : card.wallet);
-                                                            const formattedWallet = walletType
-                                                              ? String(walletType)
-                                                                .replace(/_/g, " ")
-                                                                .replace(/\b\w/g, (c) => c.toUpperCase())
-                                                              : "";
-                                                            return (
-                                                              <span className="capitalize">
-                                                                {card.brand} •••• {card.last4} ({card.funding})
-                                                                {formattedWallet && ` via ${formattedWallet}`}
-                                                              </span>
-                                                            );
-                                                          } else if (pm.type === "us_bank_account") {
-                                                            const bank = pm.us_bank_account || pm.payment_details?.us_bank_account || pm.paymentDetails?.us_bank_account;
-                                                            if (!bank) return <span>ACH</span>;
-                                                            return (
-                                                              <span>
-                                                                Bank ({bank.bank_name || "ACH"}) •••• {bank.last4 || "bank"}
-                                                              </span>
-                                                            );
-                                                          }
-                                                          return <span className="capitalize">{pm.type || "Unknown"}</span>;
-                                                        })()}
-                                                      </td>
-                                                      <td className="py-3 px-4 text-right">
-                                                        {Array.isArray(session.limits) && session.limits.length > 0 ? (
-                                                          <div className="inline-flex flex-col gap-0.5 text-[10px] text-emerald-400 font-mono text-right">
-                                                            {session.limits.map((l: any, limitIdx: number) => (
-                                                              <div key={limitIdx}>
-                                                                {(() => {
-                                                                  const rawAmount = Number(l.amount || 0);
-                                                                  // Auto-correct legacy limits written before the x100 multiplier fix
-                                                                  const corrected = rawAmount > 1000000 ? rawAmount / 100 : rawAmount;
-                                                                  return `$${(corrected / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-                                                                })()} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
-                                                              </div>
-                                                            ))}
-                                                          </div>
-                                                        ) : (
-                                                          <span className="text-muted-foreground italic text-[11px]">No limits tracked</span>
-                                                        )}
-                                                      </td>
+                                            <div className="bg-black/30 border border-white/10 rounded-2xl overflow-hidden shadow-inner">
+                                              <div className="overflow-x-auto">
+                                                <table className="w-full text-left border-collapse text-xs min-w-[750px]">
+                                                  <thead>
+                                                    <tr className="bg-white/[0.04] border-b border-white/10 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">
+                                                      <th className="py-3 px-4">Date/Time</th>
+                                                      <th className="py-3 px-4">Customer Email</th>
+                                                      <th className="py-3 px-4">Wallet Address</th>
+                                                      <th className="py-3 px-4">Stripe Session ID</th>
+                                                      <th className="py-3 px-4">Payment Method</th>
+                                                      <th className="py-3 px-4 text-right">Limits Metadata</th>
                                                     </tr>
-                                                  ))}
-                                                </tbody>
-                                              </table>
+                                                  </thead>
+                                                  <tbody className="divide-y divide-white/5">
+                                                    {uniqueSessions.map((session: any, idx: number) => (
+                                                      <tr key={idx} className="hover:bg-white/[0.02]">
+                                                        <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
+                                                          {session.createdAt ? new Date(session.createdAt).toLocaleString("en-US", {
+                                                             timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
+                                                           }) : "N/A"}
+                                                        </td>
+                                                        <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
+                                                        <td className="py-3 px-4 font-mono text-xs text-white/80 select-all" title={session.walletAddress}>
+                                                          {session.walletAddress ? (
+                                                            <span className="flex items-center gap-1">
+                                                              <span>{session.walletAddress.slice(0, 8)}...{session.walletAddress.slice(-6)}</span>
+                                                            </span>
+                                                          ) : (
+                                                            "N/A"
+                                                          )}
+                                                        </td>
+                                                        <td className="py-3 px-4 font-mono text-xs text-muted-foreground select-all" title={session.stripeSessionId}>
+                                                          {session.stripeSessionId ? (
+                                                            <a
+                                                              href={`https://dashboard.stripe.com/crypto/onramp_sessions/${session.stripeSessionId}`}
+                                                              target="_blank"
+                                                              rel="noopener noreferrer"
+                                                              className="hover:text-primary hover:underline inline-flex items-center gap-1 font-semibold"
+                                                            >
+                                                              <span>{session.stripeSessionId.slice(0, 12)}...</span>
+                                                              <ExternalLink className="w-3 h-3" />
+                                                            </a>
+                                                          ) : (
+                                                            "N/A"
+                                                          )}
+                                                        </td>
+                                                        <td className="py-3 px-4 text-white/95 text-xs font-medium">
+                                                          {(() => {
+                                                            const pm = session.paymentMethodDetails;
+                                                            if (!pm) return <span className="text-muted-foreground/50">N/A</span>;
+                                                            if (pm.type === "card") {
+                                                              const card = pm.card || pm.payment_details?.card || pm.paymentDetails?.card;
+                                                              if (!card) return <span>Card</span>;
+                                                              const walletType = card.wallet && (typeof card.wallet === "object" ? card.wallet.type : card.wallet);
+                                                              const formattedWallet = walletType
+                                                                ? String(walletType)
+                                                                  .replace(/_/g, " ")
+                                                                  .replace(/\b\w/g, (c) => c.toUpperCase())
+                                                                : "";
+                                                              return (
+                                                                <span className="capitalize">
+                                                                  {card.brand} •••• {card.last4} ({card.funding})
+                                                                  {formattedWallet && ` via ${formattedWallet}`}
+                                                                </span>
+                                                              );
+                                                            } else if (pm.type === "us_bank_account") {
+                                                              const bank = pm.us_bank_account || pm.payment_details?.us_bank_account || pm.paymentDetails?.us_bank_account;
+                                                              if (!bank) return <span>ACH</span>;
+                                                              return (
+                                                                <span>
+                                                                  Bank ({bank.bank_name || "ACH"}) •••• {bank.last4 || "bank"}
+                                                                </span>
+                                                              );
+                                                            }
+                                                            return <span className="capitalize">{pm.type || "Unknown"}</span>;
+                                                          })()}
+                                                        </td>
+                                                        <td className="py-3 px-4 text-right">
+                                                          {Array.isArray(session.limits) && session.limits.length > 0 ? (
+                                                            <div className="inline-flex flex-col gap-1 text-[11px] text-emerald-400 font-mono text-right">
+                                                              {session.limits.map((l: any, limitIdx: number) => (
+                                                                <div key={limitIdx} className="bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
+                                                                  {(() => {
+                                                                    const rawAmount = Number(l.amount || 0);
+                                                                    const corrected = rawAmount > 1000000 ? rawAmount / 100 : rawAmount;
+                                                                    return `$${(corrected / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+                                                                  })()} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
+                                                                </div>
+                                                              ))}
+                                                            </div>
+                                                          ) : (
+                                                            <span className="text-muted-foreground italic text-xs">No limits tracked</span>
+                                                          )}
+                                                        </td>
+                                                      </tr>
+                                                    ))}
+                                                  </tbody>
+                                                </table>
+                                              </div>
                                             </div>
                                           );
                                         }
 
                                         return (
-                                          <div className="text-xs text-muted-foreground p-4 border border-white/5 border-dashed rounded-lg space-y-2">
+                                          <div className="text-xs text-muted-foreground p-5 border border-white/10 border-dashed rounded-2xl space-y-2">
                                             <p>No customer sessions or transaction limits tracked for this receipt yet.</p>
                                             {r.stripeSessionId && (
-                                              <div className="pt-2 border-t border-white/5 text-[11px]">
-                                                <strong>Primary Session:</strong> {r.email || "anonymous"} • <span className="font-mono text-muted-foreground">{r.stripeSessionId}</span> (Historical record resolved prior to limits/multi-session tracking)
+                                              <div className="pt-2 border-t border-white/5 text-xs">
+                                                <strong>Primary Session:</strong> {r.email || "anonymous"} • <span className="font-mono text-muted-foreground">{r.stripeSessionId}</span>
                                               </div>
                                             )}
                                           </div>
@@ -2916,35 +3673,35 @@ export default function PlatformAnalyticsPanel() {
                                   )}
 
                                   {/* Tab 2: Items Ordered */}
-                                  {activeTab === "items" && (
+                                  {rowActiveTab === "items" && (
                                     <div className="space-y-2 animate-in fade-in duration-200 mt-1">
-                                      <div className="bg-black/20 border border-white/5 rounded-lg overflow-hidden">
+                                      <div className="bg-black/30 border border-white/10 rounded-2xl overflow-hidden shadow-inner">
                                         <table className="w-full text-left text-xs">
-                                          <thead className="bg-white/5 text-muted-foreground text-[10px] uppercase font-semibold border-b border-white/5">
+                                          <thead className="bg-white/[0.04] text-muted-foreground text-[10px] uppercase font-bold border-b border-white/10">
                                             <tr>
-                                              <th className="py-2 px-3">Item Description</th>
-                                              <th className="py-2 px-3 text-right">Price</th>
-                                              <th className="py-2 px-3 text-center">Qty</th>
-                                              <th className="py-2 px-3 text-right">Total</th>
+                                              <th className="py-2.5 px-4">Item Description</th>
+                                              <th className="py-2.5 px-4 text-right">Price</th>
+                                              <th className="py-2.5 px-4 text-center">Qty</th>
+                                              <th className="py-2.5 px-4 text-right">Total</th>
                                             </tr>
                                           </thead>
-                                          <tbody className="divide-y divide-white/5 text-white/90">
+                                          <tbody className="divide-y divide-white/5 text-white/90 font-medium">
                                             {r.lineItems && r.lineItems.length > 0 ? (
                                               r.lineItems.map((item, idx) => {
                                                 const qty = item.qty || 1;
                                                 const price = item.priceUsd || 0;
                                                 return (
-                                                  <tr key={idx}>
-                                                    <td className="py-2.5 px-3 font-medium">{item.label}</td>
-                                                    <td className="py-2.5 px-3 text-right">${price.toFixed(2)}</td>
-                                                    <td className="py-2.5 px-3 text-center">{qty}</td>
-                                                    <td className="py-2.5 px-3 text-right font-semibold">${(price * qty).toFixed(2)}</td>
+                                                  <tr key={idx} className="hover:bg-white/[0.02]">
+                                                    <td className="py-3 px-4 font-bold">{item.label}</td>
+                                                    <td className="py-3 px-4 text-right">${price.toFixed(2)}</td>
+                                                    <td className="py-3 px-4 text-center">{qty}</td>
+                                                    <td className="py-3 px-4 text-right font-extrabold text-white">${(price * qty).toFixed(2)}</td>
                                                   </tr>
                                                 );
                                               })
                                             ) : (
                                               <tr>
-                                                <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                                                <td colSpan={4} className="py-8 text-center text-muted-foreground">
                                                   No line items recorded for this receipt.
                                                 </td>
                                               </tr>
@@ -2956,11 +3713,11 @@ export default function PlatformAnalyticsPanel() {
                                   )}
 
                                   {/* Tab 3: Initialization & Origin */}
-                                  {activeTab === "origin" && (
+                                  {rowActiveTab === "origin" && (
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs animate-in fade-in duration-200 mt-1">
                                       <div className="space-y-2">
-                                        <div className="text-muted-foreground text-[10px] uppercase font-medium">Site Initialized On</div>
-                                        <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                                        <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Site Initialized On</div>
+                                        <div className="flex items-center gap-2 bg-black/30 p-3 rounded-2xl border border-white/10">
                                           <Chrome className="w-4 h-4 text-primary flex-shrink-0" />
                                           {r.parentUrl ? (
                                             <a
@@ -2978,10 +3735,10 @@ export default function PlatformAnalyticsPanel() {
                                       </div>
 
                                       <div className="space-y-2">
-                                        <div className="text-muted-foreground text-[10px] uppercase font-medium">Integration Mode</div>
-                                        <div className="flex items-center gap-1.5 bg-black/20 p-2.5 rounded-lg border border-white/5">
+                                        <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Integration Mode</div>
+                                        <div className="flex items-center gap-2 bg-black/30 p-3 rounded-2xl border border-white/10">
                                           <Activity className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                                          <span className="font-semibold text-white/90">
+                                          <span className="font-bold text-white/95">
                                             {r.parentUrl ? "Embedded Checkout (Iframe)" : "Direct Checkout Link"}
                                           </span>
                                         </div>
@@ -2998,7 +3755,7 @@ export default function PlatformAnalyticsPanel() {
                   })}
                   {tableReceipts.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="py-8 text-center text-muted-foreground text-xs">
+                      <td colSpan={9} className="py-10 text-center text-muted-foreground text-xs">
                         No transactions found matching the filter credentials.
                       </td>
                     </tr>
@@ -3008,7 +3765,7 @@ export default function PlatformAnalyticsPanel() {
             </div>
 
             {/* Pagination Controls */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-t border-white/5 text-xs text-muted-foreground select-none">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-t border-white/10 text-xs text-muted-foreground select-none">
               <div className="flex items-center gap-2">
                 <span>Show</span>
                 <select
@@ -3018,7 +3775,7 @@ export default function PlatformAnalyticsPanel() {
                     setPageSize(val);
                     setCurrentPage(1);
                   }}
-                  className="h-8 px-2 rounded bg-neutral-900 border border-white/5 text-xs text-white/80 focus:outline-none focus:border-primary/50"
+                  className="h-9 px-3 rounded-xl bg-neutral-900 border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 font-semibold"
                 >
                   <option value={10}>10</option>
                   <option value={25}>25</option>
@@ -3029,7 +3786,7 @@ export default function PlatformAnalyticsPanel() {
                 <span>entries</span>
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 font-medium">
                 <span>
                   Showing {tableReceipts.length > 0 ? (currentPage - 1) * (pageSize === -1 ? tableReceipts.length : pageSize) + 1 : 0} to{" "}
                   {Math.min(
@@ -3041,11 +3798,11 @@ export default function PlatformAnalyticsPanel() {
               </div>
 
               {pageSize !== -1 && totalPages > 1 && (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1.5">
                   <button
                     disabled={currentPage === 1}
                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    className="h-8 px-3 rounded border border-white/5 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent font-medium transition-colors"
+                    className="h-9 px-3.5 rounded-xl border border-white/10 hover:bg-white/[0.08] disabled:opacity-30 disabled:hover:bg-transparent font-semibold transition-all"
                   >
                     Previous
                   </button>
@@ -3065,9 +3822,9 @@ export default function PlatformAnalyticsPanel() {
                         <button
                           key={p}
                           onClick={() => setCurrentPage(p)}
-                          className={`h-8 w-8 rounded text-xs transition-colors ${currentPage === p
-                            ? "bg-primary text-white font-semibold"
-                            : "border border-white/5 hover:bg-white/5 text-muted-foreground hover:text-white"
+                          className={`h-9 w-9 rounded-xl text-xs transition-all ${currentPage === p
+                            ? "bg-primary text-white font-extrabold shadow-md shadow-primary/20"
+                            : "border border-white/10 hover:bg-white/[0.08] text-muted-foreground hover:text-white font-medium"
                             }`}
                         >
                           {p}
@@ -3080,7 +3837,7 @@ export default function PlatformAnalyticsPanel() {
                   <button
                     disabled={currentPage === totalPages}
                     onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                    className="h-8 px-3 rounded border border-white/5 hover:bg-white/5 disabled:opacity-30 disabled:hover:bg-transparent font-medium transition-colors"
+                    className="h-9 px-3.5 rounded-xl border border-white/10 hover:bg-white/[0.08] disabled:opacity-30 disabled:hover:bg-transparent font-semibold transition-all"
                   >
                     Next
                   </button>
@@ -3092,6 +3849,126 @@ export default function PlatformAnalyticsPanel() {
         </div>
 
       </div>
+
+      {/* Mobile Full-Screen Slide-Over Investigation Drawer Modal mounted via React Portal onto document.body */}
+      {mobileDrawerReceipt && typeof document !== "undefined" && createPortal(
+        (() => {
+          const mr = mobileDrawerReceipt;
+          const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined"].includes(String(mr.status || "").toLowerCase());
+          const statusHistory = Array.isArray(mr.statusHistory) ? mr.statusHistory : [];
+          const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
+          const currentStatus = String(mr.status || "").toLowerCase();
+
+          const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
+          const customerIdentified = statusList.includes("buyer_logged_in") || statusList.includes("checkout_session_created") || !!mr.email;
+          const paymentMethodSelected = !!mr.cardFunding || statusList.includes("payment_method_detected");
+          const kycTriggered = statusList.some(s => s.includes("kyc"));
+          const kycCompleted = (kycTriggered && isSettled);
+          const kycFailed = kycTriggered && currentStatus === "failed";
+
+          const steps = [
+            { id: "opened", label: "Link Opened", status: linkOpened ? "completed" : "upcoming", desc: "Checkout opened" },
+            { id: "identified", label: "Identified", status: customerIdentified ? "completed" : (linkOpened ? "active" : "upcoming"), desc: mr.email || "Guest" },
+            { id: "payment", label: "Payment Method", status: paymentMethodSelected ? "completed" : (customerIdentified ? "active" : "upcoming"), desc: mr.cardFunding || "Card/Bank" },
+            { id: "kyc", label: "KYC Verification", status: kycFailed ? "failed" : (kycCompleted ? "completed" : (kycTriggered ? "active" : "skipped")), desc: kycCompleted ? "Level 2 Verified" : "Standard Check" },
+            { id: "settlement", label: "Settlement", status: isSettled ? "completed" : (currentStatus === "failed" ? "failed" : "active"), desc: isSettled ? "Funds Delivered" : "In Progress" }
+          ];
+
+          return (
+            <div className="fixed inset-0 z-[99999] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 text-left font-sans animate-in fade-in duration-200">
+              <div className="relative w-full max-w-xl max-h-[85vh] rounded-3xl bg-zinc-950 border border-purple-500/30 p-5 sm:p-6 flex flex-col justify-between shadow-2xl overflow-y-auto animate-in zoom-in-95 duration-200 space-y-4">
+                <div className="space-y-4">
+                  {/* Header */}
+                  <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-black text-base text-white">{mr.receiptId}</span>
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-white/10 text-white/80 border border-white/10">
+                        {mr.brandKey}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                        ${mr.totalUsd.toFixed(2)}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setMobileDrawerReceipt(null)}
+                      className="px-3 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-xs font-bold border border-white/10"
+                    >
+                      Close ✕
+                    </button>
+                  </div>
+
+                  {/* Badass Mobile Stepper Progress Bar Panel */}
+                  <div className="relative overflow-hidden bg-gradient-to-r from-zinc-950/90 via-zinc-900/80 to-zinc-950/90 border border-white/10 rounded-2xl p-4 shadow-2xl backdrop-blur-xl">
+                    <div className="relative z-10 flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
+                        <span className="text-xs font-bold font-mono text-white tracking-tight uppercase">User Funnel Trajectory</span>
+                      </div>
+                      <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                        {isSettled ? "100% COMPLETE" : "ACTIVE DIAGNOSTIC"}
+                      </span>
+                    </div>
+
+                    <div className="relative flex items-center justify-between px-1 pt-1">
+                      <div className="absolute left-5 right-5 top-[20px] h-0.5 bg-white/10 -z-0">
+                        <div className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-300 shadow-[0_0_12px_#10b981]" style={{ width: isSettled ? "100%" : "65%" }} />
+                      </div>
+                      {steps.map((st, idx) => (
+                        <div key={st.id} className="relative z-10 flex flex-col items-center text-center">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center border text-[10px] font-bold ${
+                            st.status === "completed" ? "bg-emerald-500/20 border-emerald-400 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
+                            st.status === "failed" ? "bg-rose-500/20 border-rose-400 text-rose-400" :
+                            st.status === "active" ? "bg-primary/20 border-primary text-primary animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.5)]" :
+                            "bg-zinc-900 border-white/20 text-white/30"
+                          }`}>
+                            {st.status === "completed" ? <CheckCircle2 className="w-3.5 h-3.5" /> : st.status === "failed" ? <XCircle className="w-3.5 h-3.5" /> : idx + 1}
+                          </div>
+                          <span className="text-[8px] font-mono font-bold text-white mt-1 max-w-[45px] truncate">{st.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Technical Breakdown Cards */}
+                  <div className="space-y-2.5 font-mono text-xs">
+                    <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-0.5">
+                      <span className="text-[9px] text-white/40 font-bold uppercase">Buyer Identity</span>
+                      <div className="text-white font-bold text-xs">{mr.email || "N/A"}</div>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-0.5">
+                      <span className="text-[9px] text-white/40 font-bold uppercase">Stripe Session ID</span>
+                      <div className="text-primary font-bold text-xs truncate">{mr.stripeSessionId || "N/A"}</div>
+                    </div>
+
+                    <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-0.5">
+                      <span className="text-[9px] text-white/40 font-bold uppercase">On-Chain Tx Hash</span>
+                      <div className="text-emerald-400 font-bold text-xs truncate">{mr.transactionHash || "N/A"}</div>
+                    </div>
+
+                    {mr.failureReason && (
+                      <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs">
+                        <span className="font-bold">Failure Reason:</span> {mr.failureReason}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Modal Footer Close Button */}
+                <div className="pt-3 border-t border-white/10">
+                  <button
+                    onClick={() => setMobileDrawerReceipt(null)}
+                    className="w-full py-2.5 rounded-2xl bg-primary text-white font-mono text-xs font-bold shadow-lg shadow-primary/30 active:scale-[0.98] transition-all"
+                  >
+                    Close Investigation Drawer
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body
+      )}
 
       {showCoaster && (
         <RollercoasterOverlay
@@ -3106,8 +3983,6 @@ export default function PlatformAnalyticsPanel() {
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// CUSTOM INTERACTIVE LINE & PIE CHARTS FOR TECHNICAL ANALYSIS
 // ────────────────────────────────────────────────────────────────────────────
 
 interface CustomLineChartProps {
@@ -3990,18 +4865,39 @@ interface SafeInteractiveLineChartProps {
 }
 
 function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChartProps) {
+  const [hoveredToken, setHoveredToken] = useState<string | null>(null);
+  const [selectedToken, setSelectedToken] = useState<string | null>(null);
+
   const cleanData = useMemo(() => {
     if (!data || data.length === 0) return [];
     // Always ignore the current day's incomplete data (omit today's flat data point)
     const todayStr = new Date().toISOString().split("T")[0];
-    return data.filter(d => d.date !== todayStr);
+    const filtered = data.filter(d => d.date !== todayStr);
+
+    // Find active growth takeoff point to trim static flat leading balances (eliminating tape worm flatline)
+    let growthStartIdx = 0;
+    const n = filtered.length;
+    for (let i = 0; i < n - 1; i++) {
+      const curr = filtered[i].totalUsd || 0;
+      const next = filtered[i + 1].totalUsd || 0;
+      // Detect growth step: balance increases significantly (> $5.00 step) or crosses $25
+      if (next - curr > 5.0 || (curr < 25 && next >= 25)) {
+        growthStartIdx = Math.max(0, i - 2);
+        break;
+      }
+    }
+
+    if (growthStartIdx > 0) {
+      return filtered.slice(growthStartIdx);
+    }
+
+    return filtered;
   }, [data]);
 
   const N = cleanData.length;
   const totalWidth = 1000;
   const totalHeight = 260;
 
-  const [hoveredToken, setHoveredToken] = useState<string | null>(null);
   const [activeTrend, setActiveTrend] = useState<"none" | "standard" | "conservative" | "aggressive" | "all">("none");
 
   // Tooltip state
@@ -4156,7 +5052,7 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
     return dates;
   }, [cleanData, showForecast, predictions]);
 
-  // Find max value in series for dynamic Y axis
+  // Find max value in series for dynamic Y axis (CONSTANT: chart scale & view never changes when selecting tokens!)
   const maxValInSeries = useMemo(() => {
     if (cleanData.length === 0) return 100;
     let max = Math.max(...cleanData.map(d => d.totalUsd || 10), 10);
@@ -4175,6 +5071,8 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
   // Round maxVal to a clean upper bound
   const maxAxisVal = useMemo(() => {
     const val = maxValInSeries;
+    if (val <= 1) return 1;
+    if (val <= 5) return 5;
     if (val <= 10) return 10;
     const order = Math.pow(10, Math.floor(Math.log10(val)));
     const normalized = val / order;
@@ -4339,7 +5237,7 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
       )}
 
       {/* Legend and Trend Selectors */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-2 shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2 shrink-0">
         <div className="flex items-center gap-4 flex-wrap">
           {/* Big Badass Current Balance Display */}
           <div className="flex flex-col pr-4 border-r border-white/10">
@@ -4348,34 +5246,35 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
               ${(cleanData[N - 1]?.totalUsd || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap">
             {tokensList.map(t => {
-            const isSelected = hoveredToken === t;
-            const isAnySelected = hoveredToken !== null;
-            return (
-              <button
-                key={t}
-                onMouseEnter={() => setHoveredToken(t)}
-                onMouseLeave={() => setHoveredToken(null)}
-                className={`flex items-center gap-1.5 text-[10px] font-medium transition-all px-2 py-0.5 rounded border ${
-                  isSelected
-                    ? "bg-white/10 text-white border-white/20"
-                    : isAnySelected
-                    ? "text-muted-foreground border-transparent opacity-40 hover:opacity-75"
-                    : "text-white/70 border-transparent hover:bg-white/5"
-                }`}
-              >
-                <div className="h-2 w-2 rounded-full" style={{ backgroundColor: tokenColors[t] }} />
-                <span>{t === "totalUsd" ? "Total Portfolio Value ($)" : t}</span>
-              </button>
-            );
-          })}
+              const isSelected = selectedToken === t || hoveredToken === t;
+              const isAnySelected = selectedToken !== null || hoveredToken !== null;
+              return (
+                <button
+                  key={t}
+                  onClick={() => setSelectedToken(prev => prev === t ? null : t)}
+                  onMouseEnter={() => setHoveredToken(t)}
+                  onMouseLeave={() => setHoveredToken(null)}
+                  className={`flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all ${
+                    isSelected
+                      ? "bg-white/10 text-white border-white/30 shadow-sm"
+                      : isAnySelected
+                      ? "text-muted-foreground border-transparent opacity-40 hover:opacity-75"
+                      : "text-white/70 border-transparent hover:bg-white/5"
+                  }`}
+                >
+                  <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: tokenColors[t] }} />
+                  <span className="truncate">{t === "totalUsd" ? "Total Portfolio ($)" : t}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
 
-        {/* Predictive Settings */}
-        <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg select-none">
-          <span className="text-[9px] uppercase tracking-wider text-white/40 px-2 font-bold font-mono">Predictive HUD</span>
+        {/* Predictive Settings HUD Tabs (Mobile Scrollable & Wrapped) */}
+        <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg select-none overflow-x-auto max-w-full no-scrollbar shrink-0">
+          <span className="text-[9px] uppercase tracking-wider text-white/40 px-2 font-bold font-mono shrink-0">Predictive HUD</span>
           {[
             { label: "OFF", value: "none" },
             { label: "Standard", value: "standard" },
@@ -4386,7 +5285,7 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
             <button
               key={opt.value}
               onClick={() => setActiveTrend(opt.value as any)}
-              className={`px-2 h-5 text-[9px] font-bold rounded transition-all uppercase font-mono ${
+              className={`px-2 h-5 text-[9px] font-bold rounded transition-all uppercase font-mono shrink-0 whitespace-nowrap ${
                 activeTrend === opt.value
                   ? "bg-purple-500/20 text-purple-300 border border-purple-500/30 shadow-[0_0_8px_rgba(168,85,247,0.4)]"
                   : "text-muted-foreground hover:text-white border border-transparent"
@@ -4410,8 +5309,8 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
         </div>
 
         {/* SVG Drawing */}
-        <div className="w-full h-[260px] relative">
-          <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
+        <div className="w-full h-[320px] relative overflow-hidden">
+          <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-full overflow-hidden" preserveAspectRatio="none">
             {/* Horizontal Grid lines */}
             {gridLevels.map((lvl, idx) => {
               const { y } = getCoords(lvl, 0);
@@ -4441,8 +5340,8 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
 
             {/* Historical Paths */}
             {tokensList.map(t => {
-              const isSelected = hoveredToken === t;
-              const isAnySelected = hoveredToken !== null;
+              const isHighlighted = selectedToken === t || hoveredToken === t;
+              const isAnyActive = selectedToken !== null || hoveredToken !== null;
               const isTotal = t === "totalUsd";
 
               // Build points array
@@ -4463,13 +5362,14 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
 
               return (
                 <g key={t}>
-                  {/* Subtle hover background path for easier activation */}
+                  {/* Invisible broad click/hover hit-target path for easy activation */}
                   <path
                     d={pathString}
                     fill="none"
                     stroke="transparent"
-                    strokeWidth="12"
+                    strokeWidth="14"
                     className="cursor-pointer"
+                    onClick={() => setSelectedToken(prev => prev === t ? null : t)}
                     onMouseEnter={() => setHoveredToken(t)}
                     onMouseLeave={() => setHoveredToken(null)}
                   />
@@ -4479,11 +5379,11 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
                     d={pathString}
                     fill="none"
                     stroke={color}
-                    strokeWidth={isSelected ? (isTotal ? 3.5 : 2.5) : isTotal ? 2 : 1.2}
+                    strokeWidth={isHighlighted ? (isTotal ? 4 : 3) : isTotal ? 2 : 1.2}
                     className="transition-all duration-200 pointer-events-none"
                     style={{
-                      opacity: isSelected ? 1 : isAnySelected ? 0.15 : isTotal ? 0.8 : 0.45,
-                      filter: isSelected || isTotal ? `drop-shadow(0 0 4px ${color}80)` : "none",
+                      opacity: isHighlighted ? 1 : isAnyActive ? 0.12 : isTotal ? 0.85 : 0.45,
+                      filter: isHighlighted ? `drop-shadow(0 0 6px ${color})` : "none",
                     }}
                   />
 
@@ -4498,20 +5398,21 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
                       val = amount * price;
                     }
                     const { x, y } = getCoords(val, idx);
-                    const isNodeActive = isSelected && hoveredNode?.x === x && !hoveredNode?.isForecast;
+                    const isNodeActive = isHighlighted && hoveredNode?.x === x && !hoveredNode?.isForecast;
 
                     return (
                       <circle
                         key={idx}
                         cx={x}
                         cy={y}
-                        r={isNodeActive ? 4.5 : isSelected ? 3 : 1.5}
+                        r={isNodeActive ? 1.8 : isHighlighted ? 1.2 : 0.8}
                         fill={color}
                         stroke="#000"
-                        strokeWidth={isNodeActive ? 1.5 : 0.5}
+                        strokeWidth={isNodeActive ? 0.8 : 0.4}
                         style={{
-                          opacity: isSelected ? 1 : isAnySelected ? 0 : isTotal ? 0.6 : 0.2,
+                          opacity: isHighlighted ? 1 : isAnyActive ? 0.05 : isTotal ? 0.7 : 0.3,
                         }}
+                        onClick={() => setSelectedToken(prev => prev === t ? null : t)}
                         onMouseEnter={(e) => {
                           const containerRect = e.currentTarget.ownerSVGElement?.parentElement?.getBoundingClientRect();
                           if (!containerRect) return;
@@ -4707,13 +5608,16 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
           )}
         </div>
 
-        {/* Bottom X-axis Labels */}
-        <div className="w-full relative h-4 text-[10px] text-white/40 font-mono font-medium select-none z-10 mt-1">
+        {/* Bottom Responsive X-axis Labels */}
+        <div className="w-full relative h-4 text-[9px] text-white/40 font-mono font-medium select-none z-10 mt-1">
           {displayDates.map((date, i) => {
-            const labelInterval = Math.max(1, Math.ceil(displayDates.length / 8));
+            const labelInterval = Math.max(1, Math.ceil(displayDates.length / 5));
             const shouldShowLabel = i === 0 || i === displayDates.length - 1 || i % labelInterval === 0;
             if (!shouldShowLabel) return null;
             
+            // Format short date (MM-DD) for mobile viewports
+            const shortDate = date.length >= 10 ? date.substring(5) : date;
+
             // Calculate percentage position aligning with SVG plot coordinates
             const pct = (i / (displayDates.length - 1)) * 100;
             return (
@@ -4722,7 +5626,8 @@ function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChar
                 className="absolute -translate-x-1/2 whitespace-nowrap"
                 style={{ left: `calc(5% + ${pct * 0.92}%)` }}
               >
-                {date}
+                <span className="hidden sm:inline">{date}</span>
+                <span className="sm:hidden">{shortDate}</span>
               </span>
             );
           })}
