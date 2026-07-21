@@ -194,6 +194,7 @@ async function runBackgroundPoll(params: {
   splitAddressCredit: string;
   brandKey: string;
   detectedCardFunding?: string;
+  kycOccurred?: boolean;
 }) {
   const {
     sessionId,
@@ -205,6 +206,7 @@ async function runBackgroundPoll(params: {
     splitAddressCredit,
     brandKey,
     detectedCardFunding,
+    kycOccurred,
   } = params;
 
   const stripeKey = process.env.STRIPE_API_KEY;
@@ -403,6 +405,9 @@ async function runBackgroundPoll(params: {
           receipt.isCreditCard = isCreditCard;
           receipt.detectedCardFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
           receipt.kycLevel = kycLevel;
+          if (typeof kycOccurred === "boolean") {
+            receipt.kycOccurred = kycOccurred;
+          }
 
           let finalReceipt = receipt;
           try {
@@ -531,6 +536,7 @@ export async function POST(req: NextRequest) {
     const splitAddressCredit = String(body.splitAddressCredit || "").trim();
     const brandKey = String(body.brandKey || "").trim();
     const detectedCardFunding = String(body.detectedCardFunding || "").trim();
+    const kycOccurred = typeof body.kycOccurred === "boolean" ? body.kycOccurred : undefined;
 
     if (!sessionId || !receiptId || !merchantWallet || !email || !amount || !splitAddress) {
       return NextResponse.json(
@@ -552,6 +558,9 @@ export async function POST(req: NextRequest) {
         receipt.splitAddressCredit = splitAddressCredit || null;
         receipt.detectedCardFunding = detectedCardFunding || null;
         receipt.isCreditCard = detectedCardFunding === "credit";
+        if (typeof kycOccurred === "boolean") {
+          receipt.kycOccurred = kycOccurred;
+        }
         receipt.lastUpdatedAt = Date.now();
         await container.items.upsert(receipt);
         console.log(`[BACKGROUND POLL] Immediately saved Stripe metadata to receipt ${receiptId}`);
@@ -575,6 +584,7 @@ export async function POST(req: NextRequest) {
           splitAddressCredit,
           brandKey,
           detectedCardFunding,
+          kycOccurred,
         });
       } catch (err) {
         console.error("[BACKGROUND POLL] Unexpected exception in task execution:", err);

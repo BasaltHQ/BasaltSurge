@@ -117,6 +117,7 @@ interface ReceiptInfo {
   failureReason: string | null;
   logs?: ReceiptLog[];
   kycLevel?: "L0" | "L1" | "L2";
+  kycOccurred?: boolean;
   platformFee?: number;
   lineItems?: { label: string; priceUsd: number; qty?: number }[];
   items?: { label?: string; priceUsd?: number; quantity?: number; qty?: number }[];
@@ -3193,12 +3194,24 @@ export default function PlatformAnalyticsPanel() {
                             </span>
                           </td>
                           <td className="py-3.5 px-3">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${r.kycLevel === "L2" ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
-                              r.kycLevel === "L1" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
-                                "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
-                              }`}>
-                              {r.kycLevel}
-                            </span>
+                            {(() => {
+                              const statusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
+                              const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
+                              const kycSessionRequired = r.kycOccurred === true ||
+                                statusList.some(s => s.includes("kyc") || s.includes("verifying")) ||
+                                String(r.failureReason || "").toLowerCase().includes("verification") ||
+                                String(r.failureReason || "").toLowerCase().includes("kyc");
+                              const displayTag = kycSessionRequired ? (r.kycLevel && r.kycLevel !== "L0" ? r.kycLevel : "L1") : "None";
+                              return (
+                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${
+                                  displayTag === "L2" ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
+                                  displayTag === "L1" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+                                  "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
+                                }`}>
+                                  {displayTag}
+                                </span>
+                              );
+                            })()}
                           </td>
                           <td className="py-3.5 px-4 text-right">
                             <button
@@ -3344,8 +3357,20 @@ export default function PlatformAnalyticsPanel() {
                                       {
                                         id: "kyc",
                                         label: "KYC Check",
-                                        status: kycFailed ? "failed" : (kycCompleted ? "completed" : (kycTriggered ? "active" : (paymentMethodSelected ? "skipped" : "upcoming"))),
-                                        description: kycFailed ? "KYC Rejected" : (kycCompleted ? "KYC Verified" : (kycTriggered ? "Reviewing..." : "Not Required"))
+                                        status: kycFailed ? "failed" : (
+                                          (r.kycLevel === "L1" || r.kycLevel === "L2" || kycCompleted) ? "completed" : (
+                                            kycTriggered ? "active" : (paymentMethodSelected ? "completed" : "upcoming")
+                                          )
+                                        ),
+                                        description: kycFailed ? "KYC Rejected" : (
+                                          r.kycLevel === "L2" ? "L2 Verified" : (
+                                            r.kycLevel === "L1" ? "L1 Verified" : (
+                                              kycCompleted ? "Verified" : (
+                                                kycTriggered ? "Reviewing..." : "L0 (Not Required)"
+                                              )
+                                            )
+                                          )
+                                        )
                                       },
                                       {
                                         id: "settlement",
@@ -4076,7 +4101,24 @@ export default function PlatformAnalyticsPanel() {
             { id: "opened", label: "Link Opened", status: linkOpened ? "completed" : "upcoming", desc: "Checkout opened" },
             { id: "identified", label: "Identified", status: customerIdentified ? "completed" : (linkOpened ? "active" : "upcoming"), desc: mr.email || "Guest" },
             { id: "payment", label: "Payment Method", status: paymentMethodSelected ? "completed" : (customerIdentified ? "active" : "upcoming"), desc: mr.cardFunding || "Card/Bank" },
-            { id: "kyc", label: "KYC Verification", status: kycFailed ? "failed" : (kycCompleted ? "completed" : (kycTriggered ? "active" : "skipped")), desc: kycCompleted ? "Level 2 Verified" : "Standard Check" },
+            {
+              id: "kyc",
+              label: "KYC Verification",
+              status: kycFailed ? "failed" : (
+                (mr.kycLevel === "L1" || mr.kycLevel === "L2" || kycCompleted) ? "completed" : (
+                  kycTriggered ? "active" : "completed"
+                )
+              ),
+              desc: kycFailed ? "KYC Rejected" : (
+                mr.kycLevel === "L2" ? "L2 Verified" : (
+                  mr.kycLevel === "L1" ? "L1 Verified" : (
+                    kycCompleted ? "Verified" : (
+                      kycTriggered ? "Reviewing..." : "L0 (Not Required)"
+                    )
+                  )
+                )
+              )
+            },
             { id: "settlement", label: "Settlement", status: isSettled ? "completed" : (currentStatus === "failed" ? "failed" : "active"), desc: isSettled ? "Funds Delivered" : "In Progress" }
           ];
 
