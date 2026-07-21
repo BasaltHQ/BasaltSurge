@@ -455,10 +455,10 @@ export function computeSplitAmounts(
   const agentFeeBps = agents.reduce((sum, a) => sum + (a.bps || 0), 0);
   const merchantBps = typeof merchantFeeBps === "number" ? merchantFeeBps : (brand.defaultMerchantFeeBps ?? 0);
 
-  const amountPlatformMinor = Math.floor((grossMinor * platformFeeBps) / 10000);
-  const amountPartnerMinor = Math.floor((grossMinor * partnerFeeBps) / 10000);
-  const amountAgentMinor = agents.reduce((sum, a) => sum + Math.floor((grossMinor * (a.bps || 0)) / 10000), 0);
-  const amountMerchantMinor = grossMinor - amountPlatformMinor - amountPartnerMinor - amountAgentMinor - Math.floor((grossMinor * merchantBps) / 10000);
+  const amountPlatformMinor = Math.round((grossMinor * platformFeeBps) / 10000);
+  const amountPartnerMinor = Math.round((grossMinor * partnerFeeBps) / 10000);
+  const amountAgentMinor = agents.reduce((sum, a) => sum + Math.round((grossMinor * (a.bps || 0)) / 10000), 0);
+  const amountMerchantMinor = grossMinor - amountPlatformMinor - amountPartnerMinor - amountAgentMinor - Math.round((grossMinor * merchantBps) / 10000);
 
   return {
     platformFeeBps,

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Image from 'next/image';
 import Link from 'next/link';
 import {
@@ -62,7 +63,9 @@ import {
   GraduationCap,
   Clock,
   Mail,
-  Sliders
+  Sliders,
+  Menu,
+  X
 } from 'lucide-react';
 import { useBrand } from '@/contexts/BrandContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -293,6 +296,8 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
   const wallet = (account?.address || "").toLowerCase();
   const isSuperadmin = isPlatformSuperAdmin(wallet);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [mobileSearchQuery, setMobileSearchQuery] = useState("");
   const brand = useBrand();
   const { theme } = useTheme();
   const [containerBrandKey, setContainerBrandKey] = useState<string>("");
@@ -579,7 +584,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         md:top-[64px] md:bottom-0 md:left-0 md:flex-col md:h-[calc(100vh-64px)]
         ${isCollapsed ? 'md:w-[72px]' : 'md:w-64'}
         top-[64px] left-0 right-0 md:border-b-0
-        max-md:h-14 max-md:overflow-x-auto max-md:overflow-y-hidden
+        ${isMobileMenuOpen ? 'max-md:h-auto max-md:max-h-[85vh] max-md:overflow-y-auto' : 'max-md:h-14 max-md:overflow-hidden'}
         flex
         admin-sidebar-surface
       `}
@@ -718,44 +723,164 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         </nav>
       </div>
 
-      {/* Mobile: horizontal scrolling compact nav */}
-      <div className="flex md:hidden items-center gap-5 px-4 overflow-x-auto flex-nowrap w-full h-14 admin-mobile-nav">
-        {visibleGroups.map((group, groupIndex) => (
-          <div key={group.title} className="flex items-center gap-4 shrink-0 h-full">
-            {/* Children as text links */}
-            <div className="flex items-center gap-3">
-              {group.items?.map((child) => {
-                const isActive = child.key ? activeTab === child.key : false;
-                if (child.href) {
-                  return (
-                    <Link
-                      key={child.title}
-                      href={child.href}
-                      className="admin-mobile-nav-item"
-                    >
-                      {child.title}
-                    </Link>
-                  );
-                }
-                return (
-                  <button
-                    key={child.key}
-                    type="button"
-                    onClick={() => onChangeTab(child.key!)}
-                    className={`admin-mobile-nav-item ${isActive ? 'active' : ''}`}
-                  >
-                    {child.title}
-                  </button>
-                );
-              })}
-            </div>
+      {/* Mobile: Sleek Hamburger Navigation Header & Full-Screen Searchable Menu Overlay */}
+      <div className="flex md:hidden flex-col w-full admin-mobile-nav bg-zinc-950/95 border-b border-white/10 select-none">
+        {/* Top Mobile Bar with Active Panel Title & Hamburger Button */}
+        {(() => {
+          const activeItem = visibleGroups.flatMap(g => g.items || []).find(it => it.key === activeTab);
+          const activeTitle = activeItem?.title || "Platform Analytics";
 
-            {/* Divider unless last group */}
-            {groupIndex < visibleGroups.length - 1 && (
-              <div className="w-px h-5 bg-white/8 shrink-0" />
-            )}
-          </div>
-        ))}
+          return (
+            <div className="flex items-center justify-between px-4 h-14 w-full">
+              <div className="flex items-center gap-2 max-w-[70%]">
+                <span className="text-white/40 text-xs font-mono font-semibold uppercase tracking-wider">Active:</span>
+                <span className="text-emerald-400 font-bold text-xs font-mono truncate px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 shadow-sm">
+                  {activeTitle}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuOpen(prev => !prev)}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/10 text-xs font-mono font-bold transition-all active:scale-[0.96]"
+              >
+                {isMobileMenuOpen ? <X className="w-4 h-4 text-rose-400" /> : <Menu className="w-4 h-4 text-emerald-400" />}
+                <span>{isMobileMenuOpen ? "Close" : "Menu"}</span>
+              </button>
+            </div>
+          );
+        })()}
+
+        {/* 100% Full-Screen Searchable Menu Overlay mounted via React Portal onto document.body */}
+        {isMobileMenuOpen && typeof document !== "undefined" && createPortal(
+          (() => {
+            const activeItem = visibleGroups.flatMap(g => g.items || []).find(it => it.key === activeTab);
+            const activeTitle = activeItem?.title || "Platform Analytics";
+
+            return (
+              <div className="fixed inset-0 z-[99999] bg-zinc-950/98 backdrop-blur-2xl p-4 sm:p-6 flex flex-col justify-between font-sans animate-in fade-in duration-200 text-left">
+                <div className="space-y-4">
+                  {/* Overlay Header */}
+                  <div className="flex items-center justify-between pb-3 border-b border-white/10">
+                    <div className="flex items-center gap-2">
+                      <span className="text-white/40 text-xs font-mono font-semibold uppercase">Active:</span>
+                      <span className="text-emerald-400 font-bold text-xs font-mono truncate px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 shadow-sm">
+                        {activeTitle}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/10 text-xs font-mono font-bold"
+                    >
+                      <X className="w-4 h-4 text-rose-400" />
+                      <span>Close</span>
+                    </button>
+                  </div>
+
+                  {/* Live Search Input Box */}
+                  <div className="relative flex items-center w-full">
+                    <Search className="w-4 h-4 text-white/40 absolute left-3.5 pointer-events-none z-10" />
+                    <input
+                      type="text"
+                      value={mobileSearchQuery}
+                      onChange={(e) => setMobileSearchQuery(e.target.value)}
+                      placeholder="Search admin panels (e.g. Analytics, Partners, Reports)..."
+                      className="w-full bg-white/[0.08] border border-white/20 rounded-xl pl-10 pr-9 py-3 text-sm text-white placeholder:text-white/40 font-mono focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
+                      autoComplete="off"
+                    />
+                    {mobileSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setMobileSearchQuery("")}
+                        className="absolute right-2.5 text-white/40 hover:text-white text-xs p-1.5 z-10"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Faded Scrollable 2-Column Panel Grid */}
+                  <div
+                    className="max-h-[calc(100vh-210px)] overflow-y-auto pr-1 space-y-5 font-mono scrollbar-thin"
+                    style={{
+                      WebkitMaskImage: "linear-gradient(to bottom, black 0%, black calc(100% - 25px), transparent 100%)",
+                      maskImage: "linear-gradient(to bottom, black 0%, black calc(100% - 25px), transparent 100%)",
+                    }}
+                  >
+                    {visibleGroups.map((group) => {
+                      const filteredItems = (group.items || []).filter(item =>
+                        item.title.toLowerCase().includes(mobileSearchQuery.toLowerCase().trim())
+                      );
+
+                      if (filteredItems.length === 0) return null;
+
+                      return (
+                        <div key={group.title} className="space-y-2">
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-white/40 uppercase tracking-widest px-1">
+                            {group.icon}
+                            <span>{group.title}</span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            {filteredItems.map((child) => {
+                              const isActive = child.key ? activeTab === child.key : false;
+                              if (child.href) {
+                                return (
+                                  <Link
+                                    key={child.title}
+                                    href={child.href}
+                                    onClick={() => setIsMobileMenuOpen(false)}
+                                    className="p-3 rounded-2xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.08] text-white/80 hover:text-white text-xs font-semibold flex items-center gap-2 truncate transition-all"
+                                  >
+                                    <span className="text-white/40">{child.icon}</span>
+                                    <span className="truncate">{child.title}</span>
+                                  </Link>
+                                );
+                              }
+                              return (
+                                <button
+                                  key={child.key}
+                                  type="button"
+                                  onClick={() => {
+                                    onChangeTab(child.key!);
+                                    setIsMobileMenuOpen(false);
+                                  }}
+                                  className={`p-3 rounded-2xl border text-xs font-semibold flex items-center gap-2 text-left truncate transition-all ${
+                                    isActive
+                                      ? "bg-primary/20 border-primary text-white font-bold shadow-md shadow-primary/20"
+                                      : "border-white/10 bg-white/[0.03] hover:bg-white/[0.08] text-white/80 hover:text-white"
+                                  }`}
+                                >
+                                  <span className={isActive ? "text-primary animate-pulse" : "text-white/40"}>
+                                    {child.icon}
+                                  </span>
+                                  <span className="truncate">{child.title}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Footer Close Button */}
+                <div className="pt-3 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className="w-full py-3 rounded-2xl bg-white/10 hover:bg-white/20 text-white font-mono text-xs font-bold border border-white/10 shadow-lg active:scale-[0.98] transition-all"
+                  >
+                    Close Navigation Menu
+                  </button>
+                </div>
+              </div>
+            );
+          })(),
+          document.body
+        )}
       </div>
 
       {/* Toggle Button at bottom */}

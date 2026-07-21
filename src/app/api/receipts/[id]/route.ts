@@ -86,6 +86,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const clientCountry = (
     req.headers.get("cf-ipcountry") ||
     req.headers.get("x-vercel-ip-country") ||
+    req.headers.get("cloudfront-viewer-country") ||
+    req.headers.get("x-appengine-country") ||
     req.headers.get("x-country-code") ||
     "US"
   ).toUpperCase();

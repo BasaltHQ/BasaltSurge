@@ -52,12 +52,16 @@ export async function GET(req: NextRequest) {
             totalUsd: 1,
             createdAt: 1,
             amountPlatformMinor: 1,
+            effectiveProcessingFeeBps: 1,
             detectedCardFunding: 1,
             isCreditCard: 1,
             statusHistory: 1,
             customerEmail: 1,
             stripeEmail: 1,
-            wallet: 1
+            wallet: 1,
+            shopSlug: 1,
+            parentUrl: 1,
+            merchantName: 1
           }
         }
       ).sort({ createdAt: -1 }).toArray();
@@ -75,6 +79,7 @@ export async function GET(req: NextRequest) {
             totalUsd: 1,
             createdAt: 1,
             amountPlatformMinor: 1,
+            effectiveProcessingFeeBps: 1,
             detectedCardFunding: 1,
             isCreditCard: 1,
             transactionHash: 1,
@@ -90,7 +95,13 @@ export async function GET(req: NextRequest) {
             lastPolledAt: 1,
             stripeSessionStatus: 1,
             ipAddress: 1,
-            wallet: 1
+            wallet: 1,
+            merchantName: 1,
+            shopName: 1,
+            shopTitle: 1,
+            merchantTitle: 1,
+            shopifyShop: 1,
+            shopSlug: 1
           }
         }
       ).sort({ createdAt: -1 });
@@ -117,7 +128,7 @@ export async function GET(req: NextRequest) {
     } else {
       // Fallback for Cosmos DB
       const querySpec = {
-        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet FROM c WHERE c.type = 'receipt'"
+        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.effectiveProcessingFeeBps, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet, c.shopSlug, c.parentUrl, c.merchantName FROM c WHERE c.type = 'receipt'"
       };
       const { resources } = await container.items.query(querySpec).fetchAll();
       allReceiptsLight = resources || [];
@@ -225,32 +236,82 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Pre-fetch merchant configurations for split addresses resolution in a single query
-    const configMap: Record<string, { splitAddress?: string; splitAddressCredit?: string }> = {};
+    // Pre-fetch merchant configurations for split addresses and merchant names resolution in a single query
+    const configMap: Record<string, { brandKey?: string; merchantName?: string; splitAddress?: string; splitAddressCredit?: string }> = {};
     try {
       const configQuery = {
-        query: "SELECT c.wallet, c.brandKey, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit FROM c WHERE c.type = 'wallet_config'"
+        query: "SELECT c.wallet, c.brandKey, c.merchantName, c.name, c.businessName, c.shopName, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit FROM c WHERE c.type = 'wallet_config' OR c.type = 'client_request'"
       };
       const { resources: configs } = await container.items.query(configQuery).fetchAll();
       for (const cfg of configs || []) {
         if (cfg.wallet) {
           const pair = `${cfg.wallet}:${cfg.brandKey || ""}`;
-          configMap[pair] = {
+          const mName = cfg.merchantName || cfg.businessName || cfg.name || cfg.shopName;
+          const entry = {
+            brandKey: cfg.brandKey || undefined,
+            merchantName: mName || undefined,
             splitAddress: cfg.splitAddress || cfg.split?.address || undefined,
             splitAddressCredit: cfg.splitAddressCredit || cfg.splitCredit?.address || undefined
           };
+          configMap[pair] = entry;
+          if (cfg.wallet && !configMap[cfg.wallet]) {
+            configMap[cfg.wallet] = entry;
+          }
         }
       }
     } catch (err) {
       console.error("[PLATFORM ANALYTICS API] Failed to pre-fetch wallet configs:", err);
     }
 
+    // Helper to calculate platform fee USD with fallback to BPS model (enforcing 50 BPS / 0.5% minimum floor)
+    const getReceiptFeeUsd = (rc: any) => {
+      const totalUsd = Number(rc.totalUsd || 0);
+      if (totalUsd <= 0) return 0;
+
+      // Minimum 50 BPS (0.5% / 0.005) platform floor
+      const minPlatformFeeUsd = (totalUsd * 50) / 10000;
+
+      let calculatedFee = 0;
+      if (typeof rc.amountPlatformMinor === "number" && rc.amountPlatformMinor > 0) {
+        calculatedFee = rc.amountPlatformMinor / 100;
+      } else {
+        const bps = typeof rc.effectiveProcessingFeeBps === "number" && rc.effectiveProcessingFeeBps > 0
+          ? rc.effectiveProcessingFeeBps
+          : 50; // 50 BPS = 0.5% default platform floor
+        calculatedFee = (totalUsd * bps) / 10000;
+      }
+
+      return Math.max(minPlatformFeeUsd, calculatedFee);
+    };
+
+    // Helper to resolve brand key container slug cleanly
+    const getReceiptBrandKey = (rc: any) => {
+      if (rc.brandKey && rc.brandKey !== "unknown" && rc.brandKey !== "portalpay") {
+        return rc.brandKey;
+      }
+      if (rc.shopSlug && rc.shopSlug !== "unknown") {
+        return rc.shopSlug;
+      }
+      if (rc.wallet && configMap[rc.wallet]?.brandKey) {
+        return configMap[rc.wallet].brandKey;
+      }
+      if (rc.parentUrl) {
+        const url = String(rc.parentUrl).toLowerCase();
+        if (url.includes("aipowerpay")) return "aipowerpay";
+        if (url.includes("basaltsurge")) return "basaltsurge";
+        if (url.includes("lucky13")) return "lucky13";
+        if (url.includes("xoinpay")) return "xoinpay";
+      }
+      if (rc.brandKey) return rc.brandKey;
+      return "basaltsurge";
+    };
+
     // Aggregate metrics over all historical lightweight records
     for (const r of allReceiptsLight) {
       const status = r.status || "pending";
       totalCreated++;
       
-      const bKey = r.brandKey || "unknown";
+      const bKey = getReceiptBrandKey(r);
       const bName = r.brandName || bKey;
       if (!brandMap[bKey]) {
         brandMap[bKey] = { brandKey: bKey, brandName: bName, total: 0, paid: 0, failed: 0, gmv: 0, fees: 0 };
@@ -259,12 +320,13 @@ export async function GET(req: NextRequest) {
 
       if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
         totalPaid++;
+        const feeUsd = getReceiptFeeUsd(r);
         totalGmv += Number(r.totalUsd || 0);
-        totalFees += Number(r.amountPlatformMinor || 0) / 100;
+        totalFees += feeUsd;
         
         brandMap[bKey].paid++;
         brandMap[bKey].gmv += Number(r.totalUsd || 0);
-        brandMap[bKey].fees += Number(r.amountPlatformMinor || 0) / 100;
+        brandMap[bKey].fees += feeUsd;
 
         const funding = r.detectedCardFunding || (r.isCreditCard ? "credit" : "debit");
         if (funding === "us_bank_account") cardTypeMap.bank++;
@@ -287,13 +349,19 @@ export async function GET(req: NextRequest) {
       const rId = r.receiptId || r.id;
       const rLogs = logsByReceipt[rId] || [];
       const status = r.status || "pending";
-      const pairKey = `${r.wallet || ""}:${r.brandKey || ""}`;
-      const resolvedConfig = configMap[pairKey] || {};
+      const resolvedBrandKey = getReceiptBrandKey(r);
+      const pairKey = `${r.wallet || ""}:${resolvedBrandKey}`;
+      const resolvedConfig = configMap[pairKey] || configMap[r.wallet || ""] || {};
+
+      const derivedMerchantName = r.merchantName || r.shopName || r.shopTitle || r.merchantTitle || r.shopifyShop || resolvedConfig.merchantName || null;
+      const feeUsd = getReceiptFeeUsd(r);
 
       return {
         receiptId: rId,
-        brandKey: r.brandKey || "unknown",
-        brandName: r.brandName || r.brandKey || "unknown",
+        brandKey: resolvedBrandKey,
+        brandName: r.brandName || resolvedBrandKey,
+        merchantName: derivedMerchantName,
+        wallet: r.wallet || null,
         status,
         totalUsd: r.totalUsd || 0,
         createdAt: r.createdAt,
@@ -303,7 +371,7 @@ export async function GET(req: NextRequest) {
         cardFunding: r.detectedCardFunding || (r.isCreditCard ? "credit" : null),
         failureReason: status === "failed" ? getFailureReason(r, rLogs) : null,
         kycLevel: getKycLevel(r, rLogs),
-        platformFee: Number(r.amountPlatformMinor || 0) / 100,
+        platformFee: feeUsd,
         lineItems: r.lineItems || [],
         parentUrl: r.parentUrl || null,
         splitAddress: r.splitAddress || resolvedConfig.splitAddress || null,
@@ -367,7 +435,7 @@ export async function GET(req: NextRequest) {
       const isPaid = ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status);
       const isFailed = status === "failed";
       const paymentGmv = isPaid ? Number(r.totalUsd || 0) : 0;
-      const paymentFees = isPaid ? Number(r.amountPlatformMinor || 0) / 100 : 0;
+      const paymentFees = isPaid ? getReceiptFeeUsd(r) : 0;
       
       if (isPaid) {
         g.allPaid++;
@@ -377,7 +445,7 @@ export async function GET(req: NextRequest) {
         g.allFailed++;
       }
 
-      const bKey = r.brandKey || "unknown";
+      const bKey = getReceiptBrandKey(r);
       if (!g.brands[bKey]) {
         g.brands[bKey] = { paid: 0, failed: 0, total: 0, gmv: 0, fees: 0 };
       }
