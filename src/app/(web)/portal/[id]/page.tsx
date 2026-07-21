@@ -3569,6 +3569,29 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return rounded;
   }, [currency, totalUsd, usdRates, rates]);
 
+  // ── Stripe Onramp Mode Toggle & Location Detection ──
+  // NEXT_PUBLIC_STRIPE_HEADLESS=TRUE → New Embedded Components headless flow (Smart Wallet Bridge)
+  // Otherwise → Legacy iframe-based Stripe Crypto Onramp interceptor
+  const isExplicitlyNonUs = useMemo(() => {
+    // 1. Explicit billing address country takes highest priority
+    const billingCountry = receipt?.billingAddress?.country?.trim().toUpperCase();
+    if (billingCountry) {
+      return billingCountry !== "US";
+    }
+
+    // 2. Explicit shipping address country takes second priority
+    const shippingCountry = receipt?.shippingAddress?.country?.trim().toUpperCase();
+    if (shippingCountry) {
+      return shippingCountry !== "US";
+    }
+
+    // 3. Fallback to IP-based country code
+    const country = clientCountry.toUpperCase();
+    return country !== "US" && country !== "UNKNOWN" && country !== "XX" && country !== "";
+  }, [receipt?.billingAddress?.country, receipt?.shippingAddress?.country, clientCountry]);
+
+  const stripeHeadless = (String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE") && !isExplicitlyNonUs;
+
   const payRef = useRef<HTMLDivElement | null>(null);
   const widgetRootRef = useRef<HTMLDivElement | null>(null);
 
@@ -3580,6 +3603,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       try {
         // ── Filter Out Disabled Onramp Providers ──
         const tryFilterOnramps = () => {
+          // Do NOT filter out/hide international onramps for non-US buyers
+          if (isExplicitlyNonUs) return;
+
           const els = Array.from(scopeEl.querySelectorAll('button, div[role="button"], a[role="button"], span, p'));
           els.forEach((el: any) => {
             const txt = (el.textContent || '').trim();
@@ -3682,7 +3708,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const t2 = setTimeout(tryReorder, 400);
     const t3 = setTimeout(tryReorder, 1200);
     return () => { try { mo.disconnect(); } catch { }; clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
-  }, [effectiveSecondaryColor, theme.secondaryColor, stripeOnrampEnabled, coinbaseOnrampEnabled, transakOnrampEnabled, rampnowOnrampEnabled]);
+  }, [effectiveSecondaryColor, theme.secondaryColor, stripeOnrampEnabled, coinbaseOnrampEnabled, transakOnrampEnabled, rampnowOnrampEnabled, isExplicitlyNonUs]);
 
   // ── Thirdweb Bruteforce DOM Overrides ──
   // Thirdweb's Emotion CSS-in-JS aggressively overrides injected stylesheets with inline or high-specificity classes.
@@ -3714,29 +3740,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
     return () => mo.disconnect();
   }, [theme.bodyTextColor]);
-
-  // ── Stripe Onramp Mode Toggle ──
-  // NEXT_PUBLIC_STRIPE_HEADLESS=TRUE → New Embedded Components headless flow (Smart Wallet Bridge)
-  // Otherwise → Legacy iframe-based Stripe Crypto Onramp interceptor
-  const isExplicitlyNonUs = (() => {
-    // 1. Explicit billing address country takes highest priority
-    const billingCountry = receipt?.billingAddress?.country?.trim().toUpperCase();
-    if (billingCountry) {
-      return billingCountry !== "US";
-    }
-
-    // 2. Explicit shipping address country takes second priority
-    const shippingCountry = receipt?.shippingAddress?.country?.trim().toUpperCase();
-    if (shippingCountry) {
-      return shippingCountry !== "US";
-    }
-
-    // 3. Fallback to IP-based country code
-    const country = clientCountry.toUpperCase();
-    return country !== "US" && country !== "UNKNOWN" && country !== "XX" && country !== "";
-  })();
-
-  const stripeHeadless = (String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE") && !isExplicitlyNonUs;
 
   // eCommerce mode check: default is true (e=1 behavior). Can be disabled/forced to full flow with ?f=1 or ?f
   const isEcommerceMode = (() => {
