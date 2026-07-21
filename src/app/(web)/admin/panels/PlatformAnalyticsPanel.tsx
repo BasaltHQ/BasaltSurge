@@ -105,6 +105,8 @@ interface ReceiptInfo {
   receiptId: string;
   brandKey: string;
   brandName: string;
+  merchantName?: string | null;
+  wallet?: string | null;
   status: string;
   totalUsd: number;
   createdAt: string;
@@ -117,6 +119,7 @@ interface ReceiptInfo {
   kycLevel?: "L0" | "L1" | "L2";
   platformFee?: number;
   lineItems?: { label: string; priceUsd: number; qty?: number }[];
+  items?: { label?: string; priceUsd?: number; quantity?: number; qty?: number }[];
   parentUrl?: string | null;
   splitAddress?: string | null;
   splitAddressCredit?: string | null;
@@ -562,10 +565,10 @@ export default function PlatformAnalyticsPanel() {
   const [kycFilter, setKycFilter] = useState<string>("all");
 
   // Sorting
-  const [sortKey, setSortKey] = useState<"receiptId" | "brandKey" | "totalUsd" | "status" | "kycLevel" | "createdAt" | "stripeSessionId" | null>(null);
+  const [sortKey, setSortKey] = useState<"receiptId" | "brandKey" | "merchantName" | "totalUsd" | "status" | "kycLevel" | "createdAt" | "stripeSessionId" | null>(null);
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
 
-  const handleSort = (key: "receiptId" | "brandKey" | "totalUsd" | "status" | "kycLevel" | "createdAt" | "stripeSessionId") => {
+  const handleSort = (key: "receiptId" | "brandKey" | "merchantName" | "totalUsd" | "status" | "kycLevel" | "createdAt" | "stripeSessionId") => {
     if (sortKey === key) {
       setSortDirection(prev => (prev === "asc" ? "desc" : "asc"));
     } else {
@@ -843,6 +846,7 @@ export default function PlatformAnalyticsPanel() {
         r.email.toLowerCase().includes(q) ||
         (r.stripeSessionId && r.stripeSessionId.toLowerCase().includes(q)) ||
         (r.transactionHash && r.transactionHash.toLowerCase().includes(q)) ||
+        (r.merchantName && r.merchantName.toLowerCase().includes(q)) ||
         r.brandKey.toLowerCase().includes(q);
 
       return matchesBrand && matchesStatus && matchesQuery && matchesTime;
@@ -947,7 +951,10 @@ export default function PlatformAnalyticsPanel() {
         let valA: any = a[sortKey];
         let valB: any = b[sortKey];
 
-        if (sortKey === "kycLevel") {
+        if (sortKey === "merchantName") {
+          valA = a.merchantName || a.brandName || a.brandKey || "";
+          valB = b.merchantName || b.brandName || b.brandKey || "";
+        } else if (sortKey === "kycLevel") {
           const rank = (lvl: string) => (lvl === "L2" ? 2 : lvl === "L1" ? 1 : 0);
           valA = rank(a.kycLevel);
           valB = rank(b.kycLevel);
@@ -1704,91 +1711,77 @@ export default function PlatformAnalyticsPanel() {
           )}
 
           {!isMainChartMinimized && (
-            <div className="flex flex-wrap items-center gap-2.5">
-              {/* Metric Toggle */}
-              <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl">
-                {[
-                  { label: "Success Rate", value: "successRate" },
-                  { label: "Amount Earned", value: "amountEarned" }
-                ].map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setChartMetric(opt.value as any)}
-                    className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all ${chartMetric === opt.value
-                      ? "bg-primary text-white shadow-sm"
-                      : "text-muted-foreground hover:text-white"
-                      }`}
+            <>
+              {/* Mobile Compact Controls Toolbar (sm:hidden) */}
+              <div className="flex flex-col gap-2.5 w-full sm:hidden">
+                <div className="grid grid-cols-2 gap-2 w-full">
+                  {/* Combined Metric & Scale Selector */}
+                  <select
+                    value={`${chartMetric}_${scaleType}`}
+                    onChange={e => {
+                      const [m, s] = e.target.value.split("_");
+                      setChartMetric(m as any);
+                      setScaleType(s as any);
+                    }}
+                    className="h-9 px-2.5 rounded-xl bg-white/[0.06] border border-white/10 text-xs font-bold text-white focus:outline-none focus:border-primary truncate"
                   >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
+                    <option value="successRate_linear" className="bg-zinc-900">Success Rate (Lin)</option>
+                    <option value="successRate_log" className="bg-zinc-900">Success Rate (Log)</option>
+                    <option value="amountEarned_linear" className="bg-zinc-900">Earned $ (Lin)</option>
+                    <option value="amountEarned_log" className="bg-zinc-900">Earned $ (Log)</option>
+                  </select>
 
-              {/* Scale Toggle */}
-              <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl">
-                {[
-                  { label: "Linear", value: "linear" },
-                  { label: "Log", value: "log" }
-                ].map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => setScaleType(opt.value as any)}
-                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all ${scaleType === opt.value
-                      ? "bg-primary text-white shadow-sm"
-                      : "text-muted-foreground hover:text-white"
-                      }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Time Range Selector */}
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl">
-                  {[
-                    { label: "Today", value: "today" },
-                    { label: "Yesterday", value: "yesterday" },
-                    { label: "Weekly", value: "weekly" },
-                    { label: "Monthly", value: "monthly" },
-                    { label: "All", value: "all" },
-                    { label: "Custom", value: "custom" }
-                  ].map(opt => (
-                    <button
-                      key={opt.value}
-                      onClick={() => setTimeRange(opt.value)}
-                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all ${timeRange === opt.value
-                        ? "bg-primary text-white shadow-sm"
-                        : "text-muted-foreground hover:text-white"
-                        }`}
+                  {/* Time Range Selector & Ride the Data Button */}
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={timeRange}
+                      onChange={e => setTimeRange(e.target.value)}
+                      className="flex-1 h-9 px-2.5 rounded-xl bg-white/[0.06] border border-white/10 text-xs font-bold text-white focus:outline-none focus:border-primary truncate"
                     >
-                      {opt.label}
+                      <option value="today" className="bg-zinc-900">Today</option>
+                      <option value="yesterday" className="bg-zinc-900">Yesterday</option>
+                      <option value="weekly" className="bg-zinc-900">Weekly</option>
+                      <option value="monthly" className="bg-zinc-900">Monthly</option>
+                      <option value="all" className="bg-zinc-900">All Time</option>
+                      <option value="custom" className="bg-zinc-900">Custom Range</option>
+                    </select>
+                    <button
+                      onClick={() => setShowCoaster(true)}
+                      className="h-9 w-9 rounded-xl bg-primary/20 border border-primary/30 text-primary flex items-center justify-center shrink-0 active:scale-95 shadow-sm"
+                      title="Ride the Data"
+                    >
+                      <Route className="w-4 h-4" />
                     </button>
-                  ))}
+                  </div>
                 </div>
 
-                {/* Custom Date Pickers */}
+                {/* Mobile Custom Date Pickers */}
                 {timeRange === "custom" && (
-                  <div className="flex items-center gap-1.5 bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl h-9">
-                    <input
-                      type="date"
-                      value={customStartDate}
-                      onChange={e => setCustomStartDate(e.target.value)}
-                      className="bg-transparent border-0 text-xs text-white/90 focus:outline-none w-28 [color-scheme:dark]"
-                    />
-                    <span className="text-[10px] text-muted-foreground uppercase">to</span>
-                    <input
-                      type="date"
-                      value={customEndDate}
-                      onChange={e => setCustomEndDate(e.target.value)}
-                      className="bg-transparent border-0 text-xs text-white/90 focus:outline-none w-28 [color-scheme:dark]"
-                    />
+                  <div className="grid grid-cols-2 gap-2 p-2 rounded-xl bg-white/[0.04] border border-white/10 w-full font-mono">
+                    <div className="flex items-center gap-1.5 bg-white/[0.05] px-2 py-1 rounded-lg border border-white/10">
+                      <span className="text-[9px] text-white/40 font-bold uppercase">From:</span>
+                      <input
+                        type="date"
+                        value={customStartDate}
+                        onChange={e => setCustomStartDate(e.target.value)}
+                        className="bg-transparent border-0 text-[11px] font-bold text-white focus:outline-none w-full [color-scheme:dark]"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1.5 bg-white/[0.05] px-2 py-1 rounded-lg border border-white/10">
+                      <span className="text-[9px] text-white/40 font-bold uppercase">To:</span>
+                      <input
+                        type="date"
+                        value={customEndDate}
+                        onChange={e => setCustomEndDate(e.target.value)}
+                        className="bg-transparent border-0 text-[11px] font-bold text-white focus:outline-none w-full [color-scheme:dark]"
+                      />
+                    </div>
                   </div>
                 )}
 
-                {/* Weekly/Monthly Pagination */}
+                {/* Mobile Weekly/Monthly Pagination */}
                 {(timeRange === "weekly" || timeRange === "monthly") && (
-                  <div className="flex items-center gap-2 bg-white/[0.04] border border-white/10 px-3 py-1 rounded-xl h-9">
+                  <div className="flex items-center justify-between bg-white/[0.04] border border-white/10 px-3 py-1.5 rounded-xl text-xs font-mono">
                     <button
                       onClick={() => {
                         if (timeRange === "weekly") {
@@ -1797,12 +1790,11 @@ export default function PlatformAnalyticsPanel() {
                           setSelectedMonthOffset(prev => prev - 1);
                         }
                       }}
-                      className="text-muted-foreground hover:text-white text-xs font-bold px-1 transition-colors"
-                      title="Previous"
+                      className="text-muted-foreground hover:text-white font-bold px-2 py-0.5 rounded bg-white/5"
                     >
-                      &lt;
+                      &lt; Prev
                     </button>
-                    <span className="text-xs text-white font-medium select-none">
+                    <span className="text-white font-semibold">
                       {timeRange === "weekly" ? (
                         (() => {
                           const { start, end } = getWeekRange(selectedWeekOffset);
@@ -1824,30 +1816,165 @@ export default function PlatformAnalyticsPanel() {
                         }
                       }}
                       disabled={timeRange === "weekly" ? selectedWeekOffset >= 0 : selectedMonthOffset >= 0}
-                      className="text-muted-foreground hover:text-white disabled:opacity-30 disabled:pointer-events-none text-xs font-bold px-1 transition-colors"
-                      title="Next"
+                      className="text-muted-foreground hover:text-white disabled:opacity-30 font-bold px-2 py-0.5 rounded bg-white/5"
                     >
-                      &gt;
+                      Next &gt;
                     </button>
                   </div>
                 )}
               </div>
 
-              {/* Rollercoaster Ride Button */}
-              <button
-                onClick={() => setShowCoaster(true)}
-                className="px-3 h-9 text-xs font-bold rounded-xl transition-all duration-200 bg-primary/20 border border-primary/30 hover:border-primary/50 hover:bg-primary/30 text-primary hover:text-white flex items-center gap-1.5 shadow-sm active:scale-95"
-              >
-                <Route className="w-4 h-4" />
-                <span>Ride the Data</span>
-              </button>
-            </div>
+              {/* Desktop Full Controls Bar (hidden sm:flex) */}
+              <div className="hidden sm:flex flex-wrap items-center gap-2.5 max-w-full">
+                {/* Metric Toggle */}
+                <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl shrink-0">
+                  {[
+                    { label: "Success Rate", value: "successRate" },
+                    { label: "Amount Earned", value: "amountEarned" }
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setChartMetric(opt.value as any)}
+                      className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all shrink-0 ${chartMetric === opt.value
+                        ? "bg-primary text-white shadow-sm"
+                        : "text-muted-foreground hover:text-white"
+                        }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Scale Toggle */}
+                <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl shrink-0">
+                  {[
+                    { label: "Linear", value: "linear" },
+                    { label: "Log", value: "log" }
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setScaleType(opt.value as any)}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all shrink-0 ${scaleType === opt.value
+                        ? "bg-primary text-white shadow-sm"
+                        : "text-muted-foreground hover:text-white"
+                        }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Time Range Selector */}
+                <div className="flex items-center gap-1.5 flex-wrap max-w-full">
+                  <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl max-w-full overflow-x-auto no-scrollbar">
+                    {[
+                      { label: "Today", value: "today" },
+                      { label: "Yesterday", value: "yesterday" },
+                      { label: "Weekly", value: "weekly" },
+                      { label: "Monthly", value: "monthly" },
+                      { label: "All", value: "all" },
+                      { label: "Custom", value: "custom" }
+                    ].map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setTimeRange(opt.value)}
+                        className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all shrink-0 ${timeRange === opt.value
+                          ? "bg-primary text-white shadow-sm"
+                          : "text-muted-foreground hover:text-white"
+                          }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Custom Date Pickers */}
+                  {timeRange === "custom" && (
+                    <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/10 w-full sm:w-auto font-mono">
+                      <div className="flex items-center gap-1.5 bg-white/[0.05] px-2.5 py-1 rounded-lg border border-white/10 flex-1 sm:flex-initial">
+                        <span className="text-[10px] text-white/40 font-bold uppercase">From:</span>
+                        <input
+                          type="date"
+                          value={customStartDate}
+                          onChange={e => setCustomStartDate(e.target.value)}
+                          className="bg-transparent border-0 text-xs font-bold text-white focus:outline-none w-full sm:w-28 [color-scheme:dark]"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-white/[0.05] px-2.5 py-1 rounded-lg border border-white/10 flex-1 sm:flex-initial">
+                        <span className="text-[10px] text-white/40 font-bold uppercase">To:</span>
+                        <input
+                          type="date"
+                          value={customEndDate}
+                          onChange={e => setCustomEndDate(e.target.value)}
+                          className="bg-transparent border-0 text-xs font-bold text-white focus:outline-none w-full sm:w-28 [color-scheme:dark]"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Weekly/Monthly Pagination */}
+                  {(timeRange === "weekly" || timeRange === "monthly") && (
+                    <div className="flex items-center gap-2 bg-white/[0.04] border border-white/10 px-3 py-1 rounded-xl h-9">
+                      <button
+                        onClick={() => {
+                          if (timeRange === "weekly") {
+                            setSelectedWeekOffset(prev => prev - 1);
+                          } else {
+                            setSelectedMonthOffset(prev => prev - 1);
+                          }
+                        }}
+                        className="text-muted-foreground hover:text-white text-xs font-bold px-1 transition-colors"
+                        title="Previous"
+                      >
+                        &lt;
+                      </button>
+                      <span className="text-xs text-white font-medium select-none">
+                        {timeRange === "weekly" ? (
+                          (() => {
+                            const { start, end } = getWeekRange(selectedWeekOffset);
+                            return `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+                          })()
+                        ) : (
+                          (() => {
+                            const { start } = getMonthRange(selectedMonthOffset);
+                            return start.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+                          })()
+                        )}
+                      </span>
+                      <button
+                        onClick={() => {
+                          if (timeRange === "weekly") {
+                            setSelectedWeekOffset(prev => Math.min(0, prev + 1));
+                          } else {
+                            setSelectedMonthOffset(prev => Math.min(0, prev + 1));
+                          }
+                        }}
+                        disabled={timeRange === "weekly" ? selectedWeekOffset >= 0 : selectedMonthOffset >= 0}
+                        className="text-muted-foreground hover:text-white disabled:opacity-30 disabled:pointer-events-none text-xs font-bold px-1 transition-colors"
+                        title="Next"
+                      >
+                        &gt;
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Rollercoaster Ride Button */}
+                <button
+                  onClick={() => setShowCoaster(true)}
+                  className="px-3 h-9 text-xs font-bold rounded-xl transition-all duration-200 bg-primary/20 border border-primary/30 hover:border-primary/50 hover:bg-primary/30 text-primary hover:text-white flex items-center gap-1.5 shadow-sm active:scale-95"
+                >
+                  <Route className="w-4 h-4" />
+                  <span>Ride the Data</span>
+                </button>
+              </div>
+            </>
           )}
         </div>
 
         {/* Custom Interactive Line Chart */}
         {!isMainChartMinimized && (
-          <div className="flex-1 flex flex-col min-h-[240px] sm:min-h-[280px] mt-4 animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex-1 flex flex-col min-h-[290px] sm:min-h-[320px] mt-3 animate-in fade-in zoom-in-95 duration-200">
             {chartTimeSeries.length === 1 || timeRange === "today" || timeRange === "yesterday" ? (
               <CustomInteractiveBarChart
                 data={chartTimeSeries}
@@ -2582,14 +2709,9 @@ export default function PlatformAnalyticsPanel() {
                       >
                         <div>
                           {/* Card Header Row */}
-                          <div className="flex items-center justify-between gap-2 pb-3 border-b border-white/10">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-black text-sm text-white">{r.receiptId}</span>
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-white/10 text-white/80 border border-white/10">
-                                {r.brandKey}
-                              </span>
-                            </div>
-                            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold border inline-flex items-center gap-1 ${
+                          <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-white/10">
+                            <span className="font-mono font-black text-sm text-white tracking-tight">{r.receiptId}</span>
+                            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold border inline-flex items-center gap-1 shrink-0 ${
                               isSettled
                                 ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
                                 : r.status === "failed"
@@ -2598,12 +2720,12 @@ export default function PlatformAnalyticsPanel() {
                             }`}>
                               {isSettled && <CheckCircle2 className="w-2.5 h-2.5" />}
                               {r.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
-                              <span>{r.status}</span>
+                              <span className="truncate max-w-[120px]">{r.status}</span>
                             </span>
                           </div>
 
                           {/* Card Main Body */}
-                          <div className="my-3 space-y-2.5">
+                          <div className="my-2.5 space-y-2">
                             <div className="flex items-baseline justify-between">
                               <span className="text-2xl font-black font-mono text-white tracking-tight">${r.totalUsd.toFixed(2)}</span>
                               <span className="text-[10px] font-mono text-white/50">
@@ -2617,11 +2739,41 @@ export default function PlatformAnalyticsPanel() {
                               </span>
                             </div>
 
-                            <div className="text-xs font-mono text-white/70 truncate bg-white/[0.03] p-2 rounded-xl border border-white/5">
-                              <span className="text-white/40">Buyer Email:</span> {r.email || "N/A"}
+                            {/* Dedicated Merchant & Brand Fields */}
+                            {r.merchantName && (
+                              <div className="text-xs font-mono truncate bg-emerald-500/10 px-2.5 py-1.5 rounded-xl border border-emerald-500/20 flex items-center justify-between">
+                                <span className="text-emerald-400/80 font-bold uppercase text-[9px]">Merchant:</span>
+                                <span className="text-emerald-300 font-bold truncate max-w-[180px]">{r.merchantName}</span>
+                              </div>
+                            )}
+
+                            <div className="text-xs font-mono truncate bg-white/[0.03] px-2.5 py-1.5 rounded-xl border border-white/5 flex items-center justify-between">
+                              <span className="text-white/40 uppercase text-[9px] font-bold">Brand Container:</span>
+                              <span className="text-white/90 font-bold truncate max-w-[180px]">{r.brandKey}</span>
                             </div>
 
-                            <div className="flex items-center justify-between text-[11px] font-mono pt-1">
+                            <div className="text-xs font-mono text-white/70 truncate bg-white/[0.03] px-2.5 py-1.5 rounded-xl border border-white/5 flex items-center justify-between">
+                              <span className="text-white/40 uppercase text-[9px] font-bold">Buyer Email:</span>
+                              <span className="text-white/90 font-medium truncate max-w-[180px]">{r.email || "N/A"}</span>
+                            </div>
+
+                            {r.transactionHash && (
+                              <div className="text-xs font-mono truncate bg-emerald-500/10 px-2.5 py-1.5 rounded-xl border border-emerald-500/20 flex items-center justify-between">
+                                <span className="text-emerald-400/80 uppercase text-[9px] font-bold">On-Chain Tx:</span>
+                                <a
+                                  href={r.transactionHash.startsWith("0x") ? `https://basescan.org/tx/${r.transactionHash}` : `https://solscan.io/tx/${r.transactionHash}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-emerald-300 font-bold hover:underline inline-flex items-center gap-1 truncate max-w-[180px]"
+                                  title={`On-Chain Tx: ${r.transactionHash}`}
+                                >
+                                  <span className="truncate">{r.transactionHash.slice(0, 8)}...{r.transactionHash.slice(-6)}</span>
+                                  <ExternalLink className="w-3 h-3 text-emerald-300 shrink-0" />
+                                </a>
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between text-[11px] font-mono pt-0.5">
                               <span className="text-white/40">KYC Verification:</span>
                               <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] border ${
                                 r.kycLevel === "L2" ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
@@ -2670,7 +2822,7 @@ export default function PlatformAnalyticsPanel() {
                           const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
                           const customerIdentified = statusList.includes("buyer_logged_in") || statusList.includes("checkout_session_created") || !!r.email;
                           const paymentMethodSelected = !!r.cardFunding || statusList.includes("payment_method_detected");
-                          const kycTriggered = statusList.some(s => s.includes("kyc"));
+                          const kycTriggered = statusList.some((s: string) => s.includes("kyc"));
                           const kycCompleted = (kycTriggered && isSettled);
                           const kycFailed = kycTriggered && currentStatus === "failed";
 
@@ -2887,10 +3039,10 @@ export default function PlatformAnalyticsPanel() {
                       Date {sortKey === "createdAt" && (sortDirection === "asc" ? " ▲" : " ▼")}
                     </th>
                     <th
-                      onClick={() => handleSort("brandKey")}
+                      onClick={() => handleSort("merchantName")}
                       className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
                     >
-                      Brand {sortKey === "brandKey" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                      Merchant / Brand {sortKey === "merchantName" && (sortDirection === "asc" ? " ▲" : " ▼")}
                     </th>
                     <th
                       onClick={() => handleSort("totalUsd")}
@@ -2903,7 +3055,7 @@ export default function PlatformAnalyticsPanel() {
                       onClick={() => handleSort("stripeSessionId")}
                       className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
                     >
-                      Session ID {sortKey === "stripeSessionId" && (sortDirection === "asc" ? " ▲" : " ▼")}
+                      Session / Tx Hash {sortKey === "stripeSessionId" && (sortDirection === "asc" ? " ▲" : " ▼")}
                     </th>
                     <th
                       onClick={() => handleSort("status")}
@@ -2958,23 +3110,48 @@ export default function PlatformAnalyticsPanel() {
                               minute: "2-digit"
                             }) : "N/A"}
                           </td>
-                          <td className="py-3.5 px-3 font-mono font-semibold text-white">{r.brandKey}</td>
+                          <td className="py-3.5 px-3 font-mono">
+                            <div className="font-bold text-white text-xs truncate max-w-[150px]" title={r.merchantName || r.brandName || r.brandKey}>
+                              {r.merchantName || r.brandName || r.brandKey}
+                            </div>
+                            {r.merchantName && r.merchantName !== r.brandKey && (
+                              <div className="text-[10px] text-white/40 font-semibold truncate max-w-[150px]">
+                                Container: <span className="text-emerald-400/90 font-bold">{r.brandKey}</span>
+                              </div>
+                            )}
+                          </td>
                           <td className="py-3.5 px-3 font-extrabold text-white">${r.totalUsd.toFixed(2)}</td>
                           <td className="py-3.5 px-3 max-w-[140px] truncate font-medium" title={r.email}>{r.email}</td>
-                          <td className="py-3.5 px-3 font-mono text-[10px] text-muted-foreground max-w-[120px] truncate" title={r.stripeSessionId || "N/A"}>
-                            {r.stripeSessionId ? (
-                              <a
-                                href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="hover:text-primary hover:underline inline-flex items-center gap-1"
-                              >
-                                <span>{r.stripeSessionId}</span>
-                                <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
-                              </a>
-                            ) : (
-                              "N/A"
-                            )}
+                          <td className="py-3.5 px-3 font-mono text-[10px] text-muted-foreground max-w-[140px] truncate">
+                            <div className="flex flex-col gap-1">
+                              {r.stripeSessionId && (
+                                <a
+                                  href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="hover:text-primary hover:underline inline-flex items-center gap-1 text-primary/90 font-medium truncate"
+                                  title={`Stripe Session: ${r.stripeSessionId}`}
+                                >
+                                  <span className="truncate max-w-[110px]">{r.stripeSessionId}</span>
+                                  <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
+                                </a>
+                              )}
+                              {r.transactionHash && (
+                                <a
+                                  href={r.transactionHash.startsWith("0x") ? `https://basescan.org/tx/${r.transactionHash}` : `https://solscan.io/tx/${r.transactionHash}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="hover:text-emerald-300 hover:underline inline-flex items-center gap-1 text-emerald-400 font-bold truncate"
+                                  title={`On-Chain Tx: ${r.transactionHash}`}
+                                >
+                                  <span className="truncate">{r.transactionHash.slice(0, 8)}...{r.transactionHash.slice(-6)}</span>
+                                  <ExternalLink className="w-2.5 h-2.5 flex-shrink-0 text-emerald-400" />
+                                </a>
+                              )}
+                              {!r.stripeSessionId && !r.transactionHash && (
+                                <span className="text-white/40">N/A</span>
+                              )}
+                            </div>
                           </td>
                           <td className="py-3.5 px-3">
                             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
@@ -3862,7 +4039,7 @@ export default function PlatformAnalyticsPanel() {
           const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
           const customerIdentified = statusList.includes("buyer_logged_in") || statusList.includes("checkout_session_created") || !!mr.email;
           const paymentMethodSelected = !!mr.cardFunding || statusList.includes("payment_method_detected");
-          const kycTriggered = statusList.some(s => s.includes("kyc"));
+          const kycTriggered = statusList.some((s: string) => s.includes("kyc"));
           const kycCompleted = (kycTriggered && isSettled);
           const kycFailed = kycTriggered && currentStatus === "failed";
 
@@ -3880,10 +4057,15 @@ export default function PlatformAnalyticsPanel() {
                 <div className="space-y-4">
                   {/* Header */}
                   <div className="flex items-center justify-between pb-3 border-b border-white/10">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono font-black text-base text-white">{mr.receiptId}</span>
+                      {mr.merchantName && (
+                        <span className="px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          {mr.merchantName}
+                        </span>
+                      )}
                       <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-white/10 text-white/80 border border-white/10">
-                        {mr.brandKey}
+                        Container: {mr.brandKey}
                       </span>
                       <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                         ${mr.totalUsd.toFixed(2)}
@@ -3997,9 +4179,9 @@ interface CustomLineChartProps {
 function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey, metricType = "successRate", scaleType = "linear" }: CustomLineChartProps) {
   const N = data.length;
 
-  // Simple coordinate space for SVG drawing
+  // Coordinate space for SVG drawing
   const totalWidth = 1000;
-  const totalHeight = 180;
+  const totalHeight = 240;
 
   // Find max value in series for dynamic amount earned scaling
   const maxValInSeries = useMemo(() => {
@@ -4040,14 +4222,12 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
     if (scaleType === "linear") {
       return [0, 0.25, 0.5, 0.75, 1].map(pct => maxAxisVal * pct);
     } else {
-      // Log levels: 0, then powers of 10 up to maxAxisVal
       const levels = [0];
       let current = 1;
       while (current <= maxAxisVal) {
         levels.push(current);
         current *= 10;
       }
-      // If the last level is far below maxAxisVal, add maxAxisVal as a level
       if (levels[levels.length - 1] < maxAxisVal) {
         levels.push(maxAxisVal);
       }
@@ -4057,13 +4237,13 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
 
   const getCoords = (val: number, idx: number) => {
     const x = N > 1 ? (idx / (N - 1)) * totalWidth : totalWidth / 2;
-    let y = 172;
+    let y = 213;
     if (scaleType === "linear") {
-      y = 172 - (val / maxAxisVal) * 164;
+      y = 213 - (val / maxAxisVal) * 195;
     } else {
       const logVal = Math.log10(val + 1);
       const logMax = Math.log10(maxAxisVal + 1);
-      y = 172 - (logVal / logMax) * 164;
+      y = 213 - (logVal / logMax) * 195;
     }
     return { x, y };
   };
@@ -4090,9 +4270,9 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
   };
 
   const brandColors: Record<string, string> = {
-    aggregate: "#c084fc", // vibrant purple/indigo for overall platform success rate
-    aipowerpay: "#38bdf8", // clear sky blue
-    basaltsurge: "#fb7185", // soft rose
+    aggregate: "#c084fc",
+    aipowerpay: "#38bdf8",
+    basaltsurge: "#fb7185",
   };
 
   const getBrandColor = (key: string, idx: number) => {
@@ -4147,12 +4327,12 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
   return (
     <div className="relative w-full space-y-4 chart-container-card">
       {/* Legend with interactive Hover highlighting */}
-      <div className="flex flex-wrap items-center gap-3 select-none">
+      <div className="flex items-center gap-2 max-w-full overflow-x-auto no-scrollbar select-none py-0.5">
         {/* Aggregate legend */}
         <div
           onMouseEnter={() => setHoveredKey("aggregate")}
           onMouseLeave={() => setHoveredKey(null)}
-          className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${hoveredKey === "aggregate" ? "bg-white/10 scale-[1.03] text-white" :
+          className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2.5 rounded-lg shrink-0 ${hoveredKey === "aggregate" ? "bg-white/10 scale-[1.03] text-white" :
             hoveredKey !== null ? "opacity-30" : "text-white/80 hover:text-white"
             }`}
         >
@@ -4171,7 +4351,7 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
               key={bk}
               onMouseEnter={() => setHoveredKey(bk)}
               onMouseLeave={() => setHoveredKey(null)}
-              className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${isHovered ? "bg-white/10 scale-[1.03] text-white" :
+              className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2.5 rounded-lg shrink-0 ${isHovered ? "bg-white/10 scale-[1.03] text-white" :
                 isDimmed ? "opacity-30" : "text-white/80 hover:text-white"
                 }`}
             >
@@ -4182,29 +4362,28 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
         })}
       </div>
 
-      {/* SVG Plot card */}
-      <div className="relative flex-1 min-h-0 w-full bg-black/30 border border-white/5 rounded-xl p-4 flex flex-col gap-3">
-
-        {/* The Grid/Chart Area wrapper */}
-        <div className="relative flex-1 min-h-0 w-full pl-12 pr-2">
-
-          {/* Left vertical Y-axis labels */}
-          <div className="absolute top-[4.4%] bottom-[4.4%] left-2 flex flex-col justify-between text-[10px] text-white/40 font-sans font-medium pointer-events-none select-none z-10 py-0.5 w-10">
+      {/* SVG Plot Card Container with Sticky Y-Axis & Side-Scrollable Canvas */}
+      <div className="relative flex-1 w-full bg-black/40 border border-white/10 rounded-2xl p-3 sm:p-4 flex flex-col gap-2 overflow-hidden shadow-inner">
+        {/* Main Canvas Area */}
+        <div className="relative flex-1 w-full flex overflow-hidden">
+          
+          {/* Sticky Left Y-Axis Labels */}
+          <div className="sticky left-0 top-0 z-20 bg-zinc-950/95 border-r border-white/10 pr-2.5 pl-1.5 text-[10px] text-white/60 font-mono font-bold pointer-events-none select-none h-[255px] w-12 shrink-0 relative">
             {gridLevels.slice().reverse().map(lvl => {
-              let yPct = 0;
+              let ratio = 0;
               if (scaleType === "linear") {
-                yPct = (lvl / maxAxisVal) * 100;
+                ratio = lvl / maxAxisVal;
               } else {
                 const logVal = Math.log10(lvl + 1);
                 const logMax = Math.log10(maxAxisVal + 1);
-                yPct = (logVal / logMax) * 100;
+                ratio = logVal / logMax;
               }
-              // Position absolutely to align with the SVG line
+              const yPx = 18 + (1 - ratio) * 195;
               return (
                 <span
                   key={lvl}
-                  className="absolute left-0 -translate-y-1/2"
-                  style={{ top: `${100 - yPct}%` }}
+                  className="absolute left-1.5 -translate-y-1/2 font-mono"
+                  style={{ top: `${yPx}px` }}
                 >
                   {formatYLabel(lvl)}
                 </span>
@@ -4212,30 +4391,32 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
             })}
           </div>
 
-          {/* SVG viewport (Filling the exact same vertical space) */}
-          <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
-            {/* Horizontal Grid lines */}
-            {gridLevels.map(lvl => {
-              let y = 172;
-              if (scaleType === "linear") {
-                y = 172 - (lvl / maxAxisVal) * 164;
-              } else {
-                const logVal = Math.log10(lvl + 1);
-                const logMax = Math.log10(maxAxisVal + 1);
-                y = 172 - (logVal / logMax) * 164;
-              }
-              return (
-                <line
-                  key={lvl}
-                  x1="0"
-                  y1={y}
-                  x2={totalWidth}
-                  y2={y}
-                  stroke="rgba(255,255,255,0.04)"
-                  strokeWidth="1"
-                />
-              );
-            })}
+          {/* Horizontally Scrollable Graph Canvas */}
+          <div className="flex-1 overflow-x-auto overflow-y-hidden no-scrollbar touch-pan-x pl-2">
+            <div className="min-w-[750px] sm:min-w-[950px] lg:w-full h-full relative flex flex-col">
+              <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-[220px] overflow-visible" preserveAspectRatio="none">
+                {/* Horizontal Grid lines */}
+                {gridLevels.map(lvl => {
+                  let y = 213;
+                  if (scaleType === "linear") {
+                    y = 213 - (lvl / maxAxisVal) * 195;
+                  } else {
+                    const logVal = Math.log10(lvl + 1);
+                    const logMax = Math.log10(maxAxisVal + 1);
+                    y = 213 - (logVal / logMax) * 195;
+                  }
+                  return (
+                    <line
+                      key={lvl}
+                      x1="0"
+                      y1={y}
+                      x2={totalWidth}
+                      y2={y}
+                      stroke="rgba(255,255,255,0.06)"
+                      strokeWidth="1"
+                    />
+                  );
+                })}
 
             {/* 1. Draw Platform Aggregate Line (Rendered in background) */}
             {(() => {
@@ -4364,21 +4545,23 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
               );
             })}
           </svg>
-        </div>
 
-        {/* Bottom X-axis Labels */}
-        <div className="w-full pl-12 pr-2 flex justify-between text-[10px] text-white/40 font-sans font-medium select-none z-10">
-          {data.map((d, i) => {
-            const labelInterval = Math.max(1, Math.ceil(data.length / 8));
-            const shouldShowLabel = i === 0 || i === data.length - 1 || i % labelInterval === 0;
-            return (
-              <span key={i} className="text-center truncate" style={{ width: `${100 / data.length}%` }}>
-                {shouldShowLabel ? d.label : ""}
-              </span>
-            );
-          })}
+          {/* Bottom X-axis Date Labels */}
+          <div className="w-full h-8 border-t border-white/10 pt-1.5 flex justify-between text-[10px] text-white/70 font-mono font-semibold select-none z-10">
+            {data.map((d, i) => {
+              const labelInterval = Math.max(1, Math.ceil(data.length / 10));
+              const shouldShowLabel = i === 0 || i === data.length - 1 || i % labelInterval === 0;
+              return (
+                <span key={i} className="text-center truncate px-0.5" style={{ width: `${100 / data.length}%` }}>
+                  {shouldShowLabel ? d.label : ""}
+                </span>
+              );
+            })}
+          </div>
         </div>
       </div>
+    </div>
+  </div>
 
       {/* Floating Node Readout Tooltip (HTML overlay) */}
       {hoveredNode && (
@@ -4572,24 +4755,24 @@ function CustomInteractiveBarChart({
   const spacing = (chartWidth - barWidth * barCount) / (barCount + 1);
 
   const getCoords = (val: number) => {
-    let y = 172;
+    let y = 213;
     if (scaleType === "linear") {
-      y = 172 - (val / maxAxisVal) * 164;
+      y = 213 - (val / maxAxisVal) * 195;
     } else {
       const logVal = Math.log10(val + 1);
       const logMax = Math.log10(maxAxisVal + 1);
-      y = 172 - (logVal / logMax) * 164;
+      y = 213 - (logVal / logMax) * 195;
     }
     return y;
   };
 
   return (
     <div className="relative w-full space-y-4 chart-container-card">
-      <div className="flex flex-wrap items-center gap-3 select-none">
+      <div className="flex items-center gap-2 max-w-full overflow-x-auto no-scrollbar select-none py-0.5">
         <div
           onMouseEnter={() => setHoveredKey("aggregate")}
           onMouseLeave={() => setHoveredKey(null)}
-          className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${
+          className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2.5 rounded-lg shrink-0 ${
             hoveredKey === "aggregate" ? "bg-white/10 scale-[1.03] text-white" :
             hoveredKey !== null ? "opacity-30" : "text-white/80 hover:text-white"
           }`}
@@ -4608,7 +4791,7 @@ function CustomInteractiveBarChart({
               key={bk}
               onMouseEnter={() => setHoveredKey(bk)}
               onMouseLeave={() => setHoveredKey(null)}
-              className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2 rounded-lg ${
+              className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2.5 rounded-lg shrink-0 ${
                 isHovered ? "bg-white/10 scale-[1.03] text-white" :
                 isDimmed ? "opacity-30" : "text-white/80 hover:text-white"
               }`}
@@ -4620,24 +4803,28 @@ function CustomInteractiveBarChart({
         })}
       </div>
 
-      <div className="relative flex-1 min-h-0 w-full bg-black/30 border border-white/5 rounded-xl p-4 flex flex-col gap-3">
-        <div className="relative flex-1 min-h-0 w-full pl-12 pr-2">
-          {/* Y-Axis Labels */}
-          <div className="absolute top-[4.4%] bottom-[4.4%] left-2 flex flex-col justify-between text-[10px] text-white/40 font-sans font-medium pointer-events-none select-none z-10 py-0.5 w-10">
+      {/* SVG Plot Card Container with Sticky Y-Axis & Side-Scrollable Canvas */}
+      <div className="relative flex-1 w-full bg-black/40 border border-white/10 rounded-2xl p-3 sm:p-4 flex flex-col gap-2 overflow-hidden shadow-inner">
+        {/* Main Canvas Area */}
+        <div className="relative flex-1 w-full flex overflow-hidden">
+          
+          {/* Sticky Left Y-Axis Labels */}
+          <div className="sticky left-0 top-0 z-20 bg-zinc-950/95 border-r border-white/10 pr-2.5 pl-1.5 text-[10px] text-white/60 font-mono font-bold pointer-events-none select-none h-[255px] w-12 shrink-0 relative">
             {gridLevels.slice().reverse().map(lvl => {
-              let yPct = 0;
+              let ratio = 0;
               if (scaleType === "linear") {
-                yPct = (lvl / maxAxisVal) * 100;
+                ratio = lvl / maxAxisVal;
               } else {
                 const logVal = Math.log10(lvl + 1);
                 const logMax = Math.log10(maxAxisVal + 1);
-                yPct = (logVal / logMax) * 100;
+                ratio = logVal / logMax;
               }
+              const yPx = 18 + (1 - ratio) * 195;
               return (
                 <span
                   key={lvl}
-                  className="absolute left-0 -translate-y-1/2"
-                  style={{ top: `${100 - yPct}%` }}
+                  className="absolute left-1.5 -translate-y-1/2 font-mono"
+                  style={{ top: `${yPx}px` }}
                 >
                   {formatYLabel(lvl)}
                 </span>
@@ -4645,99 +4832,104 @@ function CustomInteractiveBarChart({
             })}
           </div>
 
-          <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
-            <defs>
-              {bars.map(bar => (
-                <linearGradient key={`grad-${bar.key}`} id={`grad-${bar.key}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={bar.color} stopOpacity={0.4} />
-                  <stop offset="100%" stopColor={bar.color} stopOpacity={0.05} />
-                </linearGradient>
-              ))}
-            </defs>
+          {/* Horizontally Scrollable Graph Canvas */}
+          <div className="flex-1 overflow-x-auto overflow-y-hidden no-scrollbar touch-pan-x pl-2">
+            <div className="min-w-[750px] sm:min-w-[950px] lg:w-full h-full relative flex flex-col">
+              <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-[220px] overflow-visible" preserveAspectRatio="none">
+                <defs>
+                  {bars.map(bar => (
+                    <linearGradient key={`grad-${bar.key}`} id={`grad-${bar.key}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={bar.color} stopOpacity={0.4} />
+                      <stop offset="100%" stopColor={bar.color} stopOpacity={0.05} />
+                    </linearGradient>
+                  ))}
+                </defs>
 
-            {/* Grid lines */}
-            {gridLevels.map(lvl => {
-              const y = getCoords(lvl);
-              return (
-                <line
-                  key={lvl}
-                  x1="0"
-                  y1={y}
-                  x2={totalWidth}
-                  y2={y}
-                  stroke="rgba(255,255,255,0.04)"
-                  strokeWidth="1"
-                />
-              );
-            })}
-
-            {/* Draw Bars */}
-            {bars.map((bar, i) => {
-              const yCoords = getCoords(bar.val);
-              const barHeight = Math.max(2, 172 - yCoords);
-              const x = paddingLeft + spacing + i * (barWidth + spacing);
-              const isHovered = hoveredKey === bar.key;
-              const isDimmed = hoveredKey !== null && !isHovered;
-
-              return (
-                <g key={bar.key}>
-                  <rect
-                    x={x}
-                    y={yCoords}
-                    width={barWidth}
-                    height={barHeight}
-                    fill={`url(#grad-${bar.key})`}
-                    stroke={bar.color}
-                    strokeWidth={isHovered ? "2" : "1.2"}
-                    strokeOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.75"}
-                    fillOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.85"}
-                    rx="6"
-                    className="transition-all duration-200 cursor-pointer"
-                    onMouseEnter={(e) => {
-                      setHoveredKey(bar.key);
-                      handleMouseEnterNode(e, bar.key, dayData.label, bar.val, bar.details);
-                    }}
-                    onMouseLeave={() => {
-                      setHoveredKey(null);
-                      setHoveredNode(null);
-                    }}
-                  />
-                  
-                  {/* Subtle top cap for glow */}
-                  {bar.val > 0 && (
+                {/* Grid lines */}
+                {gridLevels.map(lvl => {
+                  const y = getCoords(lvl);
+                  return (
                     <line
-                      x1={x}
-                      y1={yCoords}
-                      x2={x + barWidth}
-                      y2={yCoords}
-                      stroke={bar.color}
-                      strokeWidth={isHovered ? "3" : "1.8"}
-                      strokeOpacity={isHovered ? "1" : isDimmed ? "0.2" : "0.9"}
-                      className="transition-all duration-200"
+                      key={lvl}
+                      x1="0"
+                      y1={y}
+                      x2={totalWidth}
+                      y2={y}
+                      stroke="rgba(255,255,255,0.06)"
+                      strokeWidth="1"
                     />
-                  )}
-                </g>
-              );
-            })}
-          </svg>
-        </div>
+                  );
+                })}
 
-        {/* X-axis Labels */}
-        <div className="relative w-full pl-12 pr-2 h-5 text-[10px] text-white/40 font-sans font-medium select-none z-10 mt-1">
-          {bars.map((bar, i) => {
-            const x = paddingLeft + spacing + i * (barWidth + spacing);
-            const labelXCenter = x + barWidth / 2;
-            const pct = (labelXCenter / totalWidth) * 100;
-            return (
-              <span
-                key={bar.key}
-                className="absolute -translate-x-1/2 text-center truncate text-[10px] text-white/50"
-                style={{ left: `${pct}%` }}
-              >
-                {bar.label === "Platform Aggregate" ? "Platform Avg" : bar.label}
-              </span>
-            );
-          })}
+                {/* Draw Bars */}
+                {bars.map((bar, i) => {
+                  const yCoords = getCoords(bar.val);
+                  const barHeight = Math.max(2, 213 - yCoords);
+                  const x = paddingLeft + spacing + i * (barWidth + spacing);
+                  const isHovered = hoveredKey === bar.key;
+                  const isDimmed = hoveredKey !== null && !isHovered;
+
+                  return (
+                    <g key={bar.key}>
+                      <rect
+                        x={x}
+                        y={yCoords}
+                        width={barWidth}
+                        height={barHeight}
+                        fill={`url(#grad-${bar.key})`}
+                        stroke={bar.color}
+                        strokeWidth={isHovered ? "2" : "1.2"}
+                        strokeOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.75"}
+                        fillOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.85"}
+                        rx="6"
+                        className="transition-all duration-200 cursor-pointer"
+                        onMouseEnter={(e) => {
+                          setHoveredKey(bar.key);
+                          handleMouseEnterNode(e, bar.key, dayData.label, bar.val, bar.details);
+                        }}
+                        onMouseLeave={() => {
+                          setHoveredKey(null);
+                          setHoveredNode(null);
+                        }}
+                      />
+                      
+                      {/* Subtle top cap for glow */}
+                      {bar.val > 0 && (
+                        <line
+                          x1={x}
+                          y1={yCoords}
+                          x2={x + barWidth}
+                          y2={yCoords}
+                          stroke={bar.color}
+                          strokeWidth={isHovered ? "3" : "1.8"}
+                          strokeOpacity={isHovered ? "1" : isDimmed ? "0.2" : "0.9"}
+                          className="transition-all duration-200"
+                        />
+                      )}
+                    </g>
+                  );
+                })}
+              </svg>
+
+              {/* X-axis Labels */}
+              <div className="relative w-full h-8 border-t border-white/10 pt-1.5 text-[10px] text-white/70 font-mono font-semibold select-none z-10">
+                {bars.map((bar, i) => {
+                  const x = paddingLeft + spacing + i * (barWidth + spacing);
+                  const labelXCenter = x + barWidth / 2;
+                  const pct = (labelXCenter / totalWidth) * 100;
+                  return (
+                    <span
+                      key={bar.key}
+                      className="absolute -translate-x-1/2 text-center truncate text-[10px] text-white/70 font-semibold"
+                      style={{ left: `${pct}%` }}
+                    >
+                      {bar.label === "Platform Aggregate" ? "Platform Avg" : bar.label}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

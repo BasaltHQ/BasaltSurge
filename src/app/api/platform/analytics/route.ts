@@ -90,7 +90,13 @@ export async function GET(req: NextRequest) {
             lastPolledAt: 1,
             stripeSessionStatus: 1,
             ipAddress: 1,
-            wallet: 1
+            wallet: 1,
+            merchantName: 1,
+            shopName: 1,
+            shopTitle: 1,
+            merchantTitle: 1,
+            shopifyShop: 1,
+            shopSlug: 1
           }
         }
       ).sort({ createdAt: -1 });
@@ -225,20 +231,26 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Pre-fetch merchant configurations for split addresses resolution in a single query
-    const configMap: Record<string, { splitAddress?: string; splitAddressCredit?: string }> = {};
+    // Pre-fetch merchant configurations for split addresses and merchant names resolution in a single query
+    const configMap: Record<string, { merchantName?: string; splitAddress?: string; splitAddressCredit?: string }> = {};
     try {
       const configQuery = {
-        query: "SELECT c.wallet, c.brandKey, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit FROM c WHERE c.type = 'wallet_config'"
+        query: "SELECT c.wallet, c.brandKey, c.merchantName, c.name, c.businessName, c.shopName, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit FROM c WHERE c.type = 'wallet_config' OR c.type = 'client_request'"
       };
       const { resources: configs } = await container.items.query(configQuery).fetchAll();
       for (const cfg of configs || []) {
         if (cfg.wallet) {
           const pair = `${cfg.wallet}:${cfg.brandKey || ""}`;
-          configMap[pair] = {
+          const mName = cfg.merchantName || cfg.businessName || cfg.name || cfg.shopName;
+          const entry = {
+            merchantName: mName || undefined,
             splitAddress: cfg.splitAddress || cfg.split?.address || undefined,
             splitAddressCredit: cfg.splitAddressCredit || cfg.splitCredit?.address || undefined
           };
+          configMap[pair] = entry;
+          if (cfg.wallet && !configMap[cfg.wallet]) {
+            configMap[cfg.wallet] = entry;
+          }
         }
       }
     } catch (err) {
@@ -288,12 +300,16 @@ export async function GET(req: NextRequest) {
       const rLogs = logsByReceipt[rId] || [];
       const status = r.status || "pending";
       const pairKey = `${r.wallet || ""}:${r.brandKey || ""}`;
-      const resolvedConfig = configMap[pairKey] || {};
+      const resolvedConfig = configMap[pairKey] || configMap[r.wallet || ""] || {};
+
+      const derivedMerchantName = r.merchantName || r.shopName || r.shopTitle || r.merchantTitle || r.shopifyShop || resolvedConfig.merchantName || null;
 
       return {
         receiptId: rId,
         brandKey: r.brandKey || "unknown",
         brandName: r.brandName || r.brandKey || "unknown",
+        merchantName: derivedMerchantName,
+        wallet: r.wallet || null,
         status,
         totalUsd: r.totalUsd || 0,
         createdAt: r.createdAt,
