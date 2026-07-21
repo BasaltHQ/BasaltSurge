@@ -230,8 +230,46 @@ export default function PlatformAnalyticsPanel() {
 
   // Investigation target / Expanded receipt ID
   const [expandedReceiptId, setExpandedReceiptId] = useState<string | null>(null);
-  const [expandedLogs, setExpandedLogs] = useState<Record<string, ReceiptLog[]>>({});
+  const [expandedLogs, setExpandedLogs] = useState<Record<string, any[]>>({});
   const [loadingLogs, setLoadingLogs] = useState<Record<string, boolean>>({});
+  const [refreshingLimits, setRefreshingLimits] = useState<Record<string, boolean>>({});
+  const [refreshLimitsStatus, setRefreshLimitsStatus] = useState<Record<string, string>>({});
+
+  const enrichCustomerLimits = useCallback(async (receiptId: string) => {
+    if (!wallet || refreshingLimits[receiptId]) return;
+    setRefreshingLimits(prev => ({ ...prev, [receiptId]: true }));
+    setRefreshLimitsStatus(prev => ({ ...prev, [receiptId]: "Enriching limits from Stripe..." }));
+    try {
+      const res = await fetch("/api/platform/enrich-customer-limits", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-wallet": wallet
+        },
+        body: JSON.stringify({ receiptId })
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setRefreshLimitsStatus(prev => ({ ...prev, [receiptId]: "Latest limits synced from Stripe!" }));
+        if (data.receipt) {
+          setRecentReceipts(prev => prev.map(item => item.receiptId === receiptId ? { ...item, ...data.receipt } : item));
+        }
+      } else {
+        setRefreshLimitsStatus(prev => ({ ...prev, [receiptId]: `Error: ${data.error || "Failed to refresh limits"}` }));
+      }
+    } catch (err: any) {
+      setRefreshLimitsStatus(prev => ({ ...prev, [receiptId]: `Error: ${err?.message || "Network error"}` }));
+    } finally {
+      setRefreshingLimits(prev => ({ ...prev, [receiptId]: false }));
+      setTimeout(() => {
+        setRefreshLimitsStatus(prev => {
+          const next = { ...prev };
+          delete next[receiptId];
+          return next;
+        });
+      }, 4000);
+    }
+  }, [wallet, refreshingLimits]);
   const [copySuccess, setCopySuccess] = useState<Record<string, boolean>>({});
   const [hoveredLineKey, setHoveredLineKey] = useState<string | null>(null);
 
@@ -2672,6 +2710,25 @@ export default function PlatformAnalyticsPanel() {
                                   {/* Tab 5: Customer Metadata */}
                                   {activeTab === "customers" && (
                                     <div className="space-y-4 animate-in fade-in duration-200 mt-1">
+                                      <div className="flex items-center justify-between pb-1">
+                                        <div className="text-xs font-semibold text-white/90 flex items-center gap-2">
+                                          <span>Customer Sessions & Limits Metadata</span>
+                                          {refreshLimitsStatus[r.receiptId] && (
+                                            <span className={`text-[11px] font-normal ${refreshLimitsStatus[r.receiptId].startsWith("Error") ? "text-rose-400" : "text-emerald-400"} animate-in fade-in`}>
+                                              {refreshLimitsStatus[r.receiptId]}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => enrichCustomerLimits(r.receiptId)}
+                                          disabled={refreshingLimits[r.receiptId]}
+                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all disabled:opacity-50"
+                                        >
+                                          <RefreshCw className={`w-3.5 h-3.5 ${refreshingLimits[r.receiptId] ? "animate-spin" : ""}`} />
+                                          <span>{refreshingLimits[r.receiptId] ? "Enriching Limits..." : "Refresh Customer Limits"}</span>
+                                        </button>
+                                      </div>
                                       {(() => {
                                         const sessions = r.customerSessions || [];
                                         
