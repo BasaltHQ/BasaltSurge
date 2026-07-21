@@ -3569,28 +3569,41 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return rounded;
   }, [currency, totalUsd, usdRates, rates]);
 
-  // ── Stripe Onramp Mode Toggle & Location Detection ──
+  // ── Stripe Onramp Mode Toggle & Region Support Check ──
   // NEXT_PUBLIC_STRIPE_HEADLESS=TRUE → New Embedded Components headless flow (Smart Wallet Bridge)
-  // Otherwise → Legacy iframe-based Stripe Crypto Onramp interceptor
-  const isExplicitlyNonUs = useMemo(() => {
+  // Supported in US and EU/EEA countries (including UK, Switzerland, Norway, Iceland, Liechtenstein).
+  const isExplicitlyUnsupportedRegion = useMemo(() => {
+    const STRIPE_ONRAMP_SUPPORTED_COUNTRIES = new Set([
+      "US", "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", 
+      "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", 
+      "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"
+    ]);
+
+    const isSupported = (code: string) => {
+      const c = String(code || "").trim().toUpperCase();
+      if (!c || c === "UNKNOWN" || c === "XX") return true; // Default to supported if unknown
+      return STRIPE_ONRAMP_SUPPORTED_COUNTRIES.has(c);
+    };
+
     // 1. Explicit billing address country takes highest priority
     const billingCountry = receipt?.billingAddress?.country?.trim().toUpperCase();
     if (billingCountry) {
-      return billingCountry !== "US";
+      return !isSupported(billingCountry);
     }
 
     // 2. Explicit shipping address country takes second priority
     const shippingCountry = receipt?.shippingAddress?.country?.trim().toUpperCase();
     if (shippingCountry) {
-      return shippingCountry !== "US";
+      return !isSupported(shippingCountry);
     }
 
     // 3. Fallback to IP-based country code
     const country = clientCountry.toUpperCase();
-    return country !== "US" && country !== "UNKNOWN" && country !== "XX" && country !== "";
+    if (!country || country === "UNKNOWN" || country === "XX") return false;
+    return !isSupported(country);
   }, [receipt?.billingAddress?.country, receipt?.shippingAddress?.country, clientCountry]);
 
-  const stripeHeadless = (String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE") && !isExplicitlyNonUs;
+  const stripeHeadless = (String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE") && !isExplicitlyUnsupportedRegion;
 
   const payRef = useRef<HTMLDivElement | null>(null);
   const widgetRootRef = useRef<HTMLDivElement | null>(null);
@@ -3603,8 +3616,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       try {
         // ── Filter Out Disabled Onramp Providers ──
         const tryFilterOnramps = () => {
-          // Do NOT filter out/hide international onramps for non-US buyers
-          if (isExplicitlyNonUs) return;
+          // Do NOT filter out/hide international onramps for unsupported regions
+          if (isExplicitlyUnsupportedRegion) return;
 
           const els = Array.from(scopeEl.querySelectorAll('button, div[role="button"], a[role="button"], span, p'));
           els.forEach((el: any) => {
@@ -3708,7 +3721,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const t2 = setTimeout(tryReorder, 400);
     const t3 = setTimeout(tryReorder, 1200);
     return () => { try { mo.disconnect(); } catch { }; clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
-  }, [effectiveSecondaryColor, theme.secondaryColor, stripeOnrampEnabled, coinbaseOnrampEnabled, transakOnrampEnabled, rampnowOnrampEnabled, isExplicitlyNonUs]);
+  }, [effectiveSecondaryColor, theme.secondaryColor, stripeOnrampEnabled, coinbaseOnrampEnabled, transakOnrampEnabled, rampnowOnrampEnabled, isExplicitlyUnsupportedRegion]);
 
   // ── Thirdweb Bruteforce DOM Overrides ──
   // Thirdweb's Emotion CSS-in-JS aggressively overrides injected stylesheets with inline or high-specificity classes.
@@ -5322,6 +5335,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             country: kycCountry.trim().toUpperCase()
                           }
                         };
+
+                        if (kycCountry.trim().toUpperCase() !== "US") {
+                          l0Payload.birth_city = kycBirthCity.trim() || kycCity.trim();
+                          l0Payload.birth_country = (kycBirthCountry.trim() || kycCountry.trim()).toUpperCase();
+                          l0Payload.nationalities = [kycNationalities.trim().toUpperCase() || kycCountry.trim().toUpperCase()];
+                        }
+
                         submitKycInfo(l0Payload);
                       } else {
                         const dobDay = Number(kycDobDay);
@@ -5352,9 +5372,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             type: "us_ssn"
                           };
                         } else {
-                          l1Payload.nationalities = [kycNationalities.trim().toUpperCase()];
-                          l1Payload.birth_country = kycBirthCountry.trim().toUpperCase();
-                          l1Payload.birth_city = kycBirthCity.trim();
+                          l1Payload.nationalities = [kycNationalities.trim().toUpperCase() || kycCountry.trim().toUpperCase()];
+                          l1Payload.birth_country = (kycBirthCountry.trim() || kycCountry.trim()).toUpperCase();
+                          l1Payload.birth_city = kycBirthCity.trim() || kycCity.trim();
                         }
 
                         submitKycInfo(l1Payload);
