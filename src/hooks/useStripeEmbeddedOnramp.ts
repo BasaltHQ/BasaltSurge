@@ -97,6 +97,16 @@ function normalizeCountryCode(country: string): string {
   return c.length === 2 ? c : "US";
 }
 
+const EU_EEA_COUNTRIES = new Set([
+  "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", 
+  "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", 
+  "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH"
+]);
+
+function isEuEeaCountry(country: string): boolean {
+  return EU_EEA_COUNTRIES.has(normalizeCountryCode(country));
+}
+
 /** Helper to wrap Stripe KYC submission with a timeout to prevent iframe postMessage hangs */
 async function submitKycInfoWithTimeout(coordinator: OnrampCoordinator, kycInfo: any, timeoutMs = 15000): Promise<void> {
   if (kycInfo) {
@@ -110,6 +120,21 @@ async function submitKycInfoWithTimeout(coordinator: OnrampCoordinator, kycInfo:
       kycInfo.nationalities = kycInfo.nationalities.map((n: any) => 
         typeof n === "string" ? normalizeCountryCode(n) : n
       );
+    }
+
+    // Stripe requires birth_city, birth_country, and nationalities for users with EU/EEA addresses under MiCA/AMLD regulations.
+    // If not explicitly provided, fall back to the address city and country to satisfy Stripe API parameter validation.
+    const addrCountry = kycInfo.address?.country || "";
+    if (isEuEeaCountry(addrCountry)) {
+      if (!kycInfo.birth_city && kycInfo.address?.city) {
+        kycInfo.birth_city = String(kycInfo.address.city).trim();
+      }
+      if (!kycInfo.birth_country) {
+        kycInfo.birth_country = addrCountry;
+      }
+      if (!Array.isArray(kycInfo.nationalities) || kycInfo.nationalities.length === 0) {
+        kycInfo.nationalities = [addrCountry];
+      }
     }
   }
 
