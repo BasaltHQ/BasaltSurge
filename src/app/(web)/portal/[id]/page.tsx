@@ -3684,7 +3684,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // ── Stripe Onramp Mode Toggle & Region Support Check ──
   // NEXT_PUBLIC_STRIPE_HEADLESS=TRUE → New Embedded Components headless flow (Smart Wallet Bridge)
-  // Supported in US and EU/EEA countries (including UK, Switzerland, Norway, Iceland, Liechtenstein).
+  // Supported ONLY in US and EU/EEA countries (including UK, Switzerland, Norway, Iceland, Liechtenstein).
   const isExplicitlyUnsupportedRegion = useMemo(() => {
     const STRIPE_ONRAMP_SUPPORTED_COUNTRIES = new Set([
       "US", "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", 
@@ -3692,28 +3692,33 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"
     ]);
 
-    const isSupported = (code: string) => {
-      const c = String(code || "").trim().toUpperCase();
-      if (!c || c === "UNKNOWN" || c === "XX") return true; // Default to supported if unknown
-      return STRIPE_ONRAMP_SUPPORTED_COUNTRIES.has(c);
+    const normalizeCountry = (code: string) => {
+      let c = String(code || "").trim().toUpperCase();
+      if (c === "CAN" || c === "CANADA") c = "CA";
+      if (c === "USA" || c === "UNITED STATES" || c === "UNITED STATES OF AMERICA") c = "US";
+      if (c === "GBR" || c === "UK" || c === "UNITED KINGDOM" || c === "GREAT BRITAIN") c = "GB";
+      return c;
     };
 
     // 1. Explicit billing address country takes highest priority
-    const billingCountry = receipt?.billingAddress?.country?.trim().toUpperCase();
-    if (billingCountry) {
-      return !isSupported(billingCountry);
+    const billingCountry = normalizeCountry(receipt?.billingAddress?.country || "");
+    if (billingCountry && billingCountry !== "UNKNOWN" && billingCountry !== "XX") {
+      return !STRIPE_ONRAMP_SUPPORTED_COUNTRIES.has(billingCountry);
     }
 
     // 2. Explicit shipping address country takes second priority
-    const shippingCountry = receipt?.shippingAddress?.country?.trim().toUpperCase();
-    if (shippingCountry) {
-      return !isSupported(shippingCountry);
+    const shippingCountry = normalizeCountry(receipt?.shippingAddress?.country || "");
+    if (shippingCountry && shippingCountry !== "UNKNOWN" && shippingCountry !== "XX") {
+      return !STRIPE_ONRAMP_SUPPORTED_COUNTRIES.has(shippingCountry);
     }
 
     // 3. Fallback to IP-based country code
-    const country = clientCountry.toUpperCase();
-    if (!country || country === "UNKNOWN" || country === "XX") return false;
-    return !isSupported(country);
+    const country = normalizeCountry(clientCountry);
+    if (country && country !== "UNKNOWN" && country !== "XX") {
+      return !STRIPE_ONRAMP_SUPPORTED_COUNTRIES.has(country);
+    }
+
+    return false;
   }, [receipt?.billingAddress?.country, receipt?.shippingAddress?.country, clientCountry]);
 
   const stripeHeadless = (String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE") && !isExplicitlyUnsupportedRegion;
