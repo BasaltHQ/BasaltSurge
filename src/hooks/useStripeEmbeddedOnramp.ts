@@ -102,9 +102,15 @@ const VALID_ISO_COUNTRY_CODES = new Set([
   "VE", "VN", "VG", "VI", "WF", "EH", "YE", "ZM", "ZW"
 ]);
 
+const STRIPE_ONRAMP_SUPPORTED_COUNTRIES = new Set([
+  "US", "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", 
+  "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", 
+  "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"
+]);
+
 function normalizeCountryCode(country: any): string {
   if (!country) return "US";
-  const c = String(country).trim().toUpperCase();
+  let c = String(country).trim().toUpperCase();
   if (!c || c === "UNDEFINED" || c === "NULL") return "US";
   if (c === "USA" || c === "UNITED STATES" || c === "UNITED STATES OF AMERICA") return "US";
   if (c === "CAN" || c === "CANADA") return "CA";
@@ -117,6 +123,7 @@ function normalizeCountryCode(country: any): string {
   if (c === "IRL" || c === "IRELAND") return "IE";
   if (c === "AUS" || c === "AUSTRALIA") return "AU";
   if (c === "MEX" || c === "MEXICO") return "MX";
+
   return VALID_ISO_COUNTRY_CODES.has(c) ? c : "US";
 }
 
@@ -148,8 +155,7 @@ async function submitKycInfoWithTimeout(coordinator: OnrampCoordinator, kycInfo:
       }
     }
 
-    // Stripe requires birth_city, birth_country, and nationalities for users with EU/EEA addresses under MiCA/AMLD regulations.
-    // If not explicitly provided, fall back to the address city and country to satisfy Stripe API parameter validation.
+    // Stripe requires birth_city, birth_country, date_of_birth, and nationalities for users with EU/EEA addresses under MiCA/AMLD regulations.
     const addrCountry = kycInfo.address?.country || "";
     if (isEuEeaCountry(addrCountry)) {
       if (!kycInfo.birth_city && kycInfo.address?.city) {

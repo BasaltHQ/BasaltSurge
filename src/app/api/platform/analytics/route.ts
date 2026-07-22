@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { resolveWalletRole } from "@/lib/authz";
-import { formatYMDInTimeZone, getDayRangeForYmdInTz } from "@/lib/timezone";
+import { formatYMDInTimeZone, getDayRangeForYmdInTz, zonedTimeToUtcDate } from "@/lib/timezone";
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +35,65 @@ export async function GET(req: NextRequest) {
     const clientTimezone = req.headers.get("x-client-timezone") || "America/Los_Angeles";
     const targetTimezone = timezoneMode === "dynamic" ? clientTimezone : "America/Los_Angeles";
 
+    // Time-range query parameters for dynamic receipt loading
+    const timeRange = req.nextUrl.searchParams.get("timeRange");
+    const weekOffset = parseInt(req.nextUrl.searchParams.get("weekOffset") || "0", 10);
+    const monthOffset = parseInt(req.nextUrl.searchParams.get("monthOffset") || "0", 10);
+    const customStart = req.nextUrl.searchParams.get("customStart");
+    const customEnd = req.nextUrl.searchParams.get("customEnd");
+    const brandKey = req.nextUrl.searchParams.get("brandKey");
+
+    const SYSTEM_TIMEZONE = "America/Los_Angeles";
+    let filterStartIso: string | null = null;
+    let filterEndIso: string | null = null;
+
+    if (timeRange && timeRange !== "all") {
+      const now = new Date();
+      if (timeRange === "today") {
+        const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
+        const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
+        filterStartIso = start.toISOString();
+      } else if (timeRange === "yesterday") {
+        const dtf = new Intl.DateTimeFormat('en-US', { timeZone: SYSTEM_TIMEZONE, year: 'numeric', month: 'numeric', day: 'numeric' });
+        const parts = dtf.formatToParts(now);
+        const year = Number(parts.find(p => p.type === 'year')?.value);
+        const month = Number(parts.find(p => p.type === 'month')?.value);
+        const date = Number(parts.find(p => p.type === 'day')?.value);
+        const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
+        const todayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date, 0, 0, 0, 0);
+        filterStartIso = yesterdayStart.toISOString();
+        filterEndIso = todayStart.toISOString();
+      } else if (timeRange === "weekly") {
+        const dtf = new Intl.DateTimeFormat('en-US', { timeZone: SYSTEM_TIMEZONE, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short' });
+        const parts = dtf.formatToParts(now);
+        const year = Number(parts.find(p => p.type === 'year')?.value);
+        const month = Number(parts.find(p => p.type === 'month')?.value);
+        const date = Number(parts.find(p => p.type === 'day')?.value);
+        const dayStr = parts.find(p => p.type === 'weekday')?.value || 'Mon';
+        const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const day = dayMap[dayStr] ?? 1;
+        const diff = date - day + (day === 0 ? -6 : 1);
+        const start = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, diff + weekOffset * 7, 0, 0, 0, 0);
+        const end = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, diff + weekOffset * 7 + 6, 23, 59, 59, 999);
+        filterStartIso = start.toISOString();
+        filterEndIso = end.toISOString();
+      } else if (timeRange === "monthly") {
+        const dtf = new Intl.DateTimeFormat('en-US', { timeZone: SYSTEM_TIMEZONE, year: 'numeric', month: 'numeric', day: 'numeric' });
+        const parts = dtf.formatToParts(now);
+        const year = Number(parts.find(p => p.type === 'year')?.value);
+        const month = Number(parts.find(p => p.type === 'month')?.value);
+        const start = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month + monthOffset, 1, 0, 0, 0, 0);
+        const end = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month + monthOffset + 1, 0, 23, 59, 59, 999);
+        filterStartIso = start.toISOString();
+        filterEndIso = end.toISOString();
+      } else if (timeRange === "custom" && customStart && customEnd) {
+        const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStart);
+        const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEnd);
+        filterStartIso = start.toISOString();
+        filterEndIso = end.toISOString();
+      }
+    }
+
     // 2. Fetch receipts and logs using MongoDB projection for performance if available
     if ((container as any).getCollection) {
       const collection = (container as any).getCollection();
@@ -55,6 +114,9 @@ export async function GET(req: NextRequest) {
             effectiveProcessingFeeBps: 1,
             detectedCardFunding: 1,
             isCreditCard: 1,
+            kycLevel: 1,
+            kyc: 1,
+            kycOccurred: 1,
             statusHistory: 1,
             customerEmail: 1,
             stripeEmail: 1,
@@ -66,9 +128,39 @@ export async function GET(req: NextRequest) {
         }
       ).sort({ createdAt: -1 }).toArray();
 
-      // Query 2: Fetch detailed records for the most recent receipts for table listing (dynamic limit)
+      // Query 2: Fetch detailed records for receipts (filtered by date range if provided)
+      const receiptsQueryFilter: any = { type: "receipt" };
+      if (brandKey && brandKey !== "all") {
+        receiptsQueryFilter.brandKey = brandKey;
+      }
+      if (filterStartIso || filterEndIso) {
+        const startDateObj = filterStartIso ? new Date(filterStartIso) : null;
+        const endDateObj = filterEndIso ? new Date(filterEndIso) : null;
+
+        const dateConds: any[] = [];
+        const strConds: any[] = [];
+
+        if (startDateObj) dateConds.push({ createdAt: { $gte: startDateObj } });
+        if (endDateObj) dateConds.push({ createdAt: { $lte: endDateObj } });
+
+        if (filterStartIso) strConds.push({ createdAt: { $gte: filterStartIso } });
+        if (filterEndIso) strConds.push({ createdAt: { $lte: filterEndIso } });
+
+        if (brandKey && brandKey !== "all") {
+          receiptsQueryFilter.$or = [
+            { type: "receipt", brandKey, $and: dateConds },
+            { type: "receipt", brandKey, $and: strConds }
+          ];
+        } else {
+          receiptsQueryFilter.$or = [
+            { type: "receipt", $and: dateConds },
+            { type: "receipt", $and: strConds }
+          ];
+        }
+      }
+
       let query = collection.find(
-        { type: "receipt" },
+        receiptsQueryFilter,
         {
           projection: {
             id: 1,
@@ -82,6 +174,9 @@ export async function GET(req: NextRequest) {
             effectiveProcessingFeeBps: 1,
             detectedCardFunding: 1,
             isCreditCard: 1,
+            kycLevel: 1,
+            kyc: 1,
+            kycOccurred: 1,
             transactionHash: 1,
             stripeSessionId: 1,
             statusHistory: 1,
