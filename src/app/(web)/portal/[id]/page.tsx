@@ -3938,10 +3938,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
         // 2. Spending limit check if limits are already loaded
         const methodType = card.funding === "us_bank_account" ? "us_bank_account" : "card";
-        const limitEntry = (headlessOnrampLimits || []).find((l: any) => l.payment_method_type === methodType);
+        const limitEntry = getMatchingLimitEntry(headlessOnrampLimits, methodType, receipt?.currency || "usd");
         if (limitEntry) {
           const limitInDollars = limitEntry.amount / 100;
-          if (totalUsd > limitInDollars && !hasWarnedLimit) {
+          if (limitInDollars > 0 && totalUsd > limitInDollars && !hasWarnedLimit) {
             setLimitWarningInfo({
               limit: limitInDollars,
               total: totalUsd,
@@ -4030,14 +4030,35 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     },
   });
 
+  // Helper to resolve the matching payment limit for currency and method
+  function getMatchingLimitEntry(
+    limits: any[] | null | undefined,
+    methodType: "card" | "us_bank_account",
+    targetCurrency: string = "usd"
+  ) {
+    if (!Array.isArray(limits) || limits.length === 0) return null;
+    const curr = (targetCurrency || "usd").toLowerCase().trim();
+
+    const methodEntries = limits.filter((l: any) => l.payment_method_type === methodType);
+    if (methodEntries.length === 0) return null;
+
+    const currencyMatches = methodEntries.filter((l: any) =>
+      String(l.currency || "").toLowerCase().trim() === curr
+    );
+
+    const candidates = currencyMatches.length > 0 ? currencyMatches : methodEntries;
+    const sorted = [...candidates].sort((a: any, b: any) => Number(b.amount || 0) - Number(a.amount || 0));
+    return sorted[0] || null;
+  }
+
   // Dynamic Spending Limit Monitor: Trigger warning modal when receipt total exceeds payment method limit
   useEffect(() => {
     if (!detectedCardFunding || !headlessOnrampLimits || hasWarnedLimit) return;
     const methodType = detectedCardFunding === "us_bank_account" ? "us_bank_account" : "card";
-    const limitEntry = (headlessOnrampLimits || []).find((l: any) => l.payment_method_type === methodType);
+    const limitEntry = getMatchingLimitEntry(headlessOnrampLimits, methodType, receipt?.currency || "usd");
     if (limitEntry) {
       const limitInDollars = limitEntry.amount / 100;
-      if (totalUsd > limitInDollars) {
+      if (limitInDollars > 0 && totalUsd > limitInDollars) {
         setLimitWarningInfo({
           limit: limitInDollars,
           total: totalUsd,
@@ -4046,7 +4067,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         setShowLimitWarning(true);
       }
     }
-  }, [detectedCardFunding, headlessOnrampLimits, hasWarnedLimit, totalUsd]);
+  }, [detectedCardFunding, headlessOnrampLimits, hasWarnedLimit, totalUsd, receipt?.currency]);
 
   useEffect(() => {
     if (headlessSessionId) {
