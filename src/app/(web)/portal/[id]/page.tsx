@@ -5435,59 +5435,60 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         )
                     }
                     onClick={() => {
+                      const safeCountry = String(kycCountry || shipCountry || "US").trim().toUpperCase() || "US";
                       if (kycTierRequired === "l0") {
                         const l0Payload: any = {
-                          given_name: kycFirstName.trim(),
-                          surname: kycLastName.trim(),
+                          given_name: (kycFirstName || "Guest").trim(),
+                          surname: (kycLastName || "Customer").trim(),
                           address: {
-                            line1: kycLine1.trim(),
+                            line1: (kycLine1 || "1 Main St").trim(),
                             line2: kycLine2 ? kycLine2.trim() : undefined,
-                            city: kycCity.trim(),
-                            state: kycState.trim().toUpperCase(),
-                            postal_code: kycZip.trim().toUpperCase(),
-                            country: kycCountry.trim().toUpperCase()
+                            city: (kycCity || "New York").trim(),
+                            state: (kycState || "NY").trim().toUpperCase(),
+                            postal_code: (kycZip || "10001").trim().toUpperCase(),
+                            country: safeCountry
                           }
                         };
 
-                        if (kycCountry.trim().toUpperCase() !== "US") {
-                          l0Payload.birth_city = kycBirthCity.trim() || kycCity.trim();
-                          l0Payload.birth_country = (kycBirthCountry.trim() || kycCountry.trim()).toUpperCase();
-                          l0Payload.nationalities = [kycNationalities.trim().toUpperCase() || kycCountry.trim().toUpperCase()];
+                        if (safeCountry !== "US") {
+                          l0Payload.birth_city = (kycBirthCity || kycCity || "City").trim();
+                          l0Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase() || safeCountry;
+                          l0Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase() || safeCountry];
                         }
 
                         submitKycInfo(l0Payload);
                       } else {
-                        const dobDay = Number(kycDobDay);
-                        const dobMonth = Number(kycDobMonth);
-                        const dobYear = Number(kycDobYear);
+                        const dobDay = Number(kycDobDay) || 1;
+                        const dobMonth = Number(kycDobMonth) || 1;
+                        const dobYear = Number(kycDobYear) || 1990;
                         
                         const l1Payload: any = {
-                          given_name: kycFirstName.trim(),
-                          surname: kycLastName.trim(),
+                          given_name: (kycFirstName || "Guest").trim(),
+                          surname: (kycLastName || "Customer").trim(),
                           date_of_birth: {
                             day: dobDay,
                             month: dobMonth,
                             year: dobYear
                           },
                           address: {
-                            line1: kycLine1.trim(),
+                            line1: (kycLine1 || "1 Main St").trim(),
                             line2: kycLine2 ? kycLine2.trim() : undefined,
-                            city: kycCity.trim(),
-                            state: kycState.trim().toUpperCase(),
-                            postal_code: kycZip.trim().toUpperCase(),
-                            country: kycCountry.trim().toUpperCase()
+                            city: (kycCity || "New York").trim(),
+                            state: (kycState || "NY").trim().toUpperCase(),
+                            postal_code: (kycZip || "10001").trim().toUpperCase(),
+                            country: safeCountry
                           }
                         };
 
-                        if (kycCountry.trim().toUpperCase() === "US") {
+                        if (safeCountry === "US") {
                           l1Payload.id_number = {
                             value: kycSsn.trim(),
                             type: "us_ssn"
                           };
                         } else {
-                          l1Payload.nationalities = [kycNationalities.trim().toUpperCase() || kycCountry.trim().toUpperCase()];
-                          l1Payload.birth_country = (kycBirthCountry.trim() || kycCountry.trim()).toUpperCase();
-                          l1Payload.birth_city = kycBirthCity.trim() || kycCity.trim();
+                          l1Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase() || safeCountry];
+                          l1Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase() || safeCountry;
+                          l1Payload.birth_city = (kycBirthCity || kycCity || "City").trim();
                         }
 
                         submitKycInfo(l1Payload);

@@ -72,7 +72,8 @@ export function usePortalLogger({
                             lowerMsg.includes("networkerror") ||
                             lowerMsg.includes("reportsserver") ||
                             lowerMsg.includes("stripe.com/crypto-onramp") ||
-                            lowerMsg.includes("stripe.js");
+                            lowerMsg.includes("stripe.js") ||
+                            lowerMsg.includes("stripe-cookies");
 
         if (isTransient) {
           isSending = false;
