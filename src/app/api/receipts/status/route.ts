@@ -260,6 +260,7 @@ export async function POST(req: NextRequest) {
           ...(parentUrl ? { parentUrl } : {}),
           ...(failureReason ? { failureReason } : {}),
           ...(body.kycLevel ? { kycLevel: String(body.kycLevel).trim() } : {}),
+          ...(typeof body.kycOccurred === "boolean" ? { kycOccurred: body.kycOccurred } : {}),
         }
         : {
           id,

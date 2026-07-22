@@ -1694,6 +1694,7 @@ export function useStripeEmbeddedOnramp({
           splitAddressCredit,
           brandKey,
           detectedCardFunding: fundingTypeToUse,
+          kycOccurred: kycOccurredRef.current,
           kycLevel: kycOccurredRef.current
             ? (kycTierRequired === "l2" ? "L2" : (kycTierRequired === "l1" ? "L1" : "L0"))
             : "N/AKYC",

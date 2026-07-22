@@ -371,6 +371,7 @@ export async function GET(req: NextRequest) {
         cardFunding: r.detectedCardFunding || (r.isCreditCard ? "credit" : null),
         failureReason: status === "failed" ? getFailureReason(r, rLogs) : null,
         kycLevel: getKycLevel(r, rLogs),
+        kycOccurred: !!r.kycOccurred,
         platformFee: feeUsd,
         lineItems: r.lineItems || [],
         parentUrl: r.parentUrl || null,
