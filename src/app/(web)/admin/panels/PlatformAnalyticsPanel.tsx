@@ -4321,13 +4321,13 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
 
   const getCoords = (val: number, idx: number) => {
     const x = N > 1 ? (idx / (N - 1)) * totalWidth : totalWidth / 2;
-    let y = 213;
+    let y = 220;
     if (scaleType === "linear") {
-      y = 213 - (val / maxAxisVal) * 195;
+      y = 220 - (val / maxAxisVal) * 195;
     } else {
       const logVal = Math.log10(val + 1);
       const logMax = Math.log10(maxAxisVal + 1);
-      y = 213 - (logVal / logMax) * 195;
+      y = 220 - (logVal / logMax) * 195;
     }
     return { x, y };
   };
@@ -4447,12 +4447,12 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
       </div>
 
       {/* SVG Plot Card Container with Sticky Y-Axis & Side-Scrollable Canvas */}
-      <div className="relative flex-1 w-full bg-black/40 border border-white/10 rounded-2xl p-3 sm:p-4 flex flex-col gap-2 overflow-hidden shadow-inner">
+      <div className="relative flex-1 w-full min-h-[350px] bg-black/40 border border-white/10 rounded-2xl p-3 sm:p-4 flex flex-col gap-2 overflow-hidden shadow-inner">
         {/* Main Canvas Area */}
         <div className="relative flex-1 w-full flex overflow-hidden">
           
           {/* Sticky Left Y-Axis Labels */}
-          <div className="sticky left-0 top-0 z-20 bg-zinc-950/95 border-r border-white/10 pr-2.5 pl-1.5 text-[10px] text-white/60 font-mono font-bold pointer-events-none select-none h-[255px] w-12 shrink-0 relative">
+          <div className="sticky left-0 top-0 z-20 bg-zinc-950/95 border-r border-white/10 pr-2.5 pl-1.5 text-[10px] text-white/60 font-mono font-bold pointer-events-none select-none h-[260px] w-12 shrink-0 relative">
             {gridLevels.slice().reverse().map(lvl => {
               let ratio = 0;
               if (scaleType === "linear") {
@@ -4462,7 +4462,7 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
                 const logMax = Math.log10(maxAxisVal + 1);
                 ratio = logVal / logMax;
               }
-              const yPx = 18 + (1 - ratio) * 195;
+              const yPx = 25 + (1 - ratio) * 195;
               return (
                 <span
                   key={lvl}
@@ -4478,16 +4478,16 @@ function CustomInteractiveLineChart({ data, brandKeys, hoveredKey, setHoveredKey
           {/* Horizontally Scrollable Graph Canvas */}
           <div className="flex-1 overflow-x-auto overflow-y-hidden no-scrollbar touch-pan-x pl-2">
             <div className="min-w-[750px] sm:min-w-[950px] lg:w-full h-full relative flex flex-col">
-              <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-[220px] overflow-visible" preserveAspectRatio="none">
+              <svg viewBox={`0 0 ${totalWidth} 260`} className="w-full h-[260px] overflow-visible" preserveAspectRatio="none">
                 {/* Horizontal Grid lines */}
                 {gridLevels.map(lvl => {
-                  let y = 213;
+                  let y = 220;
                   if (scaleType === "linear") {
-                    y = 213 - (lvl / maxAxisVal) * 195;
+                    y = 220 - (lvl / maxAxisVal) * 195;
                   } else {
                     const logVal = Math.log10(lvl + 1);
                     const logMax = Math.log10(maxAxisVal + 1);
-                    y = 213 - (logVal / logMax) * 195;
+                    y = 220 - (logVal / logMax) * 195;
                   }
                   return (
                     <line
@@ -4839,13 +4839,13 @@ function CustomInteractiveBarChart({
   const spacing = (chartWidth - barWidth * barCount) / (barCount + 1);
 
   const getCoords = (val: number) => {
-    let y = 213;
+    let y = 220;
     if (scaleType === "linear") {
-      y = 213 - (val / maxAxisVal) * 195;
+      y = 220 - (val / maxAxisVal) * 195;
     } else {
       const logVal = Math.log10(val + 1);
       const logMax = Math.log10(maxAxisVal + 1);
-      y = 213 - (logVal / logMax) * 195;
+      y = 220 - (logVal / logMax) * 195;
     }
     return y;
   };
@@ -4888,12 +4888,12 @@ function CustomInteractiveBarChart({
       </div>
 
       {/* SVG Plot Card Container with Sticky Y-Axis & Side-Scrollable Canvas */}
-      <div className="relative flex-1 w-full bg-black/40 border border-white/10 rounded-2xl p-3 sm:p-4 flex flex-col gap-2 overflow-hidden shadow-inner">
+      <div className="relative flex-1 w-full min-h-[350px] bg-black/40 border border-white/10 rounded-2xl p-3 sm:p-4 flex flex-col gap-2 overflow-hidden shadow-inner">
         {/* Main Canvas Area */}
         <div className="relative flex-1 w-full flex overflow-hidden">
           
           {/* Sticky Left Y-Axis Labels */}
-          <div className="sticky left-0 top-0 z-20 bg-zinc-950/95 border-r border-white/10 pr-2.5 pl-1.5 text-[10px] text-white/60 font-mono font-bold pointer-events-none select-none h-[255px] w-12 shrink-0 relative">
+          <div className="sticky left-0 top-0 z-20 bg-zinc-950/95 border-r border-white/10 pr-2.5 pl-1.5 text-[10px] text-white/60 font-mono font-bold pointer-events-none select-none h-[260px] w-12 shrink-0 relative">
             {gridLevels.slice().reverse().map(lvl => {
               let ratio = 0;
               if (scaleType === "linear") {
@@ -4903,7 +4903,7 @@ function CustomInteractiveBarChart({
                 const logMax = Math.log10(maxAxisVal + 1);
                 ratio = logVal / logMax;
               }
-              const yPx = 18 + (1 - ratio) * 195;
+              const yPx = 25 + (1 - ratio) * 195;
               return (
                 <span
                   key={lvl}
@@ -4919,7 +4919,7 @@ function CustomInteractiveBarChart({
           {/* Horizontally Scrollable Graph Canvas */}
           <div className="flex-1 overflow-x-auto overflow-y-hidden no-scrollbar touch-pan-x pl-2">
             <div className="min-w-[750px] sm:min-w-[950px] lg:w-full h-full relative flex flex-col">
-              <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-[220px] overflow-visible" preserveAspectRatio="none">
+              <svg viewBox={`0 0 ${totalWidth} 260`} className="w-full h-[260px] overflow-visible" preserveAspectRatio="none">
                 <defs>
                   {bars.map(bar => (
                     <linearGradient key={`grad-${bar.key}`} id={`grad-${bar.key}`} x1="0" y1="0" x2="0" y2="1">
@@ -4948,7 +4948,7 @@ function CustomInteractiveBarChart({
                 {/* Draw Bars */}
                 {bars.map((bar, i) => {
                   const yCoords = getCoords(bar.val);
-                  const barHeight = Math.max(2, 213 - yCoords);
+                  const barHeight = Math.max(2, 220 - yCoords);
                   const x = paddingLeft + spacing + i * (barWidth + spacing);
                   const isHovered = hoveredKey === bar.key;
                   const isDimmed = hoveredKey !== null && !isHovered;
@@ -4996,7 +4996,7 @@ function CustomInteractiveBarChart({
               </svg>
 
               {/* X-axis Labels */}
-              <div className="relative w-full h-8 border-t border-white/10 pt-1.5 text-[10px] text-white/70 font-mono font-semibold select-none z-10">
+              <div className="relative w-full h-9 border-t border-white/10 pt-2 text-[11px] text-white/80 font-mono font-bold select-none z-10">
                 {bars.map((bar, i) => {
                   const x = paddingLeft + spacing + i * (barWidth + spacing);
                   const labelXCenter = x + barWidth / 2;
@@ -5004,7 +5004,7 @@ function CustomInteractiveBarChart({
                   return (
                     <span
                       key={bar.key}
-                      className="absolute -translate-x-1/2 text-center truncate text-[10px] text-white/70 font-semibold"
+                      className="absolute -translate-x-1/2 text-center truncate text-[11px] text-white/90 font-bold"
                       style={{ left: `${pct}%` }}
                     >
                       {bar.label === "Platform Aggregate" ? "Platform Avg" : bar.label}

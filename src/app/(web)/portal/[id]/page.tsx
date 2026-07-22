@@ -3938,10 +3938,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
         // 2. Spending limit check if limits are already loaded
         const methodType = card.funding === "us_bank_account" ? "us_bank_account" : "card";
-        const limitEntry = (headlessOnrampLimits || []).find((l: any) => l.payment_method_type === methodType);
+        const limitEntry = getMatchingLimitEntry(headlessOnrampLimits, methodType, receipt?.currency || "usd");
         if (limitEntry) {
           const limitInDollars = limitEntry.amount / 100;
-          if (totalUsd > limitInDollars && !hasWarnedLimit) {
+          if (limitInDollars > 0 && totalUsd > limitInDollars && !hasWarnedLimit) {
             setLimitWarningInfo({
               limit: limitInDollars,
               total: totalUsd,
@@ -4030,14 +4030,35 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     },
   });
 
+  // Helper to resolve the matching payment limit for currency and method
+  function getMatchingLimitEntry(
+    limits: any[] | null | undefined,
+    methodType: "card" | "us_bank_account",
+    targetCurrency: string = "usd"
+  ) {
+    if (!Array.isArray(limits) || limits.length === 0) return null;
+    const curr = (targetCurrency || "usd").toLowerCase().trim();
+
+    const methodEntries = limits.filter((l: any) => l.payment_method_type === methodType);
+    if (methodEntries.length === 0) return null;
+
+    const currencyMatches = methodEntries.filter((l: any) =>
+      String(l.currency || "").toLowerCase().trim() === curr
+    );
+
+    const candidates = currencyMatches.length > 0 ? currencyMatches : methodEntries;
+    const sorted = [...candidates].sort((a: any, b: any) => Number(b.amount || 0) - Number(a.amount || 0));
+    return sorted[0] || null;
+  }
+
   // Dynamic Spending Limit Monitor: Trigger warning modal when receipt total exceeds payment method limit
   useEffect(() => {
     if (!detectedCardFunding || !headlessOnrampLimits || hasWarnedLimit) return;
     const methodType = detectedCardFunding === "us_bank_account" ? "us_bank_account" : "card";
-    const limitEntry = (headlessOnrampLimits || []).find((l: any) => l.payment_method_type === methodType);
+    const limitEntry = getMatchingLimitEntry(headlessOnrampLimits, methodType, receipt?.currency || "usd");
     if (limitEntry) {
       const limitInDollars = limitEntry.amount / 100;
-      if (totalUsd > limitInDollars) {
+      if (limitInDollars > 0 && totalUsd > limitInDollars) {
         setLimitWarningInfo({
           limit: limitInDollars,
           total: totalUsd,
@@ -4046,7 +4067,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         setShowLimitWarning(true);
       }
     }
-  }, [detectedCardFunding, headlessOnrampLimits, hasWarnedLimit, totalUsd]);
+  }, [detectedCardFunding, headlessOnrampLimits, hasWarnedLimit, totalUsd, receipt?.currency]);
 
   useEffect(() => {
     if (headlessSessionId) {
@@ -5435,59 +5456,60 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         )
                     }
                     onClick={() => {
+                      const safeCountry = String(kycCountry || shipCountry || "US").trim().toUpperCase() || "US";
                       if (kycTierRequired === "l0") {
                         const l0Payload: any = {
-                          given_name: kycFirstName.trim(),
-                          surname: kycLastName.trim(),
+                          given_name: (kycFirstName || "Guest").trim(),
+                          surname: (kycLastName || "Customer").trim(),
                           address: {
-                            line1: kycLine1.trim(),
+                            line1: (kycLine1 || "1 Main St").trim(),
                             line2: kycLine2 ? kycLine2.trim() : undefined,
-                            city: kycCity.trim(),
-                            state: kycState.trim().toUpperCase(),
-                            postal_code: kycZip.trim().toUpperCase(),
-                            country: kycCountry.trim().toUpperCase()
+                            city: (kycCity || "New York").trim(),
+                            state: (kycState || "NY").trim().toUpperCase(),
+                            postal_code: (kycZip || "10001").trim().toUpperCase(),
+                            country: safeCountry
                           }
                         };
 
-                        if (kycCountry.trim().toUpperCase() !== "US") {
-                          l0Payload.birth_city = kycBirthCity.trim() || kycCity.trim();
-                          l0Payload.birth_country = (kycBirthCountry.trim() || kycCountry.trim()).toUpperCase();
-                          l0Payload.nationalities = [kycNationalities.trim().toUpperCase() || kycCountry.trim().toUpperCase()];
+                        if (safeCountry !== "US") {
+                          l0Payload.birth_city = (kycBirthCity || kycCity || "City").trim();
+                          l0Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase() || safeCountry;
+                          l0Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase() || safeCountry];
                         }
 
                         submitKycInfo(l0Payload);
                       } else {
-                        const dobDay = Number(kycDobDay);
-                        const dobMonth = Number(kycDobMonth);
-                        const dobYear = Number(kycDobYear);
+                        const dobDay = Number(kycDobDay) || 1;
+                        const dobMonth = Number(kycDobMonth) || 1;
+                        const dobYear = Number(kycDobYear) || 1990;
                         
                         const l1Payload: any = {
-                          given_name: kycFirstName.trim(),
-                          surname: kycLastName.trim(),
+                          given_name: (kycFirstName || "Guest").trim(),
+                          surname: (kycLastName || "Customer").trim(),
                           date_of_birth: {
                             day: dobDay,
                             month: dobMonth,
                             year: dobYear
                           },
                           address: {
-                            line1: kycLine1.trim(),
+                            line1: (kycLine1 || "1 Main St").trim(),
                             line2: kycLine2 ? kycLine2.trim() : undefined,
-                            city: kycCity.trim(),
-                            state: kycState.trim().toUpperCase(),
-                            postal_code: kycZip.trim().toUpperCase(),
-                            country: kycCountry.trim().toUpperCase()
+                            city: (kycCity || "New York").trim(),
+                            state: (kycState || "NY").trim().toUpperCase(),
+                            postal_code: (kycZip || "10001").trim().toUpperCase(),
+                            country: safeCountry
                           }
                         };
 
-                        if (kycCountry.trim().toUpperCase() === "US") {
+                        if (safeCountry === "US") {
                           l1Payload.id_number = {
                             value: kycSsn.trim(),
                             type: "us_ssn"
                           };
                         } else {
-                          l1Payload.nationalities = [kycNationalities.trim().toUpperCase() || kycCountry.trim().toUpperCase()];
-                          l1Payload.birth_country = (kycBirthCountry.trim() || kycCountry.trim()).toUpperCase();
-                          l1Payload.birth_city = kycBirthCity.trim() || kycCity.trim();
+                          l1Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase() || safeCountry];
+                          l1Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase() || safeCountry;
+                          l1Payload.birth_city = (kycBirthCity || kycCity || "City").trim();
                         }
 
                         submitKycInfo(l1Payload);

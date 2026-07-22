@@ -102,9 +102,10 @@ const VALID_ISO_COUNTRY_CODES = new Set([
   "VE", "VN", "VG", "VI", "WF", "EH", "YE", "ZM", "ZW"
 ]);
 
-function normalizeCountryCode(country: string): string {
-  const c = String(country || "").trim().toUpperCase();
-  if (!c) return "US";
+function normalizeCountryCode(country: any): string {
+  if (!country) return "US";
+  const c = String(country).trim().toUpperCase();
+  if (!c || c === "UNDEFINED" || c === "NULL") return "US";
   if (c === "USA" || c === "UNITED STATES" || c === "UNITED STATES OF AMERICA") return "US";
   if (c === "CAN" || c === "CANADA") return "CA";
   if (c === "GBR" || c === "UK" || c === "UNITED KINGDOM" || c === "GREAT BRITAIN") return "GB";
@@ -132,16 +133,19 @@ function isEuEeaCountry(country: string): boolean {
 /** Helper to wrap Stripe KYC submission with a timeout to prevent iframe postMessage hangs */
 async function submitKycInfoWithTimeout(coordinator: OnrampCoordinator, kycInfo: any, timeoutMs = 15000): Promise<void> {
   if (kycInfo) {
-    if (kycInfo.address && typeof kycInfo.address.country === "string") {
+    if (kycInfo.address) {
       kycInfo.address.country = normalizeCountryCode(kycInfo.address.country);
     }
-    if (typeof kycInfo.birth_country === "string") {
+    if (kycInfo.birth_country !== undefined) {
       kycInfo.birth_country = normalizeCountryCode(kycInfo.birth_country);
     }
     if (Array.isArray(kycInfo.nationalities)) {
-      kycInfo.nationalities = kycInfo.nationalities.map((n: any) => 
-        typeof n === "string" ? normalizeCountryCode(n) : n
-      );
+      kycInfo.nationalities = kycInfo.nationalities
+        .map((n: any) => normalizeCountryCode(n))
+        .filter((n: string) => !!n);
+      if (kycInfo.nationalities.length === 0) {
+        kycInfo.nationalities = ["US"];
+      }
     }
 
     // Stripe requires birth_city, birth_country, and nationalities for users with EU/EEA addresses under MiCA/AMLD regulations.
