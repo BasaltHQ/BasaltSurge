@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useActiveAccount } from "thirdweb/react";
 import {
@@ -15,6 +15,7 @@ import {
   Chrome,
   Smartphone,
   RefreshCw,
+  Loader2,
   Sliders,
   Building2,
   Activity,
@@ -75,6 +76,7 @@ interface Stat {
   totalFees: number;
   aov: number;
   cardTypes: { credit: number; debit: number; bank: number; unknown: number };
+  kycLevels?: { none: number; l1: number; l2: number };
 }
 
 interface FailureReason {
@@ -102,6 +104,7 @@ interface ReceiptLog {
 }
 
 interface ReceiptInfo {
+  id?: string;
   receiptId: string;
   brandKey: string;
   brandName: string;
@@ -114,9 +117,14 @@ interface ReceiptInfo {
   stripeSessionId: string | null;
   transactionHash: string | null;
   cardFunding: string | null;
+  detectedCardFunding?: string | null;
+  funding?: string | null;
+  isCreditCard?: boolean | null;
+  kyc?: string | null;
+  kyc_occurred?: boolean | null;
   failureReason: string | null;
   logs?: ReceiptLog[];
-  kycLevel?: "L0" | "L1" | "L2";
+  kycLevel?: "L0" | "L1" | "L2" | string;
   kycOccurred?: boolean;
   platformFee?: number;
   lineItems?: { label: string; priceUsd: number; qty?: number }[];
@@ -128,13 +136,26 @@ interface ReceiptInfo {
   lastPolledAt?: number | null;
   stripeSessionStatus?: string | null;
   ipAddress?: string | null;
-  statusHistory?: { status: string; ts: number }[];
+  statusHistory?: { status: string; ts: number; reason?: string }[];
   customerEmail?: string | null;
   stripeEmail?: string | null;
+  shopSlug?: string;
+  merchantTitle?: string;
+  shopTitle?: string;
+  shopName?: string;
+  shopifyShop?: string;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
-  return r.kycLevel || "L0";
+  const kyc = String(r.kycLevel || r.kyc || "").toUpperCase().trim();
+  if (kyc === "L2" || kyc === "LEVEL 2" || kyc === "LEVEL2") return "L2";
+  if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1" || r.kycOccurred === true || r.kyc_occurred === true) return "L1";
+  if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
+    const sKyc = String(r.customerSessions[0]?.kycLevel || r.customerSessions[0]?.kyc_level || "").toUpperCase().trim();
+    if (sKyc === "L2") return "L2";
+    if (sKyc === "L1" || r.customerSessions[0]?.kycOccurred === true) return "L1";
+  }
+  return "L0";
 };
 
 const LOADING_STAGES = [
@@ -482,6 +503,8 @@ export default function PlatformAnalyticsPanel() {
   const wallet = account?.address || "";
 
   const [loading, setLoading] = useState(true);
+  const [isRefetching, setIsRefetching] = useState(false);
+  const initialLoadDoneRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<Stat | null>(null);
   const [failureReasons, setFailureReasons] = useState<FailureReason[]>([]);
@@ -564,6 +587,7 @@ export default function PlatformAnalyticsPanel() {
   const [selectedMonthOffset, setSelectedMonthOffset] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [kycFilter, setKycFilter] = useState<string>("all");
+  const [isCardFundingFlipped, setIsCardFundingFlipped] = useState<boolean>(false);
 
   // Sorting
   const [sortKey, setSortKey] = useState<"receiptId" | "brandKey" | "merchantName" | "totalUsd" | "status" | "kycLevel" | "createdAt" | "stripeSessionId" | null>(null);
@@ -705,11 +729,26 @@ export default function PlatformAnalyticsPanel() {
 
   const fetchAnalytics = useCallback(async () => {
     if (!wallet) return;
-    setLoading(true);
+    if (!initialLoadDoneRef.current) {
+      setLoading(true);
+    } else {
+      setIsRefetching(true);
+    }
     setError(null);
     try {
       const clientTz = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
-      const res = await fetch(`/api/platform/analytics?limit=${fetchLimit}&timezoneMode=${timezoneMode}`, {
+      const params = new URLSearchParams({
+        limit: String(fetchLimit),
+        timezoneMode,
+        timeRange,
+        weekOffset: String(selectedWeekOffset),
+        monthOffset: String(selectedMonthOffset),
+        brandKey: selectedBrand
+      });
+      if (customStartDate) params.set("customStart", customStartDate);
+      if (customEndDate) params.set("customEnd", customEndDate);
+
+      const res = await fetch(`/api/platform/analytics?${params.toString()}`, {
         headers: {
           "x-wallet": wallet,
           "x-client-timezone": clientTz
@@ -725,12 +764,14 @@ export default function PlatformAnalyticsPanel() {
       setBrandStats(data.brandStats);
       setRecentReceipts(data.recentReceipts);
       setDailySeries(data.dailySeries || []);
+      initialLoadDoneRef.current = true;
     } catch (e: any) {
       setError(e?.message || "An unexpected error occurred");
     } finally {
       setLoading(false);
+      setIsRefetching(false);
     }
-  }, [wallet, fetchLimit, timezoneMode]);
+  }, [wallet, fetchLimit, timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, customStartDate, customEndDate]);
 
   const fetchSafeBalances = useCallback(async () => {
     if (!wallet) return;
@@ -1000,8 +1041,10 @@ export default function PlatformAnalyticsPanel() {
       let totalGmv = 0;
       let totalFees = 0;
       const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
+      const kycLevels = { none: 0, l1: 0, l2: 0 };
+      const receiptsForProfiles = baseFilteredReceipts.length > 0 ? baseFilteredReceipts : recentReceipts;
 
-      baseFilteredReceipts.forEach(r => {
+      receiptsForProfiles.forEach(r => {
         if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
           totalPaid++;
           totalGmv += r.totalUsd;
@@ -1010,11 +1053,40 @@ export default function PlatformAnalyticsPanel() {
           totalFailed++;
         }
 
-        const funding = String(r.cardFunding || "").toLowerCase();
-        if (funding === "us_bank_account") cardTypes.bank++;
+        const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase();
+        let funding = "unknown";
+        if (rawFunding === "us_bank_account" || rawFunding === "ach" || rawFunding === "bank") funding = "bank";
+        else if (rawFunding === "credit") funding = "credit";
+        else if (rawFunding === "debit") funding = "debit";
+        else if (r.isCreditCard === true) funding = "credit";
+        else if (r.isCreditCard === false) funding = "debit";
+        else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
+          const pm = r.customerSessions[0]?.paymentMethodDetails;
+          if (pm?.type === "us_bank_account") funding = "bank";
+          const f = pm?.card?.funding;
+          if (f === "credit") funding = "credit";
+          else if (f === "debit") funding = "debit";
+          else if (f === "us_bank_account") funding = "bank";
+        }
+
+        if (funding === "bank") cardTypes.bank++;
         else if (funding === "credit") cardTypes.credit++;
         else if (funding === "debit") cardTypes.debit++;
         else cardTypes.unknown++;
+
+        let kyc = String(r.kycLevel || r.kyc || "").toUpperCase().trim();
+        if (kyc === "L2" || kyc === "LEVEL 2" || kyc === "LEVEL2") {
+          kycLevels.l2++;
+        } else if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1" || r.kycOccurred === true || r.kyc_occurred === true) {
+          kycLevels.l1++;
+        } else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
+          const sKyc = String(r.customerSessions[0]?.kycLevel || r.customerSessions[0]?.kyc_level || "").toUpperCase().trim();
+          if (sKyc === "L2") kycLevels.l2++;
+          else if (sKyc === "L1" || r.customerSessions[0]?.kycOccurred === true) kycLevels.l1++;
+          else kycLevels.none++;
+        } else {
+          kycLevels.none++;
+        }
       });
 
       const successRate = totalCreated > 0 ? (totalPaid / totalCreated) * 100 : 0;
@@ -1028,7 +1100,8 @@ export default function PlatformAnalyticsPanel() {
         totalGmv: +totalGmv.toFixed(2),
         totalFees: +totalFees.toFixed(2),
         aov: +aov.toFixed(2),
-        cardTypes
+        cardTypes,
+        kycLevels
       };
     }
 
@@ -1039,6 +1112,7 @@ export default function PlatformAnalyticsPanel() {
     let totalGmv = 0;
     let totalFees = 0;
     const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
+    const kycLevels = { none: 0, l1: 0, l2: 0 };
 
     const now = new Date();
     const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
@@ -1091,13 +1165,44 @@ export default function PlatformAnalyticsPanel() {
       }
     });
 
-    // Populate cardTypes from baseFilteredReceipts as a fallback profile
-    baseFilteredReceipts.forEach(r => {
-      const funding = String(r.cardFunding || "").toLowerCase();
-      if (funding === "us_bank_account") cardTypes.bank++;
+    // Populate cardTypes and kycLevels from baseFilteredReceipts (or fall back to recentReceipts if baseFilteredReceipts is empty for offset time ranges)
+    const receiptsForProfiles = baseFilteredReceipts.length > 0 ? baseFilteredReceipts : recentReceipts;
+
+    receiptsForProfiles.forEach(r => {
+      const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase();
+      let funding = "unknown";
+      if (rawFunding === "us_bank_account" || rawFunding === "ach" || rawFunding === "bank") funding = "bank";
+      else if (rawFunding === "credit") funding = "credit";
+      else if (rawFunding === "debit") funding = "debit";
+      else if (r.isCreditCard === true) funding = "credit";
+      else if (r.isCreditCard === false) funding = "debit";
+      else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
+        const pm = r.customerSessions[0]?.paymentMethodDetails;
+        if (pm?.type === "us_bank_account") funding = "bank";
+        const f = pm?.card?.funding;
+        if (f === "credit") funding = "credit";
+        else if (f === "debit") funding = "debit";
+        else if (f === "us_bank_account") funding = "bank";
+      }
+
+      if (funding === "bank") cardTypes.bank++;
       else if (funding === "credit") cardTypes.credit++;
       else if (funding === "debit") cardTypes.debit++;
       else cardTypes.unknown++;
+
+      let kyc = String(r.kycLevel || r.kyc || "").toUpperCase().trim();
+      if (kyc === "L2" || kyc === "LEVEL 2" || kyc === "LEVEL2") {
+        kycLevels.l2++;
+      } else if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1" || r.kycOccurred === true || r.kyc_occurred === true) {
+        kycLevels.l1++;
+      } else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
+        const sKyc = String(r.customerSessions[0]?.kycLevel || r.customerSessions[0]?.kyc_level || "").toUpperCase().trim();
+        if (sKyc === "L2") kycLevels.l2++;
+        else if (sKyc === "L1" || r.customerSessions[0]?.kycOccurred === true) kycLevels.l1++;
+        else kycLevels.none++;
+      } else {
+        kycLevels.none++;
+      }
     });
 
     const successRate = totalCreated > 0 ? (totalPaid / totalCreated) * 100 : 0;
@@ -1111,7 +1216,8 @@ export default function PlatformAnalyticsPanel() {
       totalGmv: +totalGmv.toFixed(2),
       totalFees: +totalFees.toFixed(2),
       aov: +aov.toFixed(2),
-      cardTypes
+      cardTypes,
+      kycLevels
     };
   }, [baseFilteredReceipts, dailySeries, timeRange, selectedBrand, searchQuery, statusFilter, kycFilter, customStartDate, customEndDate, selectedWeekOffset, selectedMonthOffset, getWeekRange, getMonthRange]);
 
@@ -1647,27 +1753,106 @@ export default function PlatformAnalyticsPanel() {
             </div>
           </div>
 
+          {/* Card Funding & Consumer KYC Profile Flippable Card */}
           <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
-            <div>
-              <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">Card Funding Profile</span>
-              <div className="grid grid-cols-3 gap-2 mt-2.5">
-                <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
-                  <div className="text-[10px] text-muted-foreground font-medium">Credit</div>
-                  <div className="text-base font-bold text-white mt-0.5">{displayStats.cardTypes.credit}</div>
+            {!isCardFundingFlipped ? (
+              /* FRONT SIDE: Card Funding Profile */
+              <div className="flex flex-col justify-between h-full">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">Card Funding Profile</span>
+                    <button
+                      onClick={() => setIsCardFundingFlipped(true)}
+                      className="text-[10px] text-primary hover:underline flex items-center gap-1 font-semibold transition-colors"
+                      title="Flip to Consumer KYC Profile"
+                    >
+                      <span>KYC Profile</span>
+                      <RefreshCw className="w-3 h-3 text-primary" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-2.5">
+                    {(() => {
+                      const totalCards = (displayStats.cardTypes.credit || 0) + (displayStats.cardTypes.debit || 0) + (displayStats.cardTypes.bank || 0);
+                      const creditPct = totalCards > 0 ? ((displayStats.cardTypes.credit / totalCards) * 100).toFixed(1) : "0.0";
+                      const debitPct = totalCards > 0 ? ((displayStats.cardTypes.debit / totalCards) * 100).toFixed(1) : "0.0";
+                      const bankPct = totalCards > 0 ? ((displayStats.cardTypes.bank / totalCards) * 100).toFixed(1) : "0.0";
+
+                      return (
+                        <>
+                          <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
+                            <div className="text-[10px] text-muted-foreground font-medium">Credit</div>
+                            <div className="text-base font-bold text-white mt-0.5">{displayStats.cardTypes.credit}</div>
+                            <div className="text-[9px] font-mono text-emerald-400 font-medium mt-0.5">{creditPct}%</div>
+                          </div>
+                          <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
+                            <div className="text-[10px] text-muted-foreground font-medium">Debit</div>
+                            <div className="text-base font-bold text-white mt-0.5">{displayStats.cardTypes.debit}</div>
+                            <div className="text-[9px] font-mono text-emerald-400 font-medium mt-0.5">{debitPct}%</div>
+                          </div>
+                          <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
+                            <div className="text-[10px] text-muted-foreground font-medium">Bank</div>
+                            <div className="text-base font-bold text-white mt-0.5">{displayStats.cardTypes.bank || 0}</div>
+                            <div className="text-[9px] font-mono text-emerald-400 font-medium mt-0.5">{bankPct}%</div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
                 </div>
-                <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
-                  <div className="text-[10px] text-muted-foreground font-medium">Debit</div>
-                  <div className="text-base font-bold text-white mt-0.5">{displayStats.cardTypes.debit}</div>
-                </div>
-                <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
-                  <div className="text-[10px] text-muted-foreground font-medium">Bank</div>
-                  <div className="text-base font-bold text-white mt-0.5">{displayStats.cardTypes.bank || 0}</div>
+                <div className="mt-2 text-[10px] text-muted-foreground text-center">
+                  Categorized via BIN & Card metadata
                 </div>
               </div>
-            </div>
-            <div className="mt-2 text-[10px] text-muted-foreground text-center">
-              Categorized via BIN & Card metadata
-            </div>
+            ) : (
+              /* BACK SIDE: Consumer KYC Profile */
+              <div className="flex flex-col justify-between h-full">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-emerald-400 font-bold uppercase tracking-wider">Consumer KYC Profile</span>
+                    <button
+                      onClick={() => setIsCardFundingFlipped(false)}
+                      className="text-[10px] text-primary hover:underline flex items-center gap-1 font-semibold transition-colors"
+                      title="Flip to Card Funding Profile"
+                    >
+                      <span>Card Funding</span>
+                      <RefreshCw className="w-3 h-3 text-primary" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-2.5">
+                    {(() => {
+                      const kyc = displayStats.kycLevels || { none: 0, l1: 0, l2: 0 };
+                      const totalKyc = (kyc.none || 0) + (kyc.l1 || 0) + (kyc.l2 || 0);
+                      const nonePct = totalKyc > 0 ? ((kyc.none / totalKyc) * 100).toFixed(1) : "0.0";
+                      const l1Pct = totalKyc > 0 ? ((kyc.l1 / totalKyc) * 100).toFixed(1) : "0.0";
+                      const l2Pct = totalKyc > 0 ? ((kyc.l2 / totalKyc) * 100).toFixed(1) : "0.0";
+
+                      return (
+                        <>
+                          <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
+                            <div className="text-[10px] text-muted-foreground font-medium">None (L0)</div>
+                            <div className="text-base font-bold text-white mt-0.5">{kyc.none}</div>
+                            <div className="text-[9px] font-mono text-zinc-400 font-medium mt-0.5">{nonePct}%</div>
+                          </div>
+                          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-2 text-center">
+                            <div className="text-[10px] text-emerald-400 font-medium">L1 KYC</div>
+                            <div className="text-base font-bold text-emerald-300 mt-0.5">{kyc.l1}</div>
+                            <div className="text-[9px] font-mono text-emerald-400 font-medium mt-0.5">{l1Pct}%</div>
+                          </div>
+                          <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-2 text-center">
+                            <div className="text-[10px] text-cyan-400 font-medium">L2 KYC</div>
+                            <div className="text-base font-bold text-cyan-300 mt-0.5">{kyc.l2}</div>
+                            <div className="text-[9px] font-mono text-cyan-400 font-medium mt-0.5">{l2Pct}%</div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+                <div className="mt-2 text-[10px] text-muted-foreground text-center">
+                  Verified demographics & Stripe Radar identity levels
+                </div>
+              </div>
+            )}
           </div>
 
         </div>
@@ -1886,6 +2071,13 @@ export default function PlatformAnalyticsPanel() {
                       </button>
                     ))}
                   </div>
+
+                  {isRefetching && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-primary/15 border border-primary/30 text-primary text-xs font-mono font-bold animate-in fade-in duration-200">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Updating...</span>
+                    </div>
+                  )}
 
                   {/* Custom Date Pickers */}
                   {timeRange === "custom" && (

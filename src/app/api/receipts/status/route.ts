@@ -207,6 +207,12 @@ export async function POST(req: NextRequest) {
         currentStatus === "receipt_claimed" ||
         currentStatus.includes("refund");
 
+      const hasOnChainTx = !!(resource?.transactionHash || resource?.txHash || resource?.onChainTxHash);
+      const isClientJsRuntimeError = typeof failureReason === "string" && (
+        failureReason.toLowerCase().includes("chunkloaderror") ||
+        failureReason.toLowerCase().includes("unhandled runtime error")
+      );
+
       const isDowngrade =
         isSettled &&
         (status === "checkout_initialized" ||
@@ -214,7 +220,8 @@ export async function POST(req: NextRequest) {
           status === "link_opened" ||
           status === "buyer_logged_in" ||
           status === "checkout_ready" ||
-          status === "generated");
+          status === "generated" ||
+          (status === "failed" && (hasOnChainTx || isClientJsRuntimeError)));
 
       if (isDowngrade) {
         // Return success but do not update DB
