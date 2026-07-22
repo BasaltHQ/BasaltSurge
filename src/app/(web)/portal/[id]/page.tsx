@@ -5437,74 +5437,86 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       backgroundColor: theme.primaryColor || "#635BFF",
                     }}
                     disabled={
-                      kycTierRequired === "l0"
-                        ? (
-                          !kycFirstName ||
-                          !kycLastName ||
-                          !kycLine1 ||
-                          !kycCity ||
-                          !kycState ||
-                          !kycZip ||
-                          !(shipEmail ? isValidEmail(shipEmail) : isValidEmail(headlessEmailInput)) ||
-                          !headlessPhoneInput
-                        ) : (
-                          !kycFirstName ||
-                          !kycLastName ||
-                          !kycDobDay ||
-                          !kycDobMonth ||
-                          kycDobYear.length !== 4 ||
-                          !kycLine1 ||
-                          !kycCity ||
-                          !kycState ||
-                          !kycZip ||
-                          (kycCountry === "US" ? kycSsn.length < 9 : (!kycNationalities || !kycBirthCountry || !kycBirthCity))
-                        )
+                      (() => {
+                        const targetCountry = String(kycCountry || shipCountry || clientCountry || "US").trim().toUpperCase();
+                        const isEuRegion = ["AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"].includes(targetCountry);
+                        const requiresDobAndBirthDetails = targetCountry !== "US" || isEuRegion;
+
+                        const hasBasicDetails = kycFirstName && kycLastName && kycLine1 && kycCity && kycState && kycZip && (shipEmail ? isValidEmail(shipEmail) : isValidEmail(headlessEmailInput)) && headlessPhoneInput;
+
+                        if (!hasBasicDetails) return true;
+
+                        if (requiresDobAndBirthDetails) {
+                          const hasDob = kycDobDay && kycDobMonth && kycDobYear.length === 4;
+                          const hasBirthDetails = kycNationalities && kycBirthCountry && kycBirthCity;
+                          if (!hasDob || !hasBirthDetails) return true;
+                        }
+
+                        if (kycTierRequired !== "l0" && targetCountry === "US") {
+                          if (kycSsn.length < 9) return true;
+                        }
+
+                        return false;
+                      })()
                     }
                     onClick={() => {
-                      const safeCountry = String(kycCountry || shipCountry || "US").trim().toUpperCase() || "US";
+                      const safeCountry = String(kycCountry || shipCountry || clientCountry || "US").trim().toUpperCase() || "US";
+                      const isEuRegion = ["AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"].includes(safeCountry);
+                      
+                      const dobDay = Number(kycDobDay);
+                      const dobMonth = Number(kycDobMonth);
+                      const dobYear = Number(kycDobYear);
+                      const hasValidDob = dobDay > 0 && dobMonth > 0 && dobYear > 1900;
+
                       if (kycTierRequired === "l0") {
                         const l0Payload: any = {
-                          given_name: (kycFirstName || "Guest").trim(),
-                          surname: (kycLastName || "Customer").trim(),
+                          given_name: kycFirstName.trim(),
+                          surname: kycLastName.trim(),
                           address: {
-                            line1: (kycLine1 || "1 Main St").trim(),
+                            line1: kycLine1.trim(),
                             line2: kycLine2 ? kycLine2.trim() : undefined,
-                            city: (kycCity || "New York").trim(),
-                            state: (kycState || "NY").trim().toUpperCase(),
-                            postal_code: (kycZip || "10001").trim().toUpperCase(),
+                            city: kycCity.trim(),
+                            state: kycState.trim().toUpperCase(),
+                            postal_code: kycZip.trim().toUpperCase(),
                             country: safeCountry
                           }
                         };
 
-                        if (safeCountry !== "US") {
-                          l0Payload.birth_city = (kycBirthCity || kycCity || "City").trim();
-                          l0Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase() || safeCountry;
-                          l0Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase() || safeCountry];
+                        if (safeCountry !== "US" || isEuRegion) {
+                          l0Payload.birth_city = (kycBirthCity || kycCity).trim();
+                          l0Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
+                          l0Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
+                          if (hasValidDob) {
+                            l0Payload.date_of_birth = {
+                              day: dobDay,
+                              month: dobMonth,
+                              year: dobYear
+                            };
+                          }
                         }
 
                         submitKycInfo(l0Payload);
                       } else {
-                        const dobDay = Number(kycDobDay) || 1;
-                        const dobMonth = Number(kycDobMonth) || 1;
-                        const dobYear = Number(kycDobYear) || 1990;
-                        
                         const l1Payload: any = {
-                          given_name: (kycFirstName || "Guest").trim(),
-                          surname: (kycLastName || "Customer").trim(),
-                          date_of_birth: {
-                            day: dobDay,
-                            month: dobMonth,
-                            year: dobYear
-                          },
+                          given_name: kycFirstName.trim(),
+                          surname: kycLastName.trim(),
                           address: {
-                            line1: (kycLine1 || "1 Main St").trim(),
+                            line1: kycLine1.trim(),
                             line2: kycLine2 ? kycLine2.trim() : undefined,
-                            city: (kycCity || "New York").trim(),
-                            state: (kycState || "NY").trim().toUpperCase(),
-                            postal_code: (kycZip || "10001").trim().toUpperCase(),
+                            city: kycCity.trim(),
+                            state: kycState.trim().toUpperCase(),
+                            postal_code: kycZip.trim().toUpperCase(),
                             country: safeCountry
                           }
                         };
+
+                        if (hasValidDob) {
+                          l1Payload.date_of_birth = {
+                            day: dobDay,
+                            month: dobMonth,
+                            year: dobYear
+                          };
+                        }
 
                         if (safeCountry === "US") {
                           l1Payload.id_number = {
@@ -5512,9 +5524,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             type: "us_ssn"
                           };
                         } else {
-                          l1Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase() || safeCountry];
-                          l1Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase() || safeCountry;
-                          l1Payload.birth_city = (kycBirthCity || kycCity || "City").trim();
+                          l1Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
+                          l1Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
+                          l1Payload.birth_city = (kycBirthCity || kycCity).trim();
                         }
 
                         submitKycInfo(l1Payload);

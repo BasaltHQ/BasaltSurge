@@ -155,8 +155,7 @@ async function submitKycInfoWithTimeout(coordinator: OnrampCoordinator, kycInfo:
       }
     }
 
-    // Stripe requires birth_city, birth_country, and nationalities for users with EU/EEA addresses under MiCA/AMLD regulations.
-    // If not explicitly provided, fall back to the address city and country to satisfy Stripe API parameter validation.
+    // Stripe requires birth_city, birth_country, date_of_birth, and nationalities for users with EU/EEA addresses under MiCA/AMLD regulations.
     const addrCountry = kycInfo.address?.country || "";
     if (isEuEeaCountry(addrCountry)) {
       if (!kycInfo.birth_city && kycInfo.address?.city) {
