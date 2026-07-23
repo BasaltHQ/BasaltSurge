@@ -74,7 +74,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const isTest = id.toUpperCase() === "TEST";
   const url = new URL(req.url);
   // Public embed support: derive merchant wallet from query or header without requiring auth
-  const walletParam = String(url.searchParams.get("wallet") || "").toLowerCase();
+  const walletParam = String(url.searchParams.get("wallet") || url.searchParams.get("recipient") || "").toLowerCase();
   const headerWallet = String(req.headers.get("x-wallet") || "").toLowerCase();
   const defaultRecipient = String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || process.env.NEXT_PUBLIC_OWNER_WALLET || "").toLowerCase();
   const wallet =
