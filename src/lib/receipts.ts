@@ -99,8 +99,6 @@ export function recalculateReceiptForCardFunding(
   if (isStripeHeadless) {
     if (activeFunding === "us_bank_account") {
       stripeFeePct = 0.6;
-    } else if (!isFeeMinus) {
-      stripeFeePct = isCredit ? 3.5 : 2.25;
     } else if (basePresentedBps !== undefined) {
       const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
       const agentBps = splitCfg && Array.isArray(splitCfg.agents)
@@ -108,6 +106,8 @@ export function recalculateReceiptForCardFunding(
         : 0;
 
       stripeFeePct = Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
+    } else if (!isFeeMinus) {
+      stripeFeePct = isCredit ? 3.5 : 2.25;
     }
   }
   const totalFeePct = Math.max(0, basePlatformFeePct + processingFeePct + stripeFeePct);

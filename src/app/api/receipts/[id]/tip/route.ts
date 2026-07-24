@@ -174,7 +174,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             // Standard fee+ code path
             const activeFunding = receipt.detectedCardFunding || "debit";
             const isCredit = activeFunding === "credit";
-            const stripeFeePct = activeFunding === "us_bank_account" ? 0.6 : (isCredit ? 3.5 : 2.25);
+
+            const basePresentedBps = isCredit
+                ? (cfg?.creditPresentedFeeBps ?? cfg?.presentedFeeBps)
+                : (cfg?.presentedFeeBps);
+
+            const splitCfg = isCredit
+                ? (cfg?.splitConfigCredit || cfg?.splitConfig)
+                : (cfg?.splitConfig || cfg?.splitConfigCredit);
+
+            let stripeFeePct = activeFunding === "us_bank_account" ? 0.6 : (isCredit ? 3.5 : 2.25);
+            if (basePresentedBps !== undefined) {
+                const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
+                const agentBps = splitCfg && Array.isArray(splitCfg.agents)
+                    ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+                    : 0;
+                stripeFeePct = Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
+            }
             const feePctPlus = feePct + (stripeFeePct / 100);
 
             const baseUsd = baseItems.reduce((acc: number, i: any) => acc + (i.priceUsd || 0), 0);

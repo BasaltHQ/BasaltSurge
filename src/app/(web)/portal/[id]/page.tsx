@@ -1992,9 +1992,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Credit fee percentage calculation (presented fee + partner + merchant processing fee)
   // Used for the microtext footnote on the first pane before a card is scanned.
   const creditFeePct = useMemo(() => {
-    if (!feeMinusEnabled) {
-      return effectiveBasePlatformFeePct + Number(processingFeePct || 0) + 3.5;
-    }
     const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object"
       ? splitConfigCredit
       : splitConfig;
@@ -2009,17 +2006,19 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       return (basePresentedBps + partnerBps) / 100 + Number(processingFeePct || 0);
     }
 
+    const stripeAdd = feeMinusEnabled ? 0 : 3.5;
+
     // Fallback to split components
     if (activeSplitConfig && typeof activeSplitConfig.platformBps === "number") {
       const platformBps = activeSplitConfig.platformBps;
       const agentBps = Array.isArray(activeSplitConfig.agents)
         ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
         : 0;
-      return (platformBps + partnerBps + agentBps) / 100 + Number(processingFeePct || 0);
+      return (platformBps + partnerBps + agentBps) / 100 + Number(processingFeePct || 0) + stripeAdd;
     }
 
-    return (50 + partnerBps) / 100 + Number(processingFeePct || 0);
-  }, [splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps, processingFeePct, effectiveBasePlatformFeePct, feeMinusEnabled]);
+    return (50 + partnerBps) / 100 + Number(processingFeePct || 0) + stripeAdd;
+  }, [splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps, processingFeePct, feeMinusEnabled]);
 
   // Actual split fee percentage calculation based strictly on the smart contract split components.
   // This is used for Stripe calculations (stripeProcessingFeeUsd, stripeTotalUsd) to ensure the payment
@@ -2763,10 +2762,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [detectedCardFunding, achSpeed, debitStripeFeePct, creditStripeFeePct]);
 
   const processingFeeUsd = useMemo(() => {
-    const stripePct = feeMinusEnabled ? 0 : stripeFeePct;
+    const hasPresentedBps = presentedFeeBps !== undefined || creditPresentedFeeBps !== undefined;
+    const stripePct = (feeMinusEnabled || hasPresentedBps) ? 0 : stripeFeePct;
     const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct) / 100);
     return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
-  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled]);
+  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps]);
 
   const totalUsd = useMemo(() => {
     if (!receipt) return 0;
