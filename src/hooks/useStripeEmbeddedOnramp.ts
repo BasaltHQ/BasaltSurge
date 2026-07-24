@@ -952,7 +952,11 @@ export function useStripeEmbeddedOnramp({
                     })
                   }).catch(() => {});
                 }
-                return await onrampRef.current!.verifyDocuments();
+                if (!onrampRef.current) {
+                  console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before verifyDocuments. Aborting.");
+                  throw new Error("Onramp coordinator was cleared");
+                }
+                return await onrampRef.current.verifyDocuments();
               };
 
               runVerify()
@@ -1495,7 +1499,10 @@ export function useStripeEmbeddedOnramp({
             errCode.includes("kyc")
           ) {
             console.log("[EMBEDDED ONRAMP] Document verification required during session creation. Checking customer status first...");
-            if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
+            if (!onrampRef.current) {
+              console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared during session creation. Aborting.");
+              return null;
+            }
             
             try {
               // Pre-check customer KYC status to see if L1 is needed first, or if L2 is already under review.
@@ -1613,6 +1620,10 @@ export function useStripeEmbeddedOnramp({
             
             try {
               isVerifyingRef.current = true;
+              if (!onrampRef.current) {
+                console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before verifyDocuments. Aborting.");
+                return null;
+              }
               const verifyResult = await onrampRef.current.verifyDocuments();
               isVerifyingRef.current = false;
               console.log("[EMBEDDED ONRAMP] Stripe verifyDocuments response (session helper):", verifyResult);
@@ -1957,7 +1968,10 @@ export function useStripeEmbeddedOnramp({
     if (!checkoutSucceeded) {
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
-        if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
+        if (!onrampRef.current) {
+          console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before performCheckout. Aborting.");
+          return;
+        }
 
         const result = await onrampRef.current.performCheckout(currentSessionId || "", async (onrampSessionId: string) => {
           const checkoutRes = await fetch(`/api/stripe/onramp-checkout/${encodeURIComponent(onrampSessionId)}`, {
@@ -2199,7 +2213,10 @@ export function useStripeEmbeddedOnramp({
                 isVerifyingRef.current = true;
                 updateStep("verifying_identity");
                 
-                if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
+                if (!onrampRef.current) {
+                  console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before verifyDocuments. Aborting.");
+                  return;
+                }
                 
                 try {
                   const verifyResult = await onrampRef.current.verifyDocuments();
@@ -2237,7 +2254,10 @@ export function useStripeEmbeddedOnramp({
             if (lastError === "missing_consumer_wallet") {
               console.log("[EMBEDDED ONRAMP] Wallet not registered. Attempting wallet registration...");
               updateStep("registering_wallet");
-              if (!onrampRef.current) throw new Error("Onramp coordinator not initialized");
+              if (!onrampRef.current) {
+                console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before registerWalletAddress. Aborting.");
+                return;
+              }
               
               try {
                 await onrampRef.current.registerWalletAddress(buyerWallet, network);
@@ -2918,9 +2938,11 @@ export function useStripeEmbeddedOnramp({
               
               try {
                 // Demographics submission is skipped because the user is already L1 verified.
-                // We directly call verifyDocuments() to upload document identity verification.
-                kycOccurredRef.current = true;
-                const verifyResult = await onrampRef.current!.verifyDocuments();
+                if (!onrampRef.current) {
+                  console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before L2 verifyDocuments. Aborting.");
+                  return;
+                }
+                const verifyResult = await onrampRef.current.verifyDocuments();
                 if (verifyResult.result === "abandoned") {
                   throw new Error("Identity verification was abandoned");
                 }
@@ -3281,7 +3303,11 @@ export function useStripeEmbeddedOnramp({
                 try {
                   console.log("[EMBEDDED ONRAMP] Launching document verification for L2...");
                   kycOccurredRef.current = true;
-                  const verifyResult = await onrampRef.current!.verifyDocuments();
+                  if (!onrampRef.current) {
+                    console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before L2 verifyDocuments. Aborting.");
+                    return;
+                  }
+                  const verifyResult = await onrampRef.current.verifyDocuments();
                   if (verifyResult.result === "abandoned") {
                     throw new Error("Identity verification was abandoned");
                   }
@@ -3493,6 +3519,10 @@ export function useStripeEmbeddedOnramp({
                 meta: { error: String(kycSubmitErr?.stack || kycSubmitErr) }
               })
             }).catch(() => {});
+          }
+          if (!onrampRef.current) {
+            console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before verifyDocuments. Aborting.");
+            return;
           }
           const verifyResult = await onrampRef.current.verifyDocuments();
           console.log("[EMBEDDED ONRAMP] Stripe verifyDocuments response (payment catch):", verifyResult);
