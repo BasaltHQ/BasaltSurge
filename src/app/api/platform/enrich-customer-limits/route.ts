@@ -228,6 +228,20 @@ export async function POST(req: NextRequest) {
           customerSessions.push(updatedSession);
         }
 
+        // Auto-heal logic: If Stripe session is complete, restore receipt payment status
+        if (sessionData.status === "fulfillment_complete" && txDetails.transaction_id) {
+          receipt.transactionHash = txDetails.transaction_id;
+          receipt.transactionTimestamp = txDetails.transaction_timestamp || receipt.transactionTimestamp || Date.now();
+          receipt.status = "paid";
+          receipt.ttl = -1;
+          const history = Array.isArray(receipt.statusHistory) ? receipt.statusHistory : [];
+          if (!history.some((h: any) => h.status === "paid")) {
+            receipt.statusHistory = [...history, { status: "paid", ts: Date.now() }];
+          } else {
+            receipt.statusHistory = history;
+          }
+        }
+
         updatedAny = true;
       } catch (sessErr) {
         console.error(`[ENRICH LIMITS] Error processing session ${sessionId}:`, sessErr);
