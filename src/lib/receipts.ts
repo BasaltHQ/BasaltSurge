@@ -93,10 +93,11 @@ export function recalculateReceiptForCardFunding(
 
   // Stripe fee percent: presented fee - platform - agent (from splitConfig)
   let stripeFeePct = 0;
-  const isStripeHeadless = !!(receipt.detectedCardFunding && (receipt.detectedCardFunding === "credit" || receipt.detectedCardFunding === "debit" || receipt.detectedCardFunding === "us_bank_account"));
+  const activeFunding = detectedCardFunding || receipt.detectedCardFunding;
+  const isStripeHeadless = !!(activeFunding && (activeFunding === "credit" || activeFunding === "debit" || activeFunding === "us_bank_account"));
 
   if (isStripeHeadless) {
-    if (detectedCardFunding === "us_bank_account") {
+    if (activeFunding === "us_bank_account") {
       stripeFeePct = 0.6;
     } else if (!isFeeMinus) {
       stripeFeePct = isCredit ? 3.5 : 2.25;
@@ -178,15 +179,16 @@ export function recalculateReceiptForCardFunding(
 
     return {
       ...receipt,
+      detectedCardFunding: activeFunding,
       lineItems: finalLineItems
     };
   } else {
     // Standard fee-on-top checkout: processing fee is added on top of base items
     const originalSubtotalCents = baseItems.reduce((acc: number, i: any) => acc + toCents(i.priceUsd), 0);
     const originalTaxCents = scaledTaxCents;
-    const baseWithoutFeeCents = originalSubtotalCents + originalTaxCents;
-    const finalFeeCents = Math.round(baseWithoutFeeCents * feePct);
     const tipCents = toCents(receipt.tipAmount || 0);
+    const baseWithoutFeeCents = originalSubtotalCents + originalTaxCents + tipCents;
+    const finalFeeCents = Math.round(baseWithoutFeeCents * feePct);
 
     const finalLineItems = [
       ...baseItems,
@@ -197,8 +199,9 @@ export function recalculateReceiptForCardFunding(
 
     return {
       ...receipt,
+      detectedCardFunding: activeFunding,
       lineItems: finalLineItems,
-      totalUsd: fromCents(baseWithoutFeeCents + finalFeeCents + tipCents)
+      totalUsd: fromCents(baseWithoutFeeCents + finalFeeCents)
     };
   }
 }

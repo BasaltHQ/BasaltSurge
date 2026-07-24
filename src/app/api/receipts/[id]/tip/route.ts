@@ -172,13 +172,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             finalTotalCents = customerTotalCents;
         } else {
             // Standard fee+ code path
+            const activeFunding = receipt.detectedCardFunding || "debit";
+            const isCredit = activeFunding === "credit";
+            const stripeFeePct = activeFunding === "us_bank_account" ? 0.6 : (isCredit ? 3.5 : 2.25);
+            const feePctPlus = feePct + (stripeFeePct / 100);
+
             const baseUsd = baseItems.reduce((acc: number, i: any) => acc + (i.priceUsd || 0), 0);
             const baseCents = toCents(baseUsd);
             const taxRate = Number(receipt.taxRate || 0);
             const taxCents = Math.round(baseCents * taxRate);
 
             const subtotalCents = baseCents + taxCents + tipCents;
-            const feeCents = Math.round(subtotalCents * feePct);
+            const feeCents = Math.round(subtotalCents * feePctPlus);
 
             finalLineItems = [
                 ...baseItems,

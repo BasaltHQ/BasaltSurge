@@ -2267,6 +2267,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       amount = Number(((pct / 100) * baseSubtotal).toFixed(2));
     }
 
+    // Skip redundant updates (like on-mount initialization to 0 when receipt already has 0 tip)
+    const currentTip = Number(receipt?.tipAmount || 0);
+    if (amount === currentTip) {
+      return;
+    }
+
     setUpdatingTip(true);
     try {
       const res = await fetch(`/api/receipts/${receiptId}/tip`, {
