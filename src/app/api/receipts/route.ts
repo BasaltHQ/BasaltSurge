@@ -294,6 +294,61 @@ export async function POST(req: NextRequest) {
 
     // Construct receipt doc
     const docId = `receipt:${id}`;
+
+    // Safety check: Prevent overwriting settled/paid receipts
+    try {
+      const container = await getContainer();
+      const { resource: existing } = await container.item(docId, wallet).read();
+      if (existing) {
+        const currentStatus = String(existing.status || "").toLowerCase();
+        const isSettled =
+          currentStatus === "paid" ||
+          currentStatus === "paid - ach pending" ||
+          currentStatus === "ach_pending" ||
+          currentStatus === "checkout_success" ||
+          currentStatus === "confirmed" ||
+          currentStatus === "reconciled" ||
+          currentStatus === "tx_mined" ||
+          currentStatus === "recipient_validated" ||
+          currentStatus === "receipt_claimed" ||
+          currentStatus.includes("refund") ||
+          !!(existing.transactionHash || existing.txHash || existing.onChainTxHash);
+
+        if (isSettled) {
+          const rawXfProto = req.headers.get("x-forwarded-proto");
+          const rawXfHost = req.headers.get("x-forwarded-host");
+          const xfProto = rawXfProto ? rawXfProto.split(",")[0].trim() : null;
+          const xfHost = rawXfHost ? rawXfHost.split(",")[0].trim() : null;
+          const host = req.headers.get("host");
+          const proto = xfProto || (process.env.NODE_ENV === "production" ? "https" : "http");
+          const h = xfHost || (host ? host.split(",")[0].trim() : "");
+          const origin = h ? `${proto}://${h}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
+          const tParams = new URLSearchParams();
+          tParams.set("recipient", wallet);
+          if (redirectUrl) tParams.set("redirect_url", redirectUrl);
+          if (returnUrl) tParams.set("returnUrl", returnUrl);
+          if (onSuccess) tParams.set("onSuccess", onSuccess);
+          if (stripeEmail) tParams.set("stripeEmail", stripeEmail);
+          const paymentUrl = `${origin}/portal/${encodeURIComponent(id)}?${tParams.toString()}`;
+
+          return NextResponse.json(
+            {
+              id,
+              paymentUrl,
+              status: existing.status,
+              alreadyPaid: true,
+              ...(redirectUrl ? { redirectUrl } : {}),
+              ...(returnUrl ? { returnUrl } : {}),
+              ...(onSuccess ? { onSuccess } : {}),
+              ...(webhookUrl ? { webhookUrl } : {})
+            },
+            { status: 200, headers: { "x-correlation-id": correlationId } }
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("[RECEIPTS POST] Failed to check for settled receipt:", e);
+    }
     const doc = {
       id: docId,
       type: "receipt",

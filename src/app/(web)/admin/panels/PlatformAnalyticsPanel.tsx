@@ -3202,12 +3202,18 @@ export default function PlatformAnalyticsPanel() {
                                 {activeSubTab === "items" && (
                                   <div className="my-2 space-y-1.5 text-[10px] font-mono">
                                     {Array.isArray(r.items) && r.items.length > 0 ? (
-                                      r.items.map((it: any, idx: number) => (
-                                        <div key={idx} className="p-2 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between">
-                                          <span className="font-bold text-white truncate max-w-[140px]">{it.label || "Item"}</span>
-                                          <span className="text-emerald-400 font-extrabold">${((it.priceUsd || 0) * (it.quantity || 1)).toFixed(2)}</span>
-                                        </div>
-                                      ))
+                                      r.items.map((it: any, idx: number) => {
+                                        const qty = it.quantity || it.qty || 1;
+                                        const rawPrice = it.priceUsd || 0;
+                                        const isLineSubtotal = qty > 1 && (rawPrice * qty > (r.totalUsd || rawPrice) * 1.2);
+                                        const lineTotal = isLineSubtotal ? rawPrice : rawPrice * qty;
+                                        return (
+                                          <div key={idx} className="p-2 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between">
+                                            <span className="font-bold text-white truncate max-w-[140px]">{it.label || "Item"}</span>
+                                            <span className="text-emerald-400 font-extrabold">${lineTotal.toFixed(2)}</span>
+                                          </div>
+                                        );
+                                      })
                                     ) : (
                                       <div className="text-white/40 text-center py-4">No line items recorded</div>
                                     )}
@@ -4146,13 +4152,17 @@ export default function PlatformAnalyticsPanel() {
                                             {r.lineItems && r.lineItems.length > 0 ? (
                                               r.lineItems.map((item, idx) => {
                                                 const qty = item.qty || 1;
-                                                const price = item.priceUsd || 0;
+                                                const rawPrice = item.priceUsd || 0;
+                                                const isLineSubtotal = qty > 1 && (rawPrice * qty > (r.totalUsd || rawPrice) * 1.2);
+                                                const unitPrice = isLineSubtotal ? rawPrice / qty : rawPrice;
+                                                const lineTotal = isLineSubtotal ? rawPrice : rawPrice * qty;
+
                                                 return (
                                                   <tr key={idx} className="hover:bg-white/[0.02]">
                                                     <td className="py-3 px-4 font-bold">{item.label}</td>
-                                                    <td className="py-3 px-4 text-right">${price.toFixed(2)}</td>
+                                                    <td className="py-3 px-4 text-right">${unitPrice.toFixed(2)}</td>
                                                     <td className="py-3 px-4 text-center">{qty}</td>
-                                                    <td className="py-3 px-4 text-right font-extrabold text-white">${(price * qty).toFixed(2)}</td>
+                                                    <td className="py-3 px-4 text-right font-extrabold text-white">${lineTotal.toFixed(2)}</td>
                                                   </tr>
                                                 );
                                               })
