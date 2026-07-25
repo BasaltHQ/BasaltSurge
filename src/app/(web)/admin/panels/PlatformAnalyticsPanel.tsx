@@ -4247,9 +4247,12 @@ export default function PlatformAnalyticsPanel() {
                                    {rowActiveTab === "fees" && (() => {
                                      loadSiteConfigForReceipt(r.receiptId, r.wallet || r.merchantWallet, r.brandKey);
                                      const siteCfg = fetchedSiteConfigs[r.receiptId] || r.merchantConfig || r.brandConfig || {};
+                                     const firstSession = Array.isArray(r.customerSessions) ? r.customerSessions[0] : null;
+                                     const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || firstSession?.cardFunding || firstSession?.funding || firstSession?.detectedCardFunding || "").toLowerCase().trim();
 
-                                     const isCredit = r.detectedCardFunding === "credit" || r.isCreditCard === true;
-                                     const fundingType = String(r.detectedCardFunding || (isCredit ? "credit" : "debit")).toUpperCase();
+                                     // Default to credit card processing unless explicitly identified as debit or ACH
+                                     const isCredit = rawFunding === "credit" || r.isCreditCard === true || (rawFunding !== "debit" && rawFunding !== "us_bank_account" && rawFunding !== "ach");
+                                     const fundingType = (rawFunding || (isCredit ? "credit" : "debit")).toUpperCase();
                                      
                                      const isFeeMinus = siteCfg.feeMinusEnabled !== undefined
                                        ? !!siteCfg.feeMinusEnabled
@@ -4292,7 +4295,6 @@ export default function PlatformAnalyticsPanel() {
                                      }
 
                                      const totalUsd = Number(r.totalUsd || 0);
-                                     const firstSession = Array.isArray(r.customerSessions) ? r.customerSessions[0] : null;
                                      const stripeSessionCents = firstSession?.amountTotal ?? firstSession?.amount_total;
                                      const stripeProcessedUsd = typeof stripeSessionCents === "number" && stripeSessionCents > 0
                                        ? (stripeSessionCents / 100)
