@@ -3850,6 +3850,29 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return () => { try { mo.disconnect(); } catch { }; clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, [effectiveSecondaryColor, theme.secondaryColor, stripeOnrampEnabled, coinbaseOnrampEnabled, transakOnrampEnabled, rampnowOnrampEnabled, isExplicitlyUnsupportedRegion]);
 
+  // ── Global Onramp Click Tracker ──
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleGlobalClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const text = (target.textContent || "").toLowerCase();
+      const parentText = (target.parentElement?.textContent || "").toLowerCase();
+      const combined = `${text} ${parentText}`;
+      if (combined.includes("coinbase")) {
+        (window as any).__lastSelectedOnramp = "coinbase";
+      } else if (combined.includes("stripe") || combined.includes("card")) {
+        (window as any).__lastSelectedOnramp = "stripe";
+      } else if (combined.includes("transak")) {
+        (window as any).__lastSelectedOnramp = "transak";
+      } else if (combined.includes("moonpay")) {
+        (window as any).__lastSelectedOnramp = "moonpay";
+      }
+    };
+    window.addEventListener("click", handleGlobalClick, true);
+    return () => window.removeEventListener("click", handleGlobalClick, true);
+  }, []);
+
   // ── Thirdweb Bruteforce DOM Overrides ──
   // Thirdweb's Emotion CSS-in-JS aggressively overrides injected stylesheets with inline or high-specificity classes.
   // We use a MutationObserver to forcibly apply the theme text color to the back button SVG paths natively on the DOM nodes.
@@ -7062,12 +7085,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                                   feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
                                                   shipping: {
                                                     name: shipName,
-                                                    line1: shipLine1,
-                                                    line2: shipLine2,
-                                                    city: shipCity,
-                                                    state: shipState,
-                                                    zip: shipZip,
-                                                    country: shipCountry,
                                                     method: shipMethod,
                                                     costUsd: shippingCostUsd,
                                                   }
@@ -7075,11 +7092,31 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                               }}
                                               onSuccess={(result: any) => {
                                                 console.log("[CHECKOUT] Success:", result);
-                                                const txHash = result?.transactionHash || result?.hash || result?.receipt?.transactionHash || result?.receipt?.hash || result?.transaction?.transactionHash || result?.transaction?.hash;
+                                                const txHash = (
+                                                  result?.transactionHash ||
+                                                  result?.hash ||
+                                                  result?.receipt?.transactionHash ||
+                                                  result?.receipt?.hash ||
+                                                  result?.transaction?.transactionHash ||
+                                                  result?.transaction?.hash ||
+                                                  result?.transactionResult?.transactionHash ||
+                                                  result?.txHash ||
+                                                  result?.onChainTxHash ||
+                                                  (typeof result === "string" && result.startsWith("0x") ? result : undefined) ||
+                                                  (typeof result?.id === "string" && result.id.startsWith("0x") ? result.id : undefined)
+                                                );
+                                                const detectedProvider = (
+                                                  result?.provider ||
+                                                  result?.onRampProvider ||
+                                                  result?.quote?.provider ||
+                                                  result?.paymentMethod ||
+                                                  (typeof window !== "undefined" ? (window as any).__lastSelectedOnramp : undefined) ||
+                                                  "crypto"
+                                                );
                                                 const buyer = (account?.address || "").toLowerCase();
                                                 setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
                                                 if (txHash && receiptId) {
-                                                  postStatus("paid", { buyerWallet: buyer, txHash }).catch(e => console.error("[CHECKOUT] Failed:", e));
+                                                  postStatus("paid", { buyerWallet: buyer, txHash: txHash || undefined, detectedCardFunding: detectedProvider, provider: detectedProvider }).catch(e => console.error("[CHECKOUT] Failed:", e));
                                                 } else {
                                                   postStatus("checkout_success", { buyer });
                                                 }
@@ -7145,14 +7182,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         }}
                                         onSuccess={(result: any) => {
                                           console.log("[CHECKOUT] Success:", result);
-                                          const txHash = result?.transactionHash || result?.hash || result?.receipt?.transactionHash || result?.receipt?.hash || result?.transaction?.transactionHash || result?.transaction?.hash;
+                                          const txHash = (
+                                            result?.transactionHash ||
+                                            result?.hash ||
+                                            result?.receipt?.transactionHash ||
+                                            result?.receipt?.hash ||
+                                            result?.transaction?.transactionHash ||
+                                            result?.transaction?.hash ||
+                                            result?.transactionResult?.transactionHash ||
+                                            result?.txHash ||
+                                            result?.onChainTxHash ||
+                                            (typeof result === "string" && result.startsWith("0x") ? result : undefined) ||
+                                            (typeof result?.id === "string" && result.id.startsWith("0x") ? result.id : undefined)
+                                          );
                                           const buyer = (account?.address || "").toLowerCase();
                                           setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
-                                          if (txHash && receiptId) {
-                                            postStatus("paid", { buyerWallet: buyer, txHash }).catch(e => console.error("[CHECKOUT] Failed:", e));
-                                          } else {
-                                            postStatus("checkout_success", { buyer });
-                                          }
+                                          postStatus("paid", { buyerWallet: buyer, txHash: txHash || undefined, status: "paid", detectedCardFunding: "crypto" }).catch(e => console.error("[CHECKOUT] Failed:", e));
                                           try {
                                             fetch("/api/billing/purchase", {
                                               method: "POST",

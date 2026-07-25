@@ -50,6 +50,7 @@ export function useCoinbaseOnrampInterceptor({
         urlStr.includes("coinbase.com/buy")
       ) {
         try {
+          (window as any).__lastSelectedOnramp = "coinbase";
           const parsed = new URL(urlStr);
           // Only append if redirectUrl isn't already set
           if (!parsed.searchParams.has("redirectUrl")) {

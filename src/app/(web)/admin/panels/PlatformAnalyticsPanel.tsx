@@ -3529,13 +3529,19 @@ export default function PlatformAnalyticsPanel() {
 
                         {/* Expanded Technical Investigation Detail panel */}
                         {isExpanded && (() => {
+                          loadSiteConfigForReceipt(r.receiptId, r.wallet || r.merchantWallet, r.brandKey);
+                          const siteCfg = fetchedSiteConfigs[r.receiptId] || r.merchantConfig || r.brandConfig || {};
                           const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status);
-                          const funding = String(r.cardFunding || "").toLowerCase();
-                          const isDebit = funding === "debit";
+                          const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase().trim();
+                          const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
+                          const isCrypto = rawFunding === "crypto" || rawFunding === "usdc" || rawFunding === "web3" || rawFunding === "direct_crypto" || (!!r.transactionHash && (!r.stripeSessionId || r.stripeSessionId === "N/A"));
+                          const isDirectCrypto = isCoinbase || isCrypto;
+
+                          const isDebit = !isDirectCrypto && rawFunding === "debit";
                           const actualSplitAddress = isDebit
-                            ? (r.splitAddressCredit || r.splitAddress)
-                            : (r.splitAddress || r.splitAddressCredit);
-                          const splitBadgeLabel = isDebit ? "Debit Split" : "Credit Split";
+                            ? (siteCfg.splitAddressCredit || r.splitAddressCredit || siteCfg.splitAddress || r.splitAddress || siteCfg.splitAddressCredit || r.merchantConfig?.splitAddressCredit)
+                            : (siteCfg.splitAddress || r.splitAddress || siteCfg.splitAddressCredit || r.splitAddressCredit || siteCfg.splitAddress || r.merchantConfig?.splitAddress);
+                          const splitBadgeLabel = isDebit ? "Debit Split" : (isDirectCrypto ? "Crypto / Coinbase Split" : "Credit Split");
 
                           return (
                             <tr>
@@ -4255,9 +4261,12 @@ export default function PlatformAnalyticsPanel() {
                                      const firstSession = Array.isArray(r.customerSessions) ? r.customerSessions[0] : null;
                                      const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || firstSession?.cardFunding || firstSession?.funding || firstSession?.detectedCardFunding || "").toLowerCase().trim();
 
-                                     // Default to credit card processing unless explicitly identified as debit or ACH
-                                     const isCredit = rawFunding === "credit" || r.isCreditCard === true || (rawFunding !== "debit" && rawFunding !== "us_bank_account" && rawFunding !== "ach");
-                                     const fundingType = (rawFunding || (isCredit ? "credit" : "debit")).toUpperCase();
+                                      const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
+                                      const isCrypto = rawFunding === "crypto" || rawFunding === "usdc" || rawFunding === "web3" || rawFunding === "direct_crypto" || (!!r.transactionHash && (!r.stripeSessionId || r.stripeSessionId === "N/A"));
+                                      const isDirectCrypto = isCoinbase || isCrypto;
+
+                                      const isCredit = !isDirectCrypto && (rawFunding === "credit" || r.isCreditCard === true || (rawFunding !== "debit" && rawFunding !== "us_bank_account" && rawFunding !== "ach"));
+                                      const fundingType = isCoinbase ? "COINBASE ONRAMP" : (isCrypto ? "CRYPTO ONRAMP" : (rawFunding || (isCredit ? "credit" : "debit")).toUpperCase());
                                      
                                      const isFeeMinus = siteCfg.feeMinusEnabled !== undefined
                                        ? !!siteCfg.feeMinusEnabled
@@ -4353,7 +4362,10 @@ export default function PlatformAnalyticsPanel() {
 
                                      const netPayoutUsd = Math.round((onChainSettlementUsd - feeUsd) * 100) / 100;
                                      
-                                     const activeSplitAddress = isCredit ? (r.splitAddressCredit || r.splitAddress) : (r.splitAddress || r.splitAddressCredit);
+                                     const activeSplitAddress = isCredit
+                                       ? (siteCfg.splitAddress || r.splitAddress || siteCfg.splitAddressCredit || r.splitAddressCredit || r.merchantConfig?.splitAddress)
+                                       : (siteCfg.splitAddressCredit || r.splitAddressCredit || siteCfg.splitAddress || r.splitAddress || r.merchantConfig?.splitAddressCredit);
+                                     
                                      const stripeSessionId = r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions[0]?.stripeSessionId) || "N/A";
 
                                      const hasDualFeeConfig = r.creditPresentedFeeBps !== undefined || r.splitConfigCredit !== undefined;
