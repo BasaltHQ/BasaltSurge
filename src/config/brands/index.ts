@@ -110,10 +110,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     defaultMerchantFeeBps: 0,
     unifiedFeeEnabled: false,
     partnerWallet: "0x2367ae402e06edb2460e51f820c09fc885f87b65", // set via Admin API
-    apimCatalog: [
-      // { productId: "prod-payments", aliasName: "Payments API", visible: true },
-      // { productId: "prod-receipts", aliasName: "Receipts API", visible: true },
-    ],
+    apimCatalog: [],
   },
 };
 

@@ -2382,6 +2382,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // ── Stripe Headless Onramp State ──
   const [headlessEmailPrompt, setHeadlessEmailPrompt] = useState(false);
+  const [showUnsupportedLinkModal, setShowUnsupportedLinkModal] = useState(false);
   const [displayError, setDisplayError] = useState<string | null>(null);
   const [copiedWallet, setCopiedWallet] = useState(false);
   const [headlessEmailInput, setHeadlessEmailInput] = useState(() => {
@@ -4010,7 +4011,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         funding: isAch ? "us_bank_account" : undefined,
       });
       postStatus(statusToPost, {
-        txHash,
+          txHash,
         paymentMethod: "stripe_headless",
         stripeSessionId: result.sessionId,
         customerEmail: shipEmail || headlessEmailInput || undefined,
@@ -4020,23 +4021,24 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       });
     },
     onError: (error) => {
-      const errMsg = String(error?.message || "").toLowerCase();
-      const isCancellation = errMsg.includes("cancelled") || errMsg.includes("declined") || errMsg.includes("abandoned");
+      const errMsg = String((error as any)?.message || error || "").toLowerCase();
+      console.error("[STRIPE HEADLESS] Error:", error);
 
-      if (isCancellation) {
-        console.log("[STRIPE HEADLESS] Flow cancelled or abandoned by user, returning to email prompt.");
-        resetHeadlessOnramp();
-        setHeadlessEmailPrompt(true);
-        setHeadlessInitiated(false);
-        return;
+      if (
+        errMsg.includes("support.link.com") ||
+        errMsg.includes("can't support your link account") ||
+        errMsg.includes("unsupportable_customer") ||
+        errMsg.includes("unsupported link account")
+      ) {
+        setShowUnsupportedLinkModal(true);
+      } else {
+        postStatus("failed", { 
+          error: String((error as any)?.message || error),
+          stripeSessionId: headlessSessionId || undefined
+        });
+        setDisplayError((error as any)?.message || String(error) || "An error occurred during payment.");
       }
 
-      console.error("[STRIPE HEADLESS] Error:", error);
-      postStatus("failed", { 
-        error: error.message,
-        stripeSessionId: headlessSessionId || undefined
-      });
-      setDisplayError(error.message || "An error occurred during payment.");
       resetHeadlessOnramp();
       setHeadlessEmailPrompt(true);
       setHeadlessInitiated(false);
@@ -8217,6 +8219,75 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
         </div>
       )}
+      {/* Unsupported Stripe Link Account Custom Modal */}
+      {showUnsupportedLinkModal && (
+        <div className="fixed inset-0 z-[30000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className={`w-full max-w-md p-6 rounded-2xl md:rounded-3xl border shadow-2xl animate-in zoom-in-95 duration-200 ${
+            isLightText ? 'bg-neutral-900 border-white/15 text-white' : 'bg-white border-black/15 text-black'
+          }`}>
+            <div className="flex items-center gap-3.5 mb-4">
+              <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0 text-amber-400">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold tracking-tight">Link Account Unsupported</h3>
+                <p className={`text-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+                  Stripe Link Account Notice
+                </p>
+              </div>
+            </div>
+
+            <div className={`text-xs md:text-sm leading-relaxed p-4 rounded-xl mb-5 border ${
+              isLightText ? 'bg-white/5 border-white/10 text-white/90' : 'bg-black/5 border-black/10 text-black/90'
+            }`}>
+              Stripe Link cannot process 1-click payments for this email account at this time (<span className="font-mono text-amber-400 font-medium">support.link.com</span>).
+              <br /><br />
+              Please enter a different email address to continue with your checkout, or switch payment methods.
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              <button
+                type="button"
+                className="w-full h-11 rounded-xl font-bold text-sm bg-[#635BFF] text-white hover:bg-[#534ae5] transition-all shadow-md active:scale-[0.99] flex items-center justify-center gap-2"
+                onClick={() => {
+                  setShowUnsupportedLinkModal(false);
+                  resetHeadlessOnramp();
+                  setHeadlessEmailInput("");
+                  setShipEmail("");
+                  setHeadlessInitiated(false);
+                  setHeadlessEmailPrompt(true);
+                  if (typeof window !== "undefined") {
+                    sessionStorage.removeItem("stripe_onramp_email");
+                    sessionStorage.removeItem("stripe_onramp_customer_id");
+                    sessionStorage.removeItem("stripe_onramp_oauth_token");
+                  }
+                }}
+              >
+                <span>Use a Different Email</span>
+                <span className="font-bold">→</span>
+              </button>
+
+              <button
+                type="button"
+                className={`w-full h-10 rounded-xl font-semibold text-xs border transition-all ${
+                  isLightText ? 'border-white/15 text-white/70 hover:bg-white/5' : 'border-black/15 text-black/70 hover:bg-black/5'
+                }`}
+                onClick={() => {
+                  setShowUnsupportedLinkModal(false);
+                  resetHeadlessOnramp();
+                  setHeadlessEmailPrompt(false);
+                  setHeadlessInitiated(false);
+                }}
+              >
+                Pay with Crypto Wallet / Alternative
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Connection Mode LED Indicator */}
       {isClientSide && (
         <div
