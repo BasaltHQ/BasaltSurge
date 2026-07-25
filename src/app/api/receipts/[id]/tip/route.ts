@@ -79,9 +79,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             // Priority 2: Fallback to site config
             if (typeof basePlatformFeePct !== "number") {
                 if (cfg) {
-                    const splitCfg = (cfg as any)?.splitConfig;
-                    if (splitCfg && typeof splitCfg === "object") {
-                        const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+                    const isCredit = (receipt.detectedCardFunding || "debit") === "credit";
+                    const basePresentedBps = isCredit
+                        ? ((cfg as any)?.creditPresentedFeeBps ?? (cfg as any)?.presentedFeeBps)
+                        : ((cfg as any)?.presentedFeeBps);
+                    const splitCfg = isCredit
+                        ? ((cfg as any)?.splitConfig || (cfg as any)?.splitConfigCredit)
+                        : ((cfg as any)?.splitConfigCredit || (cfg as any)?.splitConfig);
+                    const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+
+                    if (basePresentedBps !== undefined) {
+                        basePlatformFeePct = (basePresentedBps + partnerBps) / 100;
+                    } else if (splitCfg && typeof splitCfg === "object") {
                         const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
                         const agentBps = Array.isArray(splitCfg.agents)
                             ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
@@ -185,11 +194,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
             let stripeFeePct = activeFunding === "us_bank_account" ? 0.6 : (isCredit ? 3.5 : 2.25);
             if (basePresentedBps !== undefined) {
-                const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
-                const agentBps = splitCfg && Array.isArray(splitCfg.agents)
-                    ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-                    : 0;
-                stripeFeePct = Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
+                stripeFeePct = 0;
             }
             const feePctPlus = feePct + (stripeFeePct / 100);
 
