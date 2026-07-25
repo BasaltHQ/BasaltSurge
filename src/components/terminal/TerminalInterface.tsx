@@ -49,6 +49,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
     const [taxRate, setTaxRate] = useState<number>(0);
     const [hasDefaultTax, setHasDefaultTax] = useState<boolean>(false);
     const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
+    const [unifiedFeeEnabled, setUnifiedFeeEnabled] = useState<boolean>(false);
     const [terminalLogoUrl, setTerminalLogoUrl] = useState<string>(logoUrl || "");
 
     const { pushQRToCustomerScreen, clearCustomerScreen } = useQRCodeDisplay();
@@ -67,10 +68,11 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
             .then((j: any) => {
                 const cfg = j?.config || {};
                 setFeeMinusEnabled(!!cfg?.feeMinusEnabled);
+                setUnifiedFeeEnabled(!!cfg?.unifiedFeeEnabled);
                 const feePct = Math.max(0, Number(cfg?.processingFeePct || 0));
                 setProcessingFeePct(feePct);
 
-                const splitCfg = cfg?.splitConfig;
+                const splitCfg = cfg?.splitConfigCredit || cfg?.splitConfig;
                 const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
                 const presentedFeeBps = cfg?.presentedFeeBps;
 
@@ -590,7 +592,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                                 <span>{formatCurrency(taxConverted, terminalCurrency)}</span>
                             </div>
                             <div className="flex justify-between items-center text-sm">
-                                <span className="text-muted-foreground">Platform ({(basePlatformFeePct + processingFeePct).toFixed(2)}%)</span>
+                                <span className="text-muted-foreground">{unifiedFeeEnabled ? "Fees" : "Platform"} ({(basePlatformFeePct + processingFeePct).toFixed(2)}%)</span>
                                 <span>{formatCurrency(processingFeeConverted, terminalCurrency)}</span>
                             </div>
                             <div className="h-px bg-foreground/10 my-2" />
