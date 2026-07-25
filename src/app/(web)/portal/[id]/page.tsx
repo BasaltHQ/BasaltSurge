@@ -2375,7 +2375,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [shipEmail, setShipEmail] = useState(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
-      return sp.get("stripeEmail") || sp.get("email") || "";
+      return sp.get("stripeEmail") || sp.get("email") || window.localStorage.getItem("stripe_onramp_email") || window.sessionStorage.getItem("stripe_onramp_email") || "";
     }
     return "";
   });
@@ -2387,7 +2387,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [headlessEmailInput, setHeadlessEmailInput] = useState(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
-      return sp.get("stripeEmail") || sp.get("email") || "";
+      return sp.get("stripeEmail") || sp.get("email") || window.localStorage.getItem("stripe_onramp_email") || window.sessionStorage.getItem("stripe_onramp_email") || "";
     }
     return "";
   });
@@ -4244,6 +4244,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
     if (
       configLoaded &&
+      receipt &&
       stripeHeadless &&
       isStripeOnly &&
       paymentReady &&
@@ -4267,6 +4268,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
   }, [
     configLoaded,
+    receipt,
     stripeHeadless,
     stripeOnrampEnabled,
     coinbaseOnrampEnabled,
