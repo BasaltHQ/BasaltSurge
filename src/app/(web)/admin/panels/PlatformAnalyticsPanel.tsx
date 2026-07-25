@@ -159,6 +159,9 @@ interface ReceiptInfo {
   partnerFeeBps?: number;
   platformFeeBps?: number;
   agentFeeBps?: number;
+  creditPartnerFeeBps?: number;
+  creditPlatformFeeBps?: number;
+  creditAgentFeeBps?: number;
   feeMinusEnabled?: boolean;
   merchantWallet?: string;
   stripeChargeAmountUsd?: number | null;
@@ -4274,20 +4277,24 @@ export default function PlatformAnalyticsPanel() {
                                      const basePresentedBps = effectivePresentedFeeBps !== null ? effectivePresentedFeeBps : (hasPresentedBps ? rawPresentedBps : null);
 
                                      const splitCfg = isCredit
-                                       ? (siteCfg.splitConfigCredit || r.splitConfigCredit || r.merchantConfig?.splitConfigCredit || siteCfg.splitConfig || r.splitConfig || r.merchantConfig?.splitConfig)
-                                       : (siteCfg.splitConfig || r.splitConfig || r.merchantConfig?.splitConfig || siteCfg.splitConfigCredit || r.splitConfigCredit || r.merchantConfig?.splitConfigCredit);
+                                       ? (siteCfg.splitConfig || r.splitConfig || r.merchantConfig?.splitConfig || siteCfg.splitConfigCredit || r.splitConfigCredit || r.merchantConfig?.splitConfigCredit)
+                                       : (siteCfg.splitConfigCredit || r.splitConfigCredit || r.merchantConfig?.splitConfigCredit || siteCfg.splitConfig || r.splitConfig || r.merchantConfig?.splitConfig);
 
-                                     const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" 
-                                        ? splitCfg.partnerBps 
-                                        : (siteCfg.partnerFeeBps ?? siteCfg.partnerBps ?? r.partnerFeeBps ?? r.partnerBps ?? r.merchantConfig?.partnerFeeBps ?? r.merchantConfig?.partnerBps ?? 0);
+                                     const partnerBps = isCredit
+                                       ? (splitCfg?.partnerBps ?? siteCfg.creditPartnerFeeBps ?? siteCfg.partnerFeeBps ?? r.creditPartnerFeeBps ?? r.partnerFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? r.merchantConfig?.partnerFeeBps ?? 0)
+                                       : (splitCfg?.partnerBps ?? siteCfg.partnerFeeBps ?? siteCfg.creditPartnerFeeBps ?? r.partnerFeeBps ?? r.creditPartnerFeeBps ?? r.merchantConfig?.partnerFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? 0);
 
-                                     const platformBps = splitCfg && typeof splitCfg.platformBps === "number" 
-                                        ? splitCfg.platformBps 
-                                        : (siteCfg.platformFeeBps ?? siteCfg.platformBps ?? r.platformFeeBps ?? r.platformBps ?? r.merchantConfig?.platformFeeBps ?? r.merchantConfig?.platformBps ?? 0);
+                                     const platformBps = isCredit
+                                       ? (splitCfg?.platformBps ?? siteCfg.creditPlatformFeeBps ?? siteCfg.platformFeeBps ?? r.creditPlatformFeeBps ?? r.platformFeeBps ?? r.merchantConfig?.creditPlatformFeeBps ?? r.merchantConfig?.platformFeeBps ?? 50)
+                                       : (splitCfg?.platformBps ?? siteCfg.platformFeeBps ?? siteCfg.creditPlatformFeeBps ?? r.platformFeeBps ?? r.creditPartnerFeeBps ?? r.merchantConfig?.platformFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? 75);
 
-                                     const agentBps = splitCfg && Array.isArray(splitCfg.agents) && splitCfg.agents.length > 0
-                                        ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-                                        : (siteCfg.agentFeeBps ?? siteCfg.agentBps ?? r.agentFeeBps ?? r.agentBps ?? r.merchantConfig?.agentFeeBps ?? r.merchantConfig?.agentBps ?? 0);
+                                     const agentBps = isCredit
+                                       ? (splitCfg && Array.isArray(splitCfg.agents) && splitCfg.agents.length > 0
+                                           ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+                                           : (siteCfg.creditAgentFeeBps ?? siteCfg.agentFeeBps ?? r.creditAgentFeeBps ?? r.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? 50))
+                                       : (splitCfg && Array.isArray(splitCfg.agents) && splitCfg.agents.length > 0
+                                           ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+                                           : (siteCfg.agentFeeBps ?? siteCfg.creditAgentFeeBps ?? r.agentFeeBps ?? r.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? 150));
 
                                      const stripeCardRatePct = isCredit ? 3.5 : 2.25;
                                       
