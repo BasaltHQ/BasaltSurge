@@ -172,6 +172,8 @@ interface ReceiptInfo {
   onChainTransferredUsd?: number;
   onChainAmountUsd?: number;
   actualTransferredUsd?: number;
+  destinationAmount?: number;
+  destination_amount?: number;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -4315,18 +4317,18 @@ export default function PlatformAnalyticsPanel() {
                                      const catalogItemsSubtotal = rawLineItems
                                        .filter((i: any) => i.label !== "Tax" && i.label !== "Processing Fee" && i.label !== "Gratuity" && i.label !== "Tip" && i.label !== "Shipping")
                                        .reduce((acc: number, i: any) => acc + (Number(i.priceUsd) || 0), 0) || (totalUsd - taxUsd - tipUsd - shippingUsd - processingFeeUsd);
-
                                      // On-chain settlement & Stripe fee resolution
-                                     const recordedOnChain = Number(r.onChainTransferredUsd || r.onChainAmountUsd || r.actualTransferredUsd || firstSession?.netOnChainUsd || firstSession?.amountDelivered || 0);
+                                     const recordedOnChain = Number(
+                                       r.onChainTransferredUsd || r.onChainAmountUsd || r.actualTransferredUsd || r.destinationAmount || r.destination_amount ||
+                                       firstSession?.destinationAmount || firstSession?.destination_amount || firstSession?.destinationTokenAmount || firstSession?.destination_token_amount ||
+                                       firstSession?.transactionDetails?.destinationAmount || firstSession?.transactionDetails?.destination_amount ||
+                                       firstSession?.netOnChainUsd || firstSession?.amountDelivered || firstSession?.cryptoAmount || 0
+                                     );
                                      const stripeCardRatePct = isCredit ? 3.5 : 2.25;
                                      
-                                     const estimatedStripeFee = isCredit
-                                       ? Math.round((stripeProcessedUsd * 0.035 + 0.30) * 100) / 100
-                                       : Math.round((stripeProcessedUsd * 0.0225) * 100) / 100;
-
                                      const onChainSettlementUsd = recordedOnChain > 0
                                        ? recordedOnChain
-                                       : Math.round((stripeProcessedUsd - estimatedStripeFee) * 100) / 100;
+                                       : Math.round((stripeProcessedUsd / (1 + stripeCardRatePct / 100)) * 100) / 100;
 
                                      const stripeFeeDeductionUsd = Math.max(0, Math.round((stripeProcessedUsd - onChainSettlementUsd) * 100) / 100);
 
