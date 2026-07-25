@@ -155,6 +155,9 @@ interface ReceiptInfo {
   platformBps?: number;
   feeMinusEnabled?: boolean;
   merchantWallet?: string;
+  stripeChargeAmountUsd?: number | null;
+  stripeAmountUsd?: number | null;
+  processedAmountUsd?: number | null;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -581,6 +584,27 @@ export default function PlatformAnalyticsPanel() {
   const [safeTokenPrices, setSafeTokenPrices] = useState<Record<string, number>>({ USDC: 1, USDT: 1, cbBTC: 60000, cbXRP: 1.5, SOL: 180, ETH: 3400 });
   const [safeLoading, setSafeLoading] = useState(false);
   const [safeError, setSafeError] = useState<string | null>(null);
+
+  // Site config cache for Fee & Split Breakdown sub-tab
+  const [fetchedSiteConfigs, setFetchedSiteConfigs] = useState<Record<string, any>>({});
+  const siteConfigLoadingRef = useRef<Set<string>>(new Set());
+
+  const loadSiteConfigForReceipt = useCallback((receiptId: string, walletAddr?: string | null, brandKey?: string) => {
+    if (!receiptId || fetchedSiteConfigs[receiptId] || siteConfigLoadingRef.current.has(receiptId)) return;
+    siteConfigLoadingRef.current.add(receiptId);
+    const targetWallet = walletAddr || brandKey || "Check Out";
+    fetch(`/api/site/config?wallet=${encodeURIComponent(targetWallet)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.brandConfig) {
+          setFetchedSiteConfigs(prev => ({ ...prev, [receiptId]: data.brandConfig }));
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        siteConfigLoadingRef.current.delete(receiptId);
+      });
+  }, [fetchedSiteConfigs]);
 
   // Filters
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
@@ -4194,21 +4218,27 @@ export default function PlatformAnalyticsPanel() {
 
                                    {/* Tab 6: Fee & Split Breakdown */}
                                    {rowActiveTab === "fees" && (() => {
+                                     loadSiteConfigForReceipt(r.receiptId, r.wallet || r.merchantWallet, r.brandKey);
+                                     const siteCfg = fetchedSiteConfigs[r.receiptId] || {};
+
                                      const isCredit = r.detectedCardFunding === "credit" || r.isCreditCard === true;
                                      const fundingType = String(r.detectedCardFunding || (isCredit ? "credit" : "debit")).toUpperCase();
-                                     const isFeeMinus = !!r.feeMinusEnabled;
+                                     
+                                     const isFeeMinus = siteCfg.feeMinusEnabled !== undefined
+                                       ? !!siteCfg.feeMinusEnabled
+                                       : (r.feeMinusEnabled !== undefined ? !!r.feeMinusEnabled : true);
                                      
                                      const basePresentedBps = isCredit
-                                       ? (r.creditPresentedFeeBps ?? r.presentedFeeBps)
-                                       : (r.presentedFeeBps);
+                                       ? (siteCfg.creditPresentedFeeBps ?? r.creditPresentedFeeBps ?? siteCfg.presentedFeeBps ?? r.presentedFeeBps)
+                                       : (siteCfg.presentedFeeBps ?? r.presentedFeeBps);
                                      const hasPresentedBps = basePresentedBps !== undefined && basePresentedBps !== null;
 
                                      const splitCfg = isCredit
-                                       ? (r.splitConfig || r.splitConfigCredit)
-                                       : (r.splitConfigCredit || r.splitConfig);
+                                       ? (siteCfg.splitConfigCredit || r.splitConfigCredit || siteCfg.splitConfig || r.splitConfig)
+                                       : (siteCfg.splitConfig || r.splitConfig || siteCfg.splitConfigCredit || r.splitConfigCredit);
 
-                                     const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : (r.partnerBps || 0);
-                                     const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : (r.platformBps || 50);
+                                     const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : (siteCfg.partnerBps || r.partnerBps || 0);
+                                     const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : (siteCfg.platformBps || r.platformBps || 50);
                                      const agentBps = splitCfg && Array.isArray(splitCfg.agents)
                                        ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
                                        : 0;
@@ -4221,6 +4251,12 @@ export default function PlatformAnalyticsPanel() {
                                      }
 
                                      const totalUsd = Number(r.totalUsd || 0);
+                                     const firstSession = Array.isArray(r.customerSessions) ? r.customerSessions[0] : null;
+                                     const stripeSessionCents = firstSession?.amountTotal ?? firstSession?.amount_total;
+                                     const stripeProcessedUsd = typeof stripeSessionCents === "number" && stripeSessionCents > 0
+                                       ? (stripeSessionCents / 100)
+                                       : (r.stripeChargeAmountUsd ?? r.stripeAmountUsd ?? r.processedAmountUsd ?? totalUsd);
+
                                      const stripeFeePct = (isFeeMinus || hasPresentedBps) ? 0 : (isCredit ? 3.5 : 2.25);
                                      
                                      const baseSubtotalUsd = (Array.isArray(r.lineItems) ? r.lineItems : [])
@@ -4228,10 +4264,10 @@ export default function PlatformAnalyticsPanel() {
                                        .reduce((acc: number, i: any) => acc + (Number(i.priceUsd) || 0), 0) || totalUsd;
 
                                      const feeUsd = isFeeMinus 
-                                       ? Math.round(totalUsd * (calculatedFeePct / 100) * 100) / 100
-                                       : Math.round(totalUsd * (calculatedFeePct / (100 + calculatedFeePct)) * 100) / 100;
+                                       ? Math.round(stripeProcessedUsd * (calculatedFeePct / 100) * 100) / 100
+                                       : Math.round(stripeProcessedUsd * (calculatedFeePct / (100 + calculatedFeePct)) * 100) / 100;
                                      
-                                     const netPayoutUsd = isFeeMinus ? Math.max(0, totalUsd - feeUsd) : totalUsd;
+                                     const netPayoutUsd = isFeeMinus ? Math.max(0, stripeProcessedUsd - feeUsd) : stripeProcessedUsd;
                                      const activeSplitAddress = isCredit ? (r.splitAddressCredit || r.splitAddress) : (r.splitAddress || r.splitAddressCredit);
                                      const stripeSessionId = r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions[0]?.stripeSessionId) || "N/A";
 
@@ -4363,7 +4399,7 @@ export default function PlatformAnalyticsPanel() {
                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
                                                <div className="text-[10px] text-muted-foreground uppercase font-bold">Amount Transmitted to Stripe</div>
-                                               <div className="text-base font-extrabold text-blue-400">${totalUsd.toFixed(2)} USD</div>
+                                               <div className="text-base font-extrabold text-blue-400">${stripeProcessedUsd.toFixed(2)} USD</div>
                                                <div className="text-[10px] text-muted-foreground">Exact charge amount sent to API</div>
                                              </div>
 
@@ -4395,17 +4431,19 @@ export default function PlatformAnalyticsPanel() {
                                              </span>
                                            </div>
 
-                                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
+                                           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-center">
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
                                                <div className="text-[10px] text-muted-foreground uppercase font-bold">Customer Paid Total</div>
                                                <div className="text-xl font-extrabold text-white">${totalUsd.toFixed(2)}</div>
                                              </div>
-
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Total Fees Deducted ({calculatedFeePct.toFixed(2)}%)</div>
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Processed by Stripe</div>
+                                               <div className="text-xl font-extrabold text-blue-400">${stripeProcessedUsd.toFixed(2)}</div>
+                                             </div>
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Total Fees ({calculatedFeePct.toFixed(2)}%)</div>
                                                <div className="text-xl font-extrabold text-amber-400">${feeUsd.toFixed(2)}</div>
                                              </div>
-
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
                                                <div className="text-[10px] text-muted-foreground uppercase font-bold">Merchant Net Settlement</div>
                                                <div className="text-xl font-extrabold text-emerald-400">${netPayoutUsd.toFixed(2)}</div>
