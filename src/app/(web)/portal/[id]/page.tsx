@@ -4532,7 +4532,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             container.style.boxShadow = tpShadow;
           }
 
-          // ── Card panels inside portal (.rounded-xl.border etc) ──
+          // ── Card panels inside portal (.rounded-xl.border etc, exclude buttons) ──
           scopeEl.querySelectorAll<HTMLElement>(
             ".pp-portal-container .rounded-xl.border, " +
             ".pp-portal-container .rounded-2xl.border, " +
@@ -4540,6 +4540,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             ".pp-portal-container .rounded-xl.bg-background\\/80, " +
             ".pp-portal-container .rounded-2xl.bg-background\\/70"
           ).forEach(el => {
+            if (el.tagName === 'BUTTON' || el.closest('button')) return;
             el.style.borderColor = tpBorder;
             el.style.borderRadius = tpRadius;
             el.style.backgroundColor = tpBgSurface;
@@ -4551,6 +4552,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           // ── Buttons inside portal ──
           scopeEl.querySelectorAll<HTMLElement>(".pp-portal-container button").forEach(el => {
             el.style.borderRadius = tpBtnRadius;
+          });
+          scopeEl.querySelectorAll<HTMLElement>(".pp-portal-container button.pp-primary-action-btn").forEach(el => {
+            const solidColor = (theme?.primaryColor && typeof theme.primaryColor === "string" && theme.primaryColor.startsWith("#") && !theme.primaryColor.includes("gradient")) ? theme.primaryColor : "#635BFF";
+            el.style.setProperty("background", solidColor, "important");
+            el.style.setProperty("background-color", solidColor, "important");
+            el.style.setProperty("background-image", "none", "important");
+            el.style.setProperty("color", "#ffffff", "important");
+            el.style.setProperty("backdrop-filter", "none", "important");
+            el.style.setProperty("-webkit-backdrop-filter", "none", "important");
           });
 
           // ── Inputs and selects ──
@@ -4564,8 +4574,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             el.style.borderColor = tpBorder;
           });
 
-          // ── Shadow panels ──
+          // ── Shadow panels (exclude buttons) ──
           scopeEl.querySelectorAll<HTMLElement>(".pp-portal-container .shadow-md, .pp-portal-container .shadow-lg, .pp-portal-container .shadow-xl").forEach(el => {
+            if (el.tagName === 'BUTTON' || el.closest('button')) return;
             el.style.backgroundColor = tpBgSurface;
             el.style.borderColor = tpBorder;
             el.style.borderRadius = tpRadius;
@@ -4673,6 +4684,24 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     };
   }, [tpThemeApplied, currency]);
 
+  // ─── SOLID BRAND COLOR RESOLUTION ───
+  const getSolidColor = (raw?: string, fallback = "#635BFF"): string => {
+    if (!raw || typeof raw !== "string") return fallback;
+    const str = raw.trim();
+    if (str.includes("gradient") || str.includes(",")) {
+      const hex = str.match(/#[0-9a-fA-F]{3,8}/);
+      if (hex) return hex[0];
+      const rgb = str.match(/rgba?\([^)]+\)/);
+      if (rgb) return rgb[0];
+      const hsl = str.match(/hsla?\([^)]+\)/);
+      if (hsl) return hsl[0];
+      return fallback;
+    }
+    return str;
+  };
+
+  const primaryColor = getSolidColor(theme.primaryColor, "#635BFF");
+
   // ─── ACH PENDING STATE ───
   const isAchPending = receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending" || ((stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account") && headlessStep === "awaiting_funds");
 
@@ -4691,115 +4720,220 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
             }
           }}
-          className={`w-full rounded-xl border p-5 flex flex-col items-stretch animate-in zoom-in duration-300 backdrop-blur-xl ${isLightText ? 'border-white/5 bg-white/[0.02]' : 'border-black/5 bg-black/[0.02]'}`}
+          className={`w-full rounded-2xl md:rounded-3xl border p-6 md:p-8 flex flex-col items-stretch animate-in zoom-in duration-300 backdrop-blur-2xl shadow-2xl ${
+            isLightText ? 'border-white/10 bg-neutral-900/90 shadow-black/80' : 'border-black/10 bg-white/95 shadow-black/10'
+          }`}
         >
-          <div className="flex justify-between items-center mb-1">
-            <h3 className={`text-base font-bold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>Stripe Quick Checkout</h3>
+          {/* Header Title & Stripe Link Badge */}
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <h3 className={`text-lg md:text-xl font-extrabold tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>
+              Express Checkout
+            </h3>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#00D4B2]/10 border border-[#00D4B2]/25 text-[11px] font-bold tracking-wide select-none">
+              {/* Crisp Official Stripe Link Logo */}
+              <span className="text-[#00D4B2] font-black text-xs tracking-tight flex items-center gap-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#00D4B2] inline-block -mt-1" />
+                <span className="font-extrabold text-white text-xs tracking-tight">link</span>
+              </span>
+              <span className="text-white/50 text-[10.5px] font-medium">by Stripe</span>
+            </span>
           </div>
-          <p className={`text-xs mb-4 ${isLightText ? 'text-white/60' : 'text-black/60'}`}>Verify your identity with Stripe Link to complete your payment.</p>
-          <div className={`flex items-center justify-between p-5 rounded-2xl mb-4 border ${isLightText
-              ? 'bg-white/[0.03] border-white/5 text-white'
-              : 'bg-black/[0.03] border-black/5 text-black'
+          <p className={`text-xs mb-5 ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+            Enter your email to activate 1-click checkout with your saved cards or bank account.
+          </p>
+
+          {/* Payment Methods Badges Bar - Guaranteed Single Row */}
+          <div className={`flex items-center justify-between px-3 py-2 rounded-xl mb-5 border ${
+            isLightText ? 'bg-white/[0.03] border-white/10' : 'bg-black/[0.03] border-black/10'
+          }`}>
+            <span className={`text-[10px] font-bold uppercase tracking-wider shrink-0 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
+              Accepted
+            </span>
+            <div className="flex items-center gap-1.5 flex-nowrap shrink-0">
+              {/* VISA */}
+              <span className="h-5 px-1.5 rounded bg-[#1A1F71] border border-white/10 text-[9px] font-black tracking-widest text-white italic flex items-center select-none shadow-sm shrink-0">
+                VISA
+              </span>
+              {/* Mastercard */}
+              <span className="h-5 px-1.5 rounded bg-neutral-950 border border-white/10 flex items-center gap-0.5 select-none shadow-sm shrink-0">
+                <span className="w-2 h-2 rounded-full bg-[#EB001B] inline-block" />
+                <span className="w-2 h-2 rounded-full bg-[#F79E1B] -ml-1 inline-block mix-blend-screen" />
+              </span>
+              {/* Official Apple Pay Badge */}
+              <span className="h-5 px-1.5 rounded bg-black border border-white/20 flex items-center gap-0.5 select-none shadow-sm shrink-0" title="Apple Pay">
+                <svg className="w-2.5 h-2.5 fill-current text-white shrink-0 inline-block -mt-0.5" viewBox="0 0 24 24">
+                  <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.32c.67-.82 1.12-1.96.99-3.1-.97.04-2.14.65-2.83 1.46-.62.72-1.16 1.88-1.01 3 .01 0 .03 0 .04 0 1.09 0 2.14-.54 2.81-1.36z" />
+                </svg>
+                <span className="text-[9.5px] font-bold tracking-tight text-white leading-none">Pay</span>
+              </span>
+              {/* Google Pay Badge */}
+              <span className="h-5 px-1.5 rounded bg-neutral-900 border border-white/10 text-[9px] font-bold text-white flex items-center select-none shadow-sm shrink-0">
+                <span className="text-blue-400">G</span><span className="text-red-400">P</span><span className="text-yellow-400">a</span><span className="text-green-400">y</span>
+              </span>
+              {/* ACH Bank Badge */}
+              <span className="h-5 px-1.5 rounded bg-emerald-950/80 border border-emerald-500/30 text-[8.5px] font-bold text-emerald-300 flex items-center gap-1 select-none shadow-sm shrink-0" title="ACH Bank Transfer">
+                <svg className="w-2.5 h-2.5 fill-current text-emerald-400 shrink-0" viewBox="0 0 24 24">
+                  <path d="M2 10h20v2H2zm2-7h16l2 4H2zm3 9h2v7H7zm5 0h2v7h-2zm5 0h2v7h-2zm-13 8h16v2H4z"/>
+                </svg>
+                <span>ACH</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Total Amount Glass Box */}
+          <div className={`flex items-center justify-between p-5 rounded-2xl mb-5 border relative overflow-hidden ${
+            isLightText
+              ? 'bg-gradient-to-br from-white/[0.06] to-white/[0.02] border-white/10 text-white shadow-inner'
+              : 'bg-gradient-to-br from-black/[0.06] to-black/[0.02] border-black/10 text-black shadow-inner'
+          }`}>
+            <div>
+              <span className={`text-[10px] font-bold uppercase tracking-wider block ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
+                Total Amount Due
+              </span>
+              <span className="text-[11px] font-medium text-emerald-400 flex items-center gap-1 mt-0.5">
+                <span>🔒</span> End-to-End Encrypted
+              </span>
+            </div>
+            <span className="text-3xl md:text-4xl font-black tracking-tight">{payLabel}</span>
+          </div>
+
+          {/* Email Input Field */}
+          <div className="mb-4">
+            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1.5 ${
+              isLightText ? 'text-white/60' : 'text-black/60'
             }`}>
-            <span className={`text-[13px] font-bold uppercase tracking-wider ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Total Amount</span>
-            <span className={`text-3xl font-black tracking-tight`}>{payLabel}</span>
+              Email Address for Receipt & Order Updates
+            </label>
+            <div className="relative">
+              <input
+                type="email"
+                name="email"
+                autoComplete="email"
+                placeholder="name@example.com"
+                className={`w-full h-12 pl-3.5 pr-4 rounded-xl focus:outline-none transition-all text-sm font-semibold ${
+                  isLightText
+                    ? 'bg-white/5 border border-white/15 text-white placeholder-white/40 focus:border-[#635BFF] focus:bg-white/10 focus:ring-2 focus:ring-[#635BFF]/40'
+                    : 'bg-black/5 border border-black/15 text-black placeholder-black/40 focus:border-[#635BFF] focus:bg-black/10 focus:ring-2 focus:ring-[#635BFF]/40'
+                }`}
+                value={headlessEmailInput}
+                onChange={(e) => setHeadlessEmailInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && isValidEmail(headlessEmailInput)) {
+                    setShipEmail(headlessEmailInput);
+                    setHeadlessInitiated(true);
+                    setHeadlessEmailPrompt(false);
+                    postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
+                    startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
+                  }
+                }}
+                autoFocus
+              />
+            </div>
+            {headlessEmailInput && !isValidEmail(headlessEmailInput) && (
+              <p className="text-[11px] text-red-400 font-medium mt-1.5 ml-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                Please enter a valid email address to continue.
+              </p>
+            )}
           </div>
-          <input
-            type="email"
-            name="email"
-            autoComplete="email"
-            placeholder="Email address"
-            className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${isLightText
-                ? 'bg-white/5 border border-white/10 text-white placeholder-white/75 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
-                : 'bg-black/5 border border-black/10 text-black placeholder-black/75 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
-              }`}
-            value={headlessEmailInput}
-            onChange={(e) => setHeadlessEmailInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && isValidEmail(headlessEmailInput)) {
-                setShipEmail(headlessEmailInput);
-                setHeadlessInitiated(true);
-                setHeadlessEmailPrompt(false);
-                postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
-                startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
-              }
-            }}
-            autoFocus
-          />
-          {headlessEmailInput && !isValidEmail(headlessEmailInput) && (
-            <p className="text-[11px] text-red-500/90 font-medium mb-3.5 -mt-1 ml-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
-              Please enter a valid email address.
-            </p>
-          )}
-          {theme.discretePayWithCrypto ? (
-            <div className="flex flex-col items-stretch">
-              <button
-                className={`w-full py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+
+          {/* Action Buttons */}
+          {(() => {
+            const solidBtnColor = (theme?.primaryColor && typeof theme.primaryColor === "string" && theme.primaryColor.startsWith("#") && !theme.primaryColor.includes("gradient")) ? theme.primaryColor : "#635BFF";
+
+            return theme.discretePayWithCrypto ? (
+              <div className="flex flex-col items-stretch space-y-3 mt-1">
+                <button
+                  type="submit"
+                  className="pp-primary-action-btn w-full h-12 rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2 text-white !text-white shadow-lg hover:brightness-110 active:scale-[0.99] disabled:opacity-40 disabled:hover:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: solidBtnColor,
+                    backgroundColor: solidBtnColor,
+                    backgroundImage: "none",
+                    color: "#ffffff",
+                  }}
+                  disabled={!isValidEmail(headlessEmailInput)}
+                  onClick={() => {
+                    setShipEmail(headlessEmailInput);
+                    setHeadlessInitiated(true);
+                    setHeadlessEmailPrompt(false);
+                    postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
+                    startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
+                  }}
+                >
+                  <span>Continue to Secure Checkout</span>
+                  <span className="text-base font-extrabold">→</span>
+                </button>
+                <button
+                  type="button"
+                  className={`text-xs underline hover:opacity-85 transition-opacity block mx-auto font-semibold py-1 ${
+                    isLightText ? 'text-white/60 hover:text-white' : 'text-black/60 hover:text-black'
                   }`}
-                style={{
-                  backgroundColor: theme.primaryColor || "#635BFF",
-                }}
-                disabled={!isValidEmail(headlessEmailInput)}
-                onClick={() => {
-                  setShipEmail(headlessEmailInput);
-                  setHeadlessInitiated(true);
-                  setHeadlessEmailPrompt(false);
-                  postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
-                  startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
-                }}
-              >
-                Continue
-              </button>
-              <button
-                type="button"
-                className={`text-[11px] underline hover:opacity-85 transition-opacity block mx-auto mt-3.5 font-medium ${isLightText ? 'text-white/50 hover:text-white' : 'text-black/50 hover:text-black'}`}
-                onClick={() => {
-                  setUserOptedOutOfStripeBypass(true);
-                  setHeadlessEmailPrompt(false);
-                  setHeadlessInitiated(false);
-                }}
-              >
-                {stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled
-                  ? "Pay with Crypto Wallet"
-                  : "Cancel"}
-              </button>
-            </div>
-          ) : (
-            <div className="flex gap-3">
-              <button
-                className={`flex-1 py-2.5 rounded-xl font-semibold border transition-all text-xs ${isLightText
-                    ? 'bg-white/[0.03] text-white/80 border-white/5 hover:bg-white/[0.07] hover:text-white'
-                    : 'bg-black/[0.03] text-black/80 border-black/5 hover:bg-black/[0.07] hover:text-black'
+                  onClick={() => {
+                    setUserOptedOutOfStripeBypass(true);
+                    setHeadlessEmailPrompt(false);
+                    setHeadlessInitiated(false);
+                  }}
+                >
+                  {stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled
+                    ? "Pay with Crypto Wallet"
+                    : "Cancel"}
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row gap-3 mt-1">
+                <button
+                  type="button"
+                  className={`sm:flex-1 h-12 rounded-xl font-semibold border transition-all text-xs ${
+                    isLightText
+                      ? 'bg-white/[0.04] text-white/80 border-white/10 hover:bg-white/[0.08] hover:text-white'
+                      : 'bg-black/[0.04] text-black/80 border-black/10 hover:bg-black/[0.08] hover:text-black'
                   }`}
-                onClick={() => {
-                  setUserOptedOutOfStripeBypass(true);
-                  setHeadlessEmailPrompt(false);
-                  setHeadlessInitiated(false);
-                }}
-              >
-                {stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled
-                  ? "Pay with Crypto Wallet"
-                  : "Cancel"}
-              </button>
-              <button
-                className={`flex-1 py-2.5 rounded-xl font-semibold transition-all text-xs hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 shadow-md ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
-                  }`}
-                style={{
-                  backgroundColor: theme.primaryColor || "#635BFF",
-                }}
-                disabled={!isValidEmail(headlessEmailInput)}
-                onClick={() => {
-                  setShipEmail(headlessEmailInput);
-                  setHeadlessInitiated(true);
-                  setHeadlessEmailPrompt(false);
-                  postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
-                  startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
-                }}
-              >
-                Continue
-              </button>
-            </div>
-          )}
+                  onClick={() => {
+                    setUserOptedOutOfStripeBypass(true);
+                    setHeadlessEmailPrompt(false);
+                    setHeadlessInitiated(false);
+                  }}
+                >
+                  {stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled
+                    ? "Pay with Crypto Wallet"
+                    : "Cancel"}
+                </button>
+                <button
+                  type="submit"
+                  className="pp-primary-action-btn sm:flex-1 h-12 rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2 text-white !text-white shadow-lg hover:brightness-110 active:scale-[0.99] disabled:opacity-40 disabled:hover:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: solidBtnColor,
+                    backgroundColor: solidBtnColor,
+                    backgroundImage: "none",
+                    color: "#ffffff",
+                  }}
+                  disabled={!isValidEmail(headlessEmailInput)}
+                  onClick={() => {
+                    setShipEmail(headlessEmailInput);
+                    setHeadlessInitiated(true);
+                    setHeadlessEmailPrompt(false);
+                    postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
+                    startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
+                  }}
+                >
+                  <span>Continue</span>
+                  <span className="text-base font-extrabold">→</span>
+                </button>
+              </div>
+            );
+          })()}
+
+          {/* Footer Security Seal */}
+          <div className="mt-6 pt-4 border-t border-dashed border-white/10 flex items-center justify-center gap-3 text-[11px] text-muted-foreground opacity-75">
+            <span className="flex items-center gap-1">
+              <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              <span>256-Bit SSL Encryption</span>
+            </span>
+            <span>•</span>
+            <span>Powered by Stripe</span>
+          </div>
         </form>
       ) : (
         <div className={`w-full flex flex-col relative transition-all duration-300 ${(headlessAuthElement || headlessPaymentElement)
@@ -5874,7 +6008,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       return `rgba(99, 91, 255, ${opacity})`;
     };
 
-    const primaryColor = theme.primaryColor || '#635BFF';
+    const rawPrimary = theme.primaryColor;
+    const primaryColor = (!rawPrimary || typeof rawPrimary !== "string")
+      ? "#635BFF"
+      : rawPrimary.includes("gradient")
+        ? (rawPrimary.match(/#[0-9a-fA-F]{3,8}|rgba?\([^)]+\)/)?.[0] || "#635BFF")
+        : rawPrimary;
     const accentColor = theme.secondaryColor || primaryColor;
 
     if (isLightBackground) {
@@ -6121,6 +6260,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             }
             ` : ''}
 
+            .pp-portal-container button.pp-primary-action-btn,
+            button.pp-primary-action-btn,
+            .pp-primary-action-btn {
+              background: ${primaryColor && !primaryColor.includes("gradient") ? primaryColor : '#635BFF'} !important;
+              background-color: ${primaryColor && !primaryColor.includes("gradient") ? primaryColor : '#635BFF'} !important;
+              background-image: none !important;
+              color: ${isColorLight(primaryColor && !primaryColor.includes("gradient") ? primaryColor : '#635BFF') ? '#09090b' : '#ffffff'} !important;
+              box-shadow: 0 4px 14px 0 rgba(99, 91, 255, 0.39) !important;
+            }
+
             ${(theme as any).borderRadius ? `
             .pp-portal-container button {
               border-radius: ${(theme as any).borderRadius} !important;
@@ -6129,11 +6278,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             ` : ''}
 
             ${theme.secondaryColor ? `
-            .pp-portal-container button[data-pp-pay],
-            .pp-portal-container button[data-pp-bottom-pay],
-            .pp-portal-container button[class*="bg-gradient"],
-            .pp-portal-container button[class*="w-full"][class*="py-3"],
-            .pp-portal-container button[class*="w-full"][class*="font-bold"] {
+            .pp-portal-container button[data-pp-pay]:not(.pp-primary-action-btn),
+            .pp-portal-container button[data-pp-bottom-pay]:not(.pp-primary-action-btn),
+            .pp-portal-container button[class*="bg-gradient"]:not(.pp-primary-action-btn),
+            .pp-portal-container button[class*="w-full"][class*="py-3"]:not(.pp-primary-action-btn),
+            .pp-portal-container button[class*="w-full"][class*="font-bold"]:not(.pp-primary-action-btn) {
               background: linear-gradient(135deg, ${theme.primaryColor || '#10b981'}, ${theme.secondaryColor}) !important;
               color: #ffffff !important;
               box-shadow: 0 4px 20px ${(theme.primaryColor || '#10b981')}40 !important;
@@ -6296,46 +6445,35 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     zIndex: isTwoColumnLayout && isInvoiceLayout ? 10 : undefined,
                   }}
                 >
-                  <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-xl md:ml-auto" : "w-full"}>
-                    {/* Currency equivalents selector */}
+                  <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-xl md:ml-auto relative" : "w-full relative"}>
+                    {/* Currency equivalents selector - positioned out of flow so only the receipt card is in the vertical centering calculation */}
                     {currencySelectionEnabled && (
-                    <div className="p-3" ref={currencyRef}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="text-sm font-semibold">Order Preview</div>
-                          <div className="microtext text-muted-foreground">
-                            Totals are shown in the selected currency. USD equivalent is shown when applicable.
-                          </div>
+                      <div className="absolute -top-11 left-0 right-0 flex items-center justify-between gap-3 px-1" ref={currencyRef}>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold uppercase tracking-wider opacity-60">Currency</span>
+                          {ratesUpdatedAt && (
+                            <span className="microtext opacity-40">
+                              Updated {ratesUpdatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
                         </div>
-                        <div className="microtext text-muted-foreground">
-                          {ratesUpdatedAt ? `Rates ${ratesUpdatedAt.toLocaleTimeString()}` : "Loading rates…"}
-                        </div>
-                      </div>
-
-                      <div className="mt-3">
-                        <label className="text-xs text-muted-foreground">Select currency</label>
-                        <div className="relative mt-1">
+                        <div className="relative">
                           <button
                             type="button"
                             onClick={() => setCurrencyOpen((v) => !v)}
-                            className="pp-currency-btn h-10 px-3 text-left border transition-colors flex items-center gap-3 w-full"
+                            className="pp-currency-btn h-8 px-2.5 rounded-lg text-xs font-semibold border transition-all flex items-center gap-2 hover:bg-white/5"
                             title="View currency equivalents"
                           >
-                            <span className="inline-flex items-center justify-center">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                alt={currency}
-                                src={getCurrencyFlag(currency)}
-                                className="w-[18px] h-[14px] rounded-[2px] ring-1 ring-foreground/10"
-                              />
-                            </span>
-                            <span className="truncate">
-                              {currency} — {(availableFiatCurrencies as readonly any[]).find((x) => x.code === currency)?.name || ""}
-                            </span>
-                            <span className="ml-auto opacity-70">▾</span>
+                            <img
+                              alt={currency}
+                              src={getCurrencyFlag(currency)}
+                              className="w-4 h-3 rounded-[2px] ring-1 ring-foreground/10 shrink-0"
+                            />
+                            <span>{currency}</span>
+                            <span className="opacity-60 text-[10px]">▾</span>
                           </button>
                           {currencyOpen && (
-                            <div className="pp-currency-menu absolute z-[20005] mt-1 w-full border p-1 max-h-64 overflow-y-auto">
+                            <div className="pp-currency-menu absolute right-0 z-[20005] mt-1 w-56 border p-1 rounded-xl shadow-2xl max-h-64 overflow-y-auto backdrop-blur-2xl">
                               {availableFiatCurrencies.map((c) => (
                                 <button
                                   key={c.code}
@@ -6344,30 +6482,28 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     setCurrency(c.code);
                                     setCurrencyOpen(false);
                                   }}
-                                  className="w-full px-2 py-2 rounded-md hover:bg-white/10 flex items-center gap-2 text-sm transition-colors"
+                                  className="w-full px-2.5 py-1.5 rounded-lg hover:bg-white/10 flex items-center gap-2 text-xs transition-colors text-left"
                                   style={{ color: isLightText ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.9)" }}
                                 >
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
                                   <img
                                     alt={c.code}
                                     src={getCurrencyFlag(c.code)}
-                                    className="w-[18px] h-[14px] rounded-[2px] ring-1 ring-foreground/10"
+                                    className="w-4 h-3 rounded-[2px] ring-1 ring-foreground/10 shrink-0"
                                   />
-                                  <span className="font-medium">{c.code}</span>
-                                  <span className="text-muted-foreground">— {c.name}</span>
+                                  <span className="font-bold">{c.code}</span>
+                                  <span className="opacity-60 truncate">— {c.name}</span>
                                 </button>
                               ))}
                             </div>
                           )}
                         </div>
                       </div>
-                    </div>
                     )}
 
                     {/* Receipt */}
                     <div className={isVibrantLayout 
-                      ? "mt-4 p-6 md:p-8 rounded-3xl bg-background border border-primary/20 shadow-2xl shadow-primary/10 animate-in fade-in slide-in-from-left-4 duration-500" 
-                      : "mt-2 p-3"}>
+                      ? "p-6 md:p-8 rounded-3xl bg-background border border-primary/20 shadow-2xl shadow-primary/10 animate-in fade-in slide-in-from-left-4 duration-500" 
+                      : "p-3"}>
                       <div className="flex items-center gap-3">
                         {getSymbolLogo() && (
                           <div data-pp-logo-wrapper="1" className={`${theme.brandLogoShape === "round" ? "rounded-full" : "rounded-lg"} ${isVibrantLayout ? "w-16 h-16 bg-foreground/5 p-1" : "w-10 h-10 bg-foreground/5"} overflow-hidden grid place-items-center transition-all`}>
@@ -6576,7 +6712,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     borderLeft: isTwoColumnLayout && isInvoiceLayout ? (isLightText ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(0,0,0,0.06)") : undefined,
                   }}
                 >
-                  <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-[428px] md:mr-auto" : "w-full"}>
+                  <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-[490px] md:mr-auto" : "w-full"}>
                     {/* Payment Section */}
                     <div ref={payRef} className={`mt-0 md:mt-0 ${isEmbedded ? "rounded-none border-0 p-0 bg-transparent" : "rounded-2xl border p-3 bg-background/70"} flex flex-col`}>
                       <div ref={widgetRootRef} className={isEmbedded ? "mt-0 rounded-2xl p-3" : "mt-0 rounded-2xl p-3"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
