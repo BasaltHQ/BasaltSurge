@@ -3539,9 +3539,45 @@ export default function PlatformAnalyticsPanel() {
 
                           const isDebit = !isDirectCrypto && rawFunding === "debit";
                           const actualSplitAddress = isDebit
-                            ? (siteCfg.splitAddressCredit || r.splitAddressCredit || siteCfg.splitAddress || r.splitAddress || siteCfg.splitAddressCredit || r.merchantConfig?.splitAddressCredit)
-                            : (siteCfg.splitAddress || r.splitAddress || siteCfg.splitAddressCredit || r.splitAddressCredit || siteCfg.splitAddress || r.merchantConfig?.splitAddress);
-                          const splitBadgeLabel = isDebit ? "Debit Split" : (isDirectCrypto ? "Crypto / Coinbase Split" : "Credit Split");
+                            ? (
+                                siteCfg.splitAddressCredit ||
+                                r.splitAddressCredit ||
+                                siteCfg.splitConfigCredit?.contractAddress ||
+                                siteCfg.splitConfigCredit?.address ||
+                                r.splitConfigCredit?.contractAddress ||
+                                r.splitConfigCredit?.address ||
+                                r.merchantConfig?.splitAddressCredit ||
+                                r.merchantConfig?.splitConfigCredit?.contractAddress ||
+                                r.brandConfig?.splitAddressCredit ||
+                                siteCfg.splitAddress ||
+                                r.splitAddress ||
+                                siteCfg.splitConfig?.contractAddress ||
+                                siteCfg.splitConfig?.address ||
+                                r.splitConfig?.contractAddress ||
+                                r.splitConfig?.address ||
+                                r.merchantConfig?.splitAddress ||
+                                r.brandConfig?.splitAddress
+                              )
+                            : (
+                                siteCfg.splitAddress ||
+                                r.splitAddress ||
+                                siteCfg.splitConfig?.contractAddress ||
+                                siteCfg.splitConfig?.address ||
+                                r.splitConfig?.contractAddress ||
+                                r.splitConfig?.address ||
+                                r.merchantConfig?.splitAddress ||
+                                r.merchantConfig?.splitConfig?.contractAddress ||
+                                r.brandConfig?.splitAddress ||
+                                siteCfg.splitAddressCredit ||
+                                r.splitAddressCredit ||
+                                siteCfg.splitConfigCredit?.contractAddress ||
+                                siteCfg.splitConfigCredit?.address ||
+                                r.splitConfigCredit?.contractAddress ||
+                                r.splitConfigCredit?.address ||
+                                r.merchantConfig?.splitAddressCredit ||
+                                r.brandConfig?.splitAddressCredit
+                              );
+                          const splitBadgeLabel = isDebit ? "Debit Split" : "Credit/Crypto/ACH Split";
 
                           return (
                             <tr>
@@ -4363,8 +4399,44 @@ export default function PlatformAnalyticsPanel() {
                                      const netPayoutUsd = Math.round((onChainSettlementUsd - feeUsd) * 100) / 100;
                                      
                                      const activeSplitAddress = isCredit
-                                       ? (siteCfg.splitAddress || r.splitAddress || siteCfg.splitAddressCredit || r.splitAddressCredit || r.merchantConfig?.splitAddress)
-                                       : (siteCfg.splitAddressCredit || r.splitAddressCredit || siteCfg.splitAddress || r.splitAddress || r.merchantConfig?.splitAddressCredit);
+                                        ? (
+                                            siteCfg.splitAddress ||
+                                            r.splitAddress ||
+                                            siteCfg.splitConfig?.contractAddress ||
+                                            siteCfg.splitConfig?.address ||
+                                            r.splitConfig?.contractAddress ||
+                                            r.splitConfig?.address ||
+                                            r.merchantConfig?.splitAddress ||
+                                            r.merchantConfig?.splitConfig?.contractAddress ||
+                                            r.brandConfig?.splitAddress ||
+                                            siteCfg.splitAddressCredit ||
+                                            r.splitAddressCredit ||
+                                            siteCfg.splitConfigCredit?.contractAddress ||
+                                            siteCfg.splitConfigCredit?.address ||
+                                            r.splitConfigCredit?.contractAddress ||
+                                            r.splitConfigCredit?.address ||
+                                            r.merchantConfig?.splitAddressCredit ||
+                                            r.brandConfig?.splitAddressCredit
+                                          )
+                                        : (
+                                            siteCfg.splitAddressCredit ||
+                                            r.splitAddressCredit ||
+                                            siteCfg.splitConfigCredit?.contractAddress ||
+                                            siteCfg.splitConfigCredit?.address ||
+                                            r.splitConfigCredit?.contractAddress ||
+                                            r.splitConfigCredit?.address ||
+                                            r.merchantConfig?.splitAddressCredit ||
+                                            r.merchantConfig?.splitConfigCredit?.contractAddress ||
+                                            r.brandConfig?.splitAddressCredit ||
+                                            siteCfg.splitAddress ||
+                                            r.splitAddress ||
+                                            siteCfg.splitConfig?.contractAddress ||
+                                            siteCfg.splitConfig?.address ||
+                                            r.splitConfig?.contractAddress ||
+                                            r.splitConfig?.address ||
+                                            r.merchantConfig?.splitAddress ||
+                                            r.brandConfig?.splitAddress
+                                          );
                                      
                                      const stripeSessionId = r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions[0]?.stripeSessionId) || "N/A";
 
