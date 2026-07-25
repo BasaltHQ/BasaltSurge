@@ -2110,7 +2110,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             // Prepopulate stripeEmail if returned from receipt API (making it device-specific)
             const emailVal = rec.stripeEmail || (rec as any).customerEmail || (rec as any).buyerEmail || rec.shippingAddress?.email || "";
             if (emailVal) {
-              const storedEmail = typeof window !== "undefined" ? sessionStorage.getItem("stripe_onramp_email") : null;
+              const storedEmail = typeof window !== "undefined" ? (localStorage.getItem("stripe_onramp_email") || sessionStorage.getItem("stripe_onramp_email")) : null;
               const isFresh = rec.status === "generated" || rec.status === "link_opened";
               const isSameDevice = storedEmail && storedEmail.toLowerCase() === emailVal.toLowerCase();
 

@@ -3,6 +3,37 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { isDualSplitEnabled } from "@/lib/env";
 
+// Safe sessionStorage decorator that redirects persistent user tokens to localStorage to minimize OTP prompts
+const sessionStorageDecorator = {
+  getItem(key: string): string | null {
+    if (typeof window === "undefined") return null;
+    if (key === "stripe_onramp_session_id") {
+      return window.sessionStorage.getItem(key);
+    }
+    return window.localStorage.getItem(key) || window.sessionStorage.getItem(key);
+  },
+  setItem(key: string, value: string): void {
+    if (typeof window === "undefined") return;
+    if (key === "stripe_onramp_session_id") {
+      window.sessionStorage.setItem(key, value);
+      return;
+    }
+    window.localStorage.setItem(key, value);
+    window.sessionStorage.setItem(key, value);
+  },
+  removeItem(key: string): void {
+    if (typeof window === "undefined") return;
+    if (key === "stripe_onramp_session_id") {
+      window.sessionStorage.removeItem(key);
+      return;
+    }
+    window.localStorage.removeItem(key);
+    window.sessionStorage.removeItem(key);
+  }
+};
+// Bind sessionStorage locally in this module to shadow global sessionStorage
+const sessionStorage = sessionStorageDecorator;
+
 /**
  * useStripeEmbeddedOnramp
  * 
@@ -661,6 +692,12 @@ export function useStripeEmbeddedOnramp({
         if (storedWallet) buyerWalletRef.current = storedWallet;
         if (storedSessionId) sessionIdRef.current = storedSessionId;
         if (storedFunding) sessionFundingRef.current = storedFunding;
+
+        // Restore coordinator authenticated state if we have a valid customer session
+        if (storedCustId && storedToken && storedWallet) {
+          isCoordinatorAuthedRef.current = true;
+          console.log("[EMBEDDED ONRAMP] Restored active authenticated session for customer:", storedCustId);
+        }
       }
 
       if (currentEmail && stepRef.current === "idle") {
