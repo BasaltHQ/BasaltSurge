@@ -66,14 +66,21 @@ export function recalculateReceiptForCardFunding(
   const isFeeMinus = !!siteConfig.feeMinusEnabled;
   const isCredit = detectedCardFunding === "credit";
 
-  // Resolve platform + partner + agent fee percent based on the card funding
   let basePlatformFeePct = 0.5; // fallback
   const splitCfg = isCredit
     ? (brandConfigDoc?.splitConfig || siteConfig.splitConfig || brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit)
     : (brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit || brandConfigDoc?.splitConfig || siteConfig.splitConfig);
 
-  if (splitCfg && typeof splitCfg === "object") {
-    const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+  // Resolve basePresentedBps to determine the presented fee component
+  const basePresentedBps = isCredit
+    ? (brandConfigDoc?.creditPresentedFeeBps ?? siteConfig.creditPresentedFeeBps ?? brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps)
+    : (brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps);
+
+  const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+
+  if (basePresentedBps !== undefined) {
+    basePlatformFeePct = (basePresentedBps + partnerBps) / 100;
+  } else if (splitCfg && typeof splitCfg === "object") {
     const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
     const agentBps = Array.isArray(splitCfg.agents)
       ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
@@ -84,12 +91,6 @@ export function recalculateReceiptForCardFunding(
   }
 
   const processingFeePct = typeof siteConfig.processingFeePct === "number" ? siteConfig.processingFeePct : 0;
-  
-  // Resolve basePresentedBps to determine the Stripe component
-  const basePresentedBps = isCredit
-    ? (brandConfigDoc?.creditPresentedFeeBps ?? siteConfig.creditPresentedFeeBps ?? brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps)
-    : (brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps);
-  
 
   // Stripe fee percent: presented fee - platform - agent (from splitConfig)
   let stripeFeePct = 0;
@@ -99,14 +100,9 @@ export function recalculateReceiptForCardFunding(
   if (isStripeHeadless) {
     if (activeFunding === "us_bank_account") {
       stripeFeePct = 0.6;
-    } else if (basePresentedBps !== undefined) {
-      const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
-      const agentBps = splitCfg && Array.isArray(splitCfg.agents)
-        ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-        : 0;
-
-      stripeFeePct = Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
-    } else if (!isFeeMinus) {
+    } else if (isFeeMinus || basePresentedBps !== undefined) {
+      stripeFeePct = 0;
+    } else {
       stripeFeePct = isCredit ? 3.5 : 2.25;
     }
   }
