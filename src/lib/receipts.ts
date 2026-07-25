@@ -69,8 +69,8 @@ export function recalculateReceiptForCardFunding(
   // Resolve platform + partner + agent fee percent based on the card funding
   let basePlatformFeePct = 0.5; // fallback
   const splitCfg = isCredit
-    ? (brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit || brandConfigDoc?.splitConfig || siteConfig.splitConfig)
-    : (brandConfigDoc?.splitConfig || siteConfig.splitConfig || brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit);
+    ? (brandConfigDoc?.splitConfig || siteConfig.splitConfig || brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit)
+    : (brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit || brandConfigDoc?.splitConfig || siteConfig.splitConfig);
 
   if (splitCfg && typeof splitCfg === "object") {
     const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;

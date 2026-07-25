@@ -1962,8 +1962,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     // If credit card is detected and splitConfig is present, calculate using credit config
     const isCredit = detectedCardFunding === "credit";
     const activeSplitConfig = isCredit
-      ? (splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig)
-      : (splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit);
+      ? (splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit)
+      : (splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig);
 
     const partnerBps = activeSplitConfig && typeof activeSplitConfig.partnerBps === "number"
       ? activeSplitConfig.partnerBps
@@ -1992,9 +1992,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Credit fee percentage calculation (presented fee + partner + merchant processing fee)
   // Used for the microtext footnote on the first pane before a card is scanned.
   const creditFeePct = useMemo(() => {
-    const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object"
-      ? splitConfigCredit
-      : splitConfig;
+    const activeSplitConfig = splitConfig && typeof splitConfig === "object"
+      ? splitConfig
+      : splitConfigCredit;
 
     const partnerBps = activeSplitConfig && typeof activeSplitConfig.partnerBps === "number"
       ? activeSplitConfig.partnerBps
@@ -2026,8 +2026,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const actualSplitFeePct = useMemo(() => {
     const isCredit = detectedCardFunding === "credit";
     const activeSplitConfig = isCredit
-      ? (splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig)
-      : (splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit);
+      ? (splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit)
+      : (splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig);
 
     const partnerBps = activeSplitConfig && typeof activeSplitConfig.partnerBps === "number"
       ? activeSplitConfig.partnerBps
@@ -2733,7 +2733,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const debitStripeFeePct = useMemo(() => {
     if (!feeMinusEnabled) return 2.25;
-    const activeSplitConfig = splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit;
+    const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig;
     const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
     const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
       ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
@@ -2744,7 +2744,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const creditStripeFeePct = useMemo(() => {
     if (!feeMinusEnabled) return 3.5;
-    const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig;
+    const activeSplitConfig = splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit;
     const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
     const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
       ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
@@ -2761,12 +2761,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return isCredit ? creditStripeFeePct : debitStripeFeePct;
   }, [detectedCardFunding, achSpeed, debitStripeFeePct, creditStripeFeePct]);
 
-  const processingFeeUsd = useMemo(() => {
+  const activeFeePct = useMemo(() => {
     const hasPresentedBps = presentedFeeBps !== undefined || creditPresentedFeeBps !== undefined;
     const stripePct = (feeMinusEnabled || hasPresentedBps) ? 0 : stripeFeePct;
-    const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct) / 100);
-    return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
-  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps]);
+    return Math.max(0, effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct);
+  }, [effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps]);
+
+  const processingFeeUsd = useMemo(() => {
+    return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * (activeFeePct / 100)).toFixed(2);
+  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, activeFeePct]);
 
   const totalUsd = useMemo(() => {
     if (!receipt) return 0;
@@ -2778,10 +2781,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const creditTotalUsd = useMemo(() => {
     if (feeMinusEnabled) return totalUsd;
-    const creditPct = effectiveBasePlatformFeePct + Number(processingFeePct || 0) + creditStripeFeePct;
+    const creditPct = creditFeePct;
     const creditFeeUsd = +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * (creditPct / 100)).toFixed(2);
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + creditFeeUsd).toFixed(2);
-  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, effectiveBasePlatformFeePct, processingFeePct, creditStripeFeePct, feeMinusEnabled, totalUsd]);
+  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, creditFeePct, feeMinusEnabled, totalUsd]);
 
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
@@ -6502,7 +6505,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         {!feeMinusEnabled && processingFeeUsd > 0 && (
                           <div className="flex items-center justify-between text-sm">
                             <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
-                              <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0) + (feeMinusEnabled ? 0 : stripeFeePct)).toFixed(2)}%)</span>
+                              <span>Processing Fee ({activeFeePct.toFixed(2)}%)</span>
                               {detectedCardFunding && (
                                 <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
                                     {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
@@ -7283,7 +7286,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   {!feeMinusEnabled && processingFeeUsd > 0 && (
                     <div className="flex items-center justify-between text-sm">
                       <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
-                        <span>Processing Fee ({(effectiveBasePlatformFeePct + Number(processingFeePct || 0) + (feeMinusEnabled ? 0 : stripeFeePct)).toFixed(2)}%)</span>
+                        <span>Processing Fee ({activeFeePct.toFixed(2)}%)</span>
                         {detectedCardFunding && (
                           <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
                             {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
