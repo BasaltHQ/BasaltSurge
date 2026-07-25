@@ -196,7 +196,14 @@ export async function GET(req: NextRequest) {
             shopTitle: 1,
             merchantTitle: 1,
             shopifyShop: 1,
-            shopSlug: 1
+            shopSlug: 1,
+            presentedFeeBps: 1,
+            creditPresentedFeeBps: 1,
+            splitConfig: 1,
+            splitConfigCredit: 1,
+            partnerBps: 1,
+            platformBps: 1,
+            feeMinusEnabled: 1
           }
         }
       ).sort({ createdAt: -1 });
@@ -223,7 +230,7 @@ export async function GET(req: NextRequest) {
     } else {
       // Fallback for Cosmos DB
       const querySpec = {
-        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.effectiveProcessingFeeBps, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet, c.shopSlug, c.parentUrl, c.merchantName FROM c WHERE c.type = 'receipt'"
+        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.effectiveProcessingFeeBps, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet, c.shopSlug, c.parentUrl, c.merchantName, c.presentedFeeBps, c.creditPresentedFeeBps, c.splitConfig, c.splitConfigCredit, c.partnerBps, c.platformBps, c.feeMinusEnabled FROM c WHERE c.type = 'receipt'"
       };
       const { resources } = await container.items.query(querySpec).fetchAll();
       allReceiptsLight = resources || [];

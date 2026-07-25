@@ -29,7 +29,10 @@ import {
   Cpu,
   Terminal,
   Database,
-  RotateCcw
+  RotateCcw,
+  Percent,
+  Calculator,
+  CreditCard
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 import RollercoasterOverlay from "../components/RollercoasterOverlay";
@@ -144,6 +147,17 @@ interface ReceiptInfo {
   shopTitle?: string;
   shopName?: string;
   shopifyShop?: string;
+  presentedFeeBps?: number | null;
+  creditPresentedFeeBps?: number | null;
+  splitConfig?: any;
+  splitConfigCredit?: any;
+  partnerBps?: number;
+  platformBps?: number;
+  feeMinusEnabled?: boolean;
+  merchantWallet?: string;
+  stripeChargeAmountUsd?: number | null;
+  stripeAmountUsd?: number | null;
+  processedAmountUsd?: number | null;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -570,6 +584,28 @@ export default function PlatformAnalyticsPanel() {
   const [safeTokenPrices, setSafeTokenPrices] = useState<Record<string, number>>({ USDC: 1, USDT: 1, cbBTC: 60000, cbXRP: 1.5, SOL: 180, ETH: 3400 });
   const [safeLoading, setSafeLoading] = useState(false);
   const [safeError, setSafeError] = useState<string | null>(null);
+
+  // Site config cache for Fee & Split Breakdown sub-tab
+  const [fetchedSiteConfigs, setFetchedSiteConfigs] = useState<Record<string, any>>({});
+  const siteConfigLoadingRef = useRef<Set<string>>(new Set());
+
+  const loadSiteConfigForReceipt = useCallback((receiptId: string, walletAddr?: string | null, brandKey?: string) => {
+    if (!receiptId || fetchedSiteConfigs[receiptId] || siteConfigLoadingRef.current.has(receiptId)) return;
+    siteConfigLoadingRef.current.add(receiptId);
+    const targetWallet = walletAddr || brandKey || "Check Out";
+    fetch(`/api/site/config?wallet=${encodeURIComponent(targetWallet)}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data) {
+          const cfg = { ...data, ...(data.brandConfig || {}) };
+          setFetchedSiteConfigs(prev => ({ ...prev, [receiptId]: cfg }));
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        siteConfigLoadingRef.current.delete(receiptId);
+      });
+  }, [fetchedSiteConfigs]);
 
   // Filters
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
@@ -3127,6 +3163,7 @@ export default function PlatformAnalyticsPanel() {
                                       { id: "origin", label: "Initialization & Origin", icon: Chrome, color: "text-purple-400" },
                                       { id: "logs", label: "Client Diagnostic Logs", icon: Activity, color: "text-amber-400" },
                                       { id: "customers", label: "Customer Metadata", icon: Users, color: "text-teal-400" },
+                                      { id: "fees", label: "Fee & Split Breakdown", icon: Percent, color: "text-amber-400" },
                                     ].map(tab => {
                                       const Icon = tab.icon;
                                       return (
@@ -3481,7 +3518,8 @@ export default function PlatformAnalyticsPanel() {
                                       { id: "items", label: "Items Ordered", icon: FileText },
                                       { id: "origin", label: "Initialization & Origin", icon: Chrome },
                                       { id: "logs", label: "Client Logs", icon: Activity },
-                                      { id: "customers", label: "Customer Metadata", icon: Users }
+                                      { id: "customers", label: "Customer Metadata", icon: Users },
+                                      { id: "fees", label: "Fee & Split Breakdown", icon: Percent }
                                     ].map(tab => {
                                       const Icon = tab.icon;
                                       const isActive = rowActiveTab === tab.id;
@@ -4177,11 +4215,261 @@ export default function PlatformAnalyticsPanel() {
                                         </table>
                                       </div>
                                     </div>
-                                  )}
+                                   )}
 
-                                  {/* Tab 3: Initialization & Origin */}
-                                  {rowActiveTab === "origin" && (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs animate-in fade-in duration-200 mt-1">
+                                   {/* Tab 6: Fee & Split Breakdown */}
+                                   {rowActiveTab === "fees" && (() => {
+                                     loadSiteConfigForReceipt(r.receiptId, r.wallet || r.merchantWallet, r.brandKey);
+                                     const siteCfg = fetchedSiteConfigs[r.receiptId] || {};
+
+                                     const isCredit = r.detectedCardFunding === "credit" || r.isCreditCard === true;
+                                     const fundingType = String(r.detectedCardFunding || (isCredit ? "credit" : "debit")).toUpperCase();
+                                     
+                                     const isFeeMinus = siteCfg.feeMinusEnabled !== undefined
+                                       ? !!siteCfg.feeMinusEnabled
+                                       : (r.feeMinusEnabled !== undefined ? !!r.feeMinusEnabled : true);
+                                     
+                                     const basePresentedBps = isCredit
+                                       ? (siteCfg.creditPresentedFeeBps ?? r.creditPresentedFeeBps ?? siteCfg.presentedFeeBps ?? r.presentedFeeBps)
+                                       : (siteCfg.presentedFeeBps ?? r.presentedFeeBps);
+                                     const hasPresentedBps = basePresentedBps !== undefined && basePresentedBps !== null;
+                                     const splitCfg = isCredit
+                                       ? (siteCfg.splitConfigCredit || r.splitConfigCredit || siteCfg.splitConfig || r.splitConfig)
+                                       : (siteCfg.splitConfig || r.splitConfig || siteCfg.splitConfigCredit || r.splitConfigCredit);
+
+                                     const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : (siteCfg.partnerBps || r.partnerBps || 0);
+                                     const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : (siteCfg.platformBps || r.platformBps || 50);
+                                     const agentBps = splitCfg && Array.isArray(splitCfg.agents)
+                                       ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+                                       : 0;
+
+                                     let calculatedFeePct = 0.5;
+                                     if (hasPresentedBps) {
+                                       calculatedFeePct = (Number(basePresentedBps) + partnerBps) / 100;
+                                     } else if (splitCfg && typeof splitCfg === "object") {
+                                       calculatedFeePct = (partnerBps + platformBps + agentBps) / 100;
+                                     }
+
+                                     const totalUsd = Number(r.totalUsd || 0);
+                                     const firstSession = Array.isArray(r.customerSessions) ? r.customerSessions[0] : null;
+                                     const stripeSessionCents = firstSession?.amountTotal ?? firstSession?.amount_total;
+                                     const stripeProcessedUsd = typeof stripeSessionCents === "number" && stripeSessionCents > 0
+                                       ? (stripeSessionCents / 100)
+                                       : (r.stripeChargeAmountUsd ?? r.stripeAmountUsd ?? r.processedAmountUsd ?? totalUsd);
+
+                                     const stripeCardRatePct = isCredit ? 3.5 : 2.25;
+                                     const stripeFeePct = (isFeeMinus || hasPresentedBps) ? 0 : stripeCardRatePct;
+                                     
+                                     const baseSubtotalUsd = (Array.isArray(r.lineItems) ? r.lineItems : [])
+                                       .filter((i: any) => i.label !== "Tax" && i.label !== "Processing Fee" && i.label !== "Gratuity")
+                                       .reduce((acc: number, i: any) => acc + (Number(i.priceUsd) || 0), 0) || totalUsd;
+
+                                     const netPayoutUsd = isFeeMinus 
+                                       ? Math.round((stripeProcessedUsd / (1 + (calculatedFeePct / 100))) * 100) / 100
+                                       : stripeProcessedUsd;
+
+                                     const feeUsd = isFeeMinus 
+                                       ? Math.round((stripeProcessedUsd - netPayoutUsd) * 100) / 100
+                                       : Math.round((baseSubtotalUsd * (calculatedFeePct / 100)) * 100) / 100;
+                                     
+                                     const activeSplitAddress = isCredit ? (r.splitAddressCredit || r.splitAddress) : (r.splitAddress || r.splitAddressCredit);
+                                     const stripeSessionId = r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions[0]?.stripeSessionId) || "N/A";
+
+                                     const hasDualFeeConfig = r.creditPresentedFeeBps !== undefined || r.splitConfigCredit !== undefined;
+                                     const hasDualSplitContracts = !!(r.splitAddressCredit && r.splitAddressCredit !== r.splitAddress);
+
+                                     return (
+                                       <div className="space-y-4 animate-in fade-in duration-200 mt-1 font-mono text-xs">
+                                         
+                                         {/* Merchant Configuration Badges Header */}
+                                         <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-2">
+                                           <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider flex items-center justify-between">
+                                             <span>Merchant Account Configuration Profile</span>
+                                             <span className="text-[10px] text-emerald-400 font-semibold">Active Database Profile</span>
+                                           </div>
+                                           <div className="flex flex-wrap items-center gap-2">
+                                             <span className={`px-3 py-1 rounded-xl text-xs font-bold border ${isFeeMinus ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : "bg-blue-500/15 text-blue-300 border-blue-500/30"}`}>
+                                               Fee Mode: {isFeeMinus ? "Fee- (Fee Minus)" : "Fee+ (Fee Plus)"}
+                                             </span>
+                                             <span className={`px-3 py-1 rounded-xl text-xs font-bold border ${hasDualFeeConfig ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-purple-500/15 text-purple-300 border-purple-500/30"}`}>
+                                               Rate Structure: {hasDualFeeConfig ? "Dual Fee (Debit vs Credit Separate)" : "Single Unified Fee"}
+                                             </span>
+                                             <span className={`px-3 py-1 rounded-xl text-xs font-bold border ${hasDualSplitContracts ? "bg-purple-500/15 text-purple-300 border-purple-500/30" : "bg-teal-500/15 text-teal-300 border-teal-500/30"}`}>
+                                               Split Mode: {hasDualSplitContracts ? "Dual Split Contracts" : "Single Split Contract"}
+                                             </span>
+                                           </div>
+                                         </div>
+
+                                         {/* Stage 1: Presented Amount & Components */}
+                                         <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
+                                           <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                                             <div className="text-xs font-bold text-white flex items-center gap-2">
+                                               <Percent className="w-4 h-4 text-amber-400" />
+                                               <span>1. Presented Amount & Fee Components</span>
+                                             </div>
+                                             <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                               Presented Rate: {calculatedFeePct.toFixed(2)}%
+                                             </span>
+                                           </div>
+
+                                           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Base Presented Subtotal</div>
+                                               <div className="text-base font-bold text-white">${baseSubtotalUsd.toFixed(2)}</div>
+                                               <div className="text-[10px] text-muted-foreground">Original catalog items presented to buyer</div>
+                                             </div>
+
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Presented BPS Breakdown</div>
+                                               <div className="text-xs text-white/90 space-y-0.5">
+                                                 <div className="flex justify-between">
+                                                   <span>Presented Base:</span>
+                                                   <span className="font-bold text-amber-400">{hasPresentedBps ? `${basePresentedBps} BPS (${(Number(basePresentedBps)/100).toFixed(2)}%)` : "N/A"}</span>
+                                                 </div>
+                                                 <div className="flex justify-between">
+                                                   <span>Partner Share:</span>
+                                                   <span className="font-bold text-blue-400">{partnerBps} BPS ({(partnerBps/100).toFixed(2)}%)</span>
+                                                 </div>
+                                                 <div className="flex justify-between">
+                                                   <span>Platform + Agents:</span>
+                                                   <span>{platformBps + agentBps} BPS ({((platformBps + agentBps)/100).toFixed(2)}%)</span>
+                                                 </div>
+                                               </div>
+                                             </div>
+
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Fee Resolution Mode</div>
+                                               <div className="text-sm font-bold text-amber-300">
+                                                 {hasPresentedBps ? "(PresentedBps + Partner) / 100" : "Split Components Fallback"}
+                                               </div>
+                                               <div className="text-[10px] text-muted-foreground">
+                                                 Mode: <span className="font-bold text-white">{isFeeMinus ? "Fee- (Subtracted)" : "Fee+ (Added On Top)"}</span>
+                                               </div>
+                                             </div>
+                                           </div>
+
+                                           {/* Item Scaling Mathematical Conversion Trace Box */}
+                                           <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-2 pt-3">
+                                             <div className="text-[10px] text-muted-foreground uppercase font-bold flex items-center justify-between">
+                                               <span>Item Scaling & Line Item Mathematical Conversion Trace</span>
+                                               <span className="text-amber-400 font-mono text-[10px]">
+                                                 {isFeeMinus ? `Scale Factor: ${(1 / (1 + (calculatedFeePct / 100))).toFixed(6)}` : "Scale Factor: 1.000000 (Unscaled)"}
+                                               </span>
+                                             </div>
+                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
+                                               {isFeeMinus ? (
+                                                 <>
+                                                   <div className="space-y-1 text-white/90">
+                                                     <div className="text-amber-300 font-bold">Fee- Base Scaling Formula:</div>
+                                                     <div>1. <span className="text-muted-foreground">adjustedBase</span> = customerTotal / (1 + {(calculatedFeePct / 100).toFixed(4)})</div>
+                                                     <div>   = ${stripeProcessedUsd.toFixed(2)} / {(1 + (calculatedFeePct / 100)).toFixed(4)} = <span className="font-bold text-emerald-400">${netPayoutUsd.toFixed(2)}</span></div>
+                                                   </div>
+                                                   <div className="space-y-1 text-white/90">
+                                                     <div className="text-amber-300 font-bold">Fee Absorption & Scaling Trace:</div>
+                                                     <div>2. <span className="text-muted-foreground">feeAbsorbed</span> = customerTotal - adjustedBase = <span className="font-bold text-amber-400">${feeUsd.toFixed(2)}</span></div>
+                                                     <div>3. <span className="text-muted-foreground">lineItemScale</span> = adjustedBase / customerTotal = <span className="font-bold text-blue-400">{((netPayoutUsd / (stripeProcessedUsd || 1)) * 100).toFixed(2)}%</span></div>
+                                                   </div>
+                                                 </>
+                                               ) : (
+                                                 <>
+                                                   <div className="space-y-1 text-white/90">
+                                                     <div className="text-blue-300 font-bold">Fee+ Addition Formula:</div>
+                                                     <div>1. <span className="text-muted-foreground">feeAdded</span> = baseSubtotal * {(calculatedFeePct / 100).toFixed(4)}</div>
+                                                     <div>   = ${baseSubtotalUsd.toFixed(2)} * {(calculatedFeePct / 100).toFixed(4)} = <span className="font-bold text-amber-400">${feeUsd.toFixed(2)}</span></div>
+                                                   </div>
+                                                   <div className="space-y-1 text-white/90">
+                                                     <div className="text-blue-300 font-bold">Customer Total Trace:</div>
+                                                     <div>2. <span className="text-muted-foreground">customerTotal</span> = baseSubtotal + feeAdded = <span className="font-bold text-emerald-400">${(baseSubtotalUsd + feeUsd).toFixed(2)}</span></div>
+                                                     <div>3. <span className="text-muted-foreground">lineItemScale</span> = <span className="font-bold text-blue-400">100.00% (No item scaling required)</span></div>
+                                                   </div>
+                                                 </>
+                                               )}
+                                             </div>
+                                           </div>
+                                         </div>
+
+                                         {/* Stage 2: Processed Amount Sent to Stripe */}
+                                         <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
+                                           <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                                             <div className="text-xs font-bold text-white flex items-center gap-2">
+                                               <CreditCard className="w-4 h-4 text-blue-400" />
+                                               <span>2. Processed Amount Sent to Stripe</span>
+                                             </div>
+                                             <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                                               Funding: {fundingType}
+                                             </span>
+                                           </div>
+
+                                           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Amount Transmitted to Stripe</div>
+                                               <div className="text-base font-extrabold text-blue-400">${stripeProcessedUsd.toFixed(2)} USD</div>
+                                               <div className="text-[10px] text-muted-foreground">Exact charge amount sent to API</div>
+                                             </div>
+
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Card Rate & Fee Add-On</div>
+                                               <div className="text-base font-bold text-white">{stripeCardRatePct.toFixed(2)}% Card Rate</div>
+                                               <div className="text-[10px] text-muted-foreground">
+                                                 {isFeeMinus ? "0.00% Add-On (Fee- Merchant Absorbed)" : `${stripeFeePct.toFixed(2)}% Added to customer`}
+                                               </div>
+                                             </div>
+
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Onramp Session ID</div>
+                                               <div className="text-xs text-white/90 truncate font-mono">{stripeSessionId}</div>
+                                               <div className="text-[10px] text-muted-foreground">Card: {isCredit ? "Credit SplitConfig" : "Debit SplitConfig"}</div>
+                                             </div>
+                                           </div>
+                                         </div>
+
+                                         {/* Stage 3: Final Totals & Payout Summary (Including Stripe) */}
+                                         <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
+                                           <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                                             <div className="text-xs font-bold text-white flex items-center gap-2">
+                                               <Calculator className="w-4 h-4 text-emerald-400" />
+                                               <span>3. Final Totals & Net Payout Summary (Including Stripe)</span>
+                                             </div>
+                                             <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                               Net Payout: ${netPayoutUsd.toFixed(2)}
+                                             </span>
+                                           </div>
+
+                                           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-center">
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Customer Paid Total</div>
+                                               <div className="text-xl font-extrabold text-white">${totalUsd.toFixed(2)}</div>
+                                             </div>
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Processed by Stripe</div>
+                                               <div className="text-xl font-extrabold text-blue-400">${stripeProcessedUsd.toFixed(2)}</div>
+                                             </div>
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Total Fees ({calculatedFeePct.toFixed(2)}%)</div>
+                                               <div className="text-xl font-extrabold text-amber-400">${feeUsd.toFixed(2)}</div>
+                                             </div>
+                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Merchant Net Settlement</div>
+                                               <div className="text-xl font-extrabold text-emerald-400">${netPayoutUsd.toFixed(2)}</div>
+                                             </div>
+                                           </div>
+
+                                           {/* Smart Contract Split Target */}
+                                           {activeSplitAddress && (
+                                             <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px]">
+                                               <span className="text-muted-foreground">Smart Contract Split Address:</span>
+                                               <span className="font-bold text-purple-300 font-mono">{activeSplitAddress}</span>
+                                             </div>
+                                           )}
+                                         </div>
+
+                                       </div>
+                                     );
+                                   })()}
+
+                                   {/* Tab 3: Initialization & Origin */}
+                                   {rowActiveTab === "origin" && (
+                                     <div className="space-y-4 animate-in fade-in duration-200 mt-1">
                                       <div className="space-y-2">
                                         <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Site Initialized On</div>
                                         <div className="flex items-center gap-2 bg-black/30 p-3 rounded-2xl border border-white/10">
