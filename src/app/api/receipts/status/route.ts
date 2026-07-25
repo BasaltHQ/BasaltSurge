@@ -5,7 +5,7 @@ import { requireThirdwebAuth, assertOwnershipOrAdmin } from "@/lib/auth";
 import { requireCsrf, rateLimitOrThrow, rateKey } from "@/lib/security";
 import { auditEvent } from "@/lib/audit";
 import { requireApimOrJwt } from "@/lib/gateway-auth";
-import crypto from "node:crypto";
+import * as crypto from "crypto";
 import { getBrandKey } from "@/config/brands";
 import { dispatchWebhookAsync, type WebhookPayload } from "@/lib/webhook-dispatch";
 
@@ -91,12 +91,15 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const receiptId = String(body.receiptId || "").trim();
     const wallet = String(body.wallet || "").toLowerCase();
-    const status = String(body.status || "").trim();
+    const rawStatus = String(body.status || "").trim();
+    // Standardize checkout_success to paid for consistent reporting across system
+    const status = rawStatus === "checkout_success" ? "paid" : rawStatus;
     const buyerWallet = typeof body.buyerWallet === "string" ? String(body.buyerWallet).toLowerCase() : undefined;
     const shopSlug = typeof body.shopSlug === "string" ? String(body.shopSlug).toLowerCase() : undefined;
-    // Optional tx hash from client/webhook
-    const txHashIn = typeof body.txHash === "string" ? String(body.txHash).trim().toLowerCase() : undefined;
-    const txHash = txHashIn && /^0x[a-f0-9]{64}$/i.test(txHashIn) ? txHashIn : undefined;
+    // Optional tx hash from client/webhook (accept txHash, transactionHash, hash, onChainTxHash, tx)
+    const rawTxHash = body.txHash || body.transactionHash || body.hash || body.onChainTxHash || body.tx;
+    const txHashIn = typeof rawTxHash === "string" ? String(rawTxHash).trim() : undefined;
+    const txHash = txHashIn && /^0x[a-f0-9]{64}$/i.test(txHashIn) ? txHashIn.toLowerCase() : undefined;
     const txTs = txHash ? Date.now() : undefined;
     // Optional expected payment metadata at checkout initialization
     const expectedToken = typeof body.expectedToken === "string" ? String(body.expectedToken).toUpperCase() : undefined;
@@ -104,9 +107,14 @@ export async function POST(req: NextRequest) {
     const expectedUsd = typeof body.expectedUsd === "number" ? Number(body.expectedUsd) : undefined;
     const stripeSessionId = typeof body.stripeSessionId === "string" ? String(body.stripeSessionId).trim() : undefined;
     const customerEmail = typeof body.customerEmail === "string" ? String(body.customerEmail).trim().toLowerCase() : undefined;
+    
+    const isCryptoPayment = !!txHash || body.paymentMethod === "crypto" || body.funding === "crypto" || body.detectedCardFunding === "crypto" || body.detectedCardFunding === "coinbase" || body.isCrypto === true;
+
     let detectedCardFunding = typeof body.detectedCardFunding === "string" ? String(body.detectedCardFunding).trim().toLowerCase() : undefined;
     let isCreditCard = typeof body.isCreditCard === "boolean" ? body.isCreditCard : undefined;
-    if (status === "paid - ach pending" || status === "ach_pending") {
+    if (isCryptoPayment && !stripeSessionId) {
+      detectedCardFunding = "crypto";
+    } else if (status === "paid - ach pending" || status === "ach_pending") {
       detectedCardFunding = "us_bank_account";
       isCreditCard = false;
     }
@@ -268,6 +276,11 @@ export async function POST(req: NextRequest) {
           ...(failureReason ? { failureReason } : {}),
           ...(body.kycLevel ? { kycLevel: String(body.kycLevel).trim() } : {}),
           ...(typeof body.kycOccurred === "boolean" ? { kycOccurred: body.kycOccurred } : {}),
+          // Persist smart contract split addresses and configs
+          ...(resource?.splitAddress ? { splitAddress: resource.splitAddress } : {}),
+          ...(resource?.splitAddressCredit ? { splitAddressCredit: resource.splitAddressCredit } : {}),
+          ...(resource?.splitConfig ? { splitConfig: resource.splitConfig } : {}),
+          ...(resource?.splitConfigCredit ? { splitConfigCredit: resource.splitConfigCredit } : {}),
         }
         : {
           id,

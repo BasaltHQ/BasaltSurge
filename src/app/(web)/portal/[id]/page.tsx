@@ -2382,6 +2382,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // ── Stripe Headless Onramp State ──
   const [headlessEmailPrompt, setHeadlessEmailPrompt] = useState(false);
+  const [showUnsupportedLinkModal, setShowUnsupportedLinkModal] = useState(false);
   const [displayError, setDisplayError] = useState<string | null>(null);
   const [copiedWallet, setCopiedWallet] = useState(false);
   const [headlessEmailInput, setHeadlessEmailInput] = useState(() => {
@@ -3849,6 +3850,29 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return () => { try { mo.disconnect(); } catch { }; clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, [effectiveSecondaryColor, theme.secondaryColor, stripeOnrampEnabled, coinbaseOnrampEnabled, transakOnrampEnabled, rampnowOnrampEnabled, isExplicitlyUnsupportedRegion]);
 
+  // ── Global Onramp Click Tracker ──
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleGlobalClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const text = (target.textContent || "").toLowerCase();
+      const parentText = (target.parentElement?.textContent || "").toLowerCase();
+      const combined = `${text} ${parentText}`;
+      if (combined.includes("coinbase")) {
+        (window as any).__lastSelectedOnramp = "coinbase";
+      } else if (combined.includes("stripe") || combined.includes("card")) {
+        (window as any).__lastSelectedOnramp = "stripe";
+      } else if (combined.includes("transak")) {
+        (window as any).__lastSelectedOnramp = "transak";
+      } else if (combined.includes("moonpay")) {
+        (window as any).__lastSelectedOnramp = "moonpay";
+      }
+    };
+    window.addEventListener("click", handleGlobalClick, true);
+    return () => window.removeEventListener("click", handleGlobalClick, true);
+  }, []);
+
   // ── Thirdweb Bruteforce DOM Overrides ──
   // Thirdweb's Emotion CSS-in-JS aggressively overrides injected stylesheets with inline or high-specificity classes.
   // We use a MutationObserver to forcibly apply the theme text color to the back button SVG paths natively on the DOM nodes.
@@ -4010,7 +4034,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         funding: isAch ? "us_bank_account" : undefined,
       });
       postStatus(statusToPost, {
-        txHash,
+          txHash,
         paymentMethod: "stripe_headless",
         stripeSessionId: result.sessionId,
         customerEmail: shipEmail || headlessEmailInput || undefined,
@@ -4020,23 +4044,24 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       });
     },
     onError: (error) => {
-      const errMsg = String(error?.message || "").toLowerCase();
-      const isCancellation = errMsg.includes("cancelled") || errMsg.includes("declined") || errMsg.includes("abandoned");
+      const errMsg = String((error as any)?.message || error || "").toLowerCase();
+      console.error("[STRIPE HEADLESS] Error:", error);
 
-      if (isCancellation) {
-        console.log("[STRIPE HEADLESS] Flow cancelled or abandoned by user, returning to email prompt.");
-        resetHeadlessOnramp();
-        setHeadlessEmailPrompt(true);
-        setHeadlessInitiated(false);
-        return;
+      if (
+        errMsg.includes("support.link.com") ||
+        errMsg.includes("can't support your link account") ||
+        errMsg.includes("unsupportable_customer") ||
+        errMsg.includes("unsupported link account")
+      ) {
+        setShowUnsupportedLinkModal(true);
+      } else {
+        postStatus("failed", { 
+          error: String((error as any)?.message || error),
+          stripeSessionId: headlessSessionId || undefined
+        });
+        setDisplayError((error as any)?.message || String(error) || "An error occurred during payment.");
       }
 
-      console.error("[STRIPE HEADLESS] Error:", error);
-      postStatus("failed", { 
-        error: error.message,
-        stripeSessionId: headlessSessionId || undefined
-      });
-      setDisplayError(error.message || "An error occurred during payment.");
       resetHeadlessOnramp();
       setHeadlessEmailPrompt(true);
       setHeadlessInitiated(false);
@@ -7060,12 +7085,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                                   feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
                                                   shipping: {
                                                     name: shipName,
-                                                    line1: shipLine1,
-                                                    line2: shipLine2,
-                                                    city: shipCity,
-                                                    state: shipState,
-                                                    zip: shipZip,
-                                                    country: shipCountry,
                                                     method: shipMethod,
                                                     costUsd: shippingCostUsd,
                                                   }
@@ -7073,11 +7092,31 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                               }}
                                               onSuccess={(result: any) => {
                                                 console.log("[CHECKOUT] Success:", result);
-                                                const txHash = result?.transactionHash || result?.hash || result?.receipt?.transactionHash || result?.receipt?.hash || result?.transaction?.transactionHash || result?.transaction?.hash;
+                                                const txHash = (
+                                                  result?.transactionHash ||
+                                                  result?.hash ||
+                                                  result?.receipt?.transactionHash ||
+                                                  result?.receipt?.hash ||
+                                                  result?.transaction?.transactionHash ||
+                                                  result?.transaction?.hash ||
+                                                  result?.transactionResult?.transactionHash ||
+                                                  result?.txHash ||
+                                                  result?.onChainTxHash ||
+                                                  (typeof result === "string" && result.startsWith("0x") ? result : undefined) ||
+                                                  (typeof result?.id === "string" && result.id.startsWith("0x") ? result.id : undefined)
+                                                );
+                                                const detectedProvider = (
+                                                  result?.provider ||
+                                                  result?.onRampProvider ||
+                                                  result?.quote?.provider ||
+                                                  result?.paymentMethod ||
+                                                  (typeof window !== "undefined" ? (window as any).__lastSelectedOnramp : undefined) ||
+                                                  "crypto"
+                                                );
                                                 const buyer = (account?.address || "").toLowerCase();
                                                 setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
                                                 if (txHash && receiptId) {
-                                                  postStatus("paid", { buyerWallet: buyer, txHash }).catch(e => console.error("[CHECKOUT] Failed:", e));
+                                                  postStatus("paid", { buyerWallet: buyer, txHash: txHash || undefined, detectedCardFunding: detectedProvider, provider: detectedProvider }).catch(e => console.error("[CHECKOUT] Failed:", e));
                                                 } else {
                                                   postStatus("checkout_success", { buyer });
                                                 }
@@ -7143,14 +7182,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         }}
                                         onSuccess={(result: any) => {
                                           console.log("[CHECKOUT] Success:", result);
-                                          const txHash = result?.transactionHash || result?.hash || result?.receipt?.transactionHash || result?.receipt?.hash || result?.transaction?.transactionHash || result?.transaction?.hash;
+                                          const txHash = (
+                                            result?.transactionHash ||
+                                            result?.hash ||
+                                            result?.receipt?.transactionHash ||
+                                            result?.receipt?.hash ||
+                                            result?.transaction?.transactionHash ||
+                                            result?.transaction?.hash ||
+                                            result?.transactionResult?.transactionHash ||
+                                            result?.txHash ||
+                                            result?.onChainTxHash ||
+                                            (typeof result === "string" && result.startsWith("0x") ? result : undefined) ||
+                                            (typeof result?.id === "string" && result.id.startsWith("0x") ? result.id : undefined)
+                                          );
                                           const buyer = (account?.address || "").toLowerCase();
                                           setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
-                                          if (txHash && receiptId) {
-                                            postStatus("paid", { buyerWallet: buyer, txHash }).catch(e => console.error("[CHECKOUT] Failed:", e));
-                                          } else {
-                                            postStatus("checkout_success", { buyer });
-                                          }
+                                          postStatus("paid", { buyerWallet: buyer, txHash: txHash || undefined, status: "paid", detectedCardFunding: "crypto" }).catch(e => console.error("[CHECKOUT] Failed:", e));
                                           try {
                                             fetch("/api/billing/purchase", {
                                               method: "POST",
@@ -8217,6 +8264,75 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
         </div>
       )}
+      {/* Unsupported Stripe Link Account Custom Modal */}
+      {showUnsupportedLinkModal && (
+        <div className="fixed inset-0 z-[30000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className={`w-full max-w-md p-6 rounded-2xl md:rounded-3xl border shadow-2xl animate-in zoom-in-95 duration-200 ${
+            isLightText ? 'bg-neutral-900 border-white/15 text-white' : 'bg-white border-black/15 text-black'
+          }`}>
+            <div className="flex items-center gap-3.5 mb-4">
+              <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0 text-amber-400">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold tracking-tight">Link Account Unsupported</h3>
+                <p className={`text-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+                  Stripe Link Account Notice
+                </p>
+              </div>
+            </div>
+
+            <div className={`text-xs md:text-sm leading-relaxed p-4 rounded-xl mb-5 border ${
+              isLightText ? 'bg-white/5 border-white/10 text-white/90' : 'bg-black/5 border-black/10 text-black/90'
+            }`}>
+              Stripe Link cannot process 1-click payments for this email account at this time (<span className="font-mono text-amber-400 font-medium">support.link.com</span>).
+              <br /><br />
+              Please enter a different email address to continue with your checkout, or switch payment methods.
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              <button
+                type="button"
+                className="w-full h-11 rounded-xl font-bold text-sm bg-[#635BFF] text-white hover:bg-[#534ae5] transition-all shadow-md active:scale-[0.99] flex items-center justify-center gap-2"
+                onClick={() => {
+                  setShowUnsupportedLinkModal(false);
+                  resetHeadlessOnramp();
+                  setHeadlessEmailInput("");
+                  setShipEmail("");
+                  setHeadlessInitiated(false);
+                  setHeadlessEmailPrompt(true);
+                  if (typeof window !== "undefined") {
+                    sessionStorage.removeItem("stripe_onramp_email");
+                    sessionStorage.removeItem("stripe_onramp_customer_id");
+                    sessionStorage.removeItem("stripe_onramp_oauth_token");
+                  }
+                }}
+              >
+                <span>Use a Different Email</span>
+                <span className="font-bold">→</span>
+              </button>
+
+              <button
+                type="button"
+                className={`w-full h-10 rounded-xl font-semibold text-xs border transition-all ${
+                  isLightText ? 'border-white/15 text-white/70 hover:bg-white/5' : 'border-black/15 text-black/70 hover:bg-black/5'
+                }`}
+                onClick={() => {
+                  setShowUnsupportedLinkModal(false);
+                  resetHeadlessOnramp();
+                  setHeadlessEmailPrompt(false);
+                  setHeadlessInitiated(false);
+                }}
+              >
+                Pay with Crypto Wallet / Alternative
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Connection Mode LED Indicator */}
       {isClientSide && (
         <div

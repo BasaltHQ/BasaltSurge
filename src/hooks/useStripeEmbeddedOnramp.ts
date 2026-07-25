@@ -267,7 +267,7 @@ export type UseStripeEmbeddedOnrampProps = {
     targetSplitAddress?: string;
   }) => void;
   /** Error callback */
-  onError?: (error: Error) => void;
+  onError?: (error: Error | string) => void;
   /** Step change callback */
   onStepChange?: (step: OnrampStep) => void;
   /** Card detected callback */
@@ -1066,10 +1066,11 @@ export function useStripeEmbeddedOnramp({
     isRunningRef.current = false;
     
     const isCancellation = friendlyMessage.toLowerCase().includes("cancelled") || 
-                           friendlyMessage.toLowerCase().includes("declined") || 
+                           friendlyMessage.toLowerCase().includes("user_cancel") ||
                            friendlyMessage.toLowerCase().includes("abandoned");
 
-    setError(isCancellation ? null : friendlyMessage);
+    setError(friendlyMessage);
+    onErrorRef.current?.(err instanceof Error ? err : new Error(friendlyMessage));
     setAuthElement(null);
     setPaymentElement(null);
     if (detectedCardFunding !== "us_bank_account") {

@@ -151,13 +151,32 @@ interface ReceiptInfo {
   creditPresentedFeeBps?: number | null;
   splitConfig?: any;
   splitConfigCredit?: any;
+  merchantConfig?: any;
+  brandConfig?: any;
   partnerBps?: number;
   platformBps?: number;
+  agentBps?: number;
+  partnerFeeBps?: number;
+  platformFeeBps?: number;
+  agentFeeBps?: number;
+  creditPartnerFeeBps?: number;
+  creditPlatformFeeBps?: number;
+  creditAgentFeeBps?: number;
   feeMinusEnabled?: boolean;
   merchantWallet?: string;
   stripeChargeAmountUsd?: number | null;
   stripeAmountUsd?: number | null;
   processedAmountUsd?: number | null;
+  taxAmount?: number;
+  tipAmount?: number;
+  gratuity?: number;
+  shippingCostUsd?: number;
+  shippingAmount?: number;
+  onChainTransferredUsd?: number;
+  onChainAmountUsd?: number;
+  actualTransferredUsd?: number;
+  destinationAmount?: number;
+  destination_amount?: number;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -592,12 +611,24 @@ export default function PlatformAnalyticsPanel() {
   const loadSiteConfigForReceipt = useCallback((receiptId: string, walletAddr?: string | null, brandKey?: string) => {
     if (!receiptId || fetchedSiteConfigs[receiptId] || siteConfigLoadingRef.current.has(receiptId)) return;
     siteConfigLoadingRef.current.add(receiptId);
-    const targetWallet = walletAddr || brandKey || "Check Out";
-    fetch(`/api/site/config?wallet=${encodeURIComponent(targetWallet)}`)
+    
+    const params = new URLSearchParams();
+    if (walletAddr && (walletAddr.startsWith("0x") || walletAddr.length > 20)) {
+      params.set("wallet", walletAddr);
+    }
+    if (brandKey) {
+      params.set("brandKey", brandKey);
+    }
+    if (!params.has("wallet") && !params.has("brandKey")) {
+      params.set("brandKey", "basaltsurge");
+    }
+
+    fetch(`/api/site/config?${params.toString()}`)
       .then(res => res.json())
       .then(data => {
         if (data) {
-          const cfg = { ...data, ...(data.brandConfig || {}) };
+          const rawCfg = data.config || data;
+          const cfg = { ...rawCfg, ...(rawCfg.brandConfig || {}), ...(rawCfg.merchantConfig || {}) };
           setFetchedSiteConfigs(prev => ({ ...prev, [receiptId]: cfg }));
         }
       })
@@ -3498,13 +3529,55 @@ export default function PlatformAnalyticsPanel() {
 
                         {/* Expanded Technical Investigation Detail panel */}
                         {isExpanded && (() => {
+                          loadSiteConfigForReceipt(r.receiptId, r.wallet || r.merchantWallet, r.brandKey);
+                          const siteCfg = fetchedSiteConfigs[r.receiptId] || r.merchantConfig || r.brandConfig || {};
                           const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status);
-                          const funding = String(r.cardFunding || "").toLowerCase();
-                          const isDebit = funding === "debit";
+                          const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase().trim();
+                          const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
+                          const isCrypto = rawFunding === "crypto" || rawFunding === "usdc" || rawFunding === "web3" || rawFunding === "direct_crypto" || (!!r.transactionHash && (!r.stripeSessionId || r.stripeSessionId === "N/A"));
+                          const isDirectCrypto = isCoinbase || isCrypto;
+
+                          const isDebit = !isDirectCrypto && rawFunding === "debit";
                           const actualSplitAddress = isDebit
-                            ? (r.splitAddressCredit || r.splitAddress)
-                            : (r.splitAddress || r.splitAddressCredit);
-                          const splitBadgeLabel = isDebit ? "Debit Split" : "Credit Split";
+                            ? (
+                                siteCfg.splitAddressCredit ||
+                                r.splitAddressCredit ||
+                                siteCfg.splitConfigCredit?.contractAddress ||
+                                siteCfg.splitConfigCredit?.address ||
+                                r.splitConfigCredit?.contractAddress ||
+                                r.splitConfigCredit?.address ||
+                                r.merchantConfig?.splitAddressCredit ||
+                                r.merchantConfig?.splitConfigCredit?.contractAddress ||
+                                r.brandConfig?.splitAddressCredit ||
+                                siteCfg.splitAddress ||
+                                r.splitAddress ||
+                                siteCfg.splitConfig?.contractAddress ||
+                                siteCfg.splitConfig?.address ||
+                                r.splitConfig?.contractAddress ||
+                                r.splitConfig?.address ||
+                                r.merchantConfig?.splitAddress ||
+                                r.brandConfig?.splitAddress
+                              )
+                            : (
+                                siteCfg.splitAddress ||
+                                r.splitAddress ||
+                                siteCfg.splitConfig?.contractAddress ||
+                                siteCfg.splitConfig?.address ||
+                                r.splitConfig?.contractAddress ||
+                                r.splitConfig?.address ||
+                                r.merchantConfig?.splitAddress ||
+                                r.merchantConfig?.splitConfig?.contractAddress ||
+                                r.brandConfig?.splitAddress ||
+                                siteCfg.splitAddressCredit ||
+                                r.splitAddressCredit ||
+                                siteCfg.splitConfigCredit?.contractAddress ||
+                                siteCfg.splitConfigCredit?.address ||
+                                r.splitConfigCredit?.contractAddress ||
+                                r.splitConfigCredit?.address ||
+                                r.merchantConfig?.splitAddressCredit ||
+                                r.brandConfig?.splitAddressCredit
+                              );
+                          const splitBadgeLabel = isDebit ? "Debit Split" : "Credit/Crypto/ACH Split";
 
                           return (
                             <tr>
@@ -4220,59 +4293,151 @@ export default function PlatformAnalyticsPanel() {
                                    {/* Tab 6: Fee & Split Breakdown */}
                                    {rowActiveTab === "fees" && (() => {
                                      loadSiteConfigForReceipt(r.receiptId, r.wallet || r.merchantWallet, r.brandKey);
-                                     const siteCfg = fetchedSiteConfigs[r.receiptId] || {};
+                                     const siteCfg = fetchedSiteConfigs[r.receiptId] || r.merchantConfig || r.brandConfig || {};
+                                     const firstSession = Array.isArray(r.customerSessions) ? r.customerSessions[0] : null;
+                                     const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || firstSession?.cardFunding || firstSession?.funding || firstSession?.detectedCardFunding || "").toLowerCase().trim();
 
-                                     const isCredit = r.detectedCardFunding === "credit" || r.isCreditCard === true;
-                                     const fundingType = String(r.detectedCardFunding || (isCredit ? "credit" : "debit")).toUpperCase();
+                                      const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
+                                      const isCrypto = rawFunding === "crypto" || rawFunding === "usdc" || rawFunding === "web3" || rawFunding === "direct_crypto" || (!!r.transactionHash && (!r.stripeSessionId || r.stripeSessionId === "N/A"));
+                                      const isDirectCrypto = isCoinbase || isCrypto;
+
+                                      const isCredit = !isDirectCrypto && (rawFunding === "credit" || r.isCreditCard === true || (rawFunding !== "debit" && rawFunding !== "us_bank_account" && rawFunding !== "ach"));
+                                      const fundingType = isCoinbase ? "COINBASE ONRAMP" : (isCrypto ? "CRYPTO ONRAMP" : (rawFunding || (isCredit ? "credit" : "debit")).toUpperCase());
                                      
                                      const isFeeMinus = siteCfg.feeMinusEnabled !== undefined
                                        ? !!siteCfg.feeMinusEnabled
-                                       : (r.feeMinusEnabled !== undefined ? !!r.feeMinusEnabled : true);
+                                       : (r.feeMinusEnabled !== undefined ? !!r.feeMinusEnabled : (r.merchantConfig?.feeMinusEnabled !== undefined ? !!r.merchantConfig.feeMinusEnabled : true));
                                      
-                                     const basePresentedBps = isCredit
-                                       ? (siteCfg.creditPresentedFeeBps ?? r.creditPresentedFeeBps ?? siteCfg.presentedFeeBps ?? r.presentedFeeBps)
-                                       : (siteCfg.presentedFeeBps ?? r.presentedFeeBps);
-                                     const hasPresentedBps = basePresentedBps !== undefined && basePresentedBps !== null;
+                                     const rawPresentedBps = isCredit
+                                       ? (siteCfg.creditPresentedFeeBps ?? r.creditPresentedFeeBps ?? r.merchantConfig?.creditPresentedFeeBps ?? siteCfg.presentedFeeBps ?? r.presentedFeeBps ?? r.merchantConfig?.presentedFeeBps)
+                                       : (siteCfg.presentedFeeBps ?? r.presentedFeeBps ?? r.merchantConfig?.presentedFeeBps);
+
+                                     const hasPresentedBps = rawPresentedBps !== undefined && rawPresentedBps !== null;
+
+                                     // Normalize presented fee BPS: if stored as base share (e.g. 9550 BPS = 95.5%), convert to fee BPS (10000 - 9550 = 450 BPS = 4.5%)
+                                     const effectivePresentedFeeBps = hasPresentedBps
+                                       ? (Number(rawPresentedBps) > 1000 ? (10000 - Number(rawPresentedBps)) : Number(rawPresentedBps))
+                                       : null;
+
+                                     const basePresentedBps = effectivePresentedFeeBps !== null ? effectivePresentedFeeBps : (hasPresentedBps ? rawPresentedBps : null);
+
                                      const splitCfg = isCredit
-                                       ? (siteCfg.splitConfigCredit || r.splitConfigCredit || siteCfg.splitConfig || r.splitConfig)
-                                       : (siteCfg.splitConfig || r.splitConfig || siteCfg.splitConfigCredit || r.splitConfigCredit);
+                                       ? (siteCfg.splitConfig || r.splitConfig || r.merchantConfig?.splitConfig || siteCfg.splitConfigCredit || r.splitConfigCredit || r.merchantConfig?.splitConfigCredit)
+                                       : (siteCfg.splitConfigCredit || r.splitConfigCredit || r.merchantConfig?.splitConfigCredit || siteCfg.splitConfig || r.splitConfig || r.merchantConfig?.splitConfig);
 
-                                     const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : (siteCfg.partnerBps || r.partnerBps || 0);
-                                     const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : (siteCfg.platformBps || r.platformBps || 50);
-                                     const agentBps = splitCfg && Array.isArray(splitCfg.agents)
-                                       ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-                                       : 0;
+                                     const partnerBps = isCredit
+                                       ? (splitCfg?.partnerBps ?? siteCfg.creditPartnerFeeBps ?? siteCfg.partnerFeeBps ?? r.creditPartnerFeeBps ?? r.partnerFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? r.merchantConfig?.partnerFeeBps ?? 0)
+                                       : (splitCfg?.partnerBps ?? siteCfg.partnerFeeBps ?? siteCfg.creditPartnerFeeBps ?? r.partnerFeeBps ?? r.creditPartnerFeeBps ?? r.merchantConfig?.partnerFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? 0);
 
-                                     let calculatedFeePct = 0.5;
-                                     if (hasPresentedBps) {
-                                       calculatedFeePct = (Number(basePresentedBps) + partnerBps) / 100;
-                                     } else if (splitCfg && typeof splitCfg === "object") {
-                                       calculatedFeePct = (partnerBps + platformBps + agentBps) / 100;
-                                     }
+                                     const platformBps = isCredit
+                                       ? (splitCfg?.platformBps ?? siteCfg.creditPlatformFeeBps ?? siteCfg.platformFeeBps ?? r.creditPlatformFeeBps ?? r.platformFeeBps ?? r.merchantConfig?.creditPlatformFeeBps ?? r.merchantConfig?.platformFeeBps ?? 50)
+                                       : (splitCfg?.platformBps ?? siteCfg.platformFeeBps ?? siteCfg.creditPlatformFeeBps ?? r.platformFeeBps ?? r.creditPartnerFeeBps ?? r.merchantConfig?.platformFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? 75);
+
+                                     const agentBps = isCredit
+                                       ? (splitCfg && Array.isArray(splitCfg.agents) && splitCfg.agents.length > 0
+                                           ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+                                           : (siteCfg.creditAgentFeeBps ?? siteCfg.agentFeeBps ?? r.creditAgentFeeBps ?? r.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? 50))
+                                       : (splitCfg && Array.isArray(splitCfg.agents) && splitCfg.agents.length > 0
+                                           ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+                                           : (siteCfg.agentFeeBps ?? siteCfg.creditAgentFeeBps ?? r.agentFeeBps ?? r.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? 150));
+
+                                     const stripeCardRatePct = isCredit ? 3.5 : 2.25;
+                                      
+                                     const displayPresentedRatePct = effectivePresentedFeeBps !== null
+                                       ? (effectivePresentedFeeBps + partnerBps) / 100
+                                       : stripeCardRatePct;
+
+                                     let calculatedFeePct = displayPresentedRatePct;
 
                                      const totalUsd = Number(r.totalUsd || 0);
-                                     const firstSession = Array.isArray(r.customerSessions) ? r.customerSessions[0] : null;
                                      const stripeSessionCents = firstSession?.amountTotal ?? firstSession?.amount_total;
                                      const stripeProcessedUsd = typeof stripeSessionCents === "number" && stripeSessionCents > 0
                                        ? (stripeSessionCents / 100)
                                        : (r.stripeChargeAmountUsd ?? r.stripeAmountUsd ?? r.processedAmountUsd ?? totalUsd);
 
-                                     const stripeCardRatePct = isCredit ? 3.5 : 2.25;
-                                     const stripeFeePct = (isFeeMinus || hasPresentedBps) ? 0 : stripeCardRatePct;
-                                     
-                                     const baseSubtotalUsd = (Array.isArray(r.lineItems) ? r.lineItems : [])
-                                       .filter((i: any) => i.label !== "Tax" && i.label !== "Processing Fee" && i.label !== "Gratuity")
-                                       .reduce((acc: number, i: any) => acc + (Number(i.priceUsd) || 0), 0) || totalUsd;
+                                     // Itemized line item components
+                                     const rawLineItems = Array.isArray(r.lineItems) ? r.lineItems : [];
+                                     const taxItem = rawLineItems.find((i: any) => i.label === "Tax");
+                                     const tipItem = rawLineItems.find((i: any) => i.label === "Gratuity" || i.label === "Tip");
+                                     const shippingItem = rawLineItems.find((i: any) => i.label === "Shipping" || i.label === "Delivery");
+                                     const feeItem = rawLineItems.find((i: any) => i.label === "Processing Fee");
 
-                                     const netPayoutUsd = isFeeMinus 
-                                       ? Math.round((stripeProcessedUsd / (1 + (calculatedFeePct / 100))) * 100) / 100
-                                       : stripeProcessedUsd;
+                                     const taxUsd = Number(r.taxAmount || taxItem?.priceUsd || 0);
+                                     const tipUsd = Number(r.tipAmount || r.gratuity || tipItem?.priceUsd || 0);
+                                     const shippingUsd = Number(r.shippingCostUsd || r.shippingAmount || shippingItem?.priceUsd || 0);
+                                     const processingFeeUsd = Number(feeItem?.priceUsd || 0);
+
+                                     const catalogItemsSubtotal = rawLineItems
+                                       .filter((i: any) => i.label !== "Tax" && i.label !== "Processing Fee" && i.label !== "Gratuity" && i.label !== "Tip" && i.label !== "Shipping")
+                                       .reduce((acc: number, i: any) => acc + (Number(i.priceUsd) || 0), 0) || (totalUsd - taxUsd - tipUsd - shippingUsd - processingFeeUsd);
+                                     // On-chain settlement & Stripe fee resolution
+                                     const recordedOnChain = Number(
+                                       r.onChainTransferredUsd || r.onChainAmountUsd || r.actualTransferredUsd || r.destinationAmount || r.destination_amount ||
+                                       firstSession?.destinationAmount || firstSession?.destination_amount || firstSession?.destinationTokenAmount || firstSession?.destination_token_amount ||
+                                       firstSession?.transactionDetails?.destinationAmount || firstSession?.transactionDetails?.destination_amount ||
+                                       firstSession?.netOnChainUsd || firstSession?.amountDelivered || firstSession?.cryptoAmount || 0
+                                     );
+                                     
+                                     const onChainSettlementUsd = recordedOnChain > 0
+                                       ? recordedOnChain
+                                       : Math.round((stripeProcessedUsd / (1 + stripeCardRatePct / 100)) * 100) / 100;
+
+                                     const stripeFeeDeductionUsd = Math.max(0, Math.round((stripeProcessedUsd - onChainSettlementUsd) * 100) / 100);
+
+                                     // Dollar amounts for each BPS split component of the customer total charge
+                                     const partnerUsd = Math.round((stripeProcessedUsd * (partnerBps / 10000)) * 100) / 100;
+                                     const platformUsd = Math.round((stripeProcessedUsd * (platformBps / 10000)) * 100) / 100;
+                                     const agentUsd = Math.round((stripeProcessedUsd * (agentBps / 10000)) * 100) / 100;
+
+                                     // Merchant Base Component is the scaled-down catalog base so all components sum to customer charge
+                                     const merchantBaseComponentUsd = Math.max(0, Math.round((stripeProcessedUsd - partnerUsd - platformUsd - agentUsd - stripeFeeDeductionUsd) * 100) / 100);
 
                                      const feeUsd = isFeeMinus 
-                                       ? Math.round((stripeProcessedUsd - netPayoutUsd) * 100) / 100
-                                       : Math.round((baseSubtotalUsd * (calculatedFeePct / 100)) * 100) / 100;
+                                       ? Math.round((onChainSettlementUsd * (calculatedFeePct / 100)) * 100) / 100
+                                       : Math.round((catalogItemsSubtotal * (calculatedFeePct / 100)) * 100) / 100;
+
+                                     const netPayoutUsd = Math.round((onChainSettlementUsd - feeUsd) * 100) / 100;
                                      
-                                     const activeSplitAddress = isCredit ? (r.splitAddressCredit || r.splitAddress) : (r.splitAddress || r.splitAddressCredit);
+                                     const activeSplitAddress = isCredit
+                                        ? (
+                                            siteCfg.splitAddress ||
+                                            r.splitAddress ||
+                                            siteCfg.splitConfig?.contractAddress ||
+                                            siteCfg.splitConfig?.address ||
+                                            r.splitConfig?.contractAddress ||
+                                            r.splitConfig?.address ||
+                                            r.merchantConfig?.splitAddress ||
+                                            r.merchantConfig?.splitConfig?.contractAddress ||
+                                            r.brandConfig?.splitAddress ||
+                                            siteCfg.splitAddressCredit ||
+                                            r.splitAddressCredit ||
+                                            siteCfg.splitConfigCredit?.contractAddress ||
+                                            siteCfg.splitConfigCredit?.address ||
+                                            r.splitConfigCredit?.contractAddress ||
+                                            r.splitConfigCredit?.address ||
+                                            r.merchantConfig?.splitAddressCredit ||
+                                            r.brandConfig?.splitAddressCredit
+                                          )
+                                        : (
+                                            siteCfg.splitAddressCredit ||
+                                            r.splitAddressCredit ||
+                                            siteCfg.splitConfigCredit?.contractAddress ||
+                                            siteCfg.splitConfigCredit?.address ||
+                                            r.splitConfigCredit?.contractAddress ||
+                                            r.splitConfigCredit?.address ||
+                                            r.merchantConfig?.splitAddressCredit ||
+                                            r.merchantConfig?.splitConfigCredit?.contractAddress ||
+                                            r.brandConfig?.splitAddressCredit ||
+                                            siteCfg.splitAddress ||
+                                            r.splitAddress ||
+                                            siteCfg.splitConfig?.contractAddress ||
+                                            siteCfg.splitConfig?.address ||
+                                            r.splitConfig?.contractAddress ||
+                                            r.splitConfig?.address ||
+                                            r.merchantConfig?.splitAddress ||
+                                            r.brandConfig?.splitAddress
+                                          );
+                                     
                                      const stripeSessionId = r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions[0]?.stripeSessionId) || "N/A";
 
                                      const hasDualFeeConfig = r.creditPresentedFeeBps !== undefined || r.splitConfigCredit !== undefined;
@@ -4300,25 +4465,66 @@ export default function PlatformAnalyticsPanel() {
                                            </div>
                                          </div>
 
-                                         {/* Stage 1: Presented Amount & Components */}
+                                         {/* Stage 1: Presented Amount & Charge Components */}
                                          <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
                                            <div className="flex items-center justify-between border-b border-white/10 pb-2">
                                              <div className="text-xs font-bold text-white flex items-center gap-2">
                                                <Percent className="w-4 h-4 text-amber-400" />
-                                               <span>1. Presented Amount & Fee Components</span>
+                                               <span>1. Presented Amount & Split Charge Components Breakdown</span>
                                              </div>
                                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
                                                Presented Rate: {calculatedFeePct.toFixed(2)}%
                                              </span>
                                            </div>
 
-                                           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Base Presented Subtotal</div>
-                                               <div className="text-base font-bold text-white">${baseSubtotalUsd.toFixed(2)}</div>
-                                               <div className="text-[10px] text-muted-foreground">Original catalog items presented to buyer</div>
+                                           {/* All Split Components Grid */}
+                                           <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
+                                             <div className="bg-emerald-500/10 p-2.5 rounded-xl border border-emerald-500/20 space-y-0.5">
+                                               <div className="text-[9.5px] text-emerald-300 uppercase font-bold">Merchant Base</div>
+                                               <div className="text-sm font-extrabold text-emerald-400">${merchantBaseComponentUsd.toFixed(2)}</div>
+                                               <div className="text-[9px] text-emerald-200/70 truncate">Scaled catalog item base</div>
                                              </div>
 
+                                             <div className="bg-white/[0.02] p-2.5 rounded-xl border border-white/5 space-y-0.5">
+                                               <div className="text-[9.5px] text-muted-foreground uppercase font-bold">Partner Share</div>
+                                               <div className="text-sm font-bold text-blue-400">${partnerUsd.toFixed(2)}</div>
+                                               <div className="text-[9px] text-muted-foreground truncate">{partnerBps} BPS ({(partnerBps/100).toFixed(2)}%)</div>
+                                             </div>
+
+                                             <div className="bg-white/[0.02] p-2.5 rounded-xl border border-white/5 space-y-0.5">
+                                               <div className="text-[9.5px] text-muted-foreground uppercase font-bold">Platform Share</div>
+                                               <div className="text-sm font-bold text-amber-400">${platformUsd.toFixed(2)}</div>
+                                               <div className="text-[9px] text-muted-foreground truncate">{platformBps} BPS ({(platformBps/100).toFixed(2)}%)</div>
+                                             </div>
+
+                                             <div className="bg-white/[0.02] p-2.5 rounded-xl border border-white/5 space-y-0.5">
+                                               <div className="text-[9.5px] text-muted-foreground uppercase font-bold">Agent Share</div>
+                                               <div className="text-sm font-bold text-purple-400">${agentUsd.toFixed(2)}</div>
+                                               <div className="text-[9px] text-muted-foreground truncate">{agentBps} BPS ({(agentBps/100).toFixed(2)}%)</div>
+                                             </div>
+
+                                             <div className="bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 space-y-0.5 col-span-2 md:col-span-1">
+                                               <div className="text-[9.5px] text-amber-300 uppercase font-bold">Total Charge</div>
+                                               <div className="text-sm font-extrabold text-amber-400">${stripeProcessedUsd.toFixed(2)}</div>
+                                               <div className="text-[9px] text-amber-200/60 truncate">Customer paid total</div>
+                                             </div>
+                                           </div>
+
+                                           {/* Formula Component Addition Trace */}
+                                           <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1.5 pt-2.5">
+                                             <div className="text-[10px] text-muted-foreground uppercase font-bold flex items-center justify-between">
+                                               <span>Component Mathematical Addition Trace</span>
+                                               <span className="text-emerald-400 font-mono text-[10px]">
+                                                 ${merchantBaseComponentUsd.toFixed(2)} + ${partnerUsd.toFixed(2)} + ${platformUsd.toFixed(2)} + ${agentUsd.toFixed(2)} + ${stripeFeeDeductionUsd.toFixed(2)} = ${stripeProcessedUsd.toFixed(2)}
+                                               </span>
+                                             </div>
+                                             <div className="text-xs text-white/90 font-mono">
+                                               <span className="text-emerald-400 font-bold">Merchant Base</span> (${merchantBaseComponentUsd.toFixed(2)}) + <span className="text-blue-400 font-bold">Partner</span> (${partnerUsd.toFixed(2)}) + <span className="text-amber-400 font-bold">Platform</span> (${platformUsd.toFixed(2)}) + <span className="text-purple-400 font-bold">Agent</span> (${agentUsd.toFixed(2)}) + <span className="text-rose-400 font-bold">Stripe Fee</span> (${stripeFeeDeductionUsd.toFixed(2)}) = <span className="text-amber-300 font-bold">${stripeProcessedUsd.toFixed(2)} Total</span>
+                                             </div>
+                                           </div>
+
+                                           {/* Fee Breakdown & Resolution Trace */}
+                                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
                                                <div className="text-[10px] text-muted-foreground uppercase font-bold">Presented BPS Breakdown</div>
                                                <div className="text-xs text-white/90 space-y-0.5">
@@ -4347,110 +4553,79 @@ export default function PlatformAnalyticsPanel() {
                                                </div>
                                              </div>
                                            </div>
-
-                                           {/* Item Scaling Mathematical Conversion Trace Box */}
-                                           <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-2 pt-3">
-                                             <div className="text-[10px] text-muted-foreground uppercase font-bold flex items-center justify-between">
-                                               <span>Item Scaling & Line Item Mathematical Conversion Trace</span>
-                                               <span className="text-amber-400 font-mono text-[10px]">
-                                                 {isFeeMinus ? `Scale Factor: ${(1 / (1 + (calculatedFeePct / 100))).toFixed(6)}` : "Scale Factor: 1.000000 (Unscaled)"}
-                                               </span>
-                                             </div>
-                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
-                                               {isFeeMinus ? (
-                                                 <>
-                                                   <div className="space-y-1 text-white/90">
-                                                     <div className="text-amber-300 font-bold">Fee- Base Scaling Formula:</div>
-                                                     <div>1. <span className="text-muted-foreground">adjustedBase</span> = customerTotal / (1 + {(calculatedFeePct / 100).toFixed(4)})</div>
-                                                     <div>   = ${stripeProcessedUsd.toFixed(2)} / {(1 + (calculatedFeePct / 100)).toFixed(4)} = <span className="font-bold text-emerald-400">${netPayoutUsd.toFixed(2)}</span></div>
-                                                   </div>
-                                                   <div className="space-y-1 text-white/90">
-                                                     <div className="text-amber-300 font-bold">Fee Absorption & Scaling Trace:</div>
-                                                     <div>2. <span className="text-muted-foreground">feeAbsorbed</span> = customerTotal - adjustedBase = <span className="font-bold text-amber-400">${feeUsd.toFixed(2)}</span></div>
-                                                     <div>3. <span className="text-muted-foreground">lineItemScale</span> = adjustedBase / customerTotal = <span className="font-bold text-blue-400">{((netPayoutUsd / (stripeProcessedUsd || 1)) * 100).toFixed(2)}%</span></div>
-                                                   </div>
-                                                 </>
-                                               ) : (
-                                                 <>
-                                                   <div className="space-y-1 text-white/90">
-                                                     <div className="text-blue-300 font-bold">Fee+ Addition Formula:</div>
-                                                     <div>1. <span className="text-muted-foreground">feeAdded</span> = baseSubtotal * {(calculatedFeePct / 100).toFixed(4)}</div>
-                                                     <div>   = ${baseSubtotalUsd.toFixed(2)} * {(calculatedFeePct / 100).toFixed(4)} = <span className="font-bold text-amber-400">${feeUsd.toFixed(2)}</span></div>
-                                                   </div>
-                                                   <div className="space-y-1 text-white/90">
-                                                     <div className="text-blue-300 font-bold">Customer Total Trace:</div>
-                                                     <div>2. <span className="text-muted-foreground">customerTotal</span> = baseSubtotal + feeAdded = <span className="font-bold text-emerald-400">${(baseSubtotalUsd + feeUsd).toFixed(2)}</span></div>
-                                                     <div>3. <span className="text-muted-foreground">lineItemScale</span> = <span className="font-bold text-blue-400">100.00% (No item scaling required)</span></div>
-                                                   </div>
-                                                 </>
-                                               )}
-                                             </div>
-                                           </div>
                                          </div>
 
-                                         {/* Stage 2: Processed Amount Sent to Stripe */}
+                                         {/* Stage 2: Processed Amount Sent to Stripe & On-Chain Settlement */}
                                          <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
                                            <div className="flex items-center justify-between border-b border-white/10 pb-2">
                                              <div className="text-xs font-bold text-white flex items-center gap-2">
                                                <CreditCard className="w-4 h-4 text-blue-400" />
-                                               <span>2. Processed Amount Sent to Stripe</span>
+                                               <span>2. Processed Amount Sent to Stripe & On-Chain Settlement</span>
                                              </div>
                                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
                                                Funding: {fundingType}
                                              </span>
                                            </div>
 
-                                           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Amount Transmitted to Stripe</div>
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Transmitted to Stripe</div>
                                                <div className="text-base font-extrabold text-blue-400">${stripeProcessedUsd.toFixed(2)} USD</div>
                                                <div className="text-[10px] text-muted-foreground">Exact charge amount sent to API</div>
                                              </div>
 
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Card Rate & Fee Add-On</div>
-                                               <div className="text-base font-bold text-white">{stripeCardRatePct.toFixed(2)}% Card Rate</div>
-                                               <div className="text-[10px] text-muted-foreground">
-                                                 {isFeeMinus ? "0.00% Add-On (Fee- Merchant Absorbed)" : `${stripeFeePct.toFixed(2)}% Added to customer`}
-                                               </div>
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Card/Onramp Fee</div>
+                                               <div className="text-base font-bold text-rose-400">-${stripeFeeDeductionUsd.toFixed(2)} USD</div>
+                                               <div className="text-[10px] text-muted-foreground">{stripeCardRatePct.toFixed(2)}% Processing Fee</div>
+                                             </div>
+
+                                             <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20 space-y-1">
+                                               <div className="text-[10px] text-emerald-300 uppercase font-bold">On-Chain Transferred</div>
+                                               <div className="text-base font-extrabold text-emerald-400">{onChainSettlementUsd.toFixed(2)} USDC</div>
+                                               <div className="text-[10px] text-emerald-200/70">Delivered into split contract</div>
                                              </div>
 
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Onramp Session ID</div>
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Session & Card Config</div>
                                                <div className="text-xs text-white/90 truncate font-mono">{stripeSessionId}</div>
                                                <div className="text-[10px] text-muted-foreground">Card: {isCredit ? "Credit SplitConfig" : "Debit SplitConfig"}</div>
                                              </div>
                                            </div>
                                          </div>
 
-                                         {/* Stage 3: Final Totals & Payout Summary (Including Stripe) */}
+                                         {/* Stage 3: Final Totals & Net Payout Summary (Including Stripe & On-Chain) */}
                                          <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
                                            <div className="flex items-center justify-between border-b border-white/10 pb-2">
                                              <div className="text-xs font-bold text-white flex items-center gap-2">
                                                <Calculator className="w-4 h-4 text-emerald-400" />
-                                               <span>3. Final Totals & Net Payout Summary (Including Stripe)</span>
+                                               <span>3. Final Totals & Net Payout Summary (Including Stripe & On-Chain)</span>
                                              </div>
                                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                                               Net Payout: ${netPayoutUsd.toFixed(2)}
+                                               Net Settlement: ${netPayoutUsd.toFixed(2)}
                                              </span>
                                            </div>
 
-                                           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-center">
+                                           <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5 text-center">
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Customer Paid Total</div>
-                                               <div className="text-xl font-extrabold text-white">${totalUsd.toFixed(2)}</div>
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Customer Paid</div>
+                                               <div className="text-lg font-extrabold text-white">${totalUsd.toFixed(2)}</div>
                                              </div>
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Processed by Stripe</div>
-                                               <div className="text-xl font-extrabold text-blue-400">${stripeProcessedUsd.toFixed(2)}</div>
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Fee</div>
+                                               <div className="text-lg font-extrabold text-rose-400">-${stripeFeeDeductionUsd.toFixed(2)}</div>
+                                             </div>
+                                             <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20 space-y-1">
+                                               <div className="text-[10px] text-emerald-300 uppercase font-bold">On-Chain Received</div>
+                                               <div className="text-lg font-extrabold text-emerald-400">${onChainSettlementUsd.toFixed(2)}</div>
                                              </div>
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Total Fees ({calculatedFeePct.toFixed(2)}%)</div>
-                                               <div className="text-xl font-extrabold text-amber-400">${feeUsd.toFixed(2)}</div>
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Platform Fee ({calculatedFeePct.toFixed(2)}%)</div>
+                                               <div className="text-lg font-extrabold text-amber-400">-${feeUsd.toFixed(2)}</div>
                                              </div>
-                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Merchant Net Settlement</div>
-                                               <div className="text-xl font-extrabold text-emerald-400">${netPayoutUsd.toFixed(2)}</div>
+                                             <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/30 space-y-1">
+                                               <div className="text-[10px] text-emerald-300 uppercase font-bold">Merchant Net Payout</div>
+                                               <div className="text-lg font-extrabold text-emerald-300">${netPayoutUsd.toFixed(2)}</div>
                                              </div>
                                            </div>
 
@@ -4458,7 +4633,20 @@ export default function PlatformAnalyticsPanel() {
                                            {activeSplitAddress && (
                                              <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px]">
                                                <span className="text-muted-foreground">Smart Contract Split Address:</span>
-                                               <span className="font-bold text-purple-300 font-mono">{activeSplitAddress}</span>
+                                               <span className="font-bold text-purple-300 font-mono flex items-center gap-1.5">
+                                                 {activeSplitAddress}
+                                                 {r.transactionHash && (
+                                                   <a
+                                                     href={`https://basescan.org/tx/${r.transactionHash}`}
+                                                     target="_blank"
+                                                     rel="noopener noreferrer"
+                                                     className="text-[10px] text-blue-400 hover:underline flex items-center gap-0.5 ml-2"
+                                                   >
+                                                     <span>View on BaseScan</span>
+                                                     <span>↗</span>
+                                                   </a>
+                                                 )}
+                                               </span>
                                              </div>
                                            )}
                                          </div>

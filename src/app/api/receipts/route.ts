@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import crypto from "node:crypto";
+import * as crypto from "crypto";
 import { getContainer } from "@/lib/cosmos";
 import { getSiteConfig } from "@/lib/site-config";
 import { getReceipts, pushReceipts } from "@/lib/receipts-mem";
@@ -367,7 +367,11 @@ export async function POST(req: NextRequest) {
       staffId: employeeId, // Alias for consistency with Orders/Reference
       servedBy: employeeName,
       sessionId,
-      ttl: 3600, // Auto-expire in 1h if not paid (User Request)
+      // Deployed smart contract split addresses and configs
+      ...(brand.splitAddress || (brand as any).config?.splitAddress ? { splitAddress: brand.splitAddress || (brand as any).config?.splitAddress } : {}),
+      ...(brand.splitAddressCredit || (brand as any).config?.splitAddressCredit ? { splitAddressCredit: brand.splitAddressCredit || (brand as any).config?.splitAddressCredit } : {}),
+      ...(brand.splitConfig || (brand as any).config?.splitConfig ? { splitConfig: brand.splitConfig || (brand as any).config?.splitConfig } : {}),
+      ...(brand.splitConfigCredit || (brand as any).config?.splitConfigCredit ? { splitConfigCredit: brand.splitConfigCredit || (brand as any).config?.splitConfigCredit } : {}),
       // Developer-configured redirect and webhook URLs
       ...(redirectUrl ? { redirectUrl } : {}),
       ...(returnUrl ? { returnUrl } : {}),
