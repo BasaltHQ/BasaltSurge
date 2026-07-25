@@ -2785,14 +2785,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
-    if (feeMinusEnabled) {
-      const isAch = detectedCardFunding === "us_bank_account";
-      const isCredit = detectedCardFunding === "credit";
-      const rate = isAch ? (achSpeed === "standard" ? 0.6 : 4.0) : (isCredit ? 3.5 : 2.25);
-      return +(totalUsd / (1 + rate / 100)).toFixed(2);
-    }
-    return totalUsd;
-  }, [receipt, totalUsd, detectedCardFunding, feeMinusEnabled, achSpeed]);
+    const isAch = detectedCardFunding === "us_bank_account";
+    const isCredit = detectedCardFunding === "credit";
+    const rate = isAch ? (achSpeed === "standard" ? 0.6 : 4.0) : (isCredit ? 3.5 : 2.25);
+    return +(totalUsd / (1 + rate / 100)).toFixed(2);
+  }, [receipt, totalUsd, detectedCardFunding, achSpeed]);
 
   const getAmountForFunding = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
     if (!receipt) return 0;
@@ -2804,17 +2801,19 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       return +(totalUsd / (1 + stripePct / 100)).toFixed(2);
     }
     
-    const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct) / 100);
+    const hasPresentedBps = presentedFeeBps !== undefined || creditPresentedFeeBps !== undefined;
+    const activeStripePct = hasPresentedBps ? 0 : stripePct;
+    
+    const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0) + activeStripePct) / 100);
     const feeUsd = +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
-    return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + feeUsd).toFixed(2);
-  }, [receipt, achSpeed, creditStripeFeePct, debitStripeFeePct, feeMinusEnabled, totalUsd, effectiveBasePlatformFeePct, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd]);
+    const totalForFunding = +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + feeUsd).toFixed(2);
+    
+    return +(totalForFunding / (1 + stripePct / 100)).toFixed(2);
+  }, [receipt, achSpeed, creditStripeFeePct, debitStripeFeePct, feeMinusEnabled, totalUsd, effectiveBasePlatformFeePct, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, presentedFeeBps, creditPresentedFeeBps]);
 
   const stripeProcessingFeeUsd = useMemo(() => {
-    if (feeMinusEnabled) {
-      return +(totalUsd - stripeTotalUsd).toFixed(2);
-    }
-    return +(totalUsd * (stripeFeePct / 100)).toFixed(2);
-  }, [totalUsd, stripeFeePct, stripeTotalUsd, feeMinusEnabled]);
+    return +(totalUsd - stripeTotalUsd).toFixed(2);
+  }, [totalUsd, stripeTotalUsd]);
 
   // Compute receipt readiness (loaded and has a positive total)
   useEffect(() => {
