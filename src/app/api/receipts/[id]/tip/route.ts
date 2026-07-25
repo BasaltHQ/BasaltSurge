@@ -180,8 +180,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 : (cfg?.presentedFeeBps);
 
             const splitCfg = isCredit
-                ? (cfg?.splitConfigCredit || cfg?.splitConfig)
-                : (cfg?.splitConfig || cfg?.splitConfigCredit);
+                ? (cfg?.splitConfig || cfg?.splitConfigCredit)
+                : (cfg?.splitConfigCredit || cfg?.splitConfig);
 
             let stripeFeePct = activeFunding === "us_bank_account" ? 0.6 : (isCredit ? 3.5 : 2.25);
             if (basePresentedBps !== undefined) {
