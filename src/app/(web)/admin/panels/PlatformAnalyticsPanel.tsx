@@ -596,8 +596,9 @@ export default function PlatformAnalyticsPanel() {
     fetch(`/api/site/config?wallet=${encodeURIComponent(targetWallet)}`)
       .then(res => res.json())
       .then(data => {
-        if (data && data.brandConfig) {
-          setFetchedSiteConfigs(prev => ({ ...prev, [receiptId]: data.brandConfig }));
+        if (data) {
+          const cfg = { ...data, ...(data.brandConfig || {}) };
+          setFetchedSiteConfigs(prev => ({ ...prev, [receiptId]: cfg }));
         }
       })
       .catch(() => {})
@@ -4232,7 +4233,6 @@ export default function PlatformAnalyticsPanel() {
                                        ? (siteCfg.creditPresentedFeeBps ?? r.creditPresentedFeeBps ?? siteCfg.presentedFeeBps ?? r.presentedFeeBps)
                                        : (siteCfg.presentedFeeBps ?? r.presentedFeeBps);
                                      const hasPresentedBps = basePresentedBps !== undefined && basePresentedBps !== null;
-
                                      const splitCfg = isCredit
                                        ? (siteCfg.splitConfigCredit || r.splitConfigCredit || siteCfg.splitConfig || r.splitConfig)
                                        : (siteCfg.splitConfig || r.splitConfig || siteCfg.splitConfigCredit || r.splitConfigCredit);
@@ -4257,17 +4257,21 @@ export default function PlatformAnalyticsPanel() {
                                        ? (stripeSessionCents / 100)
                                        : (r.stripeChargeAmountUsd ?? r.stripeAmountUsd ?? r.processedAmountUsd ?? totalUsd);
 
-                                     const stripeFeePct = (isFeeMinus || hasPresentedBps) ? 0 : (isCredit ? 3.5 : 2.25);
+                                     const stripeCardRatePct = isCredit ? 3.5 : 2.25;
+                                     const stripeFeePct = (isFeeMinus || hasPresentedBps) ? 0 : stripeCardRatePct;
                                      
                                      const baseSubtotalUsd = (Array.isArray(r.lineItems) ? r.lineItems : [])
                                        .filter((i: any) => i.label !== "Tax" && i.label !== "Processing Fee" && i.label !== "Gratuity")
                                        .reduce((acc: number, i: any) => acc + (Number(i.priceUsd) || 0), 0) || totalUsd;
 
+                                     const netPayoutUsd = isFeeMinus 
+                                       ? Math.round((stripeProcessedUsd / (1 + (calculatedFeePct / 100))) * 100) / 100
+                                       : stripeProcessedUsd;
+
                                      const feeUsd = isFeeMinus 
-                                       ? Math.round(stripeProcessedUsd * (calculatedFeePct / 100) * 100) / 100
-                                       : Math.round(stripeProcessedUsd * (calculatedFeePct / (100 + calculatedFeePct)) * 100) / 100;
+                                       ? Math.round((stripeProcessedUsd - netPayoutUsd) * 100) / 100
+                                       : Math.round((baseSubtotalUsd * (calculatedFeePct / 100)) * 100) / 100;
                                      
-                                     const netPayoutUsd = isFeeMinus ? Math.max(0, stripeProcessedUsd - feeUsd) : stripeProcessedUsd;
                                      const activeSplitAddress = isCredit ? (r.splitAddressCredit || r.splitAddress) : (r.splitAddress || r.splitAddressCredit);
                                      const stripeSessionId = r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions[0]?.stripeSessionId) || "N/A";
 
@@ -4358,12 +4362,12 @@ export default function PlatformAnalyticsPanel() {
                                                    <div className="space-y-1 text-white/90">
                                                      <div className="text-amber-300 font-bold">Fee- Base Scaling Formula:</div>
                                                      <div>1. <span className="text-muted-foreground">adjustedBase</span> = customerTotal / (1 + {(calculatedFeePct / 100).toFixed(4)})</div>
-                                                     <div>   = ${totalUsd.toFixed(2)} / {(1 + (calculatedFeePct / 100)).toFixed(4)} = <span className="font-bold text-emerald-400">${netPayoutUsd.toFixed(2)}</span></div>
+                                                     <div>   = ${stripeProcessedUsd.toFixed(2)} / {(1 + (calculatedFeePct / 100)).toFixed(4)} = <span className="font-bold text-emerald-400">${netPayoutUsd.toFixed(2)}</span></div>
                                                    </div>
                                                    <div className="space-y-1 text-white/90">
                                                      <div className="text-amber-300 font-bold">Fee Absorption & Scaling Trace:</div>
                                                      <div>2. <span className="text-muted-foreground">feeAbsorbed</span> = customerTotal - adjustedBase = <span className="font-bold text-amber-400">${feeUsd.toFixed(2)}</span></div>
-                                                     <div>3. <span className="text-muted-foreground">lineItemScale</span> = adjustedBase / customerTotal = <span className="font-bold text-blue-400">{((netPayoutUsd / (totalUsd || 1)) * 100).toFixed(2)}%</span></div>
+                                                     <div>3. <span className="text-muted-foreground">lineItemScale</span> = adjustedBase / customerTotal = <span className="font-bold text-blue-400">{((netPayoutUsd / (stripeProcessedUsd || 1)) * 100).toFixed(2)}%</span></div>
                                                    </div>
                                                  </>
                                                ) : (
@@ -4404,10 +4408,10 @@ export default function PlatformAnalyticsPanel() {
                                              </div>
 
                                              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Headless Fee Add-On</div>
-                                               <div className="text-base font-bold text-white">{stripeFeePct.toFixed(2)}%</div>
+                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Card Rate & Fee Add-On</div>
+                                               <div className="text-base font-bold text-white">{stripeCardRatePct.toFixed(2)}% Card Rate</div>
                                                <div className="text-[10px] text-muted-foreground">
-                                                 {stripeFeePct === 0 ? "0% (Fee- / Presented fee override active)" : `${stripeFeePct}% Stripe card fee`}
+                                                 {isFeeMinus ? "0.00% Add-On (Fee- Merchant Absorbed)" : `${stripeFeePct.toFixed(2)}% Added to customer`}
                                                </div>
                                              </div>
 
