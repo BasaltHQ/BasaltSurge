@@ -2592,7 +2592,9 @@ export function useStripeEmbeddedOnramp({
           }
           onrampRef.current = null;
         }
-        isCoordinatorAuthedRef.current = false;
+        if (!customerIdRef.current || !oauthTokenRef.current) {
+          isCoordinatorAuthedRef.current = false;
+        }
 
         // ─── Step 1: Initialize Stripe SDK with native Dark theme ───
         // @ts-ignore - beta SDK method missing from types
