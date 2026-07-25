@@ -4289,12 +4289,13 @@ export default function PlatformAnalyticsPanel() {
                                         ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
                                         : (siteCfg.agentFeeBps ?? siteCfg.agentBps ?? r.agentFeeBps ?? r.agentBps ?? r.merchantConfig?.agentFeeBps ?? r.merchantConfig?.agentBps ?? 0);
 
-                                     let calculatedFeePct = 0.5;
-                                     if (effectivePresentedFeeBps !== null) {
-                                       calculatedFeePct = (effectivePresentedFeeBps + partnerBps) / 100;
-                                     } else if (splitCfg && typeof splitCfg === "object") {
-                                       calculatedFeePct = (partnerBps + platformBps + agentBps) / 100;
-                                     }
+                                     const stripeCardRatePct = isCredit ? 3.5 : 2.25;
+                                      
+                                     const displayPresentedRatePct = effectivePresentedFeeBps !== null
+                                       ? (effectivePresentedFeeBps + partnerBps) / 100
+                                       : stripeCardRatePct;
+
+                                     let calculatedFeePct = displayPresentedRatePct;
 
                                      const totalUsd = Number(r.totalUsd || 0);
                                      const stripeSessionCents = firstSession?.amountTotal ?? firstSession?.amount_total;
@@ -4324,7 +4325,6 @@ export default function PlatformAnalyticsPanel() {
                                        firstSession?.transactionDetails?.destinationAmount || firstSession?.transactionDetails?.destination_amount ||
                                        firstSession?.netOnChainUsd || firstSession?.amountDelivered || firstSession?.cryptoAmount || 0
                                      );
-                                     const stripeCardRatePct = isCredit ? 3.5 : 2.25;
                                      
                                      const onChainSettlementUsd = recordedOnChain > 0
                                        ? recordedOnChain
