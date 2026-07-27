@@ -778,6 +778,10 @@ export default async function RootLayout({
   const brandSpecificClientId = (!brandIsPlatform && brandNormalizedKey) ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${brandNormalizedKey}`] : undefined;
   // Prioritize DB-configured thirdwebClientId, then brandSpecificClientId, then the env default (which is partner client ID in partner containers, and platform client ID in platform containers)
   const layoutTwClientId = brand.thirdwebClientId || brandSpecificClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+  const layoutClarityId = brand.microsoftClarityId ||
+    process.env.NEXT_PUBLIC_MICROSOFT_CLARITY_ID ||
+    process.env.MICROSOFT_CLARITY_ID ||
+    (containerIdentity.containerType === 'platform' ? "w0lt4j6fw3" : "");
 
   return (
     <html
@@ -845,13 +849,19 @@ export default async function RootLayout({
             s.parentNode.insertBefore(b, s);
           })(window.lintrk);
         `}} />
-        {containerIdentity.containerType === 'platform' && (
-          <Script id="microsoft-clarity-platform" strategy="afterInteractive" dangerouslySetInnerHTML={{ __html: `
+        {Boolean(layoutClarityId) && (
+          <Script id={`microsoft-clarity-${brand.key || 'app'}`} strategy="afterInteractive" dangerouslySetInnerHTML={{ __html: `
             (function(c,l,a,r,i,t,y){
               c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
               t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
               y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-            })(window,document,"clarity","script","w0lt4j6fw3");
+            })(window,document,"clarity","script","${layoutClarityId}");
+            try {
+              if (typeof window !== "undefined" && window.clarity) {
+                window.clarity("set", "partner_key", "${brand.key || 'portalpay'}");
+                window.clarity("set", "container_type", "${containerIdentity.containerType || 'platform'}");
+              }
+            } catch(e) {}
           `}} />
         )}
         <ConsoleBanner />

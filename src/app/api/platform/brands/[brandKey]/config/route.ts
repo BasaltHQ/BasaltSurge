@@ -63,6 +63,8 @@ type BrandConfigDoc = {
   thirdwebClientId?: string;
   thirdwebSecretKey?: string;
   thirdwebAuthEndpointSecret?: string;
+  // Telemetry
+  microsoftClarityId?: string;
   updatedAt?: number;
 };
 
@@ -338,6 +340,11 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
   }
   if (typeof raw?.thirdwebAuthEndpointSecret === "string") {
     out.thirdwebAuthEndpointSecret = raw.thirdwebAuthEndpointSecret.trim();
+  }
+
+  // Telemetry
+  if (typeof raw?.microsoftClarityId === "string") {
+    out.microsoftClarityId = raw.microsoftClarityId.trim();
   }
 
   return out;

@@ -190,6 +190,9 @@ export type BrandConfigDoc = {
   thirdwebSecretKey?: string;
   thirdwebAuthEndpointSecret?: string;
 
+  // Telemetry
+  microsoftClarityId?: string;
+
   updatedAt?: number;
 };
 
@@ -493,6 +496,7 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     feeMinusEnabled: typeof overrides.feeMinusEnabled === "boolean" ? overrides.feeMinusEnabled : withDefaults.feeMinusEnabled,
     achEnabled: typeof overrides.achEnabled === "boolean" ? overrides.achEnabled : withDefaults.achEnabled,
     thirdwebClientId: typeof overrides.thirdwebClientId === "string" ? overrides.thirdwebClientId.trim() : undefined,
+    microsoftClarityId: typeof overrides.microsoftClarityId === "string" ? overrides.microsoftClarityId.trim() : undefined,
   });
 
   // BasaltSurge defaults: only apply when the DB doesn't have explicit values.

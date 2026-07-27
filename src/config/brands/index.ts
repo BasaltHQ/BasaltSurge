@@ -67,8 +67,9 @@ export type BrandConfig = {
   feeMinusEnabled?: boolean;
   achEnabled?: boolean;
 
-  // Thirdweb Keys
+  // Thirdweb & Telemetry Keys
   thirdwebClientId?: string;
+  microsoftClarityId?: string; // Microsoft Clarity Project ID for partner container monitoring
 };
 
 export const BRANDS: Record<string, BrandConfig> = {

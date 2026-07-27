@@ -157,6 +157,7 @@ export default function PartnerManagementPanel() {
       if (config?.thirdwebClientId !== undefined) body.thirdwebClientId = String(config.thirdwebClientId);
       if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
+      if (config?.microsoftClarityId !== undefined) body.microsoftClarityId = String(config.microsoftClarityId).trim();
       if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
       if (config?.feeMinusEnabled !== undefined) body.feeMinusEnabled = Boolean(config.feeMinusEnabled);
       if (config?.achEnabled !== undefined) body.achEnabled = Boolean(config.achEnabled);
@@ -564,6 +565,10 @@ export default function PartnerManagementPanel() {
           DOCKER_REGISTRY_SERVER_USERNAME: (acrUsername || (provImage.includes("theutilityco.azurecr.io") ? "theutilityco" : undefined)),
           DOCKER_REGISTRY_SERVER_PASSWORD: (acrPassword || (provImage.includes("theutilityco.azurecr.io") ? "UoiX7HVOI5W/8QQqortfwpKyb5gSSlrpmOKZpo22TD+ACRA1SdXf" : undefined)),
 
+          // Microsoft Clarity Project ID for telemetry & heatmaps
+          MICROSOFT_CLARITY_ID: (config?.microsoftClarityId ? String(config.microsoftClarityId).trim() : undefined),
+          NEXT_PUBLIC_MICROSOFT_CLARITY_ID: (config?.microsoftClarityId ? String(config.microsoftClarityId).trim() : undefined),
+
           // Container type for partner deployments
           CONTAINER_TYPE: "partner",
           NEXT_PUBLIC_CONTAINER_TYPE: "partner",
@@ -883,6 +888,7 @@ export default function PartnerManagementPanel() {
       if (config?.thirdwebClientId !== undefined) body.thirdwebClientId = String(config.thirdwebClientId);
       if (config?.thirdwebSecretKey !== undefined) body.thirdwebSecretKey = String(config.thirdwebSecretKey);
       if (config?.thirdwebAuthEndpointSecret !== undefined) body.thirdwebAuthEndpointSecret = String(config.thirdwebAuthEndpointSecret);
+      if (config?.microsoftClarityId !== undefined) body.microsoftClarityId = String(config.microsoftClarityId).trim();
       if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
       if (config?.feeMinusEnabled !== undefined) body.feeMinusEnabled = Boolean(config.feeMinusEnabled);
       if (config?.achEnabled !== undefined) body.achEnabled = Boolean(config.achEnabled);
@@ -2141,6 +2147,18 @@ export default function PartnerManagementPanel() {
                   value={String(config?.thirdwebAuthEndpointSecret || "")}
                   onChange={(e) => setConfig((prev: any) => ({ ...prev, thirdwebAuthEndpointSecret: e.target.value }))}
                 />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1.5">Microsoft Clarity Project ID</label>
+                <input
+                  className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
+                  placeholder="e.g. xsulx5ftgu"
+                  value={String(config?.microsoftClarityId || "")}
+                  onChange={(e) => setConfig((prev: any) => ({ ...prev, microsoftClarityId: e.target.value.trim() }))}
+                />
+                <div className="text-[11px] text-muted-foreground/70 mt-1">
+                  Telemetry &amp; heatmap recording Project ID for this partner container.
+                </div>
               </div>
 
               {/* Lightweight theme preview/edit */}
