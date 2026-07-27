@@ -156,16 +156,19 @@ export function formatCurrency(
   
   try {
     // Use Intl.NumberFormat for proper formatting
-    const locale = options?.locale || undefined;
-    const formatted = new Intl.NumberFormat(locale, {
+    const locale = options?.locale || "en-US";
+    let formatted = new Intl.NumberFormat(locale, {
       style: "currency",
       currency: code,
-      currencyDisplay: "symbol",
+      currencyDisplay: "narrowSymbol",
       minimumFractionDigits: currency.decimals,
       maximumFractionDigits: currency.decimals,
     }).format(amount);
     
     // Special cases for certain currencies
+    if (code === "USD" && formatted.includes("US$")) {
+      formatted = formatted.replace("US$", "$");
+    }
     if (code === "NGN" && formatted.includes("NGN")) {
       return formatted.replace("NGN", currency.symbol);
     }

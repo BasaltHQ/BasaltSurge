@@ -98,7 +98,7 @@ function formatPhoneAsYouType(value: string): string {
 
 function isValidEmail(email: string): boolean {
   if (!email) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
 
@@ -4907,6 +4907,28 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             ) : (
               <div className="flex flex-col sm:flex-row gap-3 mt-1">
                 <button
+                  type="submit"
+                  className="pp-primary-action-btn sm:flex-1 h-12 rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2 text-white !text-white shadow-lg hover:brightness-110 active:scale-[0.99] disabled:opacity-40 disabled:hover:opacity-40 disabled:cursor-not-allowed"
+                  style={{
+                    background: solidBtnColor,
+                    backgroundColor: solidBtnColor,
+                    backgroundImage: "none",
+                    color: "#ffffff",
+                  }}
+                  disabled={!isValidEmail(headlessEmailInput)}
+                  onClick={() => {
+                    const trimmedEmail = headlessEmailInput.trim();
+                    setShipEmail(trimmedEmail);
+                    setHeadlessInitiated(true);
+                    setHeadlessEmailPrompt(false);
+                    postStatus("checkout_initialized", { customerEmail: trimmedEmail });
+                    startHeadlessOnramp(trimmedEmail, undefined, shipName || undefined);
+                  }}
+                >
+                  <span>Continue</span>
+                  <span className="text-base font-extrabold">→</span>
+                </button>
+                <button
                   type="button"
                   className={`sm:flex-1 h-12 rounded-xl font-semibold border transition-all text-xs ${
                     isLightText
@@ -4922,27 +4944,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   {stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled
                     ? "Pay with Crypto Wallet"
                     : "Cancel"}
-                </button>
-                <button
-                  type="submit"
-                  className="pp-primary-action-btn sm:flex-1 h-12 rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2 text-white !text-white shadow-lg hover:brightness-110 active:scale-[0.99] disabled:opacity-40 disabled:hover:opacity-40 disabled:cursor-not-allowed"
-                  style={{
-                    background: solidBtnColor,
-                    backgroundColor: solidBtnColor,
-                    backgroundImage: "none",
-                    color: "#ffffff",
-                  }}
-                  disabled={!isValidEmail(headlessEmailInput)}
-                  onClick={() => {
-                    setShipEmail(headlessEmailInput);
-                    setHeadlessInitiated(true);
-                    setHeadlessEmailPrompt(false);
-                    postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
-                    startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
-                  }}
-                >
-                  <span>Continue</span>
-                  <span className="text-base font-extrabold">→</span>
                 </button>
               </div>
             );
@@ -8343,6 +8344,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             bottom: 16,
             right: 16,
             zIndex: 9999,
+            pointerEvents: "none",
             display: "flex",
             alignItems: "center",
             gap: 6,

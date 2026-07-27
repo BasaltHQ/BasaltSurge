@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { sendTransaction, prepareTransaction, getContract, prepareContractCall, readContract } from "thirdweb";
 import { client, chain } from "@/lib/thirdweb/client";
 import { fetchEthRates, fetchUsdRates } from "@/lib/eth";
-import { ImagePlus, Trash2, Star, StarOff, Link as LinkIcon, Plus, Wand2, Infinity as InfinityIcon, Copy, ExternalLink, Download, LayoutGrid, List, Repeat, RefreshCw, Settings, GripVertical, Eye, EyeOff, Folder } from "lucide-react";
+import { ImagePlus, Trash2, Star, StarOff, Link as LinkIcon, Plus, Wand2, Infinity as InfinityIcon, Copy, ExternalLink, Download, LayoutGrid, List, Repeat, RefreshCw, Settings, GripVertical, Eye, EyeOff, Folder, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, X } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -2467,6 +2467,37 @@ function ReceiptsAdmin() {
   const superadminRecipient = (process.env.NEXT_PUBLIC_OWNER_WALLET || "").toLowerCase();
   const isSuperadminRecipient = !!superadminRecipient && operatorWallet === superadminRecipient;
   const [testHidden, setTestHidden] = React.useState<boolean>(false);
+
+  // Search, Sort, & Filter state for Receipts Table
+  const [receiptSearchQuery, setReceiptSearchQuery] = React.useState("");
+  const [receiptStatusFilter, setReceiptStatusFilter] = React.useState("all");
+  const [receiptStaffFilter, setReceiptStaffFilter] = React.useState("all");
+  const [receiptMinAmount, setReceiptMinAmount] = React.useState("");
+  const [receiptMaxAmount, setReceiptMaxAmount] = React.useState("");
+  const [receiptSortField, setReceiptSortField] = React.useState<"createdAt" | "totalUsd" | "receiptId" | "status" | "brand">("createdAt");
+  const [receiptSortOrder, setReceiptSortOrder] = React.useState<"asc" | "desc">("desc");
+
+  const isReceiptFilterActive = React.useMemo(() => {
+    return (
+      !!receiptSearchQuery.trim() ||
+      receiptStatusFilter !== "all" ||
+      receiptStaffFilter !== "all" ||
+      receiptMinAmount !== "" ||
+      receiptMaxAmount !== "" ||
+      receiptSortField !== "createdAt" ||
+      receiptSortOrder !== "desc"
+    );
+  }, [receiptSearchQuery, receiptStatusFilter, receiptStaffFilter, receiptMinAmount, receiptMaxAmount, receiptSortField, receiptSortOrder]);
+
+  const clearReceiptFilters = React.useCallback(() => {
+    setReceiptSearchQuery("");
+    setReceiptStatusFilter("all");
+    setReceiptStaffFilter("all");
+    setReceiptMinAmount("");
+    setReceiptMaxAmount("");
+    setReceiptSortField("createdAt");
+    setReceiptSortOrder("desc");
+  }, []);
   const shortWallet = React.useMemo(() => {
     const w = operatorWallet;
     return w ? `${w.slice(0, 6)}…${w.slice(-4)}` : "(not connected)";
@@ -3042,6 +3073,130 @@ function ReceiptsAdmin() {
   }, [items]);
   const totalUsd = +Number(selected?.totalUsd || 0).toFixed(2);
 
+  const filteredAndSortedReceipts = React.useMemo(() => {
+    let list = (receipts || []).filter(
+      (r: any) => !(testHidden && String(r?.receiptId || "").toUpperCase() === "TEST")
+    );
+
+    // 1. Search Query Filter
+    const q = (receiptSearchQuery || "").trim().toLowerCase();
+    if (q) {
+      list = list.filter((r: any) => {
+        const idMatches = String(r.receiptId || "").toLowerCase().includes(q);
+        const brandMatches = String(resolveBrandName(r) || "").toLowerCase().includes(q);
+        const statusMatches = String(r.status || "").toLowerCase().includes(q);
+        const staffMatches = String(r.employeeId || "").toLowerCase().includes(q);
+        const jurMatches = String(r.jurisdictionCode || "").toLowerCase().includes(q);
+        const buyerMatches = String(r.buyerWallet || "").toLowerCase().includes(q);
+        const shipNameMatches = String(r.shippingAddress?.name || "").toLowerCase().includes(q);
+        const shipEmailMatches = String(r.shippingAddress?.email || "").toLowerCase().includes(q);
+        const itemsMatch = Array.isArray(r.lineItems) && r.lineItems.some((it: any) => String(it.label || "").toLowerCase().includes(q));
+        
+        return idMatches || brandMatches || statusMatches || staffMatches || jurMatches || buyerMatches || shipNameMatches || shipEmailMatches || itemsMatch;
+      });
+    }
+
+    // 2. Status Filter
+    if (receiptStatusFilter && receiptStatusFilter !== "all") {
+      list = list.filter((r: any) => {
+        const s = String(r.status || "").toLowerCase();
+        if (receiptStatusFilter === "paid") {
+          return s === "paid" || s === "checkout_success" || s === "tx_mined" || s === "reconciled" || s === "recipient_validated";
+        }
+        if (receiptStatusFilter === "pending") {
+          return s.includes("pending") || s === "generated" || s === "checkout_initialized" || s === "link_opened" || s === "buyer_logged_in";
+        }
+        if (receiptStatusFilter === "shipped") {
+          return s === "shipped";
+        }
+        if (receiptStatusFilter === "delivered") {
+          return s === "delivered" || s === "completed";
+        }
+        if (receiptStatusFilter === "refunded") {
+          return s.includes("refund");
+        }
+        if (receiptStatusFilter === "failed") {
+          return s === "failed" || s === "tx_mismatch";
+        }
+        return s === receiptStatusFilter.toLowerCase();
+      });
+    }
+
+    // 3. Staff Filter
+    if (receiptStaffFilter && receiptStaffFilter !== "all") {
+      list = list.filter((r: any) => {
+        if (receiptStaffFilter === "admin") return r.employeeId === "admin" || !r.employeeId;
+        return String(r.employeeId || "") === receiptStaffFilter;
+      });
+    }
+
+    // 4. Min / Max Amount Filter
+    const minAmt = parseFloat(receiptMinAmount);
+    if (!isNaN(minAmt)) {
+      list = list.filter((r: any) => Number(r.totalUsd || 0) >= minAmt);
+    }
+    const maxAmt = parseFloat(receiptMaxAmount);
+    if (!isNaN(maxAmt)) {
+      list = list.filter((r: any) => Number(r.totalUsd || 0) <= maxAmt);
+    }
+
+    // 5. Sorting
+    list = [...list].sort((a: any, b: any) => {
+      let valA: any = 0;
+      let valB: any = 0;
+
+      switch (receiptSortField) {
+        case "receiptId":
+          valA = String(a.receiptId || "").toLowerCase();
+          valB = String(b.receiptId || "").toLowerCase();
+          break;
+        case "brand":
+          valA = String(resolveBrandName(a) || "").toLowerCase();
+          valB = String(resolveBrandName(b) || "").toLowerCase();
+          break;
+        case "totalUsd":
+          valA = Number(a.totalUsd || 0);
+          valB = Number(b.totalUsd || 0);
+          break;
+        case "status":
+          valA = String(a.status || "").toLowerCase();
+          valB = String(b.status || "").toLowerCase();
+          break;
+        case "createdAt":
+        default:
+          valA = Number(a.createdAt || 0);
+          valB = Number(b.createdAt || 0);
+          break;
+      }
+
+      if (valA < valB) return receiptSortOrder === "asc" ? -1 : 1;
+      if (valA > valB) return receiptSortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    return list;
+  }, [receipts, testHidden, receiptSearchQuery, receiptStatusFilter, receiptStaffFilter, receiptMinAmount, receiptMaxAmount, receiptSortField, receiptSortOrder, resolveBrandName]);
+
+  const handleSortClick = (field: "createdAt" | "totalUsd" | "receiptId" | "status" | "brand") => {
+    if (receiptSortField === field) {
+      setReceiptSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setReceiptSortField(field);
+      setReceiptSortOrder(field === "totalUsd" || field === "createdAt" ? "desc" : "asc");
+    }
+  };
+
+  const renderSortIndicator = (field: "createdAt" | "totalUsd" | "receiptId" | "status" | "brand") => {
+    if (receiptSortField !== field) {
+      return <ArrowUpDown className="w-3 h-3 opacity-30 group-hover:opacity-70 transition-opacity" />;
+    }
+    return receiptSortOrder === "asc" ? (
+      <ArrowUp className="w-3 h-3 text-primary" />
+    ) : (
+      <ArrowDown className="w-3 h-3 text-primary" />
+    );
+  };
+
   return (
     <div className="glass-pane rounded-xl border p-6 space-y-4">
       <div className="flex items-center justify-between">
@@ -3082,6 +3237,136 @@ function ReceiptsAdmin() {
           Shipping Board
         </button>
       </div>
+
+      {/* Search, Filter & Sort Toolbar */}
+      {receiptsTab === "history" && (
+        <div className="space-y-3 mb-4 p-4 rounded-xl border border-foreground/[0.05] bg-foreground/[0.01]">
+          <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between">
+            {/* Search Bar */}
+            <div className="relative flex-1 min-w-[220px]">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Search ID, brand, wallet, item, email..."
+                value={receiptSearchQuery}
+                onChange={(e) => setReceiptSearchQuery(e.target.value)}
+                className="w-full h-10 pl-9 pr-8 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-medium focus:outline-none focus:border-primary focus:bg-foreground/[0.04] transition-all placeholder:text-muted-foreground/60"
+              />
+              {receiptSearchQuery && (
+                <button
+                  onClick={() => setReceiptSearchQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded-full"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Controls Group */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Status Filter */}
+              <div className="relative">
+                <select
+                  value={receiptStatusFilter}
+                  onChange={(e) => setReceiptStatusFilter(e.target.value)}
+                  className="h-10 px-3 pr-7 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold text-foreground focus:outline-none focus:border-primary appearance-none cursor-pointer"
+                >
+                  <option value="all">All Statuses</option>
+                  <option value="paid">Paid / Settled</option>
+                  <option value="pending">Pending / Draft</option>
+                  <option value="shipped">Shipped</option>
+                  <option value="delivered">Delivered</option>
+                  <option value="refunded">Refunded</option>
+                  <option value="failed">Failed / Mismatch</option>
+                </select>
+              </div>
+
+              {/* Staff Filter */}
+              <div className="relative">
+                <select
+                  value={receiptStaffFilter}
+                  onChange={(e) => setReceiptStaffFilter(e.target.value)}
+                  className="h-10 px-3 pr-7 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold text-foreground focus:outline-none focus:border-primary appearance-none cursor-pointer"
+                >
+                  <option value="all">All Staff</option>
+                  <option value="admin">Admin</option>
+                  {team.map((m: any) => (
+                    <option key={m.id || m.employeeId} value={m.id || m.employeeId}>
+                      {m.name || m.employeeId || m.id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Min/Max Amount Inputs */}
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  placeholder="Min $"
+                  value={receiptMinAmount}
+                  onChange={(e) => setReceiptMinAmount(e.target.value)}
+                  className="w-16 h-10 px-2 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold focus:outline-none focus:border-primary placeholder:text-muted-foreground/60"
+                />
+                <span className="text-muted-foreground text-xs">-</span>
+                <input
+                  type="number"
+                  placeholder="Max $"
+                  value={receiptMaxAmount}
+                  onChange={(e) => setReceiptMaxAmount(e.target.value)}
+                  className="w-16 h-10 px-2 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold focus:outline-none focus:border-primary placeholder:text-muted-foreground/60"
+                />
+              </div>
+
+              {/* Sort By Field */}
+              <div className="flex items-center gap-1">
+                <select
+                  value={receiptSortField}
+                  onChange={(e) => setReceiptSortField(e.target.value as any)}
+                  className="h-10 px-3 pr-7 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold text-foreground focus:outline-none focus:border-primary appearance-none cursor-pointer"
+                >
+                  <option value="createdAt">Sort: Created</option>
+                  <option value="totalUsd">Sort: Amount</option>
+                  <option value="receiptId">Sort: ID</option>
+                  <option value="status">Sort: Status</option>
+                  <option value="brand">Sort: Brand</option>
+                </select>
+                <button
+                  onClick={() => setReceiptSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
+                  className="h-10 px-3 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] hover:bg-foreground/[0.05] text-xs font-semibold transition-colors flex items-center gap-1"
+                  title={`Sort Order: ${receiptSortOrder === "asc" ? "Ascending" : "Descending"}`}
+                >
+                  {receiptSortOrder === "asc" ? <ArrowUp className="w-3.5 h-3.5 text-primary" /> : <ArrowDown className="w-3.5 h-3.5 text-primary" />}
+                  <span className="uppercase text-[10px]">{receiptSortOrder}</span>
+                </button>
+              </div>
+
+              {/* Clear Filters Button */}
+              {isReceiptFilterActive && (
+                <button
+                  onClick={clearReceiptFilters}
+                  className="h-10 px-3 rounded-xl border border-red-500/20 bg-red-500/10 text-red-500 hover:bg-red-500/20 text-xs font-semibold transition-colors flex items-center gap-1.5"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Clear</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Result Count Summary */}
+          <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t border-foreground/[0.03]">
+            <span>
+              Showing <strong className="text-foreground font-semibold">{filteredAndSortedReceipts.length}</strong> of{" "}
+              <strong className="text-foreground font-semibold">{(receipts || []).length}</strong> receipts
+            </span>
+            {isReceiptFilterActive && (
+              <span className="text-primary font-medium flex items-center gap-1 text-[11px]">
+                <Filter className="w-3 h-3" /> Filters active
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {receiptsTab === "shipping" ? (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
@@ -3250,20 +3535,58 @@ function ReceiptsAdmin() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="bg-foreground/5">
-                <th className="text-left px-3 py-2 font-medium">Receipt ID</th>
-                <th className="text-left px-3 py-2 font-medium">Brand</th>
-                <th className="text-left px-3 py-2 font-medium">Total (USD)</th>
-                <th className="text-left px-3 py-2 font-medium">Created</th>
-                <th className="text-left px-3 py-2 font-medium">Status</th>
+                <th
+                  onClick={() => handleSortClick("receiptId")}
+                  className="text-left px-3 py-2 font-medium cursor-pointer hover:text-foreground transition-colors group select-none"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Receipt ID</span>
+                    {renderSortIndicator("receiptId")}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSortClick("brand")}
+                  className="text-left px-3 py-2 font-medium cursor-pointer hover:text-foreground transition-colors group select-none"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Brand</span>
+                    {renderSortIndicator("brand")}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSortClick("totalUsd")}
+                  className="text-left px-3 py-2 font-medium cursor-pointer hover:text-foreground transition-colors group select-none"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Total (USD)</span>
+                    {renderSortIndicator("totalUsd")}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSortClick("createdAt")}
+                  className="text-left px-3 py-2 font-medium cursor-pointer hover:text-foreground transition-colors group select-none"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Created</span>
+                    {renderSortIndicator("createdAt")}
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSortClick("status")}
+                  className="text-left px-3 py-2 font-medium cursor-pointer hover:text-foreground transition-colors group select-none"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Status</span>
+                    {renderSortIndicator("status")}
+                  </div>
+                </th>
                 <th className="text-left px-3 py-2 font-medium">Staff</th>
                 <th className="text-left px-3 py-2 font-medium">Jurisdiction</th>
                 <th className="text-left px-3 py-2 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {(receipts || [])
-                .filter((r: any) => !(testHidden && String(r?.receiptId || "").toUpperCase() === "TEST"))
-                .map((rec: any, idx: number) => {
+              {filteredAndSortedReceipts.map((rec: any, idx: number) => {
                   const isExpanded = expandedRowIds.includes(rec.receiptId);
                   const recItems = Array.isArray(rec.lineItems) ? rec.lineItems : [];
                   return (
@@ -3475,10 +3798,24 @@ function ReceiptsAdmin() {
                     </React.Fragment>
                   );
                 })}
-              {(!receipts || receipts.length === 0) && (
+              {filteredAndSortedReceipts.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
-                    No receipts yet. Use "Seed Receipt" to generate a demo receipt.
+                  <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+                    <div className="space-y-2">
+                      <div>
+                        {isReceiptFilterActive
+                          ? "No receipts match your search & filter criteria."
+                          : 'No receipts yet. Use "Seed Receipt" to generate a demo receipt.'}
+                      </div>
+                      {isReceiptFilterActive && (
+                        <button
+                          onClick={clearReceiptFilters}
+                          className="text-xs font-semibold text-primary underline hover:opacity-80"
+                        >
+                          Reset search and filters
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )}
