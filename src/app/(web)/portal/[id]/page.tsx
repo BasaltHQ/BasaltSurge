@@ -4580,12 +4580,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           });
           scopeEl.querySelectorAll<HTMLElement>(".pp-portal-container button.pp-primary-action-btn").forEach(el => {
             const solidColor = (theme?.primaryColor && typeof theme.primaryColor === "string" && theme.primaryColor.startsWith("#") && !theme.primaryColor.includes("gradient")) ? theme.primaryColor : "#635BFF";
+            const btnTextColor = isColorLight(solidColor) ? "#09090b" : "#ffffff";
             el.style.setProperty("background", solidColor, "important");
             el.style.setProperty("background-color", solidColor, "important");
             el.style.setProperty("background-image", "none", "important");
-            el.style.setProperty("color", "#ffffff", "important");
+            el.style.setProperty("color", btnTextColor, "important");
             el.style.setProperty("backdrop-filter", "none", "important");
             el.style.setProperty("-webkit-backdrop-filter", "none", "important");
+            el.querySelectorAll("span").forEach(s => s.style.setProperty("color", btnTextColor, "important"));
           });
 
           // ── Inputs and selects ──
@@ -4864,17 +4866,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           {/* Action Buttons */}
           {(() => {
             const solidBtnColor = (theme?.primaryColor && typeof theme.primaryColor === "string" && theme.primaryColor.startsWith("#") && !theme.primaryColor.includes("gradient")) ? theme.primaryColor : "#635BFF";
+            const btnTextColor = isColorLight(solidBtnColor) ? "#09090b" : "#ffffff";
 
             return theme.discretePayWithCrypto ? (
               <div className="flex flex-col items-stretch space-y-3 mt-1">
                 <button
                   type="submit"
-                  className="pp-primary-action-btn w-full h-12 rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2 text-white !text-white shadow-lg hover:brightness-110 active:scale-[0.99] disabled:opacity-40 disabled:hover:opacity-40 disabled:cursor-not-allowed"
+                  className="pp-primary-action-btn w-full h-12 rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2 shadow-lg hover:brightness-110 active:scale-[0.99] disabled:opacity-40 disabled:hover:opacity-40 disabled:cursor-not-allowed"
                   style={{
                     background: solidBtnColor,
                     backgroundColor: solidBtnColor,
                     backgroundImage: "none",
-                    color: "#ffffff",
+                    color: btnTextColor,
                   }}
                   disabled={!isValidEmail(headlessEmailInput)}
                   onClick={() => {
@@ -4885,8 +4888,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
                   }}
                 >
-                  <span>Continue to Secure Checkout</span>
-                  <span className="text-base font-extrabold">→</span>
+                  <span style={{ color: btnTextColor }}>Continue to Secure Checkout</span>
+                  <span className="text-base font-extrabold" style={{ color: btnTextColor }}>→</span>
                 </button>
                 <button
                   type="button"
@@ -4908,12 +4911,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               <div className="flex flex-col sm:flex-row gap-3 mt-1">
                 <button
                   type="submit"
-                  className="pp-primary-action-btn sm:flex-1 h-12 rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2 text-white !text-white shadow-lg hover:brightness-110 active:scale-[0.99] disabled:opacity-40 disabled:hover:opacity-40 disabled:cursor-not-allowed"
+                  className="pp-primary-action-btn sm:flex-1 h-12 rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2 shadow-lg hover:brightness-110 active:scale-[0.99] disabled:opacity-40 disabled:hover:opacity-40 disabled:cursor-not-allowed"
                   style={{
                     background: solidBtnColor,
                     backgroundColor: solidBtnColor,
                     backgroundImage: "none",
-                    color: "#ffffff",
+                    color: btnTextColor,
                   }}
                   disabled={!isValidEmail(headlessEmailInput)}
                   onClick={() => {
@@ -4925,8 +4928,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     startHeadlessOnramp(trimmedEmail, undefined, shipName || undefined);
                   }}
                 >
-                  <span>Continue</span>
-                  <span className="text-base font-extrabold">→</span>
+                  <span style={{ color: btnTextColor }}>Continue</span>
+                  <span className="text-base font-extrabold" style={{ color: btnTextColor }}>→</span>
                 </button>
                 <button
                   type="button"
@@ -6296,6 +6299,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               box-shadow: 0 4px 14px 0 rgba(99, 91, 255, 0.39) !important;
             }
 
+            .pp-portal-container button.pp-primary-action-btn span,
+            button.pp-primary-action-btn span,
+            .pp-primary-action-btn span {
+              color: ${isColorLight(primaryColor && !primaryColor.includes("gradient") ? primaryColor : '#635BFF') ? '#09090b' : '#ffffff'} !important;
+            }
+
             ${(theme as any).borderRadius ? `
             .pp-portal-container button {
               border-radius: ${(theme as any).borderRadius} !important;
@@ -6320,7 +6329,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               color: ${bodyColor} !important;
             }
 
-            .pp-portal-container [class*="justify-center"][class*="gap"] span {
+            .pp-portal-container [class*="justify-center"][class*="gap"]:not(button):not(.pp-primary-action-btn) span {
               color: ${mutedColor} !important;
             }
           `}} />
