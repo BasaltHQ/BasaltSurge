@@ -3269,15 +3269,15 @@ function ReceiptsAdmin() {
                 <select
                   value={receiptStatusFilter}
                   onChange={(e) => setReceiptStatusFilter(e.target.value)}
-                  className="h-10 px-3 pr-7 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold text-foreground focus:outline-none focus:border-primary appearance-none cursor-pointer"
+                  className="h-10 px-3 pr-7 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold text-foreground focus:outline-none focus:border-primary appearance-none cursor-pointer [&>option]:bg-zinc-900 [&>option]:text-zinc-100"
                 >
-                  <option value="all">All Statuses</option>
-                  <option value="paid">Paid / Settled</option>
-                  <option value="pending">Pending / Draft</option>
-                  <option value="shipped">Shipped</option>
-                  <option value="delivered">Delivered</option>
-                  <option value="refunded">Refunded</option>
-                  <option value="failed">Failed / Mismatch</option>
+                  <option value="all" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>All Statuses</option>
+                  <option value="paid" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Paid / Settled</option>
+                  <option value="pending" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Pending / Draft</option>
+                  <option value="shipped" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Shipped</option>
+                  <option value="delivered" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Delivered</option>
+                  <option value="refunded" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Refunded</option>
+                  <option value="failed" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Failed / Mismatch</option>
                 </select>
               </div>
 
@@ -3286,12 +3286,12 @@ function ReceiptsAdmin() {
                 <select
                   value={receiptStaffFilter}
                   onChange={(e) => setReceiptStaffFilter(e.target.value)}
-                  className="h-10 px-3 pr-7 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold text-foreground focus:outline-none focus:border-primary appearance-none cursor-pointer"
+                  className="h-10 px-3 pr-7 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold text-foreground focus:outline-none focus:border-primary appearance-none cursor-pointer [&>option]:bg-zinc-900 [&>option]:text-zinc-100"
                 >
-                  <option value="all">All Staff</option>
-                  <option value="admin">Admin</option>
+                  <option value="all" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>All Staff</option>
+                  <option value="admin" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Admin</option>
                   {team.map((m: any) => (
-                    <option key={m.id || m.employeeId} value={m.id || m.employeeId}>
+                    <option key={m.id || m.employeeId} value={m.id || m.employeeId} className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>
                       {m.name || m.employeeId || m.id}
                     </option>
                   ))}
@@ -3322,13 +3322,13 @@ function ReceiptsAdmin() {
                 <select
                   value={receiptSortField}
                   onChange={(e) => setReceiptSortField(e.target.value as any)}
-                  className="h-10 px-3 pr-7 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold text-foreground focus:outline-none focus:border-primary appearance-none cursor-pointer"
+                  className="h-10 px-3 pr-7 rounded-xl border border-foreground/[0.08] bg-foreground/[0.02] text-xs font-semibold text-foreground focus:outline-none focus:border-primary appearance-none cursor-pointer [&>option]:bg-zinc-900 [&>option]:text-zinc-100"
                 >
-                  <option value="createdAt">Sort: Created</option>
-                  <option value="totalUsd">Sort: Amount</option>
-                  <option value="receiptId">Sort: ID</option>
-                  <option value="status">Sort: Status</option>
-                  <option value="brand">Sort: Brand</option>
+                  <option value="createdAt" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Sort: Created</option>
+                  <option value="totalUsd" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Sort: Amount</option>
+                  <option value="receiptId" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Sort: ID</option>
+                  <option value="status" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Sort: Status</option>
+                  <option value="brand" className="bg-zinc-900 text-zinc-100 dark:bg-zinc-900 dark:text-zinc-100" style={{ backgroundColor: "#18181b", color: "#f4f4f5" }}>Sort: Brand</option>
                 </select>
                 <button
                   onClick={() => setReceiptSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
