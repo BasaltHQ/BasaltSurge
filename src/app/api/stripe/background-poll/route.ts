@@ -76,7 +76,7 @@ export async function executeGaslessTransferServer(
     });
 
     console.log(`[BACKGROUND POLL] Connecting to wallet for ${fromWalletEmail}...`);
-    const account = await wallet.connect({
+    let account = await wallet.connect({
       client: twClient,
       chain: base,
       strategy: "auth_endpoint" as any,
@@ -138,7 +138,7 @@ export async function executeGaslessTransferServer(
       console.warn("[BACKGROUND POLL] Failed to update user profile in Cosmos DB:", profileErr);
     }
 
-    const usdcContract = getContract({
+    let usdcContract = getContract({
       client: twClient,
       chain: base,
       address: BASE_USDC_ADDRESS,
@@ -152,9 +152,59 @@ export async function executeGaslessTransferServer(
         method: "function balanceOf(address account) view returns (uint256)",
         params: [account.address],
       });
-      console.log(`[BACKGROUND POLL] USDC balance: ${balance.toString()}`);
+      console.log(`[BACKGROUND POLL] USDC balance: ${balance.toString()} on EOA: ${account.address}`);
     } catch (balErr) {
       console.warn("[BACKGROUND POLL] Failed to read balance:", balErr);
+    }
+
+    // Fallback: If balance is 0 and brandKey wasn't explicitly 'aipowerpay', try candidate brand keys to find funds
+    if (balance === BigInt(0)) {
+      const candidates = ["aipowerpay", "basaltsurge", "paynex"].filter(c => c !== (brandKey || "").toLowerCase());
+      for (const candidateBrandKey of candidates) {
+        try {
+          console.log(`[BACKGROUND POLL] Balance 0 under current brand key. Retrying with candidate brand: "${candidateBrandKey}"...`);
+          let candClientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+          let candSecretKey = process.env.THIRDWEB_SECRET_KEY || "";
+          let candAuthSecret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
+
+          const { readBrandOverridesCached } = await import("@/lib/brand-config");
+          const candBrandConfig = await readBrandOverridesCached(candidateBrandKey);
+          if (candBrandConfig?.thirdwebClientId) candClientId = candBrandConfig.thirdwebClientId;
+          if (candBrandConfig?.thirdwebSecretKey) candSecretKey = candBrandConfig.thirdwebSecretKey;
+          if (candBrandConfig?.thirdwebAuthEndpointSecret) candAuthSecret = candBrandConfig.thirdwebAuthEndpointSecret;
+
+          const candTwClient = createThirdwebClient({ clientId: candClientId, secretKey: candSecretKey });
+          const candVerificationToken = markEmailVerified(fromWalletEmail, candAuthSecret);
+          const candWallet = inAppWallet({
+            auth: { options: ["auth_endpoint" as any] },
+            executionMode: { mode: "EIP7702", sponsorGas: true },
+          });
+
+          const candAccount = await candWallet.connect({
+            client: candTwClient,
+            chain: base,
+            strategy: "auth_endpoint" as any,
+            payload: JSON.stringify({ email: fromWalletEmail, verificationToken: candVerificationToken, brandKey: candidateBrandKey }),
+          });
+
+          const candUsdcContract = getContract({ client: candTwClient, chain: base, address: BASE_USDC_ADDRESS });
+          const candBalance = await readContract({
+            contract: candUsdcContract,
+            method: "function balanceOf(address account) view returns (uint256)",
+            params: [candAccount.address],
+          });
+
+          if (candBalance > BigInt(0)) {
+            console.log(`[BACKGROUND POLL] FOUND FUNDS on candidate brand "${candidateBrandKey}"! Balance: ${candBalance.toString()} on EOA: ${candAccount.address}`);
+            balance = candBalance;
+            account = candAccount;
+            usdcContract = candUsdcContract;
+            break;
+          }
+        } catch (candErr) {
+          // ignore candidate error and continue
+        }
+      }
     }
 
     const requiredUnits = BigInt(Math.floor(usdcAmount * 1_000_000));
@@ -442,9 +492,26 @@ async function runBackgroundPoll(params: {
       }
       return;
     } else {
-      console.error("[BACKGROUND POLL] executeGaslessTransferServer failed.");
-      resolvedStatus = "failed";
-      isDefinitiveFailure = true;
+      console.warn("[BACKGROUND POLL] Stripe succeeded but on-chain transfer pending/retrying in background cron.");
+      resolvedStatus = "pending_transfer";
+      isDefinitiveFailure = false;
+
+      try {
+        const container = await getContainer();
+        const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
+        const { resource: receipt } = await container.item(docId, merchantWallet).read();
+        if (receipt && receipt.status !== "paid") {
+          receipt.status = "paid - transfer pending";
+          receipt.lastUpdatedAt = Date.now();
+          receipt.statusHistory = Array.isArray(receipt.statusHistory)
+            ? [...receipt.statusHistory, { status: "paid - transfer pending", ts: Date.now() }]
+            : [{ status: "paid - transfer pending", ts: Date.now() }];
+          await container.items.upsert(receipt);
+        }
+      } catch (dbErr) {
+        console.error("[BACKGROUND POLL] Failed to update pending transfer status in DB:", dbErr);
+      }
+      return;
     }
   }
 

@@ -245,7 +245,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Resolve site configuration dynamically to get the latest splits
+      // Resolve site configuration dynamically to get the latest splits and brand context
       const siteConfig = await getSiteConfigForWallet(merchantWallet, brandKey);
       let splitAddress = receipt.splitAddress;
       let splitAddressCredit = receipt.splitAddressCredit;
@@ -257,13 +257,16 @@ export async function POST(req: NextRequest) {
         splitAddress = merchantWallet;
       }
 
+      // Infer brand key from receipt, site config, or request container context
+      const effectiveBrandKey = String(receipt.brandKey || siteConfig?.theme?.brandKey || currentBrandKey || "").trim();
+
       // Resolve brand-specific Thirdweb Client ID dynamically from database
       let clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
       let secretKey = process.env.THIRDWEB_SECRET_KEY || "";
       let authEndpointSecret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
 
-      if (brandKey) {
-        const bKey = String(brandKey).trim().toUpperCase();
+      if (effectiveBrandKey) {
+        const bKey = effectiveBrandKey.toUpperCase();
         const envClientId = process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] || process.env[`THIRDWEB_CLIENT_ID_${bKey}`];
         const envSecretKey = process.env[`THIRDWEB_SECRET_KEY_${bKey}`];
         const envAuthSecret = process.env[`THIRDWEB_AUTH_ENDPOINT_SECRET_${bKey}`];
@@ -274,7 +277,7 @@ export async function POST(req: NextRequest) {
 
         try {
           const { readBrandOverridesCached } = await import("@/lib/brand-config");
-          const brandConfigDoc = await readBrandOverridesCached(brandKey);
+          const brandConfigDoc = await readBrandOverridesCached(effectiveBrandKey);
           if (brandConfigDoc) {
             if (brandConfigDoc.thirdwebClientId) {
               clientId = brandConfigDoc.thirdwebClientId;
@@ -285,7 +288,7 @@ export async function POST(req: NextRequest) {
             if (brandConfigDoc.thirdwebAuthEndpointSecret) {
               authEndpointSecret = brandConfigDoc.thirdwebAuthEndpointSecret;
             }
-            console.log(`[cron/reconcile-stuck] Loaded brand-specific Thirdweb credentials for ${brandKey} from DB`);
+            console.log(`[cron/reconcile-stuck] Loaded brand-specific Thirdweb credentials for ${effectiveBrandKey} from DB`);
           }
         } catch (brandErr) {
           console.warn("[cron/reconcile-stuck] Failed to load brand config credentials:", brandErr);
@@ -502,7 +505,7 @@ export async function POST(req: NextRequest) {
           email,
           merchantWallet,
           amount,
-          brandKey,
+          brandKey: effectiveBrandKey,
           targetSplitAddress,
           brandTwClient,
           authEndpointSecret,
