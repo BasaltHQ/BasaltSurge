@@ -122,10 +122,8 @@ export async function POST(req: NextRequest) {
     const paymentMethodDetails = typeof body.paymentMethodDetails === "object" ? body.paymentMethodDetails : undefined;
     const parentUrl = typeof body.parentUrl === "string" ? String(body.parentUrl).trim() : undefined;
     const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "127.0.0.1";
-    let brandKey: string | undefined = typeof body.brandKey === "string" && body.brandKey.trim() ? String(body.brandKey).trim() : undefined;
-    if (!brandKey) {
-      try { brandKey = getBrandKey(req); } catch { brandKey = undefined; }
-    }
+    let brandKey: string | undefined = undefined;
+    try { brandKey = getBrandKey(); } catch { brandKey = undefined; }
 
     if (!receiptId) {
       return NextResponse.json(
@@ -247,7 +245,7 @@ export async function POST(req: NextRequest) {
             ? [...resource.statusHistory, { status, ts }]
             : [{ status, ts }],
           lastUpdatedAt: ts,
-          brandKey: brandKey || resource?.brandKey,
+          brandKey,
           ipAddress: resource.ipAddress || ipAddress,
           // Record buyer on settlement statuses
           ...(buyerWallet && ["checkout_success", "paid", "tx_mined", "reconciled", "receipt_claimed"].includes(status)

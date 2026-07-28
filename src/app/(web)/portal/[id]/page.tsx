@@ -2556,7 +2556,28 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   };
 
   const fetchAddressSuggestions = async (val: string) => {
-    return; // Disabled in favor of native browser autofill
+    if (val.length < 3) {
+      setAddressSuggestions([]);
+      setShowAddressSuggestions(false);
+      return;
+    }
+    setIsFetchingSuggestions(true);
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(val)}&format=json&addressdetails=1&limit=5`, {
+        headers: {
+          "User-Agent": "PortalPay-Checkout/1.0 (contact@portalpay.org)"
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAddressSuggestions(data || []);
+        setShowAddressSuggestions((data || []).length > 0);
+      }
+    } catch (err) {
+      console.warn("Failed to fetch address suggestions:", err);
+    } finally {
+      setIsFetchingSuggestions(false);
+    }
   };
 
   const selectAddressSuggestion = (item: any) => {
@@ -3273,10 +3294,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const widgetCurrency = isBaseChain ? currency : undefined;
   const widgetFiatAmount = useMemo(() => {
     if (!widgetCurrency) return null;
-    const targetUsd = (feeMinusEnabled && unscaleFactor > 0) ? +(totalUsd / unscaleFactor).toFixed(2) : totalUsd;
-    const usdRounded = targetUsd > 0 ? Number(targetUsd.toFixed(2)) : 0;
+    const usdRounded = totalUsd > 0 ? Number(totalUsd.toFixed(2)) : 0;
     return usdRounded > 0 ? usdRounded.toFixed(2) : "0";
-  }, [widgetCurrency, totalUsd, feeMinusEnabled, unscaleFactor]);
+  }, [widgetCurrency, totalUsd]);
 
   const stripeWidgetFiatAmount = useMemo(() => {
     if (!widgetCurrency) return null;
@@ -3530,37 +3550,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
     return "0";
   }, [token, tokenDef?.decimals, tokenDef?.symbol, stripeEthAmount, stripeTotalUsd, btcUsd, xrpUsd, usdRates]);
-
-  const thirdwebWidgetAmount = useMemo(() => {
-    const targetUsd = (feeMinusEnabled && unscaleFactor > 0) ? +(totalUsd / unscaleFactor).toFixed(2) : totalUsd;
-    if (token === "ETH") {
-      if (!usdRate || usdRate <= 0) return "0";
-      const ethVal = +(targetUsd / usdRate).toFixed(9);
-      return ethVal > 0 ? ethVal.toFixed(6) : "0";
-    }
-    const decimals = Number(tokenDef?.decimals || (tokenDef?.symbol === "cbBTC" ? 8 : 6));
-    if (tokenDef?.symbol === "USDC" || tokenDef?.symbol === "USDT") {
-      return targetUsd > 0 ? targetUsd.toFixed(decimals) : "0";
-    }
-    if (tokenDef?.symbol === "cbBTC") {
-      if (!btcUsd || btcUsd <= 0) return "0";
-      const units = targetUsd / btcUsd;
-      return units > 0 ? units.toFixed(decimals) : "0";
-    }
-    if (tokenDef?.symbol === "cbXRP") {
-      if (!xrpUsd || xrpUsd <= 0) return "0";
-      const units = targetUsd / xrpUsd;
-      return units > 0 ? units.toFixed(decimals) : "0";
-    }
-    if (tokenDef?.symbol === "SOL") {
-      const solPerUsd = Number(usdRates["SOL"] || 0);
-      if (!solPerUsd || solPerUsd <= 0) return "0";
-      const solUsd = 1 / solPerUsd;
-      const units = targetUsd / solUsd;
-      return units > 0 ? units.toFixed(decimals) : "0";
-    }
-    return "0";
-  }, [token, tokenDef?.decimals, tokenDef?.symbol, totalUsd, feeMinusEnabled, unscaleFactor, usdRate, btcUsd, xrpUsd, usdRates]);
 
   useEffect(() => {
     let active = true;
@@ -5105,7 +5094,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal First Name</label>
                           <input
                             type="text"
-                            autoComplete="given-name"
                             placeholder="John"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
@@ -5119,7 +5107,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal Last Name</label>
                           <input
                             type="text"
-                            autoComplete="family-name"
                             placeholder="Smith"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
@@ -5171,7 +5158,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       <div>
                         <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Country</label>
                         <select
-                          autoComplete="country"
                           className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                               ? 'bg-white/5 border border-white/10 text-white focus:border-white/20 focus:bg-white/10 [&>option]:bg-neutral-900 [&>option]:text-white'
                               : 'bg-black/5 border border-black/10 text-black focus:border-black/20 focus:bg-black/10 [&>option]:bg-white [&>option]:text-black'
@@ -5197,25 +5183,50 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
                       {/* L0 Address Fields */}
                       <div className="space-y-2">
-                        <div>
+                        <div className="relative">
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 1</label>
                           <input
                             type="text"
-                            autoComplete="address-line1"
                             placeholder="123 Main St"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                 : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
                             value={kycLine1}
-                            onChange={(e) => setKycLine1(e.target.value)}
+                            onChange={(e) => {
+                              setKycLine1(e.target.value);
+                              fetchAddressSuggestions(e.target.value);
+                            }}
+                            onFocus={() => setShowAddressSuggestions(addressSuggestions.length > 0)}
+                            onBlur={() => {
+                              setTimeout(() => setShowAddressSuggestions(false), 250);
+                            }}
                           />
+                          {showAddressSuggestions && addressSuggestions.length > 0 && (
+                            <div className={`absolute left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border p-1 shadow-2xl backdrop-blur-xl animate-in fade-in duration-100 ${
+                              isLightText 
+                                ? 'border-white/10 bg-neutral-950/95 text-white shadow-black/80' 
+                                : 'border-black/10 bg-white/95 text-black shadow-black/20'
+                            }`}>
+                              {addressSuggestions.map((item, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex flex-col gap-0.5 ${
+                                    isLightText ? 'hover:bg-white/10 text-white/85' : 'hover:bg-black/10 text-black/85'
+                                  }`}
+                                  onClick={() => selectAddressSuggestion(item)}
+                                >
+                                  <span className="font-semibold truncate">{item.display_name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <div>
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 2 (Optional)</label>
                           <input
                             type="text"
-                            autoComplete="address-line2"
                             placeholder="Apt, Suite, Unit"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
@@ -5230,7 +5241,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>City</label>
                             <input
                               type="text"
-                              autoComplete="address-level2"
                               placeholder="Seattle"
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                   ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
@@ -5244,7 +5254,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>State/Region</label>
                             <input
                               type="text"
-                              autoComplete="address-level1"
                               placeholder="WA"
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                   ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
@@ -5258,7 +5267,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Zip/Postal</label>
                             <input
                               type="text"
-                              autoComplete="postal-code"
                               placeholder="98101"
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                   ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
@@ -7061,7 +7069,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                               client={client}
                                               chain={chain}
                                               currency={widgetCurrency as any}
-                                              amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : thirdwebWidgetAmount}
+                                              amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                               seller={sellerAddress || merchantWallet || recipient}
                                               tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                               showThirdwebBranding={false}
@@ -7156,7 +7164,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         client={client}
                                         chain={chain}
                                         currency={widgetCurrency as any}
-                                        amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : thirdwebWidgetAmount}
+                                        amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                         seller={sellerAddress || merchantWallet || recipient}
                                         tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                         showThirdwebBranding={false}
@@ -7772,7 +7780,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           client={client}
                                           chain={base}
                                           currency={currency as any}
-                                          amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : thirdwebWidgetAmount}
+                                          amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                           seller={sellerAddress || merchantWallet || recipient}
                                           tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                           showThirdwebBranding={false}
@@ -7828,7 +7836,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     client={client}
                                     chain={base}
                                     currency={currency as any}
-                                    amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : thirdwebWidgetAmount}
+                                    amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
                                     seller={sellerAddress || merchantWallet || recipient}
                                     tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                     showThirdwebBranding={false}
