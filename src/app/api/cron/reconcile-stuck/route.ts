@@ -431,6 +431,25 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
+          // If Stripe session is fulfillment_processing, update status from checkout_initialized to paid - ach pending (for ACH) or pending
+          if (stripeStatus === "fulfillment_processing") {
+            const paymentDetailsType = String(onrampData.payment_details?.type || onrampData.payment_method_details?.type || "").toLowerCase();
+            const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
+            const isAchSession = paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach");
+            const targetStatus = isAchSession ? "paid - ach pending" : "pending";
+
+            if (receipt.status === "checkout_initialized" || receipt.status === "generated" || receipt.status === "link_opened" || receipt.status !== targetStatus) {
+              console.log(`[cron/reconcile-stuck] Updating receipt ${receiptId} status from '${receipt.status}' to '${targetStatus}' (Stripe status: ${stripeStatus})`);
+              receipt.status = targetStatus;
+              if (isAchSession) {
+                receipt.detectedCardFunding = "us_bank_account";
+              }
+              receipt.statusHistory = Array.isArray(receipt.statusHistory)
+                ? [...receipt.statusHistory, { status: targetStatus, ts: Date.now() }]
+                : [{ status: targetStatus, ts: Date.now() }];
+            }
+          }
+
           // Persist the polling details to database (lastPolledAt and stripeSessionStatus)
           await container.items.upsert(receipt);
 

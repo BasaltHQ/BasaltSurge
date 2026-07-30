@@ -159,6 +159,12 @@ export async function executeGaslessTransferServer(
 
     const requiredUnits = BigInt(Math.floor(usdcAmount * 1_000_000));
     let amountInUnits = requiredUnits;
+
+    if (balance === BigInt(0)) {
+      console.log(`[BACKGROUND POLL] Wallet ${account.address} has 0 USDC balance on-chain. Skipping transfer.`);
+      return null;
+    }
+
     if (sweepAll && balance > BigInt(0)) {
       // Sweep full balance to clear dust for guest EOA wallet
       amountInUnits = balance;
@@ -178,9 +184,10 @@ export async function executeGaslessTransferServer(
 
     console.log(`[BACKGROUND POLL] Transaction complete: ${result.transactionHash}`);
     return result.transactionHash;
-  } catch (err) {
-    console.error("[BACKGROUND POLL] executeGaslessTransferServer error:", err);
-    return null;
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err || "Gasless transfer execution error");
+    console.error("[BACKGROUND POLL] executeGaslessTransferServer error:", errorMsg, err?.stack);
+    throw new Error(errorMsg);
   }
 }
 

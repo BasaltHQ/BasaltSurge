@@ -34,6 +34,22 @@ function clearCacheIfConfigChanged(chain: Chain) {
   }
 }
 
+function getSmartAccountConfig(chain: Chain) {
+  const useNativeFallback = typeof process !== "undefined" && process.env?.NEXT_PUBLIC_USE_NATIVE_PAYMASTER === "true";
+  if (useNativeFallback) {
+    return {
+      chain,
+      sponsorGas: true,
+      bundlerUrl: "/api/bundler",
+      paymasterUrl: "/api/paymaster",
+    };
+  }
+  return {
+    chain,
+    sponsorGas: true,
+  };
+}
+
 // Produce wallets lazily with a provided chain to avoid module-eval side effects on the server
 export function getWallets(chain: Chain) {
   clearCacheIfConfigChanged(chain);
@@ -55,10 +71,7 @@ export function getWallets(chain: Chain) {
         },
         executionMode: {
           mode: "EIP4337",
-          smartAccount: {
-            chain,
-            sponsorGas: true,
-          },
+          smartAccount: getSmartAccountConfig(chain),
         },
       }),
       createWallet("io.metamask"),
@@ -86,10 +99,7 @@ export function getPrivateWallets(chain: Chain) {
         },
         executionMode: {
           mode: "EIP4337",
-          smartAccount: {
-            chain,
-            sponsorGas: true,
-          },
+          smartAccount: getSmartAccountConfig(chain),
         },
       }),
     ];
@@ -108,10 +118,7 @@ export function getOwnerModeWallets(chain: Chain) {
         },
         executionMode: {
           mode: "EIP4337",
-          smartAccount: {
-            chain,
-            sponsorGas: true,
-          },
+          smartAccount: getSmartAccountConfig(chain),
         },
       }),
     ];
@@ -137,10 +144,7 @@ export function getPrivateLoginWallets(chain: Chain) {
         },
         executionMode: {
           mode: "EIP4337",
-          smartAccount: {
-            chain,
-            sponsorGas: true,
-          },
+          smartAccount: getSmartAccountConfig(chain),
         },
       }),
       createWallet("io.metamask"),
@@ -149,3 +153,4 @@ export function getPrivateLoginWallets(chain: Chain) {
   }
   return walletCache.getPrivateLoginWallets;
 }
+

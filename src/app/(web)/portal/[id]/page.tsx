@@ -4998,7 +4998,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
 
           {/* Content Body */}
-          <div className={`flex-1 flex flex-col items-center justify-center relative ${(headlessAuthElement || headlessPaymentElement) ? "p-0 w-full" : "p-5"}`}>
+          <div className={`flex-1 flex flex-col items-center justify-start relative ${(headlessAuthElement || headlessPaymentElement) ? "p-0 w-full" : "p-3.5 md:p-5"}`}>
             {headlessStep === "error" ? (
               <div className="text-center px-4 py-6 flex flex-col items-center w-full">
                 <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mb-4 text-red-500 border border-red-500/20">
@@ -5057,7 +5057,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 </button>
               </div>
             ) : headlessStep === "collecting_kyc" ? (
-              <div className="w-full flex flex-col items-stretch p-2 animate-in zoom-in duration-300 pr-1 text-left">
+              <div className="w-full flex flex-col items-stretch justify-start p-1 md:p-2 animate-in zoom-in duration-300 pr-1 text-left">
                 <div className="mb-4">
                   <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>
                     {kycTierRequired === "l0" ? "Billing Information" : "Identity Verification"}
@@ -5802,7 +5802,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 </div>
               </div>
             ) : headlessStep === "collecting_phone" ? (
-              <div className="w-full flex flex-col items-stretch p-2 animate-in zoom-in duration-300">
+              <div className="w-full flex flex-col items-stretch justify-start p-1 md:p-2 animate-in zoom-in duration-300">
                 <h3 className={`text-base font-bold tracking-tight mb-1 ${isLightText ? 'text-white' : 'text-black'}`}>Stripe Verification Required</h3>
                 <p className={`text-xs mb-4 ${isLightText ? 'text-white/60' : 'text-black/60'}`}>Enter your phone number to register your Link account securely.</p>
                 <input
