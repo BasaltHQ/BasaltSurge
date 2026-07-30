@@ -5086,8 +5086,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 )}
 
                 <div className="space-y-3.5">
-                  <>
-                    {/* L0 Name Fields */}
+                  {(kycTierRequired as string) === "l0" ? (
+                    <>
+                      {/* L0 Name Fields */}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal First Name</label>
@@ -5236,7 +5237,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           />
                         </div>
                         <div className="grid grid-cols-12 gap-2">
-                          <div className="col-span-6">
+                          <div className="col-span-5">
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>City</label>
                             <input
                               type="text"
@@ -5249,7 +5250,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               onChange={(e) => setKycCity(e.target.value)}
                             />
                           </div>
-                          <div className="col-span-2">
+                          <div className="col-span-4">
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>State/Region</label>
                             <input
                               type="text"
@@ -5262,7 +5263,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               onChange={(e) => setKycState(e.target.value)}
                             />
                           </div>
-                          <div className="col-span-4">
+                          <div className="col-span-3">
                             <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Zip/Postal</label>
                             <input
                               type="text"
@@ -5518,22 +5519,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
                             return (
                               <div>
-                                <div className="flex items-center justify-between mb-1.5">
+                                <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5">
                                   <label className={`block text-[10.5px] font-bold uppercase tracking-wider ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
                                     Social Security Number (SSN)
                                   </label>
-                                  <span className="text-[10px] font-semibold">
+                                  <span className="text-[10px] font-semibold shrink-0">
                                     {isComplete ? (
                                       <span className="text-emerald-400 flex items-center gap-1 font-bold">✓ Complete (9/9)</span>
                                     ) : totalDigits > 0 ? (
-                                      <span className="text-amber-400 flex items-center gap-1 font-bold">⚠️ Incomplete ({totalDigits}/9 digits)</span>
+                                      <span className="text-amber-400 flex items-center gap-1 font-bold">⚠️ {totalDigits}/9 digits</span>
                                     ) : (
                                       <span className={isLightText ? 'text-white/40' : 'text-black/40'}>9 digits required</span>
                                     )}
                                   </span>
                                 </div>
 
-                                <div className="flex items-center gap-1.5 relative">
+                                <div className="flex items-center gap-1.5 w-full">
                                   {/* Box 1 (3 digits) */}
                                   <input
                                     id="ssn-p1"
@@ -5542,7 +5543,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     pattern="[0-9]*"
                                     placeholder="3 digits"
                                     maxLength={3}
-                                    className={`w-[78px] h-10 text-center rounded-xl focus:outline-none transition-all text-xs font-mono font-bold tracking-widest ${
+                                    className={`w-16 sm:w-20 min-w-0 h-10 text-center rounded-xl focus:outline-none transition-all text-xs font-mono font-bold tracking-widest shrink-0 ${
                                       isComplete
                                         ? (isLightText ? 'bg-emerald-950/30 border border-emerald-500/50 text-white shadow-sm shadow-emerald-500/10' : 'bg-emerald-50/70 border border-emerald-500/50 text-black shadow-sm')
                                         : totalDigits > 0 && p1.length < 3
@@ -5561,7 +5562,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     }}
                                   />
 
-                                  <span className={`text-xs font-bold ${isLightText ? 'text-white/30' : 'text-black/30'}`}>-</span>
+                                  <span className={`text-xs font-bold shrink-0 ${isLightText ? 'text-white/30' : 'text-black/30'}`}>-</span>
 
                                   {/* Box 2 (2 digits) */}
                                   <input
@@ -5571,7 +5572,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     pattern="[0-9]*"
                                     placeholder="2 digits"
                                     maxLength={2}
-                                    className={`w-[66px] h-10 text-center rounded-xl focus:outline-none transition-all text-xs font-mono font-bold tracking-widest ${
+                                    className={`w-14 sm:w-16 min-w-0 h-10 text-center rounded-xl focus:outline-none transition-all text-xs font-mono font-bold tracking-widest shrink-0 ${
                                       isComplete
                                         ? (isLightText ? 'bg-emerald-950/30 border border-emerald-500/50 text-white shadow-sm shadow-emerald-500/10' : 'bg-emerald-50/70 border border-emerald-500/50 text-black shadow-sm')
                                         : totalDigits > 0 && p1.length === 3 && p2.length < 2
@@ -5595,7 +5596,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     }}
                                   />
 
-                                  <span className={`text-xs font-bold ${isLightText ? 'text-white/30' : 'text-black/30'}`}>-</span>
+                                  <span className={`text-xs font-bold shrink-0 ${isLightText ? 'text-white/30' : 'text-black/30'}`}>-</span>
 
                                   {/* Box 3 (4 digits) */}
                                   <input
@@ -5605,7 +5606,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     pattern="[0-9]*"
                                     placeholder="4 digits"
                                     maxLength={4}
-                                    className={`flex-1 h-10 text-center rounded-xl focus:outline-none transition-all text-xs font-mono font-bold tracking-widest ${
+                                    className={`flex-1 min-w-0 h-10 text-center rounded-xl focus:outline-none transition-all text-xs font-mono font-bold tracking-widest ${
                                       isComplete
                                         ? (isLightText ? 'bg-emerald-950/30 border border-emerald-500/50 text-white shadow-sm shadow-emerald-500/10' : 'bg-emerald-50/70 border border-emerald-500/50 text-black shadow-sm')
                                         : totalDigits > 0 && p1.length === 3 && p2.length === 2 && p3.length < 4
@@ -5630,7 +5631,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   <button
                                     type="button"
                                     onClick={() => setShowSsn(!showSsn)}
-                                    className={`h-10 px-2.5 rounded-xl border flex items-center justify-center transition-all focus:outline-none active:scale-95 ${
+                                    className={`shrink-0 h-10 px-2.5 rounded-xl border flex items-center justify-center transition-all focus:outline-none active:scale-95 ${
                                       isLightText ? 'bg-white/5 border-white/10 text-white/60 hover:text-white' : 'bg-black/5 border-black/10 text-black/60 hover:text-black'
                                     }`}
                                     title={showSsn ? "Hide SSN" : "Show SSN"}
@@ -5731,6 +5732,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         </span>
                       </div>
                     </>
+                  )}
 
                     {/* Dynamic Industry-Standard Form Completeness Banner & Submit Button */}
                       {(() => {
