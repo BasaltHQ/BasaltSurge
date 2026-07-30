@@ -395,7 +395,31 @@ async function runBackgroundPoll(params: {
       try {
         const container = await getContainer();
         const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
-        const { resource: receipt } = await container.item(docId, merchantWallet).read();
+        let receipt: any = null;
+        try {
+          const { resource } = await container.item(docId, merchantWallet ? merchantWallet.toLowerCase() : undefined).read();
+          receipt = resource;
+        } catch {}
+
+        if (!receipt) {
+          try {
+            const rawId = receiptId.replace(/^receipt:/, '');
+            const qSpec = {
+              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId OR c.id = @rawId)",
+              parameters: [
+                { name: "@rId", value: rawId },
+                { name: "@docId", value: docId },
+                { name: "@rawId", value: rawId }
+              ]
+            };
+            const { resources } = await container.items.query(qSpec).fetchAll();
+            if (resources && resources.length > 0) {
+              receipt = resources[0];
+            }
+          } catch (qErr) {
+            console.warn("[BACKGROUND POLL] Query fallback failed for receipt:", qErr);
+          }
+        }
 
         if (receipt) {
           receipt.status = "paid";

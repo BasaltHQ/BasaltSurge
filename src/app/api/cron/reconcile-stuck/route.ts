@@ -372,7 +372,10 @@ export async function POST(req: NextRequest) {
                            onrampData.transaction_details?.last_error === "location_not_supported" ||
                            onrampData.transaction_details?.last_error === "transaction_limit_reached";
 
-        if (stripeStatus !== "fulfillment_complete") {
+        const isCardFulfilled = !isAch && (stripeStatus === "fulfillment_complete" || stripeStatus === "fulfillment_processing");
+        const isReadyForTransfer = stripeStatus === "fulfillment_complete" || isCardFulfilled;
+
+        if (!isReadyForTransfer) {
           receipt.lastUpdatedAt = Date.now(); // Register the 1 hour polling cooldown
 
           if (isRejected || isExpired) {
@@ -738,10 +741,9 @@ export async function POST(req: NextRequest) {
               results.push({ receiptId: er.receiptId, status: "failed", reason: "sweep_tx_failed", details: txErr.message });
             }
           }
-        } else {
-          // Balance is 0! Reconcile via self-healing from recently paid receipt
+          // Balance is 0! Reconcile via self-healing from recently paid receipt or directly from on-chain Base logs
           try {
-            console.log(`[cron/reconcile-stuck] EOA balance is 0. Checking database for matching paid transactions to self-heal...`);
+            console.log(`[cron/reconcile-stuck] EOA balance is 0 for ${guestAddress}. Checking database & on-chain logs to self-heal transactionHash...`);
             
             const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
             
@@ -755,6 +757,30 @@ export async function POST(req: NextRequest) {
             };
             
             const { resources: paidReceipts } = await container.items.query(paidQuerySpec).fetchAll();
+
+            // Check Base RPC on-chain logs directly if DB self-healing has no matches
+            let onChainTxHashFound = "";
+            try {
+              const { getRpcClient, eth_getLogs } = await import("thirdweb/rpc");
+              const rpc = getRpcClient({ client: brandTwClient, chain: base });
+              const usdcTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+              const guestTopic = "0x000000000000000000000000" + guestAddress.toLowerCase().replace(/^0x/, "");
+              
+              const logs = await eth_getLogs(rpc, {
+                address: BASE_USDC_ADDRESS as `0x${string}`,
+                topics: [usdcTopic as `0x${string}`, guestTopic as `0x${string}`],
+              });
+
+              if (Array.isArray(logs) && logs.length > 0) {
+                const latestLog = logs[logs.length - 1];
+                if (latestLog && latestLog.transactionHash) {
+                  onChainTxHashFound = latestLog.transactionHash;
+                  console.log(`[cron/reconcile-stuck] Recovered on-chain transaction hash from Base logs: ${onChainTxHashFound}`);
+                }
+              }
+            } catch (onchainErr) {
+              console.warn(`[cron/reconcile-stuck] Failed to query Base RPC logs for ${guestAddress}:`, onchainErr);
+            }
             
             // Filter locally for matching splits and within last 24 hours
             const matches = paidReceipts.filter((r: any) => {
@@ -905,6 +931,40 @@ export async function POST(req: NextRequest) {
               } catch (onchainErr) {
                 console.warn(`[cron/reconcile-stuck] Failed to check transaction ${txHash} on-chain for self-healing:`, onchainErr);
               }
+            }
+
+            if (!healed && onChainTxHashFound) {
+              console.log(`[cron/reconcile-stuck] Self-healing receipt using recovered Base RPC txHash: ${onChainTxHashFound}`);
+              for (const er of subGroupReceipts) {
+                const r = er.receipt;
+                r.status = "paid";
+                r.transactionHash = onChainTxHashFound;
+                r.transactionTimestamp = Date.now();
+                r.lastUpdatedAt = Date.now();
+                r.statusHistory = Array.isArray(r.statusHistory)
+                  ? [...r.statusHistory, { status: "paid", ts: Date.now() }]
+                  : [{ status: "paid", ts: Date.now() }];
+                r.ttl = -1;
+
+                let finalReceipt = r;
+                try {
+                  const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
+                  const { readBrandOverridesCached } = await import("@/lib/brand-config");
+                  const siteConfig = await getSiteConfigForWallet(er.merchantWallet, er.brandKey);
+                  const brandConfigDoc = er.brandKey ? await readBrandOverridesCached(er.brandKey) : null;
+                  const funding = (er.cardFunding === "credit" || er.isCredit === true)
+                    ? "credit"
+                    : (er.cardFunding === "us_bank_account" ? "us_bank_account" : "debit");
+                  if (siteConfig) {
+                    finalReceipt = recalculateReceiptForCardFunding(r, funding, siteConfig, brandConfigDoc);
+                  }
+                } catch {}
+
+                await container.items.upsert(finalReceipt);
+                succeeded++;
+                results.push({ receiptId: er.receiptId, status: "success", txHash: onChainTxHashFound, note: "reconciled_via_base_rpc_logs" });
+              }
+              healed = true;
             }
 
             if (!healed) {
