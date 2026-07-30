@@ -228,8 +228,11 @@ export async function POST(req: NextRequest) {
           customerSessions.push(updatedSession);
         }
 
-        // Auto-heal logic: If Stripe session is complete, restore receipt payment status
-        if (sessionData.status === "fulfillment_complete" && txDetails.transaction_id) {
+        // Auto-heal logic: ONLY restore receipt payment status if the Stripe session metadata receiptId matches THIS receipt
+        const sessionMetaReceiptId = sessionData.metadata?.receiptId || "";
+        const isMatchingReceipt = !sessionMetaReceiptId || sessionMetaReceiptId === receipt.receiptId || sessionMetaReceiptId === receiptId;
+
+        if (isMatchingReceipt && sessionData.status === "fulfillment_complete" && txDetails.transaction_id) {
           receipt.transactionHash = txDetails.transaction_id;
           receipt.transactionTimestamp = txDetails.transaction_timestamp || receipt.transactionTimestamp || Date.now();
           receipt.status = "paid";

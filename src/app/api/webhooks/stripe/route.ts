@@ -245,23 +245,54 @@ export async function POST(req: NextRequest) {
     }
 
     // On fulfillment_processing: mark receipt as pending or paid - ach pending
-    if (status === 'fulfillment_processing' && merchantWallet && metadata.receiptId) {
+    if (status === 'fulfillment_processing' && merchantWallet) {
       const baseOrigin = req.nextUrl.origin;
       try {
         const detectedFunding = cardFunding === "us_bank_account" ? "us_bank_account" : (cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined));
         const isAch = cardFunding === "us_bank_account";
         const nextStatus = isAch ? "paid - ach pending" : "pending";
-        await fetch(`${baseOrigin}/api/receipts/status`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            receiptId: String(metadata.receiptId),
-            wallet: merchantWallet,
-            status: nextStatus,
-            detectedCardFunding: detectedFunding,
-            isCreditCard: cardFunding === "credit"
-          })
-        });
+
+        // 1. Update receipt from metadata.receiptId if present
+        if (metadata.receiptId) {
+          await fetch(`${baseOrigin}/api/receipts/status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              receiptId: String(metadata.receiptId),
+              wallet: merchantWallet,
+              status: nextStatus,
+              detectedCardFunding: detectedFunding,
+              isCreditCard: cardFunding === "credit"
+            })
+          });
+        }
+
+        // 2. Also query any receipts linked to this stripeSessionId in Cosmos DB
+        if (sessionId) {
+          try {
+            const querySpec = {
+              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.stripeSessionId = @sessionId OR ARRAY_CONTAINS(c.customerSessions, { stripeSessionId: @sessionId }, true))",
+              parameters: [{ name: "@sessionId", value: sessionId }]
+            };
+            const { resources: linkedReceipts } = await container.items.query(querySpec).fetchAll();
+            for (const r of linkedReceipts || []) {
+              if (r.status === "checkout_initialized" || r.status === "generated" || r.status === "link_opened") {
+                r.status = nextStatus;
+                if (isAch) {
+                  r.detectedCardFunding = "us_bank_account";
+                }
+                r.statusHistory = Array.isArray(r.statusHistory)
+                  ? [...r.statusHistory, { status: nextStatus, ts: Date.now() }]
+                  : [{ status: nextStatus, ts: Date.now() }];
+                r.lastUpdatedAt = Date.now();
+                await container.items.upsert(r);
+                console.log(`[STRIPE WEBHOOK] Updated linked receipt ${r.id} (${r.receiptId}) to ${nextStatus}`);
+              }
+            }
+          } catch (linkedErr) {
+            console.warn('[STRIPE WEBHOOK] Failed to update linked receipts for session:', linkedErr);
+          }
+        }
       } catch (e) {
         console.error('[STRIPE WEBHOOK] Error updating receipt status:', e);
       }

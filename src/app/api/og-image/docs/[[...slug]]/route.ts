@@ -16,7 +16,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 async function getDocMarkdown(slugParts: string[]) {
-  const docsPath = join(process.cwd(), 'docs');
+  const docsPath = join(/*turbopackIgnore: true*/ process.cwd(), 'docs');
   // Try direct .md path
   const directPath = join(docsPath, ...slugParts) + '.md';
   try {

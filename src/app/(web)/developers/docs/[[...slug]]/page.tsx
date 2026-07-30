@@ -123,11 +123,11 @@ export async function generateMetadata({ params }: { params: Promise<{ slug?: st
 async function getMarkdownContent(slug: string[]) {
   // Some deployment environments change the working directory; search multiple candidate roots.
   const candidateRoots = [
-    join(process.cwd(), 'docs'),
-    join(process.cwd(), '..', 'docs'),
-    join(process.cwd(), '..', '..', 'docs'),
-    join(process.cwd(), 'site', 'docs'),
-    join(process.cwd(), 'wwwroot', 'docs'),
+    join(/*turbopackIgnore: true*/ process.cwd(), 'docs'),
+    join(/*turbopackIgnore: true*/ process.cwd(), '..', 'docs'),
+    join(/*turbopackIgnore: true*/ process.cwd(), '..', '..', 'docs'),
+    join(/*turbopackIgnore: true*/ process.cwd(), 'site', 'docs'),
+    join(/*turbopackIgnore: true*/ process.cwd(), 'wwwroot', 'docs'),
   ];
 
   const tryPaths = (root: string) => {

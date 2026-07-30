@@ -87,7 +87,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug?: st
 }
 
 async function getMarkdownContent(slug: string[]) {
-  const docsPath = join(process.cwd(), 'docs');
+  const docsPath = join(/*turbopackIgnore: true*/ process.cwd(), 'docs');
 
   let filePath: string;
   if (slug.length === 0) {
