@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
 
     // AuthZ: Allow unauthenticated status updates for tracking (link_opened, buyer_logged_in, checkout_initialized, receipt_claimed, checkout_success, paid)
     // Require JWT auth only for sensitive status updates (refund, etc.)
-    const trackingStatuses = ["link_opened", "buyer_logged_in", "checkout_initialized", "receipt_claimed", "checkout_success", "paid", "paid - ach pending", "ach_pending", "error", "failed", "pending"];
+    const trackingStatuses = ["link_opened", "buyer_logged_in", "checkout_initialized", "receipt_claimed", "checkout_success", "paid", "paid - ach pending", "ach_pending", "error", "failed", "pending", "onramp_completed", "fulfillment_processing", "onramp_session_created", "checkout_ready"];
     const isTrackingStatus = trackingStatuses.includes(status);
 
     let caller: any = null;
