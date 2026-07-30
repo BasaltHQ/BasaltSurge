@@ -4965,12 +4965,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
         </form>
       ) : (
-        <div className={`w-full flex flex-col relative transition-all duration-300 ${(headlessAuthElement || headlessPaymentElement)
+        <div className={`w-full h-auto flex flex-col relative transition-all duration-300 ${(headlessAuthElement || headlessPaymentElement)
             ? "border-0 bg-transparent shadow-none"
             : `rounded-xl shadow-xl backdrop-blur-xl overflow-hidden border ${isLightText ? 'bg-white/[0.02] border-white/5' : 'bg-black/[0.02] border-black/5'
             }`
           }`}>
-          {/* Header */}
           {/* Header */}
           <div className={`p-4 border-b flex items-center justify-between ${isLightText ? 'border-white/5' : 'border-black/5'}`}>
             <span className={`font-semibold flex items-center gap-1.5 select-none ${isLightText ? 'text-white' : 'text-black'}`}>
@@ -4998,7 +4997,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
 
           {/* Content Body */}
-          <div className={`flex-1 flex flex-col items-center justify-start relative ${(headlessAuthElement || headlessPaymentElement) ? "p-0 w-full" : "p-3.5 md:p-5"}`}>
+          <div className={`w-full flex flex-col items-stretch justify-start relative ${(headlessAuthElement || headlessPaymentElement) ? "p-0 w-full" : "p-3.5 md:p-5"}`}>
             {headlessStep === "error" ? (
               <div className="text-center px-4 py-6 flex flex-col items-center w-full">
                 <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mb-4 text-red-500 border border-red-500/20">
@@ -5188,46 +5187,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           <input
                             type="text"
                             placeholder="123 Main St"
+                            autoComplete="address-line1"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                 : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
                             value={kycLine1}
-                            onChange={(e) => {
-                              setKycLine1(e.target.value);
-                              fetchAddressSuggestions(e.target.value);
-                            }}
-                            onFocus={() => setShowAddressSuggestions(addressSuggestions.length > 0)}
-                            onBlur={() => {
-                              setTimeout(() => setShowAddressSuggestions(false), 250);
-                            }}
+                            onChange={(e) => setKycLine1(e.target.value)}
                           />
-                          {showAddressSuggestions && addressSuggestions.length > 0 && (
-                            <div className={`absolute left-0 right-0 z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border p-1 shadow-2xl backdrop-blur-xl animate-in fade-in duration-100 ${
-                              isLightText 
-                                ? 'border-white/10 bg-neutral-950/95 text-white shadow-black/80' 
-                                : 'border-black/10 bg-white/95 text-black shadow-black/20'
-                            }`}>
-                              {addressSuggestions.map((item, idx) => (
-                                <button
-                                  key={idx}
-                                  type="button"
-                                  className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors flex flex-col gap-0.5 ${
-                                    isLightText ? 'hover:bg-white/10 text-white/85' : 'hover:bg-black/10 text-black/85'
-                                  }`}
-                                  onClick={() => selectAddressSuggestion(item)}
-                                >
-                                  <span className="font-semibold truncate">{item.display_name}</span>
-                                </button>
-                              ))}
-                            </div>
-                          )}
                         </div>
                         <div>
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 2 (Optional)</label>
                           <input
                             type="text"
                             placeholder="Apt, Suite, Unit"
+                            autoComplete="address-line2"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                 : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
@@ -5242,6 +5216,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             <input
                               type="text"
                               placeholder="Seattle"
+                              autoComplete="address-level2"
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                   ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                   : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
@@ -5255,6 +5230,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             <input
                               type="text"
                               placeholder="WA"
+                              autoComplete="address-level1"
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                   ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                   : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
@@ -5268,6 +5244,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             <input
                               type="text"
                               placeholder="98101"
+                              autoComplete="postal-code"
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                   ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                   : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
