@@ -5060,16 +5060,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               <div className="w-full flex flex-col items-stretch justify-start p-1 md:p-2 animate-in zoom-in duration-300 pr-1 text-left">
                 <div className="mb-4">
                   <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>
-                    {kycTierRequired === "l0" ? "Billing Information" : "Identity Verification"}
+                    {(kycTierRequired as string) === "l0" ? "Billing Information" : "Identity Verification"}
                   </h3>
                   <p className={`text-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
-                    {kycTierRequired === "l0" 
+                    {(kycTierRequired as string) === "l0" 
                       ? "Stripe requires basic billing and contact information to authorize this transaction."
                       : "Stripe requires additional demographics to complete authorization."}
                   </p>
                 </div>
                 
-                {kycTierRequired === "l0" && shippingRequired && (
+                {(kycTierRequired as string) === "l0" && shippingRequired && (
                   <div className="mb-4 flex items-center gap-2 px-1">
                     <input
                       type="checkbox"
@@ -5086,9 +5086,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 )}
 
                 <div className="space-y-3.5">
-                  {kycTierRequired === "l0" ? (
-                    <>
-                      {/* L0 Name Fields */}
+                  <>
+                    {/* L0 Name Fields */}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal First Name</label>
@@ -5499,39 +5498,172 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       {/* Conditional KYC identification fields based on region */}
                       {kycCountry === "US" ? (
                         <div>
-                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Social Security Number (SSN)</label>
-                          <div className="relative">
-                            <input
-                              type={showSsn ? "text" : "password"}
-                              placeholder="SSN (9 digits)"
-                              maxLength={9}
-                              className={`w-full h-10 pl-3 pr-10 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                                }`}
-                              value={kycSsn}
-                              onChange={(e) => setKycSsn(e.target.value.replace(/\D/g, ''))}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowSsn(!showSsn)}
-                              className={`absolute right-3 top-1/2 -translate-y-1/2 focus:outline-none transition-opacity hover:opacity-80 active:opacity-100 ${
-                                isLightText ? 'text-white/40' : 'text-black/40'
-                              }`}
-                            >
-                              {showSsn ? (
-                                <svg className="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                                </svg>
-                              ) : (
-                                <svg className="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                                  <circle cx="12" cy="12" r="3" />
-                                </svg>
-                              )}
-                            </button>
-                          </div>
-                          <p className={`mt-1 text-[10px] leading-relaxed ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
+                          {(() => {
+                            const p1 = kycSsn.slice(0, 3);
+                            const p2 = kycSsn.slice(3, 5);
+                            const p3 = kycSsn.slice(5, 9);
+                            const totalDigits = kycSsn.length;
+                            const isComplete = totalDigits === 9;
+
+                            const handlePaste = (e: React.ClipboardEvent) => {
+                              e.preventDefault();
+                              const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 9);
+                              setKycSsn(pasted);
+                              if (pasted.length >= 5) {
+                                document.getElementById("ssn-p3")?.focus();
+                              } else if (pasted.length >= 3) {
+                                document.getElementById("ssn-p2")?.focus();
+                              }
+                            };
+
+                            return (
+                              <div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                  <label className={`block text-[10.5px] font-bold uppercase tracking-wider ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
+                                    Social Security Number (SSN)
+                                  </label>
+                                  <span className="text-[10px] font-semibold">
+                                    {isComplete ? (
+                                      <span className="text-emerald-400 flex items-center gap-1 font-bold">✓ Complete (9/9)</span>
+                                    ) : totalDigits > 0 ? (
+                                      <span className="text-amber-400 flex items-center gap-1 font-bold">⚠️ Incomplete ({totalDigits}/9 digits)</span>
+                                    ) : (
+                                      <span className={isLightText ? 'text-white/40' : 'text-black/40'}>9 digits required</span>
+                                    )}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 relative">
+                                  {/* Box 1 (3 digits) */}
+                                  <input
+                                    id="ssn-p1"
+                                    type={showSsn ? "text" : "password"}
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    placeholder="3 digits"
+                                    maxLength={3}
+                                    className={`w-[78px] h-10 text-center rounded-xl focus:outline-none transition-all text-xs font-mono font-bold tracking-widest ${
+                                      isComplete
+                                        ? (isLightText ? 'bg-emerald-950/30 border border-emerald-500/50 text-white shadow-sm shadow-emerald-500/10' : 'bg-emerald-50/70 border border-emerald-500/50 text-black shadow-sm')
+                                        : totalDigits > 0 && p1.length < 3
+                                          ? (isLightText ? 'bg-amber-950/30 border-2 border-amber-500/60 text-white animate-pulse' : 'bg-amber-50/70 border-2 border-amber-500/60 text-black animate-pulse')
+                                          : (isLightText ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30 focus:bg-white/10' : 'bg-black/5 border border-black/10 text-black placeholder-black/30 focus:border-black/30 focus:bg-black/10')
+                                    }`}
+                                    value={p1}
+                                    onPaste={handlePaste}
+                                    onChange={(e) => {
+                                      const val = e.target.value.replace(/\D/g, "").slice(0, 3);
+                                      const newSsn = val + p2 + p3;
+                                      setKycSsn(newSsn);
+                                      if (val.length === 3) {
+                                        document.getElementById("ssn-p2")?.focus();
+                                      }
+                                    }}
+                                  />
+
+                                  <span className={`text-xs font-bold ${isLightText ? 'text-white/30' : 'text-black/30'}`}>-</span>
+
+                                  {/* Box 2 (2 digits) */}
+                                  <input
+                                    id="ssn-p2"
+                                    type={showSsn ? "text" : "password"}
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    placeholder="2 digits"
+                                    maxLength={2}
+                                    className={`w-[66px] h-10 text-center rounded-xl focus:outline-none transition-all text-xs font-mono font-bold tracking-widest ${
+                                      isComplete
+                                        ? (isLightText ? 'bg-emerald-950/30 border border-emerald-500/50 text-white shadow-sm shadow-emerald-500/10' : 'bg-emerald-50/70 border border-emerald-500/50 text-black shadow-sm')
+                                        : totalDigits > 0 && p1.length === 3 && p2.length < 2
+                                          ? (isLightText ? 'bg-amber-950/30 border-2 border-amber-500/60 text-white animate-pulse' : 'bg-amber-50/70 border-2 border-amber-500/60 text-black animate-pulse')
+                                          : (isLightText ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30 focus:bg-white/10' : 'bg-black/5 border border-black/10 text-black placeholder-black/30 focus:border-black/30 focus:bg-black/10')
+                                    }`}
+                                    value={p2}
+                                    onPaste={handlePaste}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Backspace" && p2 === "") {
+                                        document.getElementById("ssn-p1")?.focus();
+                                      }
+                                    }}
+                                    onChange={(e) => {
+                                      const val = e.target.value.replace(/\D/g, "").slice(0, 2);
+                                      const newSsn = p1 + val + p3;
+                                      setKycSsn(newSsn);
+                                      if (val.length === 2) {
+                                        document.getElementById("ssn-p3")?.focus();
+                                      }
+                                    }}
+                                  />
+
+                                  <span className={`text-xs font-bold ${isLightText ? 'text-white/30' : 'text-black/30'}`}>-</span>
+
+                                  {/* Box 3 (4 digits) */}
+                                  <input
+                                    id="ssn-p3"
+                                    type={showSsn ? "text" : "password"}
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    placeholder="4 digits"
+                                    maxLength={4}
+                                    className={`flex-1 h-10 text-center rounded-xl focus:outline-none transition-all text-xs font-mono font-bold tracking-widest ${
+                                      isComplete
+                                        ? (isLightText ? 'bg-emerald-950/30 border border-emerald-500/50 text-white shadow-sm shadow-emerald-500/10' : 'bg-emerald-50/70 border border-emerald-500/50 text-black shadow-sm')
+                                        : totalDigits > 0 && p1.length === 3 && p2.length === 2 && p3.length < 4
+                                          ? (isLightText ? 'bg-amber-950/30 border-2 border-amber-500/60 text-white animate-pulse' : 'bg-amber-50/70 border-2 border-amber-500/60 text-black animate-pulse')
+                                          : (isLightText ? 'bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-white/30 focus:bg-white/10' : 'bg-black/5 border border-black/10 text-black placeholder-black/30 focus:border-black/30 focus:bg-black/10')
+                                    }`}
+                                    value={p3}
+                                    onPaste={handlePaste}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Backspace" && p3 === "") {
+                                        document.getElementById("ssn-p2")?.focus();
+                                      }
+                                    }}
+                                    onChange={(e) => {
+                                      const val = e.target.value.replace(/\D/g, "").slice(0, 4);
+                                      const newSsn = p1 + p2 + val;
+                                      setKycSsn(newSsn);
+                                    }}
+                                  />
+
+                                  {/* Show / Hide Toggle Button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowSsn(!showSsn)}
+                                    className={`h-10 px-2.5 rounded-xl border flex items-center justify-center transition-all focus:outline-none active:scale-95 ${
+                                      isLightText ? 'bg-white/5 border-white/10 text-white/60 hover:text-white' : 'bg-black/5 border-black/10 text-black/60 hover:text-black'
+                                    }`}
+                                    title={showSsn ? "Hide SSN" : "Show SSN"}
+                                  >
+                                    {showSsn ? (
+                                      <svg className="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                                      </svg>
+                                    ) : (
+                                      <svg className="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.644C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                                        <circle cx="12" cy="12" r="3" />
+                                      </svg>
+                                    )}
+                                  </button>
+                                </div>
+
+                                {/* Live Helper / Completion status message */}
+                                {!isComplete && totalDigits > 0 && (
+                                  <p className="mt-1 text-[10.5px] font-medium text-amber-400 animate-in fade-in duration-150 flex items-center gap-1">
+                                    <span>⚠️ SSN incomplete: {9 - totalDigits} more {9 - totalDigits === 1 ? 'digit' : 'digits'} required to submit.</span>
+                                  </p>
+                                )}
+
+                                {isComplete && (
+                                  <p className="mt-1 text-[10.5px] font-medium text-emerald-400 animate-in fade-in duration-150 flex items-center gap-1">
+                                    <span>✓ 9-digit SSN complete & encrypted.</span>
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })()}
+                          <p className={`mt-1.5 text-[10px] leading-relaxed ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
                             SSN is processed securely and directly on Stripe's server.
                           </p>
                         </div>
@@ -5599,121 +5731,169 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         </span>
                       </div>
                     </>
-                  )}
 
-                  {/* Submit Button */}
-                  <button
-                    className={`w-full h-11 rounded-xl font-semibold transition-all text-xs hover:opacity-90 active:scale-[0.98] disabled:opacity-40 disabled:hover:opacity-40 shadow-md flex items-center justify-center gap-1.5 ${
-                      isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
-                    }`}
-                    style={{
-                      backgroundColor: theme.primaryColor || "#635BFF",
-                    }}
-                    disabled={
-                      (() => {
+                    {/* Dynamic Industry-Standard Form Completeness Banner & Submit Button */}
+                      {(() => {
                         const targetCountry = String(kycCountry || shipCountry || clientCountry || "US").trim().toUpperCase();
                         const isEuRegion = ["AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"].includes(targetCountry);
-                        const requiresDobAndBirthDetails = targetCountry !== "US" || isEuRegion;
 
-                        const hasBasicDetails = kycFirstName && kycLastName && kycLine1 && kycCity && kycState && kycZip && (shipEmail ? isValidEmail(shipEmail) : isValidEmail(headlessEmailInput)) && headlessPhoneInput;
+                        const missingFields: string[] = [];
+                        if (!kycFirstName.trim()) missingFields.push("First Name");
+                        if (!kycLastName.trim()) missingFields.push("Last Name");
 
-                        if (!hasBasicDetails) return true;
+                        const currentEmail = shipEmail ? shipEmail.trim() : headlessEmailInput.trim();
+                        if (!currentEmail || !isValidEmail(currentEmail)) missingFields.push("Valid Email");
 
-                        if (requiresDobAndBirthDetails) {
+                        if (!headlessPhoneInput || headlessPhoneInput.trim().length < 8) missingFields.push("Phone Number");
+
+                        if (!kycLine1.trim()) missingFields.push("Address Line 1");
+                        if (!kycCity.trim()) missingFields.push("City");
+                        if (!kycState.trim()) missingFields.push("State/Region");
+                        if (!kycZip.trim()) missingFields.push("Zip Code");
+
+                        if (targetCountry !== "US" || isEuRegion) {
                           const hasDob = kycDobDay && kycDobMonth && kycDobYear.length === 4;
-                          const hasBirthDetails = kycNationalities && kycBirthCountry && kycBirthCity;
-                          if (!hasDob || !hasBirthDetails) return true;
+                          if (!hasDob) missingFields.push("Date of Birth");
+                          if (!kycBirthCity.trim()) missingFields.push("Birth City");
+                          if (!kycBirthCountry.trim()) missingFields.push("Birth Country");
+                          if (!kycNationalities.trim()) missingFields.push("Nationality");
                         }
 
-                        if (kycTierRequired !== "l0" && targetCountry === "US") {
-                          if (kycSsn.length < 9) return true;
+                        if ((kycTierRequired as string) !== "l0" && targetCountry === "US") {
+                          if (kycSsn.length < 9) missingFields.push(`SSN (${9 - kycSsn.length} digits left)`);
                         }
 
-                        return false;
-                      })()
-                    }
-                    onClick={() => {
-                      const safeCountry = String(kycCountry || shipCountry || clientCountry || "US").trim().toUpperCase() || "US";
-                      const isEuRegion = ["AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"].includes(safeCountry);
-                      
-                      const dobDay = Number(kycDobDay);
-                      const dobMonth = Number(kycDobMonth);
-                      const dobYear = Number(kycDobYear);
-                      const hasValidDob = dobDay > 0 && dobMonth > 0 && dobYear > 1900;
+                        const isFormComplete = missingFields.length === 0;
 
-                      if (kycTierRequired === "l0") {
-                        const l0Payload: any = {
-                          given_name: kycFirstName.trim(),
-                          surname: kycLastName.trim(),
-                          address: {
-                            line1: kycLine1.trim(),
-                            line2: kycLine2 ? kycLine2.trim() : undefined,
-                            city: kycCity.trim(),
-                            state: kycState.trim().toUpperCase(),
-                            postal_code: kycZip.trim().toUpperCase(),
-                            country: safeCountry
-                          }
-                        };
+                        return (
+                          <div className="space-y-3 mt-4">
+                            {/* Live Completeness Status Feedback Box */}
+                            {!isFormComplete ? (
+                              <div className={`p-3 rounded-xl border animate-in fade-in duration-200 ${
+                                isLightText ? 'bg-amber-950/20 border-amber-500/30 text-amber-300' : 'bg-amber-50/70 border-amber-500/40 text-amber-900'
+                              }`}>
+                                <div className="font-bold flex items-center justify-between mb-1.5 text-[11px] uppercase tracking-wider">
+                                  <span className="flex items-center gap-1.5">
+                                    <span>⚠️</span>
+                                    <span>Action Required ({missingFields.length} {missingFields.length === 1 ? 'field' : 'fields'} remaining)</span>
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {missingFields.map((field, idx) => (
+                                    <span key={idx} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-semibold border ${
+                                      isLightText ? 'bg-amber-500/15 border-amber-500/30 text-amber-200' : 'bg-amber-100 border-amber-300 text-amber-900'
+                                    }`}>
+                                      • {field}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className={`p-2.5 rounded-xl border flex items-center gap-2 text-xs font-semibold animate-in fade-in duration-200 ${
+                                isLightText ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300' : 'bg-emerald-50/70 border-emerald-500/40 text-emerald-900'
+                              }`}>
+                                <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                </svg>
+                                <span>All required details provided. Ready for identity verification.</span>
+                              </div>
+                            )}
 
-                        if (safeCountry !== "US" || isEuRegion) {
-                          l0Payload.birth_city = (kycBirthCity || kycCity).trim();
-                          l0Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
-                          l0Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
-                          if (hasValidDob) {
-                            l0Payload.date_of_birth = {
-                              day: dobDay,
-                              month: dobMonth,
-                              year: dobYear
-                            };
-                          }
-                        }
+                            {/* Submit Button */}
+                            <button
+                              type="button"
+                              className={`w-full h-11 rounded-xl font-semibold transition-all text-xs hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex items-center justify-center gap-1.5 ${
+                                isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                              }`}
+                              style={{
+                                backgroundColor: isFormComplete ? (theme.primaryColor || "#635BFF") : (isLightText ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"),
+                                color: isFormComplete ? (isColorLight(theme.primaryColor || "#635BFF") ? "#09090b" : "#ffffff") : (isLightText ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)"),
+                              }}
+                              disabled={!isFormComplete}
+                              onClick={() => {
+                                const safeCountry = String(kycCountry || shipCountry || clientCountry || "US").trim().toUpperCase() || "US";
+                                const isEuRegion = ["AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"].includes(safeCountry);
+                                
+                                const dobDay = Number(kycDobDay);
+                                const dobMonth = Number(kycDobMonth);
+                                const dobYear = Number(kycDobYear);
+                                const hasValidDob = dobDay > 0 && dobMonth > 0 && dobYear > 1900;
 
-                        submitKycInfo(l0Payload);
-                      } else {
-                        const l1Payload: any = {
-                          given_name: kycFirstName.trim(),
-                          surname: kycLastName.trim(),
-                          address: {
-                            line1: kycLine1.trim(),
-                            line2: kycLine2 ? kycLine2.trim() : undefined,
-                            city: kycCity.trim(),
-                            state: kycState.trim().toUpperCase(),
-                            postal_code: kycZip.trim().toUpperCase(),
-                            country: safeCountry
-                          }
-                        };
+                                if ((kycTierRequired as string) === "l0") {
+                                  const l0Payload: any = {
+                                    given_name: kycFirstName.trim(),
+                                    surname: kycLastName.trim(),
+                                    address: {
+                                      line1: kycLine1.trim(),
+                                      line2: kycLine2 ? kycLine2.trim() : undefined,
+                                      city: kycCity.trim(),
+                                      state: kycState.trim().toUpperCase(),
+                                      postal_code: kycZip.trim().toUpperCase(),
+                                      country: safeCountry
+                                    }
+                                  };
 
-                        if (hasValidDob) {
-                          l1Payload.date_of_birth = {
-                            day: dobDay,
-                            month: dobMonth,
-                            year: dobYear
-                          };
-                        }
+                                  if (safeCountry !== "US" || isEuRegion) {
+                                    l0Payload.birth_city = (kycBirthCity || kycCity).trim();
+                                    l0Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
+                                    l0Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
+                                    if (hasValidDob) {
+                                      l0Payload.date_of_birth = {
+                                        day: dobDay,
+                                        month: dobMonth,
+                                        year: dobYear
+                                      };
+                                    }
+                                  }
 
-                        if (safeCountry === "US") {
-                          l1Payload.id_number = {
-                            value: kycSsn.trim(),
-                            type: "us_ssn"
-                          };
-                        } else {
-                          l1Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
-                          l1Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
-                          l1Payload.birth_city = (kycBirthCity || kycCity).trim();
-                        }
+                                  submitKycInfo(l0Payload);
+                                } else {
+                                  const l1Payload: any = {
+                                    given_name: kycFirstName.trim(),
+                                    surname: kycLastName.trim(),
+                                    address: {
+                                      line1: kycLine1.trim(),
+                                      line2: kycLine2 ? kycLine2.trim() : undefined,
+                                      city: kycCity.trim(),
+                                      state: kycState.trim().toUpperCase(),
+                                      postal_code: kycZip.trim().toUpperCase(),
+                                      country: safeCountry
+                                    }
+                                  };
 
-                        submitKycInfo(l1Payload);
-                      }
-                    }}
-                  >
-                    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
-                      <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1s1 .45 1 1v3c0 .55-.45 1-1 1zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
-                    </svg>
-                    {kycTierRequired === "l0" ? "Submit KYC Verification" : "Submit KYC Details"}
-                  </button>
-                </div>
-              </div>
-            ) : headlessStep === "submitting_kyc" ? (
+                                  if (safeCountry === "US") {
+                                    l1Payload.id_number = kycSsn.trim();
+                                  } else {
+                                    if (hasValidDob) {
+                                      l1Payload.date_of_birth = {
+                                        day: dobDay,
+                                        month: dobMonth,
+                                        year: dobYear
+                                      };
+                                    }
+                                    l1Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
+                                    l1Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
+                                    l1Payload.birth_city = (kycBirthCity || kycCity).trim();
+                                  }
+
+                                  submitKycInfo(l1Payload);
+                                }
+                              }}
+                            >
+                              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+                                <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1s1 .45 1 1v3c0 .55-.45 1-1 1zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
+                              </svg>
+                              {isFormComplete 
+                                ? ((kycTierRequired as string) === "l0" ? "Submit KYC Verification" : "Submit KYC Details") 
+                                : `Complete ${missingFields.length} ${missingFields.length === 1 ? 'Field' : 'Fields'} to Continue`
+                              }
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                ) : headlessStep === "submitting_kyc" ? (
               <div className="text-center flex flex-col items-center justify-center gap-4 min-h-[320px] px-4 py-8 w-full animate-in fade-in duration-300">
                 <p className={`font-semibold text-sm tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>Submitting KYC Details...</p>
                 <div className="relative flex items-center justify-center mt-2 mb-4 scale-110">
