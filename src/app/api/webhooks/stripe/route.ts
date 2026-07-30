@@ -244,13 +244,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // On fulfillment_processing: mark receipt as pending or paid - ach pending
+    // On fulfillment_processing: mark receipt as paid (or paid - ach pending for ACH)
     if (status === 'fulfillment_processing' && merchantWallet) {
       const baseOrigin = req.nextUrl.origin;
       try {
         const detectedFunding = cardFunding === "us_bank_account" ? "us_bank_account" : (cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined));
         const isAch = cardFunding === "us_bank_account";
-        const nextStatus = isAch ? "paid - ach pending" : "pending";
+        const nextStatus = isAch ? "paid - ach pending" : "paid";
 
         // 1. Update receipt from metadata.receiptId if present
         if (metadata.receiptId) {
@@ -276,17 +276,18 @@ export async function POST(req: NextRequest) {
             };
             const { resources: linkedReceipts } = await container.items.query(querySpec).fetchAll();
             for (const r of linkedReceipts || []) {
-              if (r.status === "checkout_initialized" || r.status === "generated" || r.status === "link_opened") {
+              if (r.status !== "paid" && r.status !== "paid - ach pending" && r.status !== "checkout_success") {
                 r.status = nextStatus;
                 if (isAch) {
                   r.detectedCardFunding = "us_bank_account";
+                } else {
+                  r.ttl = -1;
                 }
                 r.statusHistory = Array.isArray(r.statusHistory)
                   ? [...r.statusHistory, { status: nextStatus, ts: Date.now() }]
                   : [{ status: nextStatus, ts: Date.now() }];
                 r.lastUpdatedAt = Date.now();
                 await container.items.upsert(r);
-                console.log(`[STRIPE WEBHOOK] Updated linked receipt ${r.id} (${r.receiptId}) to ${nextStatus}`);
               }
             }
           } catch (linkedErr) {
