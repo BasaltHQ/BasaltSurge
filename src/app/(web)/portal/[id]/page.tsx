@@ -2792,9 +2792,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     if (!receipt) return 0;
     const isAch = detectedCardFunding === "us_bank_account";
     const isCredit = detectedCardFunding === "credit";
-    const rate = isAch ? (achSpeed === "standard" ? 0.6 : 4.0) : (isCredit ? 3.5 : 2.25);
+    const rate = isAch ? (achSpeed === "standard" ? 0.6 : 4.0) : (isCredit ? creditStripeFeePct : debitStripeFeePct);
     return +(totalUsd / (1 + rate / 100)).toFixed(2);
-  }, [receipt, totalUsd, detectedCardFunding, achSpeed]);
+  }, [receipt, totalUsd, detectedCardFunding, achSpeed, creditStripeFeePct, debitStripeFeePct]);
 
   const getAmountForFunding = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
     if (!receipt) return 0;
