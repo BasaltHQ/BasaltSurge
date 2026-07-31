@@ -34,7 +34,10 @@ import {
   Calculator,
   CreditCard,
   GitCommit,
-  GitBranch
+  GitBranch,
+  Wrench,
+  Zap,
+  ShieldCheck
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 import RollercoasterOverlay from "../components/RollercoasterOverlay";
@@ -740,6 +743,8 @@ export default function PlatformAnalyticsPanel() {
   }, [wallet, refreshingLimits]);
   const [copySuccess, setCopySuccess] = useState<Record<string, boolean>>({});
   const [hoveredLineKey, setHoveredLineKey] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
+  const [actionFeedback, setActionFeedback] = useState<Record<string, string>>({});
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -850,6 +855,81 @@ export default function PlatformAnalyticsPanel() {
     }
   }, [wallet, fetchLimit, timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, customStartDate, customEndDate]);
 
+  const handleTargetedReconcile = useCallback(async (receiptId: string) => {
+    setActionLoading(prev => ({ ...prev, [receiptId]: true }));
+    setActionFeedback(prev => ({ ...prev, [receiptId]: "Connecting to reconciliation engine..." }));
+    try {
+      const cronSecret = process.env.NEXT_PUBLIC_CRON_SECRET || "default_cron_secret_temp_key_portalpay";
+      const res = await fetch(`/api/cron/reconcile-stuck?receiptId=${encodeURIComponent(receiptId)}&cronSecret=${encodeURIComponent(cronSecret)}`, {
+        headers: {
+          "x-wallet": wallet || "",
+          "x-cron-secret": cronSecret
+        },
+        cache: "no-store"
+      });
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { error: text || `HTTP ${res.status} ${res.statusText}` };
+      }
+
+      if (res.ok && data.ok) {
+        const msg = `✓ Single-Receipt Reconciliation Complete!\n` +
+          `• Processed: ${data.processed || 0}\n` +
+          `• Succeeded: ${data.succeeded || 0}\n` +
+          `• Results: ${JSON.stringify(data.results || [], null, 2)}`;
+        setActionFeedback(prev => ({ ...prev, [receiptId]: msg }));
+        // Refresh analytics dashboard live
+        fetchAnalytics();
+      } else {
+        setActionFeedback(prev => ({ ...prev, [receiptId]: `❌ Reconciliation Response (HTTP ${res.status}): ${data.error || text || "Unknown error"}` }));
+      }
+    } catch (err: any) {
+      setActionFeedback(prev => ({ ...prev, [receiptId]: `❌ Network Error: ${err.message || "Failed to trigger reconciliation"}` }));
+    } finally {
+      setActionLoading(prev => ({ ...prev, [receiptId]: false }));
+    }
+  }, [wallet, fetchAnalytics]);
+
+  const handleStripeTelemetryCheck = useCallback(async (receiptId: string, stripeSessionId?: string | null) => {
+    const key = `stripe-${receiptId}`;
+    if (!stripeSessionId) {
+      setActionFeedback(prev => ({ ...prev, [receiptId]: "⚠️ No Stripe Session ID recorded on this receipt." }));
+      return;
+    }
+    setActionLoading(prev => ({ ...prev, [key]: true }));
+    setActionFeedback(prev => ({ ...prev, [receiptId]: "Querying Stripe live API telemetry..." }));
+    try {
+      const res = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(stripeSessionId)}`, {
+        cache: "no-store"
+      });
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { error: text || `HTTP ${res.status} ${res.statusText}` };
+      }
+
+      if (res.ok) {
+        const msg = `📡 Live Stripe Telemetry Check:\n` +
+          `• Status: ${data.status || "unknown"}\n` +
+          `• Session ID: ${stripeSessionId}\n` +
+          `• Customer: ${data.customer_information?.email || data.email || "N/A"}\n` +
+          `• Details: ${JSON.stringify(data.transaction_details || data, null, 2)}`;
+        setActionFeedback(prev => ({ ...prev, [receiptId]: msg }));
+      } else {
+        setActionFeedback(prev => ({ ...prev, [receiptId]: `❌ Stripe API Error (HTTP ${res.status}): ${data.error || text || "Failed to fetch session"}` }));
+      }
+    } catch (err: any) {
+      setActionFeedback(prev => ({ ...prev, [receiptId]: `❌ Telemetry Check Error: ${err.message || "Failed to query Stripe API"}` }));
+    } finally {
+      setActionLoading(prev => ({ ...prev, [key]: false }));
+    }
+  }, []);
+
   const fetchSafeBalances = useCallback(async () => {
     if (!wallet) return;
     setSafeLoading(true);
@@ -906,6 +986,20 @@ export default function PlatformAnalyticsPanel() {
     });
     return Array.from(keys);
   }, [brandStats]);
+
+  // Dynamically detected statuses from loaded dataset with counts
+  const detectedStatuses = useMemo(() => {
+    const map: Record<string, number> = {};
+    recentReceipts.forEach(r => {
+      const s = String(r.status || "").trim();
+      if (s) {
+        map[s] = (map[s] || 0) + 1;
+      }
+    });
+    return Object.entries(map)
+      .sort((a, b) => b[1] - a[1])
+      .map(([status, count]) => ({ status, count }));
+  }, [recentReceipts]);
 
   // Shared brand colors matching the Line Chart
   const brandColors: Record<string, string> = useMemo(() => ({
@@ -2897,10 +2991,19 @@ export default function PlatformAnalyticsPanel() {
                 onChange={e => setStatusFilter(e.target.value)}
                 className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
               >
-                <option value="all" className="bg-neutral-900">All Statuses</option>
-                <option value="paid" className="bg-neutral-900">Paid Only</option>
-                <option value="failed" className="bg-neutral-900">Failed Only</option>
-                <option value="checkout_initialized" className="bg-neutral-900">Initialized Only</option>
+                <option value="all" className="bg-neutral-900">All Statuses ({recentReceipts.length})</option>
+                {detectedStatuses.map(({ status, count }) => {
+                  const formattedLabel = status
+                    .replace(/_/g, " ")
+                    .replace(/-/g, " ")
+                    .replace(/\b\w/g, char => char.toUpperCase());
+
+                  return (
+                    <option key={status} value={status} className="bg-neutral-900">
+                      {formattedLabel} ({count})
+                    </option>
+                  );
+                })}
               </select>
 
               <select
@@ -3268,6 +3371,17 @@ export default function PlatformAnalyticsPanel() {
                                         </button>
                                       );
                                     })}
+                                    {/* Tab 7: Reconcile & Single-Receipt Targeted Actions */}
+                                    <button
+                                      onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: "reconcile" }))}
+                                      className="w-full p-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 flex items-center justify-between text-purple-300 text-left transition-all active:scale-[0.98]"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <Wrench className="w-3.5 h-3.5" />
+                                        <span className="font-semibold text-[11px]">Reconcile & Actions</span>
+                                      </div>
+                                      <span className="text-purple-300/50 text-xs font-bold">›</span>
+                                    </button>
                                   </div>
                                 </div>
 
@@ -3649,7 +3763,8 @@ export default function PlatformAnalyticsPanel() {
                                       { id: "origin", label: "Initialization & Origin", icon: Chrome },
                                       { id: "logs", label: "Client Logs", icon: Activity },
                                       { id: "customers", label: "Customer Metadata", icon: Users },
-                                      { id: "fees", label: "Fee & Split Breakdown", icon: Percent }
+                                      { id: "fees", label: "Fee & Split Breakdown", icon: Percent },
+                                      { id: "reconcile", label: "Reconcile & Actions", icon: Wrench }
                                     ].map(tab => {
                                       const Icon = tab.icon;
                                       const isActive = rowActiveTab === tab.id;
@@ -3913,21 +4028,49 @@ export default function PlatformAnalyticsPanel() {
                                           </div>
 
                                           <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">On-chain Tx Hash</div>
+                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Leg 1 (Onramp Tx)</div>
                                             <div className="flex items-center gap-1.5 pt-0.5">
                                               <span className="font-mono text-white/90 truncate max-w-[160px]">
-                                                {r.transactionHash || "N/A"}
+                                                {(r as any).onrampTxHash || (r as any).leg1TxHash || "N/A"}
                                               </span>
-                                              {r.transactionHash && (
+                                              {((r as any).onrampTxHash || (r as any).leg1TxHash) && (
                                                 <>
                                                   <button
-                                                    onClick={() => handleCopy(r.transactionHash!, `tx-${r.receiptId}`)}
+                                                    onClick={() => handleCopy(((r as any).onrampTxHash || (r as any).leg1TxHash)!, `leg1-${r.receiptId}`)}
                                                     className="text-muted-foreground hover:text-white transition-colors"
                                                   >
                                                     <Copy className="w-3.5 h-3.5" />
                                                   </button>
                                                   <a
-                                                    href={`https://basescan.org/tx/${r.transactionHash}`}
+                                                    href={`https://basescan.org/tx/${(r as any).onrampTxHash || (r as any).leg1TxHash}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-muted-foreground hover:text-white transition-colors"
+                                                  >
+                                                    <ExternalLink className="w-3.5 h-3.5" />
+                                                  </a>
+                                                </>
+                                              )}
+                                              {copySuccess[`leg1-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
+                                            </div>
+                                          </div>
+
+                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Leg 2 (Settlement Tx)</div>
+                                            <div className="flex items-center gap-1.5 pt-0.5">
+                                              <span className="font-mono text-white/90 truncate max-w-[160px]">
+                                                {r.transactionHash || (r as any).leg2TxHash || "N/A"}
+                                              </span>
+                                              {(r.transactionHash || (r as any).leg2TxHash) && (
+                                                <>
+                                                  <button
+                                                    onClick={() => handleCopy((r.transactionHash || (r as any).leg2TxHash)!, `tx-${r.receiptId}`)}
+                                                    className="text-muted-foreground hover:text-white transition-colors"
+                                                  >
+                                                    <Copy className="w-3.5 h-3.5" />
+                                                  </button>
+                                                  <a
+                                                    href={`https://basescan.org/tx/${r.transactionHash || (r as any).leg2TxHash}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     className="text-muted-foreground hover:text-white transition-colors"
@@ -4700,7 +4843,7 @@ export default function PlatformAnalyticsPanel() {
                                                      className="text-[10px] text-blue-400 hover:underline flex items-center gap-0.5 ml-2"
                                                    >
                                                      <span>View on BaseScan</span>
-                                                     <span>↗</span>
+                                             <span>↗</span>
                                                    </a>
                                                  )}
                                                </span>
@@ -4711,6 +4854,95 @@ export default function PlatformAnalyticsPanel() {
                                        </div>
                                      );
                                    })()}
+
+                                   {/* Tab 7: Reconcile & Single-Receipt Targeted Actions */}
+                                   {rowActiveTab === "reconcile" && (
+                                     <div className="space-y-4 animate-in fade-in duration-200 mt-1">
+                                       <div className="bg-black/40 border border-white/10 rounded-2xl p-5 space-y-4 shadow-xl">
+                                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
+                                           <div>
+                                             <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                                               <Wrench className="w-4 h-4 text-primary" />
+                                               <span>Targeted Receipt Controls & On-Chain Settlement</span>
+                                             </h4>
+                                             <p className="text-xs text-muted-foreground mt-0.5">
+                                               Execute instant EIP-7702 gasless sweep, recover Base RPC transfer logs, or check live Stripe session status for Receipt #{r.receiptId}
+                                             </p>
+                                           </div>
+                                           <span className="text-[10px] font-mono px-3 py-1 rounded-full bg-white/5 border border-white/10 text-white/80 font-bold self-start sm:self-auto">
+                                             Receipt: #{r.receiptId}
+                                           </span>
+                                         </div>
+
+                                         {/* Action Cards Grid */}
+                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                           {/* Action 1: Targeted Single-Receipt Sweep */}
+                                           <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4 space-y-3.5 flex flex-col justify-between hover:border-emerald-500/30 transition-all">
+                                             <div>
+                                               <div className="flex items-center gap-2 text-xs font-bold text-white mb-1.5">
+                                                 <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
+                                                   <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                                                 </div>
+                                                 <span>Single-Receipt Force Reconcile</span>
+                                               </div>
+                                               <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                                                 Executes single-receipt targeted EIP-7702 USDC sweep, verifies Base RPC logs (`eth_getLogs`), and force-attaches the on-chain Tx Hash to this receipt.
+                                               </p>
+                                             </div>
+                                             <button
+                                               type="button"
+                                               onClick={() => handleTargetedReconcile(r.receiptId)}
+                                               disabled={actionLoading[r.receiptId]}
+                                               className="w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 shadow-md"
+                                             >
+                                               <RefreshCw className={`w-3.5 h-3.5 ${actionLoading[r.receiptId] ? "animate-spin text-emerald-400" : ""}`} />
+                                               <span>{actionLoading[r.receiptId] ? "Executing Targeted Sweep..." : "Run Targeted Reconcile"}</span>
+                                             </button>
+                                           </div>
+
+                                           {/* Action 2: Stripe Session Live Telemetry Check */}
+                                           <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4 space-y-3.5 flex flex-col justify-between hover:border-blue-500/30 transition-all">
+                                             <div>
+                                               <div className="flex items-center gap-2 text-xs font-bold text-white mb-1.5">
+                                                 <div className="w-6 h-6 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
+                                                   <Activity className="w-3.5 h-3.5 text-blue-400" />
+                                                 </div>
+                                                 <span>Stripe Onramp Session Telemetry</span>
+                                               </div>
+                                               <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                                                 Queries Stripe's live API to verify onramp session state, customer identity verifications, payment method details, and raw Stripe errors.
+                                               </p>
+                                             </div>
+                                             <button
+                                               type="button"
+                                               onClick={() => handleStripeTelemetryCheck(r.receiptId, r.stripeSessionId)}
+                                               disabled={actionLoading[`stripe-${r.receiptId}`]}
+                                               className="w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 shadow-md"
+                                             >
+                                               <RefreshCw className={`w-3.5 h-3.5 ${actionLoading[`stripe-${r.receiptId}`] ? "animate-spin text-blue-400" : ""}`} />
+                                               <span>{actionLoading[`stripe-${r.receiptId}`] ? "Querying Stripe API..." : "Check Live Stripe Telemetry"}</span>
+                                             </button>
+                                           </div>
+                                         </div>
+
+                                         {/* Action Telemetry Output Console */}
+                                         {actionFeedback[r.receiptId] && (
+                                           <div className="mt-3 bg-black/70 border border-white/10 rounded-2xl p-4 font-mono text-xs space-y-2 animate-in fade-in duration-200 shadow-inner">
+                                             <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider flex items-center justify-between border-b border-white/10 pb-2">
+                                               <span className="flex items-center gap-1.5 text-white/80">
+                                                 <Terminal className="w-3.5 h-3.5 text-primary" />
+                                                 <span>Action Output Telemetry</span>
+                                               </span>
+                                               <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Live Response</span>
+                                             </div>
+                                             <pre className="text-emerald-300 text-[11px] overflow-x-auto whitespace-pre-wrap leading-relaxed pt-1">
+                                               {actionFeedback[r.receiptId]}
+                                             </pre>
+                                           </div>
+                                         )}
+                                       </div>
+                                     </div>
+                                   )}
 
                                    {/* Tab 3: Initialization & Origin */}
                                    {rowActiveTab === "origin" && (
