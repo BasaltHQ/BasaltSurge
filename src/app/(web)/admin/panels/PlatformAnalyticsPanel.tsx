@@ -867,7 +867,14 @@ export default function PlatformAnalyticsPanel() {
         },
         cache: "no-store"
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { error: text || `HTTP ${res.status} ${res.statusText}` };
+      }
+
       if (res.ok && data.ok) {
         const msg = `✓ Single-Receipt Reconciliation Complete!\n` +
           `• Processed: ${data.processed || 0}\n` +
@@ -877,7 +884,7 @@ export default function PlatformAnalyticsPanel() {
         // Refresh analytics dashboard live
         fetchAnalytics();
       } else {
-        setActionFeedback(prev => ({ ...prev, [receiptId]: `❌ Reconciliation Failed: ${data.error || "Unknown error"}` }));
+        setActionFeedback(prev => ({ ...prev, [receiptId]: `❌ Reconciliation Response (HTTP ${res.status}): ${data.error || text || "Unknown error"}` }));
       }
     } catch (err: any) {
       setActionFeedback(prev => ({ ...prev, [receiptId]: `❌ Network Error: ${err.message || "Failed to trigger reconciliation"}` }));
@@ -898,7 +905,14 @@ export default function PlatformAnalyticsPanel() {
       const res = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(stripeSessionId)}`, {
         cache: "no-store"
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = { error: text || `HTTP ${res.status} ${res.statusText}` };
+      }
+
       if (res.ok) {
         const msg = `📡 Live Stripe Telemetry Check:\n` +
           `• Status: ${data.status || "unknown"}\n` +
@@ -907,7 +921,7 @@ export default function PlatformAnalyticsPanel() {
           `• Details: ${JSON.stringify(data.transaction_details || data, null, 2)}`;
         setActionFeedback(prev => ({ ...prev, [receiptId]: msg }));
       } else {
-        setActionFeedback(prev => ({ ...prev, [receiptId]: `❌ Stripe API Error: ${data.error || "Failed to fetch session"}` }));
+        setActionFeedback(prev => ({ ...prev, [receiptId]: `❌ Stripe API Error (HTTP ${res.status}): ${data.error || text || "Failed to fetch session"}` }));
       }
     } catch (err: any) {
       setActionFeedback(prev => ({ ...prev, [receiptId]: `❌ Telemetry Check Error: ${err.message || "Failed to query Stripe API"}` }));
