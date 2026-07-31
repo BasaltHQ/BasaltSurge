@@ -50,6 +50,27 @@ export async function POST(req: NextRequest) {
     params.append("lock_wallet_address", "true");
     params.append("settlement_speed", "standard");
 
+    // SERVER-SIDE SECURITY CHECK: Validate source amount against target receipt total in Cosmos/MongoDB
+    if (receiptId && amount) {
+      try {
+        const c = await getContainer();
+        const { resource: dbRec } = await c.item(`receipt:${receiptId}`, receiptId).read<any>().catch(() => ({ resource: null }));
+        if (dbRec && typeof dbRec.totalUsd === "number" && dbRec.totalUsd > 0) {
+          const numSource = Number(amount);
+          const minExpected = +(dbRec.totalUsd * 0.7).toFixed(2);
+          if (numSource < minExpected) {
+            console.error(`[ONRAMP SECURITY BLOCK] Requested amount $${numSource} is below minimum $${minExpected} for receipt ${receiptId} ($${dbRec.totalUsd})`);
+            return NextResponse.json(
+              { ok: false, error: "amount_mismatch_too_low", details: `Requested amount $${numSource} is less than required for receipt $${dbRec.totalUsd}` },
+              { status: 400 }
+            );
+          }
+        }
+      } catch (err) {
+        console.warn("[ONRAMP] Non-blocking receipt validation check error:", err);
+      }
+    }
+
     // Pre-populate source amount if provided (USD)
     if (amount && Number(amount) > 0) {
       params.append("source_amount", amount);

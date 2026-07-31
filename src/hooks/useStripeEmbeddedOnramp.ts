@@ -1507,7 +1507,7 @@ export function useStripeEmbeddedOnramp({
           body: JSON.stringify({
             cryptoCustomerId: customerId,
             cryptoPaymentToken: pmToken,
-            sourceAmount: amt ?? amount,
+            sourceAmount: amt ?? getOnrampAmount(fundingTypeToUse),
             sourceCurrency: "usd",
             destinationCurrency,
             destinationNetwork: network,
