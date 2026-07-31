@@ -968,10 +968,15 @@ export async function POST(req: NextRequest) {
     const totalFeePct = Math.max(0, finalBasePlatformFeePct + Number(processingFeePct || 0));
     const feePctFraction = totalFeePct / 100;
 
+    const cookieHeader = req.headers.get("cookie") || "";
+    const isFeeMinus = typeof (cfg as any)?.feeMinusEnabled === "boolean"
+      ? (cfg as any).feeMinusEnabled
+      : cookieHeader.includes("pp_sandbox_fee_mode=fee_minus");
+
     // Skip processing fee for cash payments — no payment processor involved.
-    // Also skip processing fee if brand has a presentedFee configured (e.g. Stripe card presentedFee is handled/added at the checkout/Stripe onramp level)
+    // Also skip processing fee if brand has a presentedFee configured OR if feeMinus is enabled (merchant absorbs fee)
     const hasPresentedFee = typeof brandPresentedFeeBps === "number";
-    const processingFeeCents = (paymentMethod === "cash" || hasPresentedFee) ? 0 : Math.round(baseWithoutFeeCents * feePctFraction);
+    const processingFeeCents = (paymentMethod === "cash" || hasPresentedFee || isFeeMinus) ? 0 : Math.round(baseWithoutFeeCents * feePctFraction);
 
     const finalLineItems: ReceiptLineItem[] = [
       ...lineItems,
@@ -1117,6 +1122,7 @@ export async function POST(req: NextRequest) {
       statusHistory: [{ status: x402Status === "paid" ? "paid" : "generated", ts }],
       discountId: appliedDiscountDoc?.id, // Track used discount
       discountCode: appliedDiscountDoc?.code,
+      feeMinusEnabled: isFeeMinus,
 
       // Restaurant/POS Persisted Fields
       tableNumber,

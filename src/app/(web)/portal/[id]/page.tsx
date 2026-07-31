@@ -2207,6 +2207,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const unscaleFactor = useMemo(() => {
     if (!feeMinusEnabled || !receipt) return 1;
+    if (storedProcessingFeeUsd > 0) return 1;
     const shipItem = items.find((it) => /^shipping/i.test(it.label || ""));
     const dbShippingCostUsd = shipItem ? Number(shipItem.priceUsd || 0) : 0;
     const baseSum = itemsSubtotalUsd + taxUsd + dbShippingCostUsd;
@@ -2214,7 +2215,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const dbTotal = Number(receipt.totalUsd || 0);
     if (dbTotal <= 0) return 1;
     return dbTotal / baseSum;
-  }, [feeMinusEnabled, itemsSubtotalUsd, taxUsd, items, receipt]);
+  }, [feeMinusEnabled, itemsSubtotalUsd, taxUsd, items, receipt, storedProcessingFeeUsd]);
 
   const displayItemsSubtotalUsd = useMemo(() => {
     return feeMinusEnabled ? +(itemsSubtotalUsd * unscaleFactor).toFixed(2) : itemsSubtotalUsd;
