@@ -2792,9 +2792,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     if (!receipt) return 0;
     const isAch = detectedCardFunding === "us_bank_account";
     const isCredit = detectedCardFunding === "credit";
-    const rate = isAch ? (achSpeed === "standard" ? 0.6 : 4.0) : (isCredit ? 3.5 : 2.25);
+    const rate = isAch ? (achSpeed === "standard" ? 0.6 : 4.0) : (isCredit ? creditStripeFeePct : debitStripeFeePct);
     return +(totalUsd / (1 + rate / 100)).toFixed(2);
-  }, [receipt, totalUsd, detectedCardFunding, achSpeed]);
+  }, [receipt, totalUsd, detectedCardFunding, achSpeed, creditStripeFeePct, debitStripeFeePct]);
 
   const getAmountForFunding = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
     if (!receipt) return 0;
@@ -6004,7 +6004,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 )}
 
                 {/* Dynamic Status / Spinner for intermediate steps */}
-                {!(headlessStep === "authenticating" || headlessStep === "collecting_payment") && (
+                {!["authenticating", "collecting_payment", "collecting_kyc", "verifying_identity"].includes(headlessStep as any) && (
                   <div className="text-center flex flex-col items-center justify-center gap-4 min-h-[320px] px-4 py-8 w-full animate-in fade-in duration-300">
                     <p className={`font-semibold text-sm tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>{headlessStatus}</p>
                     <div className="relative flex items-center justify-center mt-2 mb-4 scale-110">
