@@ -4028,21 +4028,49 @@ export default function PlatformAnalyticsPanel() {
                                           </div>
 
                                           <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">On-chain Tx Hash</div>
+                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Leg 1 (Onramp Tx)</div>
                                             <div className="flex items-center gap-1.5 pt-0.5">
                                               <span className="font-mono text-white/90 truncate max-w-[160px]">
-                                                {r.transactionHash || "N/A"}
+                                                {(r as any).onrampTxHash || (r as any).leg1TxHash || "N/A"}
                                               </span>
-                                              {r.transactionHash && (
+                                              {((r as any).onrampTxHash || (r as any).leg1TxHash) && (
                                                 <>
                                                   <button
-                                                    onClick={() => handleCopy(r.transactionHash!, `tx-${r.receiptId}`)}
+                                                    onClick={() => handleCopy(((r as any).onrampTxHash || (r as any).leg1TxHash)!, `leg1-${r.receiptId}`)}
                                                     className="text-muted-foreground hover:text-white transition-colors"
                                                   >
                                                     <Copy className="w-3.5 h-3.5" />
                                                   </button>
                                                   <a
-                                                    href={`https://basescan.org/tx/${r.transactionHash}`}
+                                                    href={`https://basescan.org/tx/${(r as any).onrampTxHash || (r as any).leg1TxHash}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-muted-foreground hover:text-white transition-colors"
+                                                  >
+                                                    <ExternalLink className="w-3.5 h-3.5" />
+                                                  </a>
+                                                </>
+                                              )}
+                                              {copySuccess[`leg1-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
+                                            </div>
+                                          </div>
+
+                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
+                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Leg 2 (Settlement Tx)</div>
+                                            <div className="flex items-center gap-1.5 pt-0.5">
+                                              <span className="font-mono text-white/90 truncate max-w-[160px]">
+                                                {r.transactionHash || (r as any).leg2TxHash || "N/A"}
+                                              </span>
+                                              {(r.transactionHash || (r as any).leg2TxHash) && (
+                                                <>
+                                                  <button
+                                                    onClick={() => handleCopy((r.transactionHash || (r as any).leg2TxHash)!, `tx-${r.receiptId}`)}
+                                                    className="text-muted-foreground hover:text-white transition-colors"
+                                                  >
+                                                    <Copy className="w-3.5 h-3.5" />
+                                                  </button>
+                                                  <a
+                                                    href={`https://basescan.org/tx/${r.transactionHash || (r as any).leg2TxHash}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     className="text-muted-foreground hover:text-white transition-colors"
