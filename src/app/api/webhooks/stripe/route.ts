@@ -244,8 +244,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // On fulfillment_processing: mark receipt as paid (or paid - ach pending for ACH)
-    if (status === 'fulfillment_processing' && merchantWallet) {
+    // On fulfillment_processing or onramp_completed: mark receipt as paid (or paid - ach pending for ACH)
+    if ((status === 'fulfillment_processing' || status === 'onramp_completed') && merchantWallet) {
       const baseOrigin = req.nextUrl.origin;
       try {
         const detectedFunding = cardFunding === "us_bank_account" ? "us_bank_account" : (cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined));
