@@ -6004,7 +6004,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 )}
 
                 {/* Dynamic Status / Spinner for intermediate steps */}
-                {!(headlessStep === "authenticating" || headlessStep === "collecting_payment") && (
+                {!["authenticating", "collecting_payment", "collecting_kyc", "verifying_identity"].includes(headlessStep as any) && (
                   <div className="text-center flex flex-col items-center justify-center gap-4 min-h-[320px] px-4 py-8 w-full animate-in fade-in duration-300">
                     <p className={`font-semibold text-sm tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>{headlessStatus}</p>
                     <div className="relative flex items-center justify-center mt-2 mb-4 scale-110">

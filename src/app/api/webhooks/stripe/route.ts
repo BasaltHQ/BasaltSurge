@@ -271,7 +271,7 @@ export async function POST(req: NextRequest) {
         if (sessionId) {
           try {
             const querySpec = {
-              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.stripeSessionId = @sessionId OR ARRAY_CONTAINS(c.customerSessions, { stripeSessionId: @sessionId }, true))",
+              query: "SELECT * FROM c WHERE c.type = 'receipt' AND c.stripeSessionId = @sessionId",
               parameters: [{ name: "@sessionId", value: sessionId }]
             };
             const { resources: linkedReceipts } = await container.items.query(querySpec).fetchAll();
