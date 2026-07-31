@@ -118,8 +118,34 @@ export async function POST(req: NextRequest) {
     const minTimeStr = new Date(minTime).toISOString();
     const container = await getContainer();
     
+    let targetReceiptId = "";
+    try {
+      const url = new URL(req.url);
+      targetReceiptId = String(url.searchParams.get("receiptId") || url.searchParams.get("receipt_id") || url.searchParams.get("id") || "").trim();
+    } catch {}
+
+    if (!targetReceiptId) {
+      try {
+        const body = await req.clone().json().catch(() => ({}));
+        targetReceiptId = String(body.receiptId || body.receipt_id || body.id || "").trim();
+      } catch {}
+    }
+
+    const rawTargetId = targetReceiptId.replace(/^receipt:/, "");
+    const targetDocId = rawTargetId ? `receipt:${rawTargetId}` : "";
+
     let querySpec: any;
-    if (isPartner && currentBrandKey) {
+    if (targetReceiptId) {
+      console.log(`[cron/reconcile-stuck] Running single-receipt targeted reconciliation for receipt: ${targetReceiptId}`);
+      querySpec = {
+        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId OR c.id = @rawId)",
+        parameters: [
+          { name: "@rId", value: rawTargetId },
+          { name: "@docId", value: targetDocId },
+          { name: "@rawId", value: rawTargetId }
+        ]
+      };
+    } else if (isPartner && currentBrandKey) {
       querySpec = {
         query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'onramp_completed' OR c.status = 'reconciled' OR c.status = 'paid' OR c.status = 'paid - ach pending' OR c.status = 'ach_pending') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr) AND c.brandKey = @brandKey",
         parameters: [
