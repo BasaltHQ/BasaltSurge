@@ -6004,7 +6004,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 {/* Auth Element Container */}
                 <div
                   className="w-full h-full flex flex-col items-stretch"
-                  style={{ display: headlessStep === "authenticating" && headlessAuthElement ? "block" : "none" }}
+                  style={{ display: ["authenticating", "verifying_identity"].includes(headlessStep as string) && headlessAuthElement ? "block" : "none" }}
                   ref={(el) => {
                     if (el && headlessAuthElement && !el.contains(headlessAuthElement)) {
                       el.innerHTML = "";
@@ -6025,7 +6025,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   }}
                 />
 
-                 {headlessStep === "authenticating" && headlessAuthElement && (
+                {["authenticating", "verifying_identity"].includes(headlessStep as string) && headlessAuthElement && (
                   <div
                     className="absolute bottom-[14px] left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
                     style={{
