@@ -2734,26 +2734,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
 
   const debitStripeFeePct = useMemo(() => {
-    if (!feeMinusEnabled) return 2.25;
-    const activeSplitConfig = splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig;
-    const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
-    const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
-      ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-      : 0;
-    const basePresentedBps = presentedFeeBps !== undefined ? presentedFeeBps : 290;
-    return Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
-  }, [splitConfig, splitConfigCredit, presentedFeeBps, feeMinusEnabled]);
+    return 2.25;
+  }, []);
 
   const creditStripeFeePct = useMemo(() => {
-    if (!feeMinusEnabled) return 3.5;
-    const activeSplitConfig = splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit;
-    const platformBps = activeSplitConfig ? (typeof activeSplitConfig.platformBps === "number" ? activeSplitConfig.platformBps : 50) : 0;
-    const agentBps = activeSplitConfig && Array.isArray(activeSplitConfig.agents)
-      ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-      : 0;
-    const basePresentedBps = creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : 390);
-    return Math.max(0, basePresentedBps - platformBps - agentBps) / 100;
-  }, [splitConfig, splitConfigCredit, creditPresentedFeeBps, presentedFeeBps, feeMinusEnabled]);
+    return 3.5;
+  }, []);
 
   const stripeFeePct = useMemo(() => {
     if (detectedCardFunding === "us_bank_account") {
@@ -3008,9 +2994,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Consolidated site-config fetch (single call) to set fee, default token, and seller/split address
   useEffect(() => {
-    if (!effectiveMerchantWallet) return; // avoid unscoped fetch on portal; wait for merchant wallet
+    const targetWallet = effectiveMerchantWallet || recipient;
+    if (!targetWallet) return; // avoid unscoped fetch on portal; wait for merchant wallet
     let cancelled = false;
-    getSiteConfigOnce(String(effectiveMerchantWallet).toLowerCase(), String(effectiveMerchantWallet))
+    getSiteConfigOnce(String(targetWallet).toLowerCase(), String(targetWallet))
       .then((j: SiteConfigResponse) => {
         if (cancelled) return;
         const cfg = j?.config || {};
