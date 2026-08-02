@@ -90,7 +90,20 @@ If polling is needed as a fallback to check if a payment succeeded:
   ```
 
 ### D. Webhook Verification (`POST /api/webhooks`)
-PortalPay sends a POST event `receipt.paid` to the merchant's configured webhook URL when payment completes.
+PortalPay sends a POST event `receipt.status_updated` (or `receipt.paid`) to the merchant's configured webhook URL when payment completes.
+* **Payload Fields**:
+  ```json
+  {
+    "event": "receipt.status_updated",
+    "receiptId": "rec_883a042bc1",
+    "status": "paid",
+    "transactionHash": "0x...",
+    "stripeSessionId": "cos_8a7a48c2-6bae-4b08-9d36-35670b42dc8d",
+    "isStripeSessionUnique": true,
+    "timestamp": 1785626400000
+  }
+  ```
+  `isStripeSessionUnique` is a boolean indicating whether the `stripeSessionId` is unique to that specific receipt in the database.
 * **Signature Verification**: Webhooks are signed using HMAC-SHA256. The signature is passed in the `x-portalpay-signature` header in the format `sha256=<hex_digest>`. It is generated using the merchant's API Key secret as the HMAC key.
 * **Boilerplate Signature Check (Node.js)**:
   ```javascript
@@ -119,5 +132,34 @@ PortalPay sends a POST event `receipt.paid` to the merchant's configured webhook
     } catch {
       return false;
     }
+  }
+  ```
+
+### E. Service Status Ping (`GET /api/status/ping`)
+Health check and system diagnostics endpoint requiring API Key authentication.
+* **Endpoint**: `/api/status/ping`
+* **Headers**:
+  `x-api-key: sk_live_...` (or `Authorization: Bearer <key>`)
+* **Query Parameter Fallback**: `?apiKey=sk_live_...`
+* **Response (HTTP 200)**:
+  ```json
+  {
+    "ok": true,
+    "status": "healthy",
+    "timestamp": "2026-08-01T19:12:00.000Z",
+    "uptimeSeconds": 12345,
+    "environment": "production",
+    "services": {
+      "database": "online",
+      "stripe": "configured"
+    }
+  }
+  ```
+* **Response (HTTP 401 Unauthorized)**:
+  ```json
+  {
+    "ok": false,
+    "error": "unauthorized",
+    "message": "Valid x-api-key header, Bearer token, or apiKey query parameter required."
   }
   ```

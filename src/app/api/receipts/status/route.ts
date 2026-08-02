@@ -418,6 +418,7 @@ export async function POST(req: NextRequest) {
         const previousStatus = resource ? String(resource.status || "pending") : "pending";
         // Use the signing secret stored on the receipt at creation time (container-stable)
         const signingSecret = next?.webhookSigningSecret || resource?.webhookSigningSecret;
+        const activeStripeSessionId = stripeSessionId || next?.stripeSessionId || resource?.stripeSessionId;
         dispatchWebhookAsync(webhookTarget, {
           event: "receipt.status_updated",
           receiptId,
@@ -430,6 +431,7 @@ export async function POST(req: NextRequest) {
           token: next?.expectedToken,
           timestamp: Date.now(),
           brandKey,
+          stripeSessionId: activeStripeSessionId,
         } as WebhookPayload, signingSecret);
       }
 

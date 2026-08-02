@@ -69,9 +69,27 @@ User-Agent: PortalPay-Webhook/1.0
   "totalUsd": 25.00,
   "token": "USDC",
   "timestamp": 1713200000000,
-  "brandKey": "myshop"
+  "brandKey": "myshop",
+  "stripeSessionId": "cos_8a7a48c2-6bae-4b08-9d36-35670b42dc8d",
+  "isStripeSessionUnique": true
 }
 ```
+
+### Payload Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `event` | string | Webhook event name (`receipt.status_updated`) |
+| `receiptId` | string | Unique receipt ID |
+| `status` | string | Current payment status |
+| `previousStatus` | string | Status prior to this update |
+| `transactionHash` | string \| null | On-chain transaction hash (when completed) |
+| `buyerWallet` | string \| null | Buyer's wallet address |
+| `merchantWallet` | string | Merchant recipient wallet address |
+| `totalUsd` | number | Receipt total in USD |
+| `stripeSessionId` | string \| null | Stripe Checkout/Onramp Session ID (if applicable) |
+| `isStripeSessionUnique` | boolean | `true` if the `stripeSessionId` is unique to this single receipt; `false` if shared or unpopulated |
+| `timestamp` | number | Event timestamp (Unix ms) |
 
 ### Status Values
 

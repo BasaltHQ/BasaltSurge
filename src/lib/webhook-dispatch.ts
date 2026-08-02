@@ -19,7 +19,7 @@ import crypto from "node:crypto";
  */
 
 export type WebhookPayload = {
-  event: "receipt.status_updated";
+  event: "receipt.status_updated" | string;
   receiptId: string;
   status: string;
   previousStatus?: string;
@@ -30,7 +30,36 @@ export type WebhookPayload = {
   token?: string;
   timestamp: number;
   brandKey?: string;
+  stripeSessionId?: string | null;
+  isStripeSessionUnique?: boolean;
 };
+
+/**
+ * Checks if a given stripeSessionId is unique to a single receipt across the database.
+ * Returns `true` if <= 1 receipts share this stripeSessionId, or `false` if multiple receipts share it.
+ */
+export async function checkStripeSessionUniqueness(
+  stripeSessionId?: string | null,
+  receiptId?: string | null
+): Promise<boolean> {
+  if (!stripeSessionId || typeof stripeSessionId !== "string" || !stripeSessionId.trim()) {
+    return false;
+  }
+
+  try {
+    const container = await getContainer(undefined, "surge_events");
+    const querySpec = {
+      query: "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'receipt' AND (c.stripeSessionId = @sessionId OR c.stripeOnrampSessionId = @sessionId OR c.sessionId = @sessionId)",
+      parameters: [{ name: "@sessionId", value: stripeSessionId.trim() }]
+    };
+    const { resources } = await container.items.query<number>(querySpec).fetchAll();
+    const count = resources[0] || 0;
+    return count <= 1;
+  } catch (err) {
+    console.warn("[WEBHOOK DISPATCH] Failed to query stripeSessionId uniqueness:", err);
+    return true; // Fallback to true if lookup fails
+  }
+}
 
 /**
  * Validates that a URL is safe to dispatch webhooks to.
@@ -111,7 +140,19 @@ export async function dispatchDeveloperWebhook(
 
   const deliveryId = crypto.randomUUID();
   const timestamp = Date.now();
-  const body = JSON.stringify({ ...payload, timestamp });
+
+  let isUnique = payload.isStripeSessionUnique;
+  if (isUnique === undefined && payload.stripeSessionId) {
+    isUnique = await checkStripeSessionUniqueness(payload.stripeSessionId, payload.receiptId);
+  }
+
+  const finalPayload = {
+    ...payload,
+    stripeSessionId: payload.stripeSessionId || null,
+    isStripeSessionUnique: isUnique !== undefined ? Boolean(isUnique) : (payload.stripeSessionId ? true : false),
+    timestamp,
+  };
+  const body = JSON.stringify(finalPayload);
   const signature = computeSignature(body, secret);
 
   const headers: Record<string, string> = {

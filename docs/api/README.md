@@ -104,8 +104,9 @@ Docs: `./users.md`
   - Mutations are not available via APIM developer subscriptions; use PortalPay Admin UI for admin operations
 Docs: `./graphql.md`
 
-### Health (Public)
+### Health & Status
 - GET `/portalpay/healthz` – Health check (no subscription key required)
+- GET `/api/status/ping` – Service status ping & diagnostics (API Key required: `x-api-key` or `Authorization: Bearer`)
 Docs: `./health.md`
 
 ---
