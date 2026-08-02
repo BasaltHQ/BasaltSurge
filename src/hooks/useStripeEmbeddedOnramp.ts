@@ -2409,6 +2409,15 @@ export function useStripeEmbeddedOnramp({
           type: "us_ssn"
         };
       }
+      if (payload.address && typeof payload.address === "object") {
+        const cleanAddr: Record<string, string> = {};
+        for (const [k, v] of Object.entries(payload.address)) {
+          if (v !== undefined && v !== null && String(v).trim() !== "") {
+            cleanAddr[k] = String(v).trim();
+          }
+        }
+        payload.address = cleanAddr;
+      }
       await submitKycInfoWithTimeout(onrampRef.current, payload);
       console.log("[EMBEDDED ONRAMP] KYC demographics submitted successfully! Checking verification status...");
 

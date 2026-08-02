@@ -319,7 +319,7 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
 
           {/* Content */}
           <article className="max-w-none">
-            <MarkdownRenderer content={processedContent} />
+            <MarkdownRenderer content={processedContent.replace(/^\s*#\s+[^\n]+\n?/, '')} />
           </article>
 
           {/* Page Navigation */}
