@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
         const { resource: dbRec } = await c.item(`receipt:${receiptId}`, receiptId).read<any>().catch(() => ({ resource: null }));
         if (dbRec && typeof dbRec.totalUsd === "number" && dbRec.totalUsd > 0) {
           const numSource = Number(sourceAmount);
-          const minExpected = +(dbRec.totalUsd * 0.7).toFixed(2); // 70% threshold allows for fee scaling
+          const minExpected = +(dbRec.totalUsd * 0.98).toFixed(2); // Strict 98% threshold
           if (numSource < minExpected) {
             console.error(`[ONRAMP V2 SECURITY BLOCK] Requested amount $${numSource} is below minimum $${minExpected} for receipt ${receiptId} ($${dbRec.totalUsd})`);
             return NextResponse.json(
@@ -220,6 +220,9 @@ export async function POST(req: NextRequest) {
         const { resource: receipt } = await container.item(docId, normalizedWallet).read();
         if (receipt) {
           receipt.stripeSessionId = data.id;
+          if (sourceAmount && Number(sourceAmount) > 0) {
+            receipt.totalUsd = Number(sourceAmount);
+          }
           receipt.lastUpdatedAt = Date.now();
           await container.items.upsert(receipt);
           console.log(`[ONRAMP V2] Successfully linked Stripe session ${data.id} to receipt ${receiptId}`);
