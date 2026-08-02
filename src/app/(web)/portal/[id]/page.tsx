@@ -4960,13 +4960,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
         </form>
       ) : (
-        <div className={`w-full h-auto flex flex-col relative transition-all duration-300 ${(headlessAuthElement || headlessPaymentElement)
-            ? "border-0 bg-transparent shadow-none"
-            : `rounded-xl shadow-xl backdrop-blur-xl overflow-hidden border ${isLightText ? 'bg-white/[0.02] border-white/5' : 'bg-black/[0.02] border-black/5'
-            }`
+        <div className={`w-full h-auto flex flex-col relative transition-all duration-300 ${
+            (["authenticating", "collecting_payment"].includes(headlessStep as string) && (headlessAuthElement || headlessPaymentElement))
+              ? "border-0 bg-transparent shadow-none"
+              : `rounded-xl shadow-xl backdrop-blur-xl overflow-hidden border ${isLightText ? 'bg-white/[0.02] border-white/5' : 'bg-black/[0.02] border-black/5'}`
           }`}>
           {/* Header */}
-          <div className={`p-4 border-b flex items-center justify-between ${isLightText ? 'border-white/5' : 'border-black/5'}`}>
+          <div className={`p-4 border-b flex items-center justify-between shrink-0 ${isLightText ? 'border-white/5' : 'border-black/5'}`}>
             <span className={`font-semibold flex items-center gap-1.5 select-none ${isLightText ? 'text-white' : 'text-black'}`}>
               <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#635BFF] fill-current">
                 <path d="M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .979-.714 1.481-1.993 1.481-2.274 0-4.662-.835-6.353-1.638l-.898 5.568c2.81 1.748 5.51 1.748 8.028 1.748 2.541 0 4.606-.654 6.095-1.872 1.583-1.282 2.39-3.136 2.39-5.381 0-4.088-2.52-5.77-6.476-7.228z" />
@@ -4992,7 +4992,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
 
           {/* Content Body */}
-          <div className={`w-full flex flex-col items-stretch justify-start relative ${(headlessAuthElement || headlessPaymentElement) ? "p-0 w-full" : "p-3.5 md:p-5"}`}>
+          <div className={`w-full flex flex-col items-stretch justify-start relative shrink-0 ${
+            (["authenticating", "collecting_payment"].includes(headlessStep as string) && (headlessAuthElement || headlessPaymentElement))
+              ? "p-0 w-full"
+              : "p-3.5 md:p-5"
+          }`}>
             {headlessStep === "error" ? (
               <div className="text-center px-4 py-6 flex flex-col items-center w-full">
                 <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mb-4 text-red-500 border border-red-500/20">
@@ -6908,7 +6912,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   </div>
                 </div>
                 <div
-                  className={`h-full flex flex-col justify-center ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : ""}`}
+                  className={`h-full flex flex-col justify-start ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : ""}`}
                   style={{
                     background: rightSideBackground,
                     borderLeft: isTwoColumnLayout && isInvoiceLayout ? (isLightText ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(0,0,0,0.06)") : undefined,
@@ -6916,7 +6920,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 >
                   <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-[490px] md:mr-auto" : "w-full"}>
                     {/* Payment Section */}
-                    <div ref={payRef} className={`mt-0 md:mt-0 ${isEmbedded ? "rounded-none border-0 p-0 bg-transparent" : "rounded-2xl border p-3 bg-background/70"} flex flex-col`}>
+                    <div ref={payRef} className={`mt-0 md:mt-0 ${isEmbedded ? "rounded-none border-0 p-0 bg-transparent" : "rounded-2xl border p-3 bg-background/70"} flex flex-col justify-start`}>
                       <div ref={widgetRootRef} className={isEmbedded ? "mt-0 rounded-2xl p-3" : "mt-0 rounded-2xl p-3"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                         {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                           <>
