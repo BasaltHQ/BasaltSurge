@@ -45,6 +45,7 @@ export const EXCLUDE_PREFIXES = new Set<string>([
     "nodes", // Node operators landing page
     "delivers", // Local Delivery consumer storefront
     "drive", // Local Delivery driver console
+    "sample-forms", // sample forms preview route
     "favicon.ico",
     "globals.css",
     "robots.txt",
