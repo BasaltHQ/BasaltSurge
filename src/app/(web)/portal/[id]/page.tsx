@@ -582,8 +582,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [walletThemeLoaded, setWalletThemeLoaded] = useState(false);
   const [useMerchantThemeLock, setUseMerchantThemeLock] = useState(false);
 
-  // Shop slug propagated from public shop page to tag receipts for reviews
-  const shopSlugParam = String(searchParams?.get("shop") || "").toLowerCase();
+  // Shop slug propagated from public shop page to tag receipts for reviews (stripping trailing -slug or _slug)
+  const rawShopParam = String(searchParams?.get("shop") || "").toLowerCase().trim();
+  const shopSlugParam = rawShopParam.replace(/[-_]?slug$/i, "");
 
   // Optional theme override parameters (passed by shop slugs)
   const tPrimary = String(searchParams?.get("t_primary") || "").trim();
@@ -2142,10 +2143,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               }
               const hasMissing = !b.firstName || !b.lastName || !b.line1 || !b.city || !b.zip || !b.phone;
               if (hasMissing) {
-                setIsAccordionOpen(true);
+                // Removed automatic open
               }
-            } else {
-              setIsAccordionOpen(true);
             }
             try {
               const rw = String((rec as any)?.recipientWallet || (rec as any)?.wallet || "").toLowerCase();
@@ -3937,6 +3936,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   } = useStripeEmbeddedOnramp({
     email: shipEmail || headlessEmailInput || undefined,
     fullName: shipName || undefined,
+    phone: headlessPhoneInput || undefined,
     theme: isLightBackground ? "stripe" : "night",
     splitAddress: sellerAddress as string,
     splitAddressCredit: sellerAddressCredit as string,
@@ -5056,7 +5056,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               </div>
             ) : headlessStep === "collecting_kyc" ? (
               <div className="w-full flex flex-col items-stretch justify-start p-1 md:p-2 animate-in zoom-in duration-300 pr-1 text-left">
-                <div className="mb-4">
+                <div className="mb-3">
                   <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>
                     {(kycTierRequired as string) === "l0" ? "Billing Information" : "Identity Verification"}
                   </h3>
@@ -5066,22 +5066,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       : "Stripe requires additional demographics to complete authorization."}
                   </p>
                 </div>
-                
-                {(kycTierRequired as string) === "l0" && shippingRequired && (
-                  <div className="mb-4 flex items-center gap-2 px-1">
-                    <input
-                      type="checkbox"
-                      id="kycSameAsShipping"
-                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                      style={{ accentColor: theme.primaryColor || "#635BFF" }}
-                      checked={kycSameAsShipping}
-                      onChange={(e) => setKycSameAsShipping(e.target.checked)}
-                    />
-                    <label htmlFor="kycSameAsShipping" className={`text-xs font-semibold cursor-pointer select-none ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
-                      Billing details same as shipping
-                    </label>
-                  </div>
-                )}
 
                 <div className="space-y-3.5">
                   {(kycTierRequired as string) === "l0" ? (
@@ -5257,11 +5241,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     </>
                   ) : (
                     <>
-                      {/* L1 Form - Collapsible Address Accordion */}
+                      {/* L1 Form - Collapsible Address Accordion (Starts Collapsed) */}
                       <details 
                         open={isAccordionOpen}
                         onToggle={(e) => setIsAccordionOpen((e.target as HTMLDetailsElement).open)}
-                        className={`group rounded-xl border overflow-hidden ${
+                        className={`group rounded-xl border overflow-hidden transition-all duration-200 ${
                           isLightText ? 'border-white/10 bg-white/[0.02]' : 'border-black/10 bg-black/[0.02]'
                         }`}
                       >
@@ -5276,6 +5260,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           </div>
                           <span className={`text-[10px] ${isLightText ? 'text-white/40' : 'text-black/40'} group-open:rotate-180 transition-transform duration-200`}>▼</span>
                         </summary>
+
                         <div className="p-3 border-t border-dashed space-y-3.5 bg-black/[0.04] border-white/5">
                           {/* Carried over Name Fields */}
                           <div className="grid grid-cols-2 gap-3">
@@ -5307,7 +5292,40 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             </div>
                           </div>
 
-                          {/* Carried over Country Field */}
+                          {/* Carried over Contact Fields (Email & Phone) */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Email Address</label>
+                              <input
+                                type="email"
+                                placeholder="email@example.com"
+                                className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  }`}
+                                value={shipEmail || headlessEmailInput}
+                                onChange={(e) => {
+                                  setShipEmail(e.target.value);
+                                  setHeadlessEmailInput(e.target.value);
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Phone Number</label>
+                              <input
+                                type="tel"
+                                placeholder="+15555555555"
+                                className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  }`}
+                                value={headlessPhoneInput}
+                                onChange={(e) => setHeadlessPhoneInput(e.target.value)}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Country Field */}
                           <div>
                             <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Country</label>
                             <select
@@ -5404,9 +5422,53 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         </div>
                       </details>
 
-                      {/* DOB Field */}
+                      {/* DOB Field with Interactive Calendar Picker */}
                       <div>
-                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Date of Birth</label>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Date of Birth</label>
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                const input = e.currentTarget.nextElementSibling as HTMLInputElement;
+                                if (input) {
+                                  try {
+                                    input.showPicker();
+                                  } catch {
+                                    input.focus();
+                                    input.click();
+                                  }
+                                }
+                              }}
+                              className={`flex items-center gap-1 text-[10.5px] font-semibold transition-colors hover:underline cursor-pointer ${
+                                isLightText ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-700'
+                              }`}
+                            >
+                              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+                              </svg>
+                              <span>Select from calendar</span>
+                            </button>
+                            <input
+                              type="date"
+                              className="absolute top-0 right-0 opacity-0 w-0 h-0 pointer-events-none"
+                              max={new Date().toISOString().split("T")[0]}
+                              value={
+                                kycDobYear && kycDobMonth && kycDobDay
+                                  ? `${kycDobYear}-${String(kycDobMonth).padStart(2, "0")}-${String(kycDobDay).padStart(2, "0")}`
+                                  : ""
+                              }
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  const [y, m, d] = e.target.value.split("-");
+                                  setKycDobYear(y || "");
+                                  setKycDobMonth(m || "");
+                                  setKycDobDay(d || "");
+                                }
+                              }}
+                            />
+                          </div>
+                        </div>
                         <div className="grid grid-cols-3 gap-2">
                           <div>
                             <input
