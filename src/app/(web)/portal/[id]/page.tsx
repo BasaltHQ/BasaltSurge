@@ -5787,18 +5787,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 const dobYear = Number(kycDobYear);
                                 const hasValidDob = dobDay > 0 && dobMonth > 0 && dobYear > 1900;
 
+                                const addressObj: Record<string, string> = {
+                                  line1: kycLine1.trim(),
+                                  city: kycCity.trim(),
+                                  state: kycState.trim().toUpperCase(),
+                                  postal_code: kycZip.trim().toUpperCase(),
+                                  country: safeCountry
+                                };
+                                if (kycLine2 && kycLine2.trim()) {
+                                  addressObj.line2 = kycLine2.trim();
+                                }
+
                                 if ((kycTierRequired as string) === "l0") {
                                   const l0Payload: any = {
                                     given_name: kycFirstName.trim(),
                                     surname: kycLastName.trim(),
-                                    address: {
-                                      line1: kycLine1.trim(),
-                                      line2: kycLine2 ? kycLine2.trim() : undefined,
-                                      city: kycCity.trim(),
-                                      state: kycState.trim().toUpperCase(),
-                                      postal_code: kycZip.trim().toUpperCase(),
-                                      country: safeCountry
-                                    }
+                                    address: addressObj
                                   };
 
                                   if (safeCountry !== "US" || isEuRegion) {
@@ -5819,14 +5823,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   const l1Payload: any = {
                                     given_name: kycFirstName.trim(),
                                     surname: kycLastName.trim(),
-                                    address: {
-                                      line1: kycLine1.trim(),
-                                      line2: kycLine2 ? kycLine2.trim() : undefined,
-                                      city: kycCity.trim(),
-                                      state: kycState.trim().toUpperCase(),
-                                      postal_code: kycZip.trim().toUpperCase(),
-                                      country: safeCountry
-                                    }
+                                    address: addressObj
                                   };
 
                                   if (safeCountry === "US") {

@@ -38,6 +38,7 @@ export const docsNavigation: DocNavSection[] = [
       { title: 'Users', href: '/developers/docs/api/users' },
       { title: 'GraphQL', href: '/developers/docs/api/graphql' },
       { title: 'Health', href: '/developers/docs/api/health' },
+      { title: 'Webhooks', href: '/developers/docs/api/webhooks' },
     ],
   },
   {
