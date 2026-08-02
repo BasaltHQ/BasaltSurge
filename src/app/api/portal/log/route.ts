@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { maskSensitiveData } from "@/lib/sanitize-logs";
 import crypto from "node:crypto";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +12,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, disabled: true });
     }
 
-    const body = await req.json();
+    const rawBody = await req.json();
+    const body = maskSensitiveData(rawBody);
     const { level, message, stack, receiptId, wallet, sessionId, host, userAgent, ts, type, errorId } = body;
 
     // Validate minimum required fields
@@ -19,8 +21,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    const sanitizedMessage = maskSensitiveData(message);
+    const sanitizedMeta = body.meta ? maskSensitiveData(body.meta) : "";
+
     // Always log to server terminal/console for easy development debugging
-    console.log(`[PORTAL CLIENT ${level.toUpperCase()}] ${message}`, body.meta ? JSON.stringify(body.meta) : "");
+    console.log(`[PORTAL CLIENT ${level.toUpperCase()}] ${sanitizedMessage}`, sanitizedMeta ? JSON.stringify(sanitizedMeta) : "");
 
     // Only allow error logs to be saved to DB
     if (level !== "error") {
@@ -38,8 +43,8 @@ export async function POST(req: NextRequest) {
       type: type || "portal_client_log",
       errorId: errorId || null,
       level,
-      message,
-      stack: stack || null,
+      message: sanitizedMessage,
+      stack: stack ? maskSensitiveData(stack) : null,
       receiptId: receiptId || null,
       sessionId: sessionId || null,
       host: host || null,

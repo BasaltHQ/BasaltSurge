@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { isDualSplitEnabled } from "@/lib/env";
+import { maskSensitiveData } from "@/lib/sanitize-logs";
 
 // Safe sessionStorage decorator that redirects persistent user tokens to localStorage to minimize OTP prompts
 const sessionStorageDecorator = {
@@ -313,6 +314,8 @@ export type UseStripeEmbeddedOnrampReturn = {
   sessionId: string | null;
   /** The dynamic KYC tier required */
   kycTierRequired?: "l0" | "l1" | "l2";
+  /** Flag indicating if all KYC tiers have been completed */
+  isAllKycCompleted?: boolean;
   /** Stripe onramp remaining transaction limits */
   onrampLimits?: any[] | null;
   /** Expose flag to show delivery speed selection UI for bank accounts */
@@ -538,6 +541,7 @@ export function useStripeEmbeddedOnramp({
     return null;
   });
   const [kycTierRequired, setKycTierRequired] = useState<"l0" | "l1" | "l2">("l0");
+  const [isAllKycCompleted, setIsAllKycCompleted] = useState<boolean>(false);
   const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
@@ -2397,11 +2401,19 @@ export function useStripeEmbeddedOnramp({
     isRunningRef.current = true;
     try {
       kycOccurredRef.current = true;
-      await submitKycInfoWithTimeout(onrampRef.current, kycInfo);
+      // Normalize id_number string if passed directly as string
+      const payload = { ...kycInfo };
+      if (payload.id_number && typeof payload.id_number === "string") {
+        payload.id_number = {
+          value: payload.id_number.trim(),
+          type: "us_ssn"
+        };
+      }
+      await submitKycInfoWithTimeout(onrampRef.current, payload);
       console.log("[EMBEDDED ONRAMP] KYC demographics submitted successfully! Checking verification status...");
 
       // Determine which tier was just submitted based on the payload fields
-      const submittedTier = (kycInfo.date_of_birth || kycInfo.id_number || kycInfo.nationalities) ? "l1" : "l0";
+      const submittedTier = (payload.date_of_birth || payload.id_number || payload.nationalities) ? "l1" : "l0";
 
       updateStep("checking_kyc");
       const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
@@ -2871,6 +2883,8 @@ export function useStripeEmbeddedOnramp({
           ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available") 
           : isOverallIdVerified;
 
+        setIsAllKycCompleted(Boolean(isL2Verified));
+
         // If ACH payment is chosen, we strictly enforce verification through L2.
         const isCustomerVerified = isAchEnforcedRef.current 
           ? isL2Verified 
@@ -2936,6 +2950,8 @@ export function useStripeEmbeddedOnramp({
             const isFreshL2Verified = freshL2 
               ? (freshL2.verification_status === "verified" || freshL2.verification_status === "not_available") 
               : isFreshOverallIdVerified;
+
+            setIsAllKycCompleted(Boolean(isFreshL2Verified));
             
             const isFreshVerified = isAchEnforcedRef.current
               ? isFreshL2Verified
@@ -3022,11 +3038,12 @@ export function useStripeEmbeddedOnramp({
           return;
         }
       } else {
-        const errData = await kycRes.json().catch(() => ({}));
-        console.error("[EMBEDDED ONRAMP] KYC status check failed on startOnramp:", errData);
-        
-        if (kycRes.status === 401 || errData.error === "missing_oauth_token" || errData.error === "invalid_oauth_token") {
-          console.warn("[EMBEDDED ONRAMP] Stale/invalid OAuth token detected during startOnramp check. Resetting Link session...");
+        const errText = await kycRes.text().catch(() => "");
+        let errData: any = {};
+        try { errData = JSON.parse(errText); } catch (_) {}
+
+        if (kycRes.status === 401 || kycRes.status === 404 || errData.error === "missing_oauth_token" || errData.error === "invalid_oauth_token" || errData.error === "customer_fetch_failed") {
+          console.warn(`[EMBEDDED ONRAMP] Stale/invalid customer session detected (${kycRes.status}). Clearing Link session and restarting...`);
           if (typeof window !== "undefined") {
             sessionStorage.removeItem("stripe_onramp_customer_id");
             sessionStorage.removeItem("stripe_onramp_oauth_token");
@@ -3045,7 +3062,7 @@ export function useStripeEmbeddedOnramp({
           }, 0);
           return;
         } else {
-          console.log("[EMBEDDED ONRAMP] Defaulting to L0 KYC due to status fetch failure.");
+          console.warn(`[EMBEDDED ONRAMP] KYC status check failed (${kycRes.status}). Defaulting to L0 KYC:`, errData);
           setKycTierRequired("l0");
           updateStep("collecting_kyc");
           isRunningRef.current = false;
@@ -3545,14 +3562,15 @@ export function useStripeEmbeddedOnramp({
               console.log("[EMBEDDED ONRAMP] Live mode detected. Skipping mock demographics submission.");
             }
           } catch (kycSubmitErr: any) {
-            console.warn("[EMBEDDED ONRAMP] submitKycInfo failed:", kycSubmitErr?.message);
+            const sanitizedErrMsg = maskSensitiveData(kycSubmitErr?.message || kycSubmitErr);
+            console.warn("[EMBEDDED ONRAMP] submitKycInfo failed:", sanitizedErrMsg);
             fetch("/api/portal/log", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 level: "warn",
-                message: `[EMBEDDED ONRAMP] submitKycInfo failed: ${kycSubmitErr?.message || kycSubmitErr}`,
-                meta: { error: String(kycSubmitErr?.stack || kycSubmitErr) }
+                message: `[EMBEDDED ONRAMP] submitKycInfo failed: ${sanitizedErrMsg}`,
+                meta: { error: maskSensitiveData(String(kycSubmitErr?.stack || kycSubmitErr)) }
               })
             }).catch(() => {});
           }
@@ -3635,6 +3653,7 @@ export function useStripeEmbeddedOnramp({
     detectedCardLast4,
     sessionId,
     kycTierRequired,
+    isAllKycCompleted,
     onrampLimits,
     showSpeedSelection,
     confirmSpeed,

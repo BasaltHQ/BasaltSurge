@@ -2762,10 +2762,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const totalUsd = useMemo(() => {
     if (!receipt) return 0;
     if (feeMinusEnabled) {
-      return +(((itemsSubtotalUsd + taxUsd + shippingCostUsd) * unscaleFactor) + tipUsd).toFixed(2);
+      return +(itemsSubtotalUsd + taxUsd + shippingCostUsd + tipUsd).toFixed(2);
     }
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + processingFeeUsd).toFixed(2);
-  }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd, feeMinusEnabled, unscaleFactor]);
+  }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd, feeMinusEnabled]);
 
   const creditTotalUsd = useMemo(() => {
     if (feeMinusEnabled) return totalUsd;
@@ -3923,6 +3923,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     submitKycInfo,
     reset: resetHeadlessOnramp,
     kycTierRequired,
+    isAllKycCompleted,
     onrampLimits: headlessOnrampLimits,
     detectedCardFunding: stripeDetectedFunding,
     showSpeedSelection: headlessShowSpeedSelection,
@@ -3961,10 +3962,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         setDetectedCardBrand(card.brand);
         setDetectedCardLast4(card.last4);
 
-        // 2. Spending limit check if limits are already loaded
+        // 2. Spending limit check: ONLY trigger warning if customer has ALREADY completed all KYC tiers
         const methodType = card.funding === "us_bank_account" ? "us_bank_account" : "card";
         const limitEntry = getMatchingLimitEntry(headlessOnrampLimits, methodType, receipt?.currency || "usd");
-        if (limitEntry) {
+        if (limitEntry && isAllKycCompleted) {
           const limitInDollars = limitEntry.amount / 100;
           if (limitInDollars > 0 && totalUsd > limitInDollars && !hasWarnedLimit) {
             setLimitWarningInfo({
@@ -4077,9 +4078,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return sorted[0] || null;
   }
 
-  // Dynamic Spending Limit Monitor: Trigger warning modal when receipt total exceeds payment method limit
+  // Dynamic Spending Limit Monitor: Trigger warning modal ONLY when customer has completed all KYC tiers and total exceeds limit
   useEffect(() => {
-    if (!detectedCardFunding || !headlessOnrampLimits || hasWarnedLimit) return;
+    if (!detectedCardFunding || !headlessOnrampLimits || hasWarnedLimit || !isAllKycCompleted) return;
     const methodType = detectedCardFunding === "us_bank_account" ? "us_bank_account" : "card";
     const limitEntry = getMatchingLimitEntry(headlessOnrampLimits, methodType, receipt?.currency || "usd");
     if (limitEntry) {
@@ -4093,7 +4094,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         setShowLimitWarning(true);
       }
     }
-  }, [detectedCardFunding, headlessOnrampLimits, hasWarnedLimit, totalUsd, receipt?.currency]);
+  }, [detectedCardFunding, headlessOnrampLimits, hasWarnedLimit, totalUsd, receipt?.currency, isAllKycCompleted]);
 
   useEffect(() => {
     if (headlessSessionId) {
@@ -5829,7 +5830,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   };
 
                                   if (safeCountry === "US") {
-                                    l1Payload.id_number = kycSsn.trim();
+                                    l1Payload.id_number = {
+                                      value: kycSsn.trim(),
+                                      type: "us_ssn"
+                                    };
                                   } else {
                                     if (hasValidDob) {
                                       l1Payload.date_of_birth = {
