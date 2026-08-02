@@ -5056,7 +5056,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               </div>
             ) : headlessStep === "collecting_kyc" ? (
               <div className="w-full flex flex-col items-stretch justify-start p-1 md:p-2 animate-in zoom-in duration-300 pr-1 text-left">
-                <div className="mb-4">
+                <div className="mb-3">
                   <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>
                     {(kycTierRequired as string) === "l0" ? "Billing Information" : "Identity Verification"}
                   </h3>
@@ -5066,22 +5066,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       : "Stripe requires additional demographics to complete authorization."}
                   </p>
                 </div>
-                
-                {(kycTierRequired as string) === "l0" && shippingRequired && (
-                  <div className="mb-4 flex items-center gap-2 px-1">
-                    <input
-                      type="checkbox"
-                      id="kycSameAsShipping"
-                      className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                      style={{ accentColor: theme.primaryColor || "#635BFF" }}
-                      checked={kycSameAsShipping}
-                      onChange={(e) => setKycSameAsShipping(e.target.checked)}
-                    />
-                    <label htmlFor="kycSameAsShipping" className={`text-xs font-semibold cursor-pointer select-none ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
-                      Billing details same as shipping
-                    </label>
-                  </div>
-                )}
 
                 <div className="space-y-3.5">
                   {(kycTierRequired as string) === "l0" ? (

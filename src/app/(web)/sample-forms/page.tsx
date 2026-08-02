@@ -90,7 +90,7 @@ export default function SampleFormsPage() {
         
         <div className="w-full flex flex-col items-stretch justify-start animate-in zoom-in duration-300 text-left">
           {/* Form Header */}
-          <div className="mb-4">
+          <div className="mb-3">
             <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>
               {activeTier === "l0" ? "Billing Information" : "Identity Verification"}
             </h3>
@@ -100,22 +100,6 @@ export default function SampleFormsPage() {
                 : "Stripe requires additional demographics to complete authorization."}
             </p>
           </div>
-
-          {activeTier === "l0" && shippingRequired && (
-            <div className="mb-4 flex items-center gap-2 px-1">
-              <input
-                type="checkbox"
-                id="kycSameAsShipping"
-                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                style={{ accentColor: primaryColor }}
-                checked={kycSameAsShipping}
-                onChange={(e) => setKycSameAsShipping(e.target.checked)}
-              />
-              <label htmlFor="kycSameAsShipping" className={`text-xs font-semibold cursor-pointer select-none ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
-                Billing details same as shipping
-              </label>
-            </div>
-          )}
 
           <div className="space-y-3.5">
             {activeTier === "l0" ? (
