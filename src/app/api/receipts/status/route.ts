@@ -105,6 +105,12 @@ export async function POST(req: NextRequest) {
     const expectedToken = typeof body.expectedToken === "string" ? String(body.expectedToken).toUpperCase() : undefined;
     const expectedAmountToken = typeof body.expectedAmountToken === "string" || typeof body.expectedAmountToken === "number" ? String(body.expectedAmountToken) : undefined;
     const expectedUsd = typeof body.expectedUsd === "number" ? Number(body.expectedUsd) : undefined;
+    const totalUsdIn = typeof body.totalUsd === "number" && body.totalUsd > 0 ? Number(body.totalUsd) : (typeof body.total === "number" && body.total > 0 ? Number(body.total) : expectedUsd);
+    const lineItemsIn = Array.isArray(body.lineItems) ? body.lineItems : (Array.isArray(body.items) ? body.items : undefined);
+    const shippingCostUsdIn = typeof body.shippingCostUsd === "number" ? Number(body.shippingCostUsd) : undefined;
+    const taxUsdIn = typeof body.taxUsd === "number" ? Number(body.taxUsd) : undefined;
+    const tipUsdIn = typeof body.tipUsd === "number" ? Number(body.tipUsd) : undefined;
+    const discountUsdIn = typeof body.discountUsd === "number" ? Number(body.discountUsd) : undefined;
     const stripeSessionId = typeof body.stripeSessionId === "string" ? String(body.stripeSessionId).trim() : undefined;
     const customerEmail = typeof body.customerEmail === "string" ? String(body.customerEmail).trim().toLowerCase() : undefined;
     
@@ -267,6 +273,12 @@ export async function POST(req: NextRequest) {
               expectedUsd
             }
             : {}),
+          ...(typeof totalUsdIn === "number" && totalUsdIn > 0 ? { totalUsd: totalUsdIn } : {}),
+          ...(lineItemsIn ? { lineItems: lineItemsIn } : {}),
+          ...(typeof shippingCostUsdIn === "number" ? { shippingCostUsd: shippingCostUsdIn } : {}),
+          ...(typeof taxUsdIn === "number" ? { taxUsd: taxUsdIn } : {}),
+          ...(typeof tipUsdIn === "number" ? { tipUsd: tipUsdIn } : {}),
+          ...(typeof discountUsdIn === "number" ? { discountUsd: discountUsdIn } : {}),
           ...(shopSlug ? { shopSlug } : {}),
           ...(stripeSessionId ? { stripeSessionId } : {}),
           ...(customerEmail ? { customerEmail } : {}),

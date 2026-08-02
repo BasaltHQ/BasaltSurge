@@ -3413,6 +3413,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           wallet: merchantWallet || recipient,
           status,
           parentUrl,
+          totalUsd: typeof totalUsd === "number" && totalUsd > 0 ? totalUsd : undefined,
+          lineItems: Array.isArray(items) && items.length > 0 ? items : undefined,
+          shippingCostUsd: typeof shippingCostUsd === "number" ? shippingCostUsd : undefined,
+          taxUsd: typeof taxUsd === "number" ? taxUsd : undefined,
+          tipUsd: typeof tipUsd === "number" ? tipUsd : undefined,
+          discountUsd: typeof (receipt as any)?.discountUsd === "number" ? (receipt as any).discountUsd : undefined,
           ...(shopSlugParam ? { shopSlug: shopSlugParam } : {}),
           ...extra,
         }),
@@ -5782,6 +5788,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 const safeCountry = String(kycCountry || shipCountry || clientCountry || "US").trim().toUpperCase() || "US";
                                 const isEuRegion = ["AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"].includes(safeCountry);
                                 
+                                const rawStateLower = kycState.trim().toLowerCase();
+                                const normalizedState = STATE_MAP[rawStateLower] || kycState.trim().toUpperCase();
+
                                 const dobDay = Number(kycDobDay);
                                 const dobMonth = Number(kycDobMonth);
                                 const dobYear = Number(kycDobYear);
@@ -5790,7 +5799,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 const addressObj: Record<string, string> = {
                                   line1: kycLine1.trim(),
                                   city: kycCity.trim(),
-                                  state: kycState.trim().toUpperCase(),
+                                  state: normalizedState,
                                   postal_code: kycZip.trim().toUpperCase(),
                                   country: safeCountry
                                 };

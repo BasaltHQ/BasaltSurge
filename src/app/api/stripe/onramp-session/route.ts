@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
         const { resource: dbRec } = await c.item(`receipt:${receiptId}`, receiptId).read<any>().catch(() => ({ resource: null }));
         if (dbRec && typeof dbRec.totalUsd === "number" && dbRec.totalUsd > 0) {
           const numSource = Number(amount);
-          const minExpected = +(dbRec.totalUsd * 0.7).toFixed(2);
+          const minExpected = +(dbRec.totalUsd * 0.98).toFixed(2);
           if (numSource < minExpected) {
             console.error(`[ONRAMP SECURITY BLOCK] Requested amount $${numSource} is below minimum $${minExpected} for receipt ${receiptId} ($${dbRec.totalUsd})`);
             return NextResponse.json(
@@ -130,6 +130,9 @@ export async function POST(req: NextRequest) {
         const { resource: receipt } = await container.item(docId, normalizedWallet).read();
         if (receipt) {
           receipt.stripeSessionId = data.id;
+          if (amount && Number(amount) > 0) {
+            receipt.totalUsd = Number(amount);
+          }
           receipt.lastUpdatedAt = Date.now();
           await container.items.upsert(receipt);
           console.log(`[STRIPE ONRAMP] Successfully linked Stripe session ${data.id} to receipt ${receiptId}`);
