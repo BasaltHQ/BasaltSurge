@@ -100,6 +100,18 @@ export async function resolveAdminRole(wallet?: string, contextBrandKey?: string
             } catch { }
         }
 
+        // 3. Check Merchant Team Member (linkedWallet)
+        try {
+            const querySpec = {
+                query: "SELECT c.role FROM c WHERE c.type = 'merchant_team_member' AND c.linkedWallet = @w AND (NOT IS_DEFINED(c.active) OR c.active = true)",
+                parameters: [{ name: "@w", value: w }]
+            };
+            const { resources: teamRes } = await c.items.query(querySpec).fetchAll();
+            if (teamRes && teamRes.length > 0 && teamRes[0].role) {
+                return (teamRes[0].role as AdminRole) || 'merchant_cashier';
+            }
+        } catch { }
+
     } catch { /* DB connect failed */ }
 
     return null;

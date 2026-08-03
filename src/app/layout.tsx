@@ -753,6 +753,47 @@ export default async function RootLayout({
         dbCustomRoles = resource.customRoles;
       }
     }
+
+    // Load Merchant Team Members (linkedWallet) & Custom Merchant Roles
+    try {
+      let teamQuery = "SELECT c.linkedWallet, c.role FROM c WHERE c.type = 'merchant_team_member' AND IS_DEFINED(c.linkedWallet) AND (NOT IS_DEFINED(c.active) OR c.active = true)";
+      let rolesQuery = "SELECT c.customRoles, c.roleOverrides FROM c WHERE c.type = 'merchant_roles'";
+      const params: any[] = [];
+
+      if (isPartner && brand.key) {
+        teamQuery += " AND c.brandKey = @brandKey";
+        rolesQuery += " AND c.brandKey = @brandKey";
+        params.push({ name: "@brandKey", value: brand.key.toLowerCase() });
+      }
+
+      const { resources: teamMembers } = await c.items.query({ query: teamQuery, parameters: params }).fetchAll();
+      if (Array.isArray(teamMembers)) {
+        teamMembers.forEach((tm: any) => {
+          const w = String(tm.linkedWallet || "").toLowerCase().trim();
+          const role = String(tm.role || "merchant_cashier");
+          if (/^0x[a-f0-9]{40}$/.test(w) && !dbAdminRoles[w]) {
+            dbAdminRoles[w] = role;
+            if (!dbAdminWalletsList.includes(w)) {
+              dbAdminWalletsList.push(w);
+            }
+          }
+        });
+      }
+
+      const { resources: mRoles } = await c.items.query({ query: rolesQuery, parameters: params }).fetchAll();
+      if (Array.isArray(mRoles)) {
+        mRoles.forEach((mr: any) => {
+          if (mr.roleOverrides && typeof mr.roleOverrides === "object") {
+            dbRolePermissions = { ...dbRolePermissions, ...mr.roleOverrides };
+          }
+          if (Array.isArray(mr.customRoles)) {
+            dbCustomRoles = [...dbCustomRoles, ...mr.customRoles];
+          }
+        });
+      }
+    } catch {
+      // Merchant team query optional
+    }
   } catch (e) {
     // DB document might not exist yet
   }

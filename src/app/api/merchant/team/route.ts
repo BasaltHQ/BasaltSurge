@@ -59,7 +59,12 @@ export async function POST(req: NextRequest) {
         const brandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
 
         if (!body.name || !body.pin || !body.role) {
-            return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+            return NextResponse.json({ error: "Missing required fields (name, pin, role)" }, { status: 400 });
+        }
+
+        const linkedWalletRaw = String(body.linkedWallet || "").trim().toLowerCase();
+        if (!linkedWalletRaw || !/^0x[a-f0-9]{40}$/i.test(linkedWalletRaw)) {
+            return NextResponse.json({ error: "A valid EVM wallet address (0x...) is required for team members to authenticate and access the admin module." }, { status: 400 });
         }
 
         const { createHash } = await import("node:crypto");
@@ -76,7 +81,7 @@ export async function POST(req: NextRequest) {
             pinHash,
             role: body.role,
             active: true,
-            linkedWallet: body.linkedWallet ? String(body.linkedWallet).toLowerCase() : undefined,
+            linkedWallet: linkedWalletRaw,
             createdAt: Math.floor(Date.now() / 1000),
             updatedAt: Math.floor(Date.now() / 1000)
         };
