@@ -162,12 +162,13 @@ function LoadingSkeleton() {
   );
 }
 
-export function AnalyticsPanel() {
+export function AnalyticsPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
   const [metrics, setMetrics] = useState<MerchantMetrics | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   const account = useActiveAccount();
+  const activeMerchantWallet = (overrideWallet || account?.address || '').toLowerCase();
 
   const getEmptyMetrics = useCallback((): MerchantMetrics => ({
     merchant: '',
@@ -220,7 +221,7 @@ export function AnalyticsPanel() {
   const [txLoading, setTxLoading] = useState(false);
 
   useEffect(() => {
-    const wallet = metrics?.merchant || account?.address;
+    const wallet = overrideWallet || metrics?.merchant || account?.address;
     if (!wallet) return;
 
     let cancelled = false;
@@ -244,7 +245,7 @@ export function AnalyticsPanel() {
     return () => {
       cancelled = true;
     };
-  }, [metrics?.merchant, account?.address]);
+  }, [overrideWallet, metrics?.merchant, account?.address]);
 
   const filteredTransactions = useMemo(() => {
     if (!transactions.length) return [];
@@ -278,8 +279,11 @@ export function AnalyticsPanel() {
     } else {
       qs.set('range', range);
     }
+    if (overrideWallet) {
+      qs.set('wallet', overrideWallet);
+    }
     return qs.toString();
-  }, [range, sinceMsCustom]);
+  }, [range, sinceMsCustom, overrideWallet]);
 
   useEffect(() => {
     let cancelled = false;
@@ -291,7 +295,8 @@ export function AnalyticsPanel() {
           cache: 'no-store',
           credentials: 'include',
           headers: {
-            'x-wallet': (account?.address || '').toLowerCase(),
+            'x-wallet': activeMerchantWallet,
+            'x-linked-wallet': (account?.address || '').toLowerCase(),
           },
         });
         let parsed: MetricsResponse | null = null;
