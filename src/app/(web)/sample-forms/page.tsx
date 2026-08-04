@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 export default function SampleFormsPage() {
   const [activeTier, setActiveTier] = useState<"l0" | "l1">("l1");
@@ -22,6 +22,62 @@ export default function SampleFormsPage() {
   const [kycZip, setKycZip] = useState("97477");
   const [shippingRequired, setShippingRequired] = useState(true);
   const [kycSameAsShipping, setKycSameAsShipping] = useState(true);
+
+  // Address Autocomplete State
+  const [addressPredictions, setAddressPredictions] = useState<Array<{ placeId: string; description: string; mainText: string; secondaryText: string }>>([]);
+  const [isAddressLoading, setIsAddressLoading] = useState(false);
+  const [showAddressDropdown, setShowAddressDropdown] = useState(false);
+  const [isAddressVerified, setIsAddressVerified] = useState(false);
+  const addressDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!kycLine1 || kycLine1.trim().length < 3 || isAddressVerified) {
+      setAddressPredictions([]);
+      setShowAddressDropdown(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setIsAddressLoading(true);
+      try {
+        const res = await fetch(`/api/address/autocomplete?input=${encodeURIComponent(kycLine1)}`);
+        const data = await res.json();
+        if (data.predictions) {
+          setAddressPredictions(data.predictions);
+          setShowAddressDropdown(data.predictions.length > 0);
+        }
+      } catch (err) {
+        console.error("Autocomplete failed:", err);
+      } finally {
+        setIsAddressLoading(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [kycLine1, isAddressVerified]);
+
+  const handleSelectPrediction = async (placeId: string, description: string) => {
+    setIsAddressLoading(true);
+    setShowAddressDropdown(false);
+    setKycLine1(description);
+    try {
+      const res = await fetch(`/api/address/autocomplete?placeId=${encodeURIComponent(placeId)}`);
+      const data = await res.json();
+      if (data && !data.error) {
+        if (data.streetAddress) setKycLine1(data.streetAddress);
+        if (data.apartment) setKycLine2(data.apartment);
+        if (data.city) setKycCity(data.city);
+        if (data.state) setKycState(data.state);
+        if (data.zip) setKycZip(data.zip);
+        if (data.country) setKycCountry(data.country);
+        setIsAddressVerified(true);
+      }
+    } catch (err) {
+      console.error("Failed to fetch place details:", err);
+    } finally {
+      setIsAddressLoading(false);
+    }
+  };
 
   // L1 Specific State
   const [isAccordionOpen, setIsAccordionOpen] = useState(false); // Default collapsed
@@ -65,7 +121,7 @@ export default function SampleFormsPage() {
           }`}
         >
           <span>Tier 0 (L0)</span>
-          <span className="text-[10px] opacity-75 font-normal">Billing Info</span>
+          <span className="text-[10px] opacity-75 font-normal">Legal Identity</span>
         </button>
 
         <button
@@ -92,11 +148,11 @@ export default function SampleFormsPage() {
           {/* Form Header */}
           <div className="mb-3">
             <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>
-              {activeTier === "l0" ? "Billing Information" : "Identity Verification"}
+              {activeTier === "l0" ? "KYC & Compliance Verification" : "Identity Verification"}
             </h3>
-            <p className={`text-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+            <p className={`text-xs font-medium mb-1 ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
               {activeTier === "l0" 
-                ? "Stripe requires basic billing and contact information to authorize this transaction."
+                ? "Enter your full name and primary home address required for regulatory compliance."
                 : "Stripe requires additional demographics to complete authorization."}
             </p>
           </div>
@@ -107,7 +163,7 @@ export default function SampleFormsPage() {
                 {/* L0 Name Fields */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal First Name</label>
+                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>First Name</label>
                     <input
                       type="text"
                       placeholder="John"
@@ -120,7 +176,7 @@ export default function SampleFormsPage() {
                     />
                   </div>
                   <div>
-                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal Last Name</label>
+                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Last Name</label>
                     <input
                       type="text"
                       placeholder="Smith"
@@ -196,18 +252,72 @@ export default function SampleFormsPage() {
                 {/* L0 Address Fields */}
                 <div className="space-y-2">
                   <div className="relative">
-                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 1</label>
-                    <input
-                      type="text"
-                      placeholder="123 Main St"
-                      autoComplete="address-line1"
-                      className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                          ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                          : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                        }`}
-                      value={kycLine1}
-                      onChange={(e) => setKycLine1(e.target.value)}
-                    />
+                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Home Address</label>
+                    <div className="relative" ref={addressDropdownRef}>
+                      <input
+                        type="text"
+                        placeholder="Start typing your home address..."
+                        autoComplete="address-line1"
+                        className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                            ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                            : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                          }`}
+                        value={kycLine1}
+                        onChange={(e) => {
+                          setKycLine1(e.target.value);
+                          setIsAddressVerified(false);
+                        }}
+                        onFocus={() => addressPredictions.length > 0 && setShowAddressDropdown(true)}
+                      />
+
+                      {/* Google Places Autocomplete Predictions Dropdown */}
+                      {showAddressDropdown && addressPredictions.length > 0 && (
+                        <div className={`absolute z-50 left-0 right-0 mt-1 rounded-xl shadow-2xl overflow-hidden border divide-y ${
+                          isLightText
+                            ? 'bg-neutral-900 border-white/15 divide-white/10 text-white'
+                            : 'bg-white border-black/15 divide-black/10 text-black'
+                        }`}>
+                          {/* Header with Mobile Close Button */}
+                          <div className={`px-3 py-1.5 flex items-center justify-between text-[10px] font-semibold tracking-wider uppercase border-b ${
+                            isLightText ? 'bg-white/5 border-white/10 text-white/60' : 'bg-black/5 border-black/10 text-black/60'
+                          }`}>
+                            <span>Address Suggestions</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setShowAddressDropdown(false);
+                              }}
+                              className="px-2 py-0.5 rounded-md hover:bg-white/20 active:scale-95 transition flex items-center gap-1 text-[10px] font-bold text-gray-400 hover:text-white"
+                            >
+                              ✕ Close
+                            </button>
+                          </div>
+
+                          {addressPredictions.map((p) => (
+                            <button
+                              key={p.placeId}
+                              type="button"
+                              onClick={() => handleSelectPrediction(p.placeId, p.description)}
+                              className={`w-full text-left px-3 py-2.5 text-xs transition flex flex-col ${
+                                isLightText
+                                  ? 'hover:bg-white/10 text-gray-200'
+                                  : 'hover:bg-black/5 text-gray-800'
+                              }`}
+                            >
+                              <span className="font-semibold">{p.mainText}</span>
+                              {p.secondaryText && (
+                                <span className="text-[10px] opacity-60 mt-0.5">{p.secondaryText}</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <p className={`text-[11px] mt-1.5 font-medium flex items-center gap-1.5 ${isLightText ? 'text-amber-400/90' : 'text-amber-700'}`}>
+                      <span>💡 Use your home residential address (no P.O. Boxes or business addresses).</span>
+                    </p>
                   </div>
                   <div>
                     <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 2 (Optional)</label>
@@ -704,9 +814,16 @@ export default function SampleFormsPage() {
           </button>
 
           {/* Compliance & Identity Disclosure Footer */}
-          <p className={`mt-3 text-center text-[10.5px] leading-relaxed select-none ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
-            By continuing, you allow <strong className={isLightText ? 'text-white/80' : 'text-black/80'}>BasaltSurge</strong> to check your identity verification and manage your saved crypto wallets and buy/sell crypto on your behalf.
+          <p className={`mt-3 text-center text-[10.5px] leading-relaxed select-none ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+            By continuing, you authorize <strong className={isLightText ? 'text-white/90' : 'text-black/90'}>BasaltSurge</strong> to perform identity verification and process payment authorizations in compliance with applicable KYC/AML financial regulations.
           </p>
+          <div className={`mt-2 flex items-center justify-center gap-2.5 text-[9.5px] font-semibold uppercase tracking-wider ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
+            <span>🔒 256-Bit SSL Encrypted</span>
+            <span>•</span>
+            <span>🛡️ Bank-Grade Security</span>
+            <span>•</span>
+            <span>⚖️ Regulatory Compliant</span>
+          </div>
         </div>
       </div>
     </div>
