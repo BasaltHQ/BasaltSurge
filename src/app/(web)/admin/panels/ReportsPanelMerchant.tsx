@@ -16,10 +16,10 @@ import { Input } from "@/components/ui/input";
  * Shows stats and reports for the connected merchant wallet.
  * Placed under the "Merchant" sidebar group.
  */
-export default function ReportsPanelMerchant() {
+export default function ReportsPanelMerchant({ overrideWallet }: { overrideWallet?: string } = {}) {
     const account = useActiveAccount();
     const { theme } = useTheme();
-    const merchantWallet = (account?.address || "").toLowerCase();
+    const merchantWallet = (overrideWallet || account?.address || "").toLowerCase();
 
     const [reportType, setReportType] = useState("z-report");
     const [range, setRange] = useState("today");
@@ -81,7 +81,7 @@ export default function ReportsPanelMerchant() {
         setReportError("");
         try {
             const { start, end } = getDateRange(range);
-            let apiUrl = `/api/terminal/reports?type=${reportType}&start=${start}&end=${end}&format=json`;
+            let apiUrl = `/api/terminal/reports?type=${reportType}&start=${start}&end=${end}&format=json&wallet=${merchantWallet}`;
             if (employeeFilter) apiUrl += `&employeeId=${encodeURIComponent(employeeFilter)}`;
 
             const res = await fetch(apiUrl, {

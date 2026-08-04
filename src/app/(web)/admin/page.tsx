@@ -7054,8 +7054,9 @@ function CategoryManagementList({ items, shopConfig, onSave, onViewItems }: { it
   );
 }
 
-function InventoryPanel() {
+function InventoryPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
   const account = useActiveAccount();
+  const targetWallet = (overrideWallet || account?.address || "").toLowerCase();
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -7090,8 +7091,8 @@ function InventoryPanel() {
     (async () => {
       try {
         const [shopRes, siteRes] = await Promise.all([
-          fetch("/api/shop/config", { headers: { "x-wallet": account?.address || "" } }),
-          fetch("/api/site/config", { headers: { "x-wallet": account?.address || "" } }),
+          fetch(`/api/shop/config?wallet=${encodeURIComponent(targetWallet)}`, { headers: { "x-wallet": targetWallet, "x-linked-wallet": (account?.address || "").toLowerCase() } }),
+          fetch(`/api/site/config?wallet=${encodeURIComponent(targetWallet)}`, { headers: { "x-wallet": targetWallet, "x-linked-wallet": (account?.address || "").toLowerCase() } }),
         ]);
         const shopData = await shopRes.json().catch(() => ({}));
         const siteData = await siteRes.json().catch(() => ({}));
@@ -8002,10 +8003,8 @@ function InventoryPanel() {
       if (packFilter && packFilter !== "any") url.searchParams.set("pack", packFilter);
       url.searchParams.set("sort", sortField || "updatedAt");
       url.searchParams.set("order", sortOrder || "desc");
-      url.searchParams.set("limit", String(Math.max(1, Math.floor(limit || 1))));
-      url.searchParams.set("page", String(qpPage));
-
-      const r = await fetch(url.toString(), { headers: { "x-wallet": account?.address || "" }, credentials: "include", cache: "no-store" });
+      if (targetWallet) url.searchParams.set("wallet", targetWallet);
+      const r = await fetch(url.toString(), { headers: { "x-wallet": targetWallet, "x-linked-wallet": (account?.address || "").toLowerCase() }, credentials: "include", cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       const arr = Array.isArray(j?.items) ? j.items : (Array.isArray(j) ? j : []);
       setItems(arr);
@@ -10064,9 +10063,9 @@ function InventoryPanel() {
 }
 
 /** ---------------- Terminal Panel ---------------- */
-function TerminalPanel() {
+function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
   const account = useActiveAccount();
-  const operatorWallet = (account?.address || "").toLowerCase();
+  const operatorWallet = (overrideWallet || account?.address || "").toLowerCase();
   const shortWallet = React.useMemo(() => {
     const w = operatorWallet;
     return w ? `${w.slice(0, 6)}…${w.slice(-4)}` : "(not connected)";
@@ -10126,7 +10125,12 @@ function TerminalPanel() {
     customDomainVerified?: boolean;
   }> {
     try {
-      const r = await fetch("/api/site/config", { headers: { "x-wallet": account?.address || "" } });
+      const r = await fetch(`/api/site/config?wallet=${encodeURIComponent(operatorWallet)}`, { 
+        headers: { 
+          "x-wallet": operatorWallet, 
+          "x-linked-wallet": (account?.address || "").toLowerCase() 
+        } 
+      });
       const j = await r.json().catch(() => ({}));
       const cfg: any = j?.config || {};
       const processingFeePct = Math.max(0, Number(cfg?.processingFeePct || 0));
@@ -10785,8 +10789,9 @@ function TerminalPanel() {
 }
 
 // ---------------- Orders Tab ----------------
-function OrdersPanel() {
+function OrdersPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
   const account = useActiveAccount();
+  const merchantWallet = (overrideWallet || account?.address || "").toLowerCase();
   const brand = useBrand();
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [selectedQty, setSelectedQty] = useState<Record<string, number>>({});
@@ -10850,9 +10855,9 @@ function OrdersPanel() {
       } else if (sortBy === "price") {
         comparison = Number(a.priceUsd || 0) - Number(b.priceUsd || 0);
       } else if (sortBy === "stock") {
-        const aStock = Number(a.stockQty) === -1 ? 999999 : Number(a.stockQty || 0);
-        const bStock = Number(b.stockQty) === -1 ? 999999 : Number(b.stockQty || 0);
-        comparison = aStock - bStock;
+        const stockA = Number(a.stockQty) === -1 ? 999999 : Number(a.stockQty || 0);
+        const stockB = Number(b.stockQty) === -1 ? 999999 : Number(b.stockQty || 0);
+        comparison = stockA - stockB;
       }
       return sortOrder === "asc" ? comparison : -comparison;
     });
@@ -10888,7 +10893,7 @@ function OrdersPanel() {
 
   async function loadInventory() {
     try {
-      const r = await fetch("/api/inventory", { headers: { "x-wallet": account?.address || "" }, credentials: "include", cache: "no-store" });
+      const r = await fetch(`/api/inventory?wallet=${encodeURIComponent(merchantWallet)}`, { headers: { "x-wallet": merchantWallet, "x-linked-wallet": (account?.address || "").toLowerCase() }, credentials: "include", cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       setInventory(Array.isArray(j?.items) ? j.items : []);
     } catch { }
@@ -10896,7 +10901,7 @@ function OrdersPanel() {
 
   async function loadBrand() {
     try {
-      const r = await fetch("/api/site/config", { headers: { "x-wallet": account?.address || "" } });
+      const r = await fetch(`/api/site/config?wallet=${encodeURIComponent(merchantWallet)}`, { headers: { "x-wallet": merchantWallet, "x-linked-wallet": (account?.address || "").toLowerCase() } });
       const j = await r.json().catch(() => ({}));
       setBrandName(j?.config?.theme?.brandName || getDefaultBrandName((brand as any)?.key));
       setProcessingFeePct(Math.max(0, Number(j?.config?.processingFeePct || 0)));
@@ -10959,7 +10964,7 @@ function OrdersPanel() {
       }
       const r = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-wallet": account?.address || "" },
+        headers: { "Content-Type": "application/json", "x-wallet": merchantWallet, "x-linked-wallet": (account?.address || "").toLowerCase() },
         credentials: "include",
         cache: "no-store",
         body: JSON.stringify(payload),
@@ -11541,6 +11546,8 @@ export default function AdminPage() {
     return null;
   });
 
+  const effectiveMerchantWallet = activeTeamContext?.merchantWallet ? String(activeTeamContext.merchantWallet).toLowerCase() : wallet;
+
   useEffect(() => {
     const handler = (e: any) => {
       setActiveTeamContext(e.detail || null);
@@ -11869,7 +11876,7 @@ export default function AdminPage() {
         )}
         {activeTab === "reserve" && <ReserveTabs />}
         {activeTab === "delivery" && <DeliveryPanel />}
-        {activeTab === "shopSetup" && <ShopPanel />}
+        {activeTab === "shopSetup" && <ShopPanel overrideWallet={effectiveMerchantWallet} />}
         {activeTab === "profileSetup" && <ProfilePanel />}
         {activeTab === "roadmap" && <RoadmapPanel brandKey={getEffectiveBrandKey()} />}
         {activeTab === "updates" && canAccessPanel("updates", wallet) && <UpdatesPanel brandKey={getEffectiveBrandKey()} />}
@@ -11905,7 +11912,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {activeTab === "analytics" && <AnalyticsPanel />}
+        {activeTab === "analytics" && <AnalyticsPanel overrideWallet={effectiveMerchantWallet} />}
         {activeTab === "leaderboard" && <LeaderboardPanel />}
         {activeTab === "autoclose" && <AutoclosePanel />}
 
@@ -11941,11 +11948,11 @@ export default function AdminPage() {
         )}
 
         {activeTab === "inventory" && (
-          <InventoryPanel />
+          <InventoryPanel overrideWallet={effectiveMerchantWallet} />
         )}
 
         {activeTab === "orders" && (
-          <OrdersPanel />
+          <OrdersPanel overrideWallet={effectiveMerchantWallet} />
         )}
 
         {activeTab === "purchases" && (
@@ -11959,14 +11966,14 @@ export default function AdminPage() {
           <MessagesPanelExt role="buyer" />
         )}
         {activeTab === "messages-merchant" && (
-          <MessagesPanelExt role="merchant" />
+          <MessagesPanelExt role="merchant" overrideWallet={effectiveMerchantWallet} />
         )}
         {activeTab === "rewards" && (
           <RewardsPanel />
         )}
 
         {activeTab === "terminal" && (
-          <TerminalPanel />
+          <TerminalPanel overrideWallet={effectiveMerchantWallet} />
         )}
 
         {activeTab === "users" && canAccessPanel("users", wallet) && (
@@ -12064,7 +12071,7 @@ export default function AdminPage() {
           <SubscriptionsPanel />
         )}
         {activeTab === "reports" && (
-          <ReportsPanelMerchant />
+          <ReportsPanelMerchant overrideWallet={effectiveMerchantWallet} />
         )}
         {activeTab === "reportsPartner" && canAccessPanel("reportsPartner", wallet) && (
           <ReportsPanelPartner />

@@ -19,16 +19,28 @@ export async function GET(req: NextRequest) {
     const sinceMsParam = url.searchParams.get("sinceMs");
     const requestedWallet = String(url.searchParams.get("wallet") || "").toLowerCase();
 
-    // Identify merchant wallet: prefer auth cookie, fallback to x-wallet header
+    // Identify merchant wallet & caller
     const authed = await getAuthenticatedWallet(req);
+    const linkedWalletHeader = String(req.headers.get("x-linked-wallet") || "").toLowerCase();
     const headerWallet = String(req.headers.get("x-wallet") || "").toLowerCase();
-    const caller = (authed || headerWallet || "").toLowerCase();
+    const caller = (authed || linkedWalletHeader || headerWallet || "").toLowerCase();
+
     let merchant = caller;
 
-    // Allow owner to inspect a specified merchant wallet via ?wallet=
-    if (requestedWallet && isOwnerWallet(caller)) {
-      merchant = requestedWallet;
+    // If requested wallet differs from caller (e.g. team member or owner accessing a specific shop)
+    const targetWallet = requestedWallet || (headerWallet && headerWallet !== caller ? headerWallet : "");
+    if (targetWallet && targetWallet !== caller) {
+      const { verifyMerchantTeamAccess } = await import("@/lib/authz-server");
+      const access = await verifyMerchantTeamAccess(caller, targetWallet);
+      if (!access.authorized) {
+        return NextResponse.json(
+          { error: "unauthorized_or_invalid_merchant" },
+          { status: 401, headers: { "x-correlation-id": correlationId } }
+        );
+      }
+      merchant = targetWallet;
     }
+
 
     // Validate merchant wallet
     if (!/^0x[a-f0-9]{40}$/i.test(merchant)) {

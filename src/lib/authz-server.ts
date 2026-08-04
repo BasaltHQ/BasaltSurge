@@ -116,3 +116,74 @@ export async function resolveAdminRole(wallet?: string, contextBrandKey?: string
 
     return null;
 }
+
+export interface MerchantTeamAccessResult {
+    authorized: boolean;
+    isOwner: boolean;
+    isAdmin: boolean;
+    role?: string;
+    teamMember?: any;
+}
+
+/**
+ * Server-side: Verify if a caller wallet has authorization to access/manage a target merchant wallet.
+ * Grants access if:
+ * 1. callerWallet === targetMerchantWallet (Owner)
+ * 2. callerWallet is a Platform SuperAdmin / Admin or Partner Admin
+ * 3. callerWallet is an active merchant_team_member attached to targetMerchantWallet
+ */
+export async function verifyMerchantTeamAccess(
+    callerWallet?: string | null,
+    targetMerchantWallet?: string | null,
+    contextBrandKey?: string
+): Promise<MerchantTeamAccessResult> {
+    if (!callerWallet || !targetMerchantWallet) {
+        return { authorized: false, isOwner: false, isAdmin: false };
+    }
+    const cw = callerWallet.toLowerCase().trim();
+    const tw = targetMerchantWallet.toLowerCase().trim();
+
+    if (!/^0x[a-f0-9]{40}$/i.test(cw) || !/^0x[a-f0-9]{40}$/i.test(tw)) {
+        return { authorized: false, isOwner: false, isAdmin: false };
+    }
+
+    // 1. Direct Owner
+    if (cw === tw) {
+        return { authorized: true, isOwner: true, isAdmin: true, role: 'merchant_owner' };
+    }
+
+    // 2. Admin Check (Platform / Partner Admin)
+    const adminRole = await resolveAdminRole(cw, contextBrandKey);
+    if (adminRole && (adminRole.startsWith('platform_') || adminRole.startsWith('partner_'))) {
+        return { authorized: true, isOwner: false, isAdmin: true, role: adminRole };
+    }
+
+    // 3. Merchant Team Member Check (linkedWallet)
+    try {
+        const { getContainer } = await import('@/lib/cosmos');
+        const c = await getContainer();
+        const querySpec = {
+            query: "SELECT * FROM c WHERE c.type = 'merchant_team_member' AND c.merchantWallet = @mw AND c.linkedWallet = @cw AND (NOT IS_DEFINED(c.active) OR c.active = true)",
+            parameters: [
+                { name: "@mw", value: tw },
+                { name: "@cw", value: cw }
+            ]
+        };
+        const { resources: teamRes } = await c.items.query(querySpec).fetchAll();
+        if (teamRes && teamRes.length > 0) {
+            const tm = teamRes[0];
+            return {
+                authorized: true,
+                isOwner: false,
+                isAdmin: false,
+                role: tm.role || 'merchant_cashier',
+                teamMember: tm
+            };
+        }
+    } catch (e) {
+        console.error("verifyMerchantTeamAccess query failed:", e);
+    }
+
+    return { authorized: false, isOwner: false, isAdmin: false };
+}
+

@@ -185,21 +185,15 @@ export async function GET(req: NextRequest) {
                 }
 
                 if (!authorized) {
-                    // C. Manager Delegated Access
-                    const memberQuery = {
-                        query: "SELECT * FROM c WHERE c.merchantWallet = @mw AND c.type = 'merchant_team_member' AND c.linkedWallet = @lw AND (c.role = 'manager' OR c.role = 'owner')",
-                        parameters: [
-                            { name: "@mw", value: w },
-                            { name: "@lw", value: requestWallet }
-                        ]
-                    };
-                    const { resources: members } = await container.items.query(memberQuery).fetchAll();
-                    if (members.length > 0) {
+                    // C. Team Member Delegated Access
+                    const { verifyMerchantTeamAccess } = await import("@/lib/authz-server");
+                    const teamAccess = await verifyMerchantTeamAccess(requestWallet, w);
+                    if (teamAccess.authorized) {
                         authorized = true;
-                        staffName = members[0].name;
-                        console.log("[ReportsAPI] Manager/Team Access Granted");
+                        staffName = teamAccess.teamMember?.name || staffName || "Team Member";
+                        console.log("[ReportsAPI] Team Access Granted for role:", teamAccess.role);
                     } else {
-                        console.warn("[ReportsAPI] Team Member Not Found for:", requestWallet);
+                        console.warn("[ReportsAPI] Team Member Not Found or Unauthorized for:", requestWallet);
                     }
                 }
             }

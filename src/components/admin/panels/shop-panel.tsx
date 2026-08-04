@@ -121,14 +121,15 @@ function contrastTextFor(bg: string, fallback = "#ffffff"): string {
   return L > 0.5 ? "#000000" : "#ffffff";
 }
 
-export function ShopPanel() {
+export function ShopPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
   const twTheme = usePortalThirdwebTheme();
   const account = useActiveAccount();
+  const targetWallet = (overrideWallet || account?.address || "").toLowerCase();
   const brand = useBrand();
   const router = useRouter();
   // Use the partner container's logo as default, fallback to BasaltSurge logo if not available
   const defaultLogo = brand?.logos?.app || "/BasaltSurgeWideD.png";
-  const isConnected = !!account?.address;
+  const isConnected = !!(overrideWallet || account?.address);
   const [wallets, setWallets] = useState<any[]>([]);
   useEffect(() => {
     let mounted = true;
@@ -489,7 +490,13 @@ export function ShopPanel() {
         // If auth check fails, continue to shop config load (non-fatal)
       }
 
-      const r = await fetch("/api/shop/config", { headers: { "x-wallet": account?.address || "" }, cache: "no-store" });
+      const r = await fetch(`/api/shop/config?wallet=${encodeURIComponent(targetWallet)}`, { 
+        headers: { 
+          "x-wallet": targetWallet,
+          "x-linked-wallet": (account?.address || "").toLowerCase()
+        }, 
+        cache: "no-store" 
+      });
       const j = await r.json().catch(() => ({}));
       const conf: ShopConfig = j?.config || {};
       // If already configured, hydrate

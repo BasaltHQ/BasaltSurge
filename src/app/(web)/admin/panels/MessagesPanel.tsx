@@ -78,9 +78,9 @@ function cx(...args: Array<string | false | null | undefined>) {
   return args.filter(Boolean).join(" ");
 }
 
-export default function MessagesPanel({ role }: { role?: 'buyer' | 'merchant' }) {
+export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer' | 'merchant'; overrideWallet?: string }) {
   const account = useActiveAccount();
-  const me = String((account as any)?.address || "").toLowerCase();
+  const me = (overrideWallet || String((account as any)?.address || "")).toLowerCase();
 
   // Conversations state
   const [conversations, setConversations] = React.useState<Conversation[]>([]);
