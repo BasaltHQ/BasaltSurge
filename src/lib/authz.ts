@@ -27,7 +27,16 @@ export type AdminRole =
   | 'partner_dev'            // Partner Developer
   | 'partner_manager'        // Partner Operations/Branding Manager
   | 'partner_finance'        // Partner Finance Admin
-  | 'partner_support';       // Partner Support Specialist
+  | 'partner_support'        // Partner Support Specialist
+  | 'merchant_owner'         // Merchant Master Admin / Owner
+  | 'merchant_admin'         // Merchant Manager / General Admin
+  | 'merchant_cashier'       // Merchant Cashier / FOH Staff
+  | 'merchant_kitchen'       // Merchant Kitchen / BOH Staff
+  | 'merchant_finance'       // Merchant Bookkeeper / Finance
+  | 'merchant_inventory'     // Merchant Stock / Inventory Manager
+  | 'manager'                // Legacy Merchant Manager
+  | 'staff'                  // Legacy Merchant Staff
+  | string;                  // Custom Role Keys
 
 export type AdminPermission =
   | 'manage:admins'          // Add/Remove other admins (Master Admins only)
@@ -39,10 +48,17 @@ export type AdminPermission =
   | 'view:analytics'         // View analytics dashboards
   | 'view:reports'           // Financial and operations reports
   | 'manage:support'         // Support tickets & Support Admin console
-  | 'manage:platform';       // Applications, contracts, university, loyaltyConfig
+  | 'manage:platform'        // Applications, contracts, university, loyaltyConfig
+  | 'manage:team'            // Add/Edit team members and PINs
+  | 'manage:roles'           // Create/Edit custom roles & permission maps
+  | 'manage:inventory'       // Manage catalog, stock, items
+  | 'manage:orders'          // Process sales, refunds, receipts
+  | 'manage:payouts'         // Manage tip payouts & USDC transfers
+  | 'access:terminal'        // Terminal checkout access
+  | 'manage:settings';       // Store settings
 
 // Permission mappings per role
-const ROLE_PERMISSIONS: Record<AdminRole, AdminPermission[]> = {
+const ROLE_PERMISSIONS: Record<string, AdminPermission[]> = {
   platform_super_admin: [
     'manage:admins',
     'manage:partners',
@@ -53,7 +69,14 @@ const ROLE_PERMISSIONS: Record<AdminRole, AdminPermission[]> = {
     'view:analytics',
     'view:reports',
     'manage:support',
-    'manage:platform'
+    'manage:platform',
+    'manage:team',
+    'manage:roles',
+    'manage:inventory',
+    'manage:orders',
+    'manage:payouts',
+    'access:terminal',
+    'manage:settings'
   ],
   platform_admin: [
     'manage:branding',
@@ -91,13 +114,16 @@ const ROLE_PERMISSIONS: Record<AdminRole, AdminPermission[]> = {
     'manage:merchants',
     'view:analytics',
     'view:reports',
-    'manage:dev'
+    'manage:dev',
+    'manage:team',
+    'manage:roles'
   ],
   partner_admin: [
     'manage:branding',
     'manage:merchants',
     'view:analytics',
-    'view:reports'
+    'view:reports',
+    'manage:team'
   ],
   partner_dev: [
     'manage:branding',
@@ -118,6 +144,59 @@ const ROLE_PERMISSIONS: Record<AdminRole, AdminPermission[]> = {
     'manage:merchants',
     'view:analytics',
     'manage:support'
+  ],
+  merchant_owner: [
+    'manage:admins',
+    'manage:team',
+    'manage:roles',
+    'manage:inventory',
+    'manage:orders',
+    'manage:merchants',
+    'view:analytics',
+    'view:reports',
+    'manage:payouts',
+    'access:terminal',
+    'manage:settings'
+  ],
+  merchant_admin: [
+    'manage:team',
+    'manage:inventory',
+    'manage:orders',
+    'manage:merchants',
+    'view:analytics',
+    'view:reports',
+    'access:terminal',
+    'manage:settings'
+  ],
+  merchant_cashier: [
+    'manage:orders',
+    'access:terminal'
+  ],
+  merchant_kitchen: [
+    'manage:orders'
+  ],
+  merchant_finance: [
+    'view:analytics',
+    'view:reports',
+    'manage:payouts'
+  ],
+  merchant_inventory: [
+    'manage:inventory',
+    'view:analytics'
+  ],
+  manager: [
+    'manage:team',
+    'manage:inventory',
+    'manage:orders',
+    'manage:merchants',
+    'view:analytics',
+    'view:reports',
+    'access:terminal',
+    'manage:settings'
+  ],
+  staff: [
+    'manage:orders',
+    'access:terminal'
   ]
 };
 

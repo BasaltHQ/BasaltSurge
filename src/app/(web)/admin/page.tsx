@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { sendTransaction, prepareTransaction, getContract, prepareContractCall, readContract } from "thirdweb";
 import { client, chain } from "@/lib/thirdweb/client";
 import { fetchEthRates, fetchUsdRates } from "@/lib/eth";
-import { ImagePlus, Trash2, Star, StarOff, Link as LinkIcon, Plus, Wand2, Infinity as InfinityIcon, Copy, ExternalLink, Download, LayoutGrid, List, Repeat, RefreshCw, Settings, GripVertical, Eye, EyeOff, Folder, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, X } from "lucide-react";
+import { ImagePlus, Trash2, Star, StarOff, Link as LinkIcon, Plus, Wand2, Infinity as InfinityIcon, Copy, ExternalLink, Download, LayoutGrid, List, Repeat, RefreshCw, Settings, GripVertical, Eye, EyeOff, Folder, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, X, Building2 } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -11530,6 +11530,27 @@ export default function AdminPage() {
   const [industryPack, setIndustryPack] = useState<string | null>(null);
   const containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").toLowerCase();
 
+  // Track active team merchant context when user navigates into a team merchant section
+  const [activeTeamContext, setActiveTeamContext] = useState<any | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("pp_active_merchant_context");
+        return stored ? JSON.parse(stored) : null;
+      } catch { return null; }
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    const handler = (e: any) => {
+      setActiveTeamContext(e.detail || null);
+    };
+    try { window.addEventListener("pp:merchantContextChanged", handler as any); } catch { }
+    return () => {
+      try { window.removeEventListener("pp:merchantContextChanged", handler as any); } catch { }
+    };
+  }, []);
+
   // Partner module configuration — which merchant panels are disabled
   const [disabledMerchantModules, setDisabledMerchantModules] = useState<string[]>([]);
   useEffect(() => {
@@ -11804,6 +11825,30 @@ export default function AdminPage() {
         </div>
 
         {/* Tabs Content */}
+        {activeTeamContext && (
+          <div className="bg-purple-950/40 border border-purple-500/30 rounded-xl p-3.5 mb-5 flex items-center justify-between text-xs text-purple-200 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex items-center gap-2.5">
+              <div className="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse" />
+              <Building2 size={16} className="text-purple-400 flex-shrink-0" />
+              <span>
+                Active Team Merchant Context: <strong className="text-white font-semibold text-sm">{activeTeamContext.merchantName || activeTeamContext.name || 'Merchant Team'}</strong>
+                <span className="ml-2.5 px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-mono font-medium border border-purple-500/30 uppercase text-[10px]">
+                  Role: {activeTeamContext.role}
+                </span>
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem('pp_active_merchant_context');
+                window.dispatchEvent(new CustomEvent('pp:merchantContextChanged', { detail: null }));
+              }}
+              className="px-3 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/40 transition-colors font-medium text-xs flex items-center gap-1.5 cursor-pointer flex-shrink-0"
+            >
+              <X size={13} />
+              Switch to My Primary Merchant
+            </button>
+          </div>
+        )}
         {activeTab === "notificationsMerchant" && (
           <NotificationsPanel level="merchant" />
         )}
@@ -12013,7 +12058,7 @@ export default function AdminPage() {
           <EndpointsPanel industryPack={industryPack} onNavigateToTab={(tab) => setActiveTab(tab as any)} />
         )}
         {activeTab === "team" && (
-          <TeamPanel />
+          <TeamPanel overrideWallet={activeTeamContext?.merchantWallet} />
         )}
         {activeTab === "subscriptions" && (
           <SubscriptionsPanel />

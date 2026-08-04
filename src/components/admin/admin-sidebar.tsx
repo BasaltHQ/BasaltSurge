@@ -161,6 +161,8 @@ interface NavItem {
   key?: AdminTabKey;
   href?: string;
   icon?: React.ReactNode;
+  roleBadge?: string;
+  profile?: any;
   items?: { title: string; key?: AdminTabKey; href?: string; icon?: React.ReactNode; badge?: React.ReactNode }[];
 }
 
@@ -174,6 +176,19 @@ function NavGroup({ item, activeTab, onChangeTab }: { item: NavItem; activeTab: 
   });
 
   const hasChildren = item.items && item.items.length > 0;
+
+  const handleTabClick = (tabKey: AdminTabKey) => {
+    if (typeof window !== 'undefined') {
+      if (item.profile) {
+        localStorage.setItem('pp_active_merchant_context', JSON.stringify(item.profile));
+        window.dispatchEvent(new CustomEvent('pp:merchantContextChanged', { detail: item.profile }));
+      } else if (item.title && item.title.toLowerCase().includes('merchant')) {
+        localStorage.removeItem('pp_active_merchant_context');
+        window.dispatchEvent(new CustomEvent('pp:merchantContextChanged', { detail: null }));
+      }
+    }
+    onChangeTab(tabKey);
+  };
 
   if (!hasChildren) {
     if (item.href) {
@@ -192,7 +207,7 @@ function NavGroup({ item, activeTab, onChangeTab }: { item: NavItem; activeTab: 
       return (
         <button
           type="button"
-          onClick={() => onChangeTab(item.key!)}
+          onClick={() => handleTabClick(item.key!)}
           className={`admin-nav-item ${isActive ? 'active' : ''}`}
         >
           <span className="flex-shrink-0 w-4 h-4 flex items-center justify-center opacity-70">{item.icon}</span>
@@ -210,13 +225,22 @@ function NavGroup({ item, activeTab, onChangeTab }: { item: NavItem; activeTab: 
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="admin-nav-group-label mt-4 mb-1 w-full cursor-pointer hover:text-white/40 transition-colors"
+          className="admin-nav-group-label mt-4 mb-1 w-full cursor-pointer hover:text-white/40 transition-colors flex items-center justify-between pr-1"
         >
-          <span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">{item.icon}</span>
-          <span>{item.title}</span>
-          <ChevronDown
-            className={`w-3 h-3 ml-auto text-white/15 transition-transform duration-200 ${isOpen ? '' : '-rotate-90'}`}
-          />
+          <span className="flex items-center gap-2 min-w-0">
+            <span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">{item.icon}</span>
+            <span className="truncate text-white/90">{item.title}</span>
+          </span>
+          <div className="flex items-center gap-1.5 ml-auto">
+            {item.roleBadge && (
+              <span className="px-1.5 py-0.5 rounded-full text-[9px] uppercase font-bold tracking-wider bg-purple-500/20 text-purple-300 border border-purple-500/30 flex-shrink-0">
+                {item.roleBadge}
+              </span>
+            )}
+            <ChevronDown
+              className={`w-3 h-3 text-white/15 transition-transform duration-200 flex-shrink-0 ${isOpen ? '' : '-rotate-90'}`}
+            />
+          </div>
         </button>
 
         {isOpen && hasChildren && (
@@ -244,7 +268,7 @@ function NavGroup({ item, activeTab, onChangeTab }: { item: NavItem; activeTab: 
                 <button
                   key={child.key}
                   type="button"
-                  onClick={() => onChangeTab(child.key!)}
+                  onClick={() => handleTabClick(child.key!)}
                   className={`admin-nav-item ml-3 group transition-all duration-300 ${isActive ? 'active' : 'hover:bg-white/5'}`}
                 >
                   {child.icon && (
@@ -280,7 +304,7 @@ function NavGroup({ item, activeTab, onChangeTab }: { item: NavItem; activeTab: 
             <button
               key={child.key}
               type="button"
-              onClick={() => onChangeTab(child.key!)}
+              onClick={() => handleTabClick(child.key!)}
               className={`md:hidden admin-mobile-nav-item ${isActive ? 'active' : ''}`}
             >
               {child.title}
@@ -427,6 +451,28 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
 
 
 
+  const [teamProfiles, setTeamProfiles] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!wallet) return;
+    let cancelled = false;
+    fetch(`/api/admin/reports/access?wallet=${encodeURIComponent(wallet)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data && Array.isArray(data.profiles)) {
+          const extTeams = data.profiles.filter(
+            (p: any) => p.merchantWallet && p.merchantWallet.toLowerCase() !== wallet.toLowerCase()
+          );
+          setTeamProfiles(extTeams);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [wallet]);
+
   const getIndustryPackBadge = (pack: string) => {
     switch (pack) {
       case 'restaurant': return <ChefHat className="w-3.5 h-3.5 text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]" />;
@@ -436,6 +482,36 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
       default: return null;
     }
   };
+
+  const teamMerchantGroups: NavItem[] = teamProfiles.map((tp: any) => {
+    const roleKey = String(tp.role || "staff").toLowerCase();
+    const roleBadge =
+      roleKey === "merchant_owner" ? "Owner" :
+      roleKey === "merchant_admin" || roleKey === "manager" ? "Manager" :
+      roleKey === "merchant_cashier" || roleKey === "staff" ? "Cashier" :
+      roleKey === "merchant_kitchen" ? "Kitchen" :
+      roleKey === "merchant_finance" ? "Bookkeeper" :
+      roleKey === "merchant_inventory" ? "Inventory" : tp.role;
+
+    return {
+      title: tp.merchantName ? `${tp.merchantName}` : "Merchant Team",
+      icon: <Building2 className="w-4 h-4 text-purple-400" />,
+      roleBadge,
+      profile: tp,
+      items: [
+        { title: 'Shop Configuration', key: 'shopSetup' as AdminTabKey, icon: <Store className="w-4 h-4" /> },
+        { title: 'Analytics', key: 'analytics' as AdminTabKey, icon: <LineChart className="w-4 h-4" /> },
+        { title: 'Terminal', key: 'terminal' as AdminTabKey, icon: <Terminal className="w-4 h-4" /> },
+        { title: 'Inventory', key: 'inventory' as AdminTabKey, icon: <Boxes className="w-4 h-4" /> },
+        { title: 'Orders', key: 'orders' as AdminTabKey, icon: <ReceiptText className="w-4 h-4" /> },
+        { title: 'Subscriptions', key: 'subscriptions' as AdminTabKey, icon: <Repeat className="w-4 h-4" /> },
+        { title: 'Team', key: 'team' as AdminTabKey, icon: <Users className="w-4 h-4" /> },
+        { title: 'Reports', key: 'reports' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
+        { title: 'Messages', key: 'messages-merchant' as AdminTabKey, icon: <MessageSquare className="w-4 h-4" /> },
+        { title: 'Notifications', key: 'notificationsMerchant' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
+      ].filter((item) => !disabledMerchantModules.includes(item.key) && canAccessPanel(item.key as any, wallet)),
+    };
+  });
 
   const groups: NavItem[] = [
     {
@@ -457,7 +533,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
       ],
     },
     {
-      title: 'Merchant',
+      title: 'Merchant (My Shop)',
       icon: <Building2 className="w-4 h-4" />,
       items: [
         { title: 'Shop Configuration', key: 'shopSetup' as AdminTabKey, icon: <Store className="w-4 h-4" /> },
@@ -476,6 +552,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Notifications', key: 'notificationsMerchant' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
       ].filter((item) => !disabledMerchantModules.includes(item.key)),
     },
+    ...teamMerchantGroups,
     {
       title: 'Apps',
       icon: <Package className="w-4 h-4" />,

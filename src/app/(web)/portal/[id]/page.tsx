@@ -6974,7 +6974,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   </div>
                 </div>
                 <div
-                  className={`h-full flex flex-col justify-start ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : ""}`}
+                  className={`h-full flex flex-col ${((shippingRequired && !shippingComplete) || headlessStep === "collecting_kyc") ? "justify-start md:py-6" : "justify-center"} ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : ""}`}
                   style={{
                     background: rightSideBackground,
                     borderLeft: isTwoColumnLayout && isInvoiceLayout ? (isLightText ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(0,0,0,0.06)") : undefined,
@@ -6982,7 +6982,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 >
                   <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-[490px] md:mr-auto" : "w-full"}>
                     {/* Payment Section */}
-                    <div ref={payRef} className={`mt-0 md:mt-0 ${isEmbedded ? "rounded-none border-0 p-0 bg-transparent" : "rounded-2xl border p-3 bg-background/70"} flex flex-col justify-start`}>
+                    <div ref={payRef} className={`mt-0 md:mt-0 ${isEmbedded ? "rounded-none border-0 p-0 bg-transparent" : "rounded-2xl border p-3 bg-background/70"} flex flex-col ${((shippingRequired && !shippingComplete) || headlessStep === "collecting_kyc") ? "justify-start" : "justify-center"}`}>
                       <div ref={widgetRootRef} className={isEmbedded ? "mt-0 rounded-2xl p-3" : "mt-0 rounded-2xl p-3"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                         {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                           <>
