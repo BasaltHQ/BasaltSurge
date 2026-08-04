@@ -845,24 +845,9 @@ export default async function RootLayout({
       data-pp-env={process.env.NODE_ENV || "production"}
       suppressHydrationWarning
     >
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: `
-          (function() {
-            try {
-              var bk = document.documentElement.getAttribute('data-pp-brand-key') || 'basaltsurge';
-              var match = document.cookie.match(new RegExp('(^| )pp_tw_client_id_' + bk + '=([^;]+)'));
-              var cached = match ? match[2] : null;
-              if (!cached) {
-                cached = localStorage.getItem('pp-thirdweb-client-id:' + bk);
-              }
-              if (cached) {
-                document.documentElement.setAttribute('data-pp-thirdweb-client-id', cached);
-              }
-            } catch(e) {}
-          })();
-        ` }} />
+      <head suppressHydrationWarning>
         {/* Cache invalidate comment */}
-        <link rel="stylesheet" href="https://use.typekit.net/eur3bvn.css" />
+        <link rel="stylesheet" href="https://use.typekit.net/eur3bvn.css" suppressHydrationWarning />
         <meta name="base:app_id" content="69614c80b8395f034ac21fe2" />
         <meta name="talentapp:project_verification" content="4fcbdd3d1a22b3bbdb9b60465f2559a71c1e54cb0b5c770a107ca32bae1d012e44c9348820c266379ed6ffd8dd3a468e973d61fba686fcf26330a46ac88d5171" />
         <noscript>

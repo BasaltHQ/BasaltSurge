@@ -809,7 +809,7 @@ export function Navbar() {
     return (
         <>
             <AutoConnect client={client} wallets={wallets} />
-            <style>{`
+            <style suppressHydrationWarning>{`
                 .nav-item-custom-border {
                     border: 1px solid transparent;
                 }

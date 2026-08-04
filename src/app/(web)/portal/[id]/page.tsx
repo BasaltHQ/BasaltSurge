@@ -2556,22 +2556,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   };
 
   const fetchAddressSuggestions = async (val: string) => {
-    if (val.length < 3) {
+    if (val.length < 2) {
       setAddressSuggestions([]);
       setShowAddressSuggestions(false);
       return;
     }
     setIsFetchingSuggestions(true);
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(val)}&format=json&addressdetails=1&limit=5`, {
-        headers: {
-          "User-Agent": "PortalPay-Checkout/1.0 (contact@portalpay.org)"
-        }
-      });
+      const res = await fetch(`/api/address/autocomplete?input=${encodeURIComponent(val)}`);
       if (res.ok) {
         const data = await res.json();
-        setAddressSuggestions(data || []);
-        setShowAddressSuggestions((data || []).length > 0);
+        setAddressSuggestions(data.predictions || []);
+        setShowAddressSuggestions((data.predictions || []).length > 0);
       }
     } catch (err) {
       console.warn("Failed to fetch address suggestions:", err);
@@ -2580,35 +2576,31 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
   };
 
-  const selectAddressSuggestion = (item: any) => {
-    const addr = item.address;
-    if (!addr) return;
+  const selectAddressSuggestion = async (item: any) => {
+    if (!item) return;
 
-    // Extract line1
-    const number = addr.house_number || "";
-    const road = addr.road || "";
-    const line1 = `${number} ${road}`.trim();
-    setKycLine1(line1);
-
-    // Extract city
-    const city = addr.city || addr.town || addr.village || addr.suburb || addr.city_district || "";
-    setKycCity(city);
-
-    // Extract state
-    const rawState = (addr.state || "").toLowerCase();
-    const stateAbbr = STATE_MAP[rawState] || addr.state || "";
-    setKycState(stateAbbr);
-
-    // Extract postcode
-    const zip = addr.postcode || "";
-    setKycZip(zip);
-
-    // Extract country code
-    const countryCode = (addr.country_code || "US").toUpperCase();
-    setKycCountry(countryCode);
-    setKycNationalities(countryCode);
-    setKycBirthCountry(countryCode);
-
+    if (item.placeId) {
+      setKycLine1(item.mainText || item.description);
+      setShowAddressSuggestions(false);
+      try {
+        const res = await fetch(`/api/address/autocomplete?placeId=${encodeURIComponent(item.placeId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.streetAddress) setKycLine1(data.streetAddress);
+          if (data.apartment) setKycLine2(data.apartment);
+          if (data.city) setKycCity(data.city);
+          if (data.state) setKycState(data.state);
+          if (data.zip) setKycZip(data.zip);
+          if (data.country) {
+            setKycCountry(data.country);
+            setKycNationalities(data.country);
+            setKycBirthCountry(data.country);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch place details:", err);
+      }
+    }
     setAddressSuggestions([]);
     setShowAddressSuggestions(false);
   };
@@ -5058,11 +5050,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               <div className="w-full flex flex-col items-stretch justify-start p-1 md:p-2 animate-in zoom-in duration-300 pr-1 text-left">
                 <div className="mb-3">
                   <h3 className={`text-base font-bold tracking-tight mb-0.5 ${isLightText ? 'text-white' : 'text-black'}`}>
-                    {(kycTierRequired as string) === "l0" ? "Billing Information" : "Identity Verification"}
+                    {(kycTierRequired as string) === "l0" ? "KYC & Compliance Verification" : "Identity Verification"}
                   </h3>
-                  <p className={`text-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+                  <p className={`text-xs font-medium mb-1 ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
                     {(kycTierRequired as string) === "l0" 
-                      ? "Stripe requires basic billing and contact information to authorize this transaction."
+                      ? "Enter your full name and primary home address required for regulatory compliance."
                       : "Stripe requires additional demographics to complete authorization."}
                   </p>
                 </div>
@@ -5073,7 +5065,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       {/* L0 Name Fields */}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal First Name</label>
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>First Name</label>
                           <input
                             type="text"
                             placeholder="John"
@@ -5086,7 +5078,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           />
                         </div>
                         <div>
-                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Legal Last Name</label>
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Last Name</label>
                           <input
                             type="text"
                             placeholder="Smith"
@@ -5166,18 +5158,71 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       {/* L0 Address Fields */}
                       <div className="space-y-2">
                         <div className="relative">
-                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 1</label>
+                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Home Address</label>
                           <input
                             type="text"
-                            placeholder="123 Main St"
+                            placeholder="Start typing your home address..."
                             autoComplete="address-line1"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                 : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
                             value={kycLine1}
-                            onChange={(e) => setKycLine1(e.target.value)}
+                            onChange={(e) => {
+                              setKycLine1(e.target.value);
+                              fetchAddressSuggestions(e.target.value);
+                            }}
+                            onFocus={() => addressSuggestions.length > 0 && setShowAddressSuggestions(true)}
                           />
+
+                          {/* Google Places Autocomplete Predictions Dropdown */}
+                          {showAddressSuggestions && addressSuggestions.length > 0 && (
+                            <div className={`absolute z-50 left-0 right-0 mt-1 rounded-xl shadow-2xl overflow-hidden border divide-y ${
+                              isLightText
+                                ? 'bg-neutral-900 border-white/15 divide-white/10 text-white'
+                                : 'bg-white border-black/15 divide-black/10 text-black'
+                            }`}>
+                              {/* Header with Mobile Close Button */}
+                              <div className={`px-3 py-1.5 flex items-center justify-between text-[10px] font-semibold tracking-wider uppercase border-b ${
+                                isLightText ? 'bg-white/5 border-white/10 text-white/60' : 'bg-black/5 border-black/10 text-black/60'
+                              }`}>
+                                <span>Address Suggestions</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setShowAddressSuggestions(false);
+                                  }}
+                                  className="px-2 py-0.5 rounded-md hover:bg-white/20 active:scale-95 transition flex items-center gap-1 text-[10px] font-bold text-gray-400 hover:text-white"
+                                >
+                                  ✕ Close
+                                </button>
+                              </div>
+
+                              {addressSuggestions.map((item: any, idx: number) => (
+                                <button
+                                  key={item.placeId || idx}
+                                  type="button"
+                                  onClick={() => selectAddressSuggestion(item)}
+                                  className={`w-full text-left px-3 py-2.5 text-xs transition flex flex-col ${
+                                    isLightText
+                                      ? 'hover:bg-white/10 text-gray-200'
+                                      : 'hover:bg-black/5 text-gray-800'
+                                  }`}
+                                >
+                                  <span className="font-semibold">{item.mainText || item.description}</span>
+                                  {item.secondaryText && (
+                                    <span className="text-[10px] opacity-60 mt-0.5">{item.secondaryText}</span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          <p className={`text-[11px] mt-1.5 font-medium flex items-center gap-1.5 ${isLightText ? 'text-amber-400/90' : 'text-amber-700'}`}>
+                            <span>💡 Use your home residential address (no P.O. Boxes or business addresses).</span>
+                          </p>
                         </div>
                         <div>
                           <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 2 (Optional)</label>
@@ -6063,9 +6108,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 >
                   Confirm & Continue
                 </button>
-                <p className={`mt-3 text-center text-[10.5px] leading-relaxed select-none ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
-                  By continuing, you allow <strong className={isLightText ? 'text-white/80' : 'text-black/80'}>{theme.brandName || "BasaltSurge"}</strong> to check your identity verification and manage your saved crypto wallets and buy/sell crypto on your behalf.
+                <p className={`mt-3 text-center text-[10.5px] leading-relaxed select-none ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
+                  By continuing, you authorize <strong className={isLightText ? 'text-white/90' : 'text-black/90'}>{theme.brandName || "BasaltSurge"}</strong> to perform identity verification and process payment authorizations in compliance with applicable KYC/AML financial regulations.
                 </p>
+                <div className={`mt-2 flex items-center justify-center gap-2.5 text-[9.5px] font-semibold uppercase tracking-wider ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
+                  <span>🔒 256-Bit SSL Encrypted</span>
+                  <span>•</span>
+                  <span>🛡️ Bank-Grade Security</span>
+                  <span>•</span>
+                  <span>⚖️ Regulatory Compliant</span>
+                </div>
               </div>
             ) : headlessAuthElement || headlessPaymentElement ? (
               <div className="w-full h-full flex flex-col items-stretch stripe-embedded-container animate-in fade-in duration-300 relative">
@@ -6113,7 +6165,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
                 {["authenticating", "verifying_identity"].includes(headlessStep as string) && headlessAuthElement && (
                   <div
-                    className="absolute bottom-[14px] left-[20px] right-[20px] z-[2147483647] flex items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
+                    className="absolute bottom-[14px] left-[20px] right-[20px] z-[2147483647] flex flex-col items-center justify-center text-center text-[10.5px] leading-relaxed select-none pointer-events-none"
                     style={{
                       backgroundColor: isLightBackground ? "#ffffff" : "#0c111b",
                       border: isLightBackground ? "1px solid #e6ebf1" : "1px solid rgba(255, 255, 255, 0.08)",
@@ -6125,7 +6177,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     }}
                   >
                     <span>
-                      By continuing, you allow <strong className="font-semibold" style={{ color: isLightBackground ? "#3c4257" : "#ffffff" }}>{theme.brandName || "BasaltSurge"}</strong> to check your identity verification and manage your saved crypto wallets and buy/sell crypto on your behalf.
+                      By continuing, you authorize <strong className="font-semibold" style={{ color: isLightBackground ? "#3c4257" : "#ffffff" }}>{theme.brandName || "BasaltSurge"}</strong> to perform identity verification and process payment authorizations in compliance with applicable KYC/AML financial regulations.
                     </span>
                   </div>
                 )}
