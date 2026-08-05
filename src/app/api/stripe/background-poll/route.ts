@@ -10,6 +10,60 @@ export const dynamic = 'force-dynamic';
 const STRIPE_API_VERSION = "2026-06-24.dahlia";
 const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
+export async function findLeg2OnChainTx(
+  userWallet: string,
+  splitAddress: string
+): Promise<string | null> {
+  try {
+    if (!userWallet || !userWallet.startsWith("0x")) return null;
+    const rpcUrl = process.env.BASE_RPC_URL || "https://mainnet.base.org";
+    const paddedUserWallet = "0x000000000000000000000000" + userWallet.slice(2).toLowerCase();
+    const paddedSplit = splitAddress && splitAddress.startsWith("0x")
+      ? "0x000000000000000000000000" + splitAddress.slice(2).toLowerCase()
+      : null;
+
+    const blockNumRes = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] })
+    });
+    const blockNumData = await blockNumRes.json();
+    const currentBlock = blockNumData.result ? parseInt(blockNumData.result, 16) : 0;
+    const fromBlockHex = currentBlock > 10000 ? "0x" + (currentBlock - 10000).toString(16) : "0x0";
+
+    const response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "eth_getLogs",
+        params: [{
+          address: BASE_USDC_ADDRESS,
+          fromBlock: fromBlockHex,
+          toBlock: "latest",
+          topics: [
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            paddedUserWallet,
+            ...(paddedSplit ? [paddedSplit] : [])
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) return null;
+    const data = await response.json();
+    const logs = data.result || [];
+    if (logs.length > 0) {
+      const latestLog = logs[logs.length - 1];
+      return latestLog.transactionHash || null;
+    }
+  } catch (err) {
+    console.warn("[BACKGROUND POLL] Error querying Base on-chain Leg 2 logs:", err);
+  }
+  return null;
+}
+
 export async function executeGaslessTransferServer(
   fromWalletEmail: string,
   toAddress: string,
@@ -161,7 +215,13 @@ export async function executeGaslessTransferServer(
     let amountInUnits = requiredUnits;
 
     if (balance === BigInt(0)) {
-      console.log(`[BACKGROUND POLL] Wallet ${account.address} has 0 USDC balance on-chain. Skipping transfer.`);
+      console.log(`[BACKGROUND POLL] Wallet ${account.address} has 0 USDC balance on-chain. Checking for existing completed Leg 2 transfer on Base...`);
+      const existingLeg2Tx = await findLeg2OnChainTx(account.address, toAddress);
+      if (existingLeg2Tx) {
+        console.log(`🎉 [BACKGROUND POLL] Found completed Leg 2 transaction on Base: ${existingLeg2Tx}`);
+        return existingLeg2Tx;
+      }
+      console.log(`[BACKGROUND POLL] Wallet ${account.address} has 0 USDC balance and no prior Leg 2 transfer found. Skipping.`);
       return null;
     }
 
@@ -474,6 +534,201 @@ async function runBackgroundPoll(params: {
       return;
     } else {
       console.error("[BACKGROUND POLL] executeGaslessTransferServer failed.");
+          const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
+          const { resource: receipt } = await container.item(docId, merchantWallet).read();
+          if (receipt) {
+            if (receipt.detectedCardFunding) {
+              dbFunding = receipt.detectedCardFunding;
+            } else if (Array.isArray(receipt.customerSessions)) {
+              for (const s of receipt.customerSessions) {
+                const funding = s.paymentMethodDetails?.card?.funding;
+                if (funding) {
+                  dbFunding = funding;
+                  break;
+                }
+              }
+            }
+          }
+        } catch (dbErr) {
+          console.warn("[BACKGROUND POLL] Failed to query database receipt for funding:", dbErr);
+        }
+
+        resolvedFunding = stripeFunding || dbFunding || detectedCardFunding || null;
+        isCreditCard = resolvedFunding === "credit" || resolvedFunding === null || resolvedFunding === undefined;
+        break;
+      }
+
+      // Early exit if session failed
+      if (
+        status === "rejected" ||
+        lastError === "transaction_failed" ||
+        lastError === "location_not_supported" ||
+        lastError === "transaction_limit_reached"
+      ) {
+        console.warn(`[BACKGROUND POLL] Stripe session failed early: status=${status}, lastError=${lastError}`);
+        resolvedStatus = "failed";
+        isDefinitiveFailure = true;
+        break;
+      }
+    } catch (e) {
+      console.error(`[BACKGROUND POLL] Fetch error (attempt ${attempt + 1}):`, e);
+    }
+  }
+
+  // Handle results
+  if (resolvedStatus === "success") {
+    console.log(`[BACKGROUND POLL] Stripe onramp fulfilled. Executing EIP-7702 transfer...`);
+
+    let kycLevel = "L0";
+    const resolvedFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
+    const isAch = resolvedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account";
+    
+    if (isAch) {
+      kycLevel = "L2";
+    } else if (cryptoCustomerId) {
+      try {
+        const custResponse = await fetch(
+          `https://api.stripe.com/v1/crypto/customers/${encodeURIComponent(cryptoCustomerId)}`,
+          {
+            method: "GET",
+            headers: {
+              "Authorization": `Bearer ${stripeKey}`,
+              "Stripe-Version": STRIPE_API_VERSION,
+            },
+          }
+        );
+        if (custResponse.ok) {
+          const customerData = await custResponse.json();
+          const verifications = customerData.verifications || [];
+          const kycVerified = verifications.find((v: any) => v.name === "kyc_verified");
+          const idDocVerified = verifications.find((v: any) => v.name === "id_document_verified");
+          
+          const kycTiers = customerData.kyc_tiers || [];
+          const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
+          const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+          const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
+          
+          const isOverallKycVerified = kycVerified?.status === "approved" ||
+                                       kycVerified?.status === "verified" ||
+                                       kycVerified?.status === "completed";
+          const isOverallIdVerified = idDocVerified?.status === "approved" ||
+                                      idDocVerified?.status === "verified" ||
+                                      idDocVerified?.status === "completed";
+          
+          const isL0Verified = l0Tier 
+            ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
+            : isOverallKycVerified;
+          const isL1Verified = l1Tier 
+            ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
+            : isOverallKycVerified;
+          const isL2Verified = l2Tier 
+            ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
+            : isOverallIdVerified;
+            
+          if (isL2Verified) kycLevel = "L2";
+          else if (isL1Verified) kycLevel = "L1";
+          else kycLevel = "L0";
+          console.log(`[BACKGROUND POLL] Customer KYC level resolved from Stripe: ${kycLevel}`);
+        }
+      } catch (kycFetchErr) {
+        console.warn("[BACKGROUND POLL] Failed to fetch customer KYC level:", kycFetchErr);
+      }
+    }
+
+    const targetSplitAddress = (isCreditCard || resolvedFunding === "us_bank_account")
+      ? splitAddress
+      : (splitAddressCredit || splitAddress);
+
+    // Execute transfer
+    const txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey, true, kycLevel);
+
+    if (txHash) {
+      finalTxHash = txHash;
+      console.log(`[BACKGROUND POLL] Transfer succeeded: ${txHash}`);
+
+      // Update receipt in Cosmos DB
+      try {
+        const container = await getContainer();
+        const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
+        let receipt: any = null;
+        try {
+          const { resource } = await container.item(docId, merchantWallet ? merchantWallet.toLowerCase() : undefined).read();
+          receipt = resource;
+        } catch {}
+
+        if (!receipt) {
+          try {
+            const rawId = receiptId.replace(/^receipt:/, '');
+            const qSpec = {
+              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId OR c.id = @rawId)",
+              parameters: [
+                { name: "@rId", value: rawId },
+                { name: "@docId", value: docId },
+                { name: "@rawId", value: rawId }
+              ]
+            };
+            const { resources } = await container.items.query(qSpec).fetchAll();
+            if (resources && resources.length > 0) {
+              receipt = resources[0];
+            }
+          } catch (qErr) {
+            console.warn("[BACKGROUND POLL] Query fallback failed for receipt:", qErr);
+          }
+        }
+
+        if (receipt) {
+          receipt.status = "paid";
+          receipt.transactionHash = txHash;
+          receipt.transactionTimestamp = Date.now();
+          receipt.lastUpdatedAt = Date.now();
+          receipt.statusHistory = Array.isArray(receipt.statusHistory)
+            ? [...receipt.statusHistory, { status: "paid", ts: Date.now() }]
+            : [{ status: "paid", ts: Date.now() }];
+          // Set TTL to -1 to prevent auto-delete since it is paid
+          receipt.ttl = -1;
+
+          // Persist card funding if resolved
+          receipt.isCreditCard = isCreditCard;
+          receipt.detectedCardFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
+          receipt.kycLevel = kycLevel;
+          if (typeof kycOccurred === "boolean") {
+            receipt.kycOccurred = kycOccurred;
+          }
+
+          let finalReceipt = receipt;
+          try {
+            const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
+            const { readBrandOverridesCached } = await import("@/lib/brand-config");
+            const siteConfig = await getSiteConfigForWallet(merchantWallet);
+            const brandConfigDoc = brandKey ? await readBrandOverridesCached(brandKey) : null;
+            if (siteConfig) {
+              const funding = receipt.detectedCardFunding === "credit"
+                ? "credit"
+                : (receipt.detectedCardFunding === "us_bank_account" ? "us_bank_account" : "debit");
+              finalReceipt = recalculateReceiptForCardFunding(receipt, funding, siteConfig, brandConfigDoc);
+            }
+          } catch (recalcErr) {
+            console.error("[BACKGROUND POLL] Failed to recalculate receipt line items:", recalcErr);
+          }
+
+          try {
+            const { checkAndSyncShopifyOrder } = await import("@/lib/shopify/sync-order");
+            finalReceipt = await checkAndSyncShopifyOrder(finalReceipt, "paid");
+          } catch (shopifyErr) {
+            console.error("[BACKGROUND POLL] Failed to run Shopify sync:", shopifyErr);
+          }
+
+          await container.items.upsert(finalReceipt);
+          console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to paid with txHash: ${txHash}`);
+        } else {
+          console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found in DB`);
+        }
+      } catch (dbErr) {
+        console.error("[BACKGROUND POLL] Database update error:", dbErr);
+      }
+      return;
+    } else {
+      console.error("[BACKGROUND POLL] executeGaslessTransferServer failed.");
       resolvedStatus = "failed";
       isDefinitiveFailure = true;
     }
@@ -490,6 +745,10 @@ async function runBackgroundPoll(params: {
       const { resource: receipt } = await container.item(docId, merchantWallet).read();
 
       if (receipt) {
+        if (receipt.status === "paid" || receipt.transactionHash || receipt.leg2TxHash || receipt.leg1TxHash) {
+          console.log(`[BACKGROUND POLL] Receipt ${receiptId} is already paid or confirmed on-chain. Skipping failure update.`);
+          return;
+        }
         const isAch = receipt.detectedCardFunding === "us_bank_account" || detectedCardFunding === "us_bank_account";
         const nextStatus = isDefinitiveFailure ? "failed" : (isAch ? "paid - ach pending" : "pending");
         receipt.status = nextStatus;
@@ -511,48 +770,141 @@ async function runBackgroundPoll(params: {
       // 2. Send transaction failure email to customer
       try {
         console.log(`[BACKGROUND POLL] Sending failure email to ${email}`);
-      const siteConfig = await getSiteConfigForWallet(merchantWallet);
-      const brandName = siteConfig?.theme?.brandName || "PortalPay";
-      const brandColor = siteConfig?.theme?.primaryColor || "#35ff7c";
-      const logoUrl = siteConfig?.theme?.brandLogoUrl || "";
+        const siteConfig = await getSiteConfigForWallet(merchantWallet);
+        const brandName = siteConfig?.theme?.brandName || "PortalPay";
+        const brandColor = siteConfig?.theme?.primaryColor || "#35ff7c";
+        const logoUrl = siteConfig?.theme?.brandLogoUrl || "";
 
-      // Ensure logo URL is absolute
-      let absoluteLogoUrl = logoUrl;
-      if (absoluteLogoUrl && absoluteLogoUrl.startsWith("/")) {
-        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://surge.basalthq.com";
-        absoluteLogoUrl = `${baseUrl}${absoluteLogoUrl}`;
+        // Ensure logo URL is absolute
+        let absoluteLogoUrl = logoUrl;
+        if (absoluteLogoUrl && absoluteLogoUrl.startsWith("/")) {
+          const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://surge.basalthq.com";
+          absoluteLogoUrl = `${baseUrl}${absoluteLogoUrl}`;
+        }
+
+        const htmlContent = generateHtmlEmailTemplate({
+          brandName,
+          brandColor,
+          logoUrl: absoluteLogoUrl || undefined,
+          title: "Transaction Failed",
+          subtitle: `Receipt #${receiptId}`,
+          message: `Your transaction of $${amount.toFixed(2)} could not be processed. Your payment has failed and you have not been charged. Please try again.`,
+          details: [
+            { label: "Receipt ID", value: receiptId },
+            { label: "Amount", value: `$${amount.toFixed(2)}` },
+            { label: "Status", value: "Failed" },
+            { label: "Reason", value: "Onramp transaction failed or timed out" },
+          ],
+          ctaText: "Try Payment Again",
+          ctaUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001"}/portal/${receiptId}?recipient=${encodeURIComponent(merchantWallet)}`,
+        });
+
+        await sendEmail({
+          to: email,
+          subject: `[${brandName}] Transaction Failed - Receipt #${receiptId}`,
+          html: htmlContent,
+          fromName: `${brandName} Support`,
+          brandKey: brandKey,
+        });
+        console.log(`[BACKGROUND POLL] Failure email successfully dispatched to ${email}`);
+      } catch (emailErr) {
+        console.error("[BACKGROUND POLL] Failed to send failure email:", emailErr);
       }
+    }
 
-      const htmlContent = generateHtmlEmailTemplate({
-        brandName,
-        brandColor,
-        logoUrl: absoluteLogoUrl || undefined,
-        title: "Transaction Failed",
-        subtitle: `Receipt #${receiptId}`,
-        message: `Your transaction of $${amount.toFixed(2)} could not be processed. Your payment has failed and you have not been charged. Please try again.`,
-        details: [
-          { label: "Receipt ID", value: receiptId },
-          { label: "Amount", value: `$${amount.toFixed(2)}` },
-          { label: "Status", value: "Failed" },
-          { label: "Reason", value: "Onramp transaction failed or timed out" },
-        ],
-        ctaText: "Try Payment Again",
-        ctaUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001"}/portal/${receiptId}?recipient=${encodeURIComponent(merchantWallet)}`,
-      });
+    // 3. Schedule 10-minute delayed safety check before treating failure as permanent
+    if (sessionId && stripeKey) {
+      console.log(`[BACKGROUND POLL] Scheduling 10-minute delayed safety check for receipt ${receiptId}, session ${sessionId}...`);
+      setTimeout(async () => {
+        try {
+          console.log(`[10MIN SAFETY CHECK] Running delayed reconciliation for receipt ${receiptId}, session ${sessionId}...`);
+          const container = await getContainer();
+          const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
+          const { resource: receipt } = await container.item(docId, merchantWallet).read();
+          if (!receipt) return;
 
-      await sendEmail({
-        to: email,
-        subject: `[${brandName}] Transaction Failed - Receipt #${receiptId}`,
-        html: htmlContent,
-        fromName: `${brandName} Support`,
-        brandKey: brandKey,
-      });
-      console.log(`[BACKGROUND POLL] Failure email successfully dispatched to ${email}`);
-    } catch (emailErr) {
-      console.error("[BACKGROUND POLL] Failed to send failure email:", emailErr);
+          // If receipt was already marked paid or confirmed on-chain, exit
+          if (receipt.status === "paid" || receipt.transactionHash || receipt.leg2TxHash || receipt.leg1TxHash) {
+            console.log(`[10MIN SAFETY CHECK] Receipt ${receiptId} is already paid or confirmed on-chain. Exiting.`);
+            return;
+          }
+
+          // Query Stripe API for session status
+          const response = await fetch(
+            `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
+            {
+              method: "GET",
+              headers: {
+                "Authorization": `Bearer ${stripeKey}`,
+                "Stripe-Version": STRIPE_API_VERSION,
+              },
+            }
+          );
+
+          if (!response.ok) {
+            console.warn(`[10MIN SAFETY CHECK] Stripe API query returned HTTP ${response.status} for session ${sessionId}`);
+            return;
+          }
+
+          const data = await response.json();
+          if (data.status === "fulfillment_complete") {
+            const metaReceiptId = data.metadata?.receiptId || "";
+            if (metaReceiptId && metaReceiptId !== receiptId && metaReceiptId !== docId) {
+              console.warn(`[10MIN SAFETY CHECK] Stripe metadata receiptId (${metaReceiptId}) does not match current receipt (${receiptId}). Skipping.`);
+              return;
+            }
+
+            console.log(`🎉 [10MIN SAFETY CHECK] Stripe session ${sessionId} was FULFILLED! Recovering receipt ${receiptId} from 'failed' -> 'paid'...`);
+
+            const isCredit = receipt.detectedCardFunding === "credit" || receipt.isCreditCard;
+            const targetSplit = (isCredit && receipt.splitAddress) ? receipt.splitAddress : (receipt.splitAddressCredit || receipt.splitAddress || splitAddress);
+
+            let kycLevel = "L0";
+            const gaslessTx = await executeGaslessTransferServer(
+              email,
+              targetSplit,
+              amount,
+              brandKey,
+              true,
+              kycLevel
+            );
+
+            receipt.status = "paid";
+            receipt.transactionHash = gaslessTx || receipt.transactionHash || null;
+            receipt.lastUpdatedAt = Date.now();
+            receipt.statusHistory = Array.isArray(receipt.statusHistory)
+              ? [...receipt.statusHistory, { status: "paid", ts: Date.now(), reason: "10_min_safety_recovery" }]
+              : [{ status: "paid", ts: Date.now(), reason: "10_min_safety_recovery" }];
+
+            await container.items.upsert(receipt);
+            console.log(`🎉 [10MIN SAFETY RECOVERY SUCCESS] Updated receipt ${receiptId} to 'paid' in DB!`);
+
+            // Dispatch partner webhook
+            if (receipt.webhookUrl) {
+              const { dispatchWebhookAsync } = await import("@/lib/webhook-dispatch");
+              dispatchWebhookAsync(receipt.webhookUrl, {
+                event: "receipt.status_updated",
+                receiptId: receipt.id || receiptId,
+                status: "paid",
+                previousStatus: "failed",
+                transactionHash: gaslessTx || null,
+                buyerWallet: receipt.buyerWallet || null,
+                merchantWallet: merchantWallet,
+                totalUsd: amount,
+                timestamp: Date.now(),
+                brandKey: brandKey || "aipowerpay",
+                stripeSessionId: sessionId
+              }, receipt.webhookSecret);
+            }
+          } else {
+            console.log(`[10MIN SAFETY CHECK] Stripe session ${sessionId} status is still '${data.status}'. Failure confirmed.`);
+          }
+        } catch (delayedErr) {
+          console.error("[10MIN SAFETY CHECK] Delayed reconciliation error:", delayedErr);
+        }
+      }, 10 * 60 * 1000); // 10 minutes delay
     }
   }
-}
 }
 
 export async function POST(req: NextRequest) {
@@ -582,7 +934,12 @@ export async function POST(req: NextRequest) {
       const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
       const { resource: receipt } = await container.item(docId, merchantWallet).read();
       if (receipt) {
-        receipt.stripeSessionId = sessionId;
+        // Safeguard: Retain existing session ID if already linked, preventing foreign session overwrites
+        if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
+          console.warn(`[BACKGROUND POLL] Receipt ${receiptId} already has stripeSessionId ${receipt.stripeSessionId}. Retaining existing session, ignoring foreign sessionId ${sessionId}`);
+        } else {
+          receipt.stripeSessionId = sessionId;
+        }
         receipt.customerEmail = email;
         receipt.onrampAmount = amount;
         receipt.splitAddress = splitAddress;
@@ -605,28 +962,32 @@ export async function POST(req: NextRequest) {
     // Launch background task asynchronously without awaiting
     (async () => {
       try {
-        await runBackgroundPoll({
+        await executeBackgroundPollTask({
           sessionId,
           receiptId,
           merchantWallet,
           email,
+          buyerWallet: "",
           amount,
           splitAddress,
           splitAddressCredit,
+          network: "base",
+          destinationCurrency: "usdc",
+          stripeKey: process.env.STRIPE_SECRET_KEY || "",
           brandKey,
           detectedCardFunding,
           kycOccurred,
         });
       } catch (err) {
-        console.error("[BACKGROUND POLL] Unexpected exception in task execution:", err);
+        console.error("[BACKGROUND POLL] Unhandled error in background poll execution task:", err);
       }
     })();
 
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    console.error("[BACKGROUND POLL POST] Error:", e);
+    return NextResponse.json({ ok: true, message: "background_poll_initiated" });
+  } catch (error: any) {
+    console.error("[BACKGROUND POLL] Error starting background task:", error);
     return NextResponse.json(
-      { ok: false, error: e?.message || "internal_error" },
+      { ok: false, error: error?.message || "internal_error" },
       { status: 500 }
     );
   }

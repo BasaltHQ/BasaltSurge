@@ -8,14 +8,14 @@ import { maskSensitiveData } from "@/lib/sanitize-logs";
 const sessionStorageDecorator = {
   getItem(key: string): string | null {
     if (typeof window === "undefined") return null;
-    if (key === "stripe_onramp_session_id") {
+    if (key.startsWith("stripe_onramp_session_id")) {
       return window.sessionStorage.getItem(key);
     }
     return window.localStorage.getItem(key) || window.sessionStorage.getItem(key);
   },
   setItem(key: string, value: string): void {
     if (typeof window === "undefined") return;
-    if (key === "stripe_onramp_session_id") {
+    if (key.startsWith("stripe_onramp_session_id")) {
       window.sessionStorage.setItem(key, value);
       return;
     }
@@ -24,7 +24,7 @@ const sessionStorageDecorator = {
   },
   removeItem(key: string): void {
     if (typeof window === "undefined") return;
-    if (key === "stripe_onramp_session_id") {
+    if (key.startsWith("stripe_onramp_session_id")) {
       window.sessionStorage.removeItem(key);
       return;
     }
@@ -536,10 +536,27 @@ export function useStripeEmbeddedOnramp({
   const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | "us_bank_account" | null>(null);
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
+  const sessionKey = useMemo(() => {
+    if (!receiptId) return "stripe_onramp_session_id";
+    const cleanId = String(receiptId).replace(/^receipt:/, "").trim();
+    return `stripe_onramp_session_id:${cleanId}`;
+  }, [receiptId]);
+
   const [sessionId, setSessionId] = useState<string | null>(() => {
-    if (typeof window !== "undefined") return sessionStorage.getItem("stripe_onramp_session_id");
+    if (typeof window !== "undefined") {
+      const key = receiptId ? `stripe_onramp_session_id:${String(receiptId).replace(/^receipt:/, "").trim()}` : "stripe_onramp_session_id";
+      return sessionStorage.getItem(key);
+    }
     return null;
   });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const currentStored = sessionStorage.getItem(sessionKey);
+      sessionIdRef.current = currentStored || null;
+      setSessionId(currentStored || null);
+    }
+  }, [sessionKey]);
   const [kycTierRequired, setKycTierRequired] = useState<"l0" | "l1" | "l2">("l0");
   const [isAllKycCompleted, setIsAllKycCompleted] = useState<boolean>(false);
   const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
@@ -671,7 +688,7 @@ export function useStripeEmbeddedOnramp({
         sessionStorage.removeItem("stripe_onramp_customer_id");
         sessionStorage.removeItem("stripe_onramp_oauth_token");
         sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-        sessionStorage.removeItem("stripe_onramp_session_id");
+        sessionStorage.removeItem(sessionKey);
         sessionStorage.removeItem("stripe_onramp_email");
         sessionStorage.removeItem("stripe_onramp_session_funding");
 
@@ -688,7 +705,7 @@ export function useStripeEmbeddedOnramp({
         const storedCustId = sessionStorage.getItem("stripe_onramp_customer_id");
         const storedToken = sessionStorage.getItem("stripe_onramp_oauth_token");
         const storedWallet = sessionStorage.getItem("stripe_onramp_buyer_wallet");
-        const storedSessionId = sessionStorage.getItem("stripe_onramp_session_id");
+        const storedSessionId = sessionStorage.getItem(sessionKey);
         const storedFunding = sessionStorage.getItem("stripe_onramp_session_funding") as any;
 
         if (storedCustId) customerIdRef.current = storedCustId;
@@ -1276,7 +1293,7 @@ export function useStripeEmbeddedOnramp({
       sessionStorage.removeItem("stripe_onramp_customer_id");
       sessionStorage.removeItem("stripe_onramp_oauth_token");
       sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-      sessionStorage.removeItem("stripe_onramp_session_id");
+      sessionStorage.removeItem(sessionKey);
     }
     isRunningRef.current = false;
     stepRef.current = "idle";
@@ -1630,7 +1647,7 @@ export function useStripeEmbeddedOnramp({
                     sessionStorage.removeItem("stripe_onramp_customer_id");
                     sessionStorage.removeItem("stripe_onramp_oauth_token");
                     sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-                    sessionStorage.removeItem("stripe_onramp_session_id");
+                    sessionStorage.removeItem(sessionKey);
                   }
                   customerIdRef.current = null;
                   oauthTokenRef.current = null;
@@ -1913,7 +1930,7 @@ export function useStripeEmbeddedOnramp({
       sessionIdRef.current = currentSessionId;
       setSessionId(currentSessionId);
       if (typeof window !== "undefined") {
-        sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+        sessionStorage.setItem(sessionKey, currentSessionId);
       }
 
       const hasCardInfo = !!(sessionResult.paymentDetails?.card || sessionResult.paymentDetails?.us_bank_account || sessionResult.paymentMethod || sessionResult.paymentDetails?.type);
@@ -1945,7 +1962,7 @@ export function useStripeEmbeddedOnramp({
             sessionIdRef.current = currentSessionId;
             setSessionId(currentSessionId);
             if (typeof window !== "undefined") {
-              sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+              sessionStorage.setItem(sessionKey, currentSessionId);
             }
           }
         } else {
@@ -1967,7 +1984,7 @@ export function useStripeEmbeddedOnramp({
             sessionIdRef.current = currentSessionId;
             setSessionId(currentSessionId);
             if (typeof window !== "undefined") {
-              sessionStorage.setItem("stripe_onramp_session_id", currentSessionId);
+              sessionStorage.setItem(sessionKey, currentSessionId);
             }
           }
         }
@@ -2219,7 +2236,7 @@ export function useStripeEmbeddedOnramp({
                         sessionStorage.removeItem("stripe_onramp_customer_id");
                         sessionStorage.removeItem("stripe_onramp_oauth_token");
                         sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-                        sessionStorage.removeItem("stripe_onramp_session_id");
+                        sessionStorage.removeItem(sessionKey);
                       }
                       customerIdRef.current = null;
                       oauthTokenRef.current = null;
@@ -2465,7 +2482,7 @@ export function useStripeEmbeddedOnramp({
               sessionIdRef.current = null;
               setSessionId(null);
               if (typeof window !== "undefined") {
-                sessionStorage.removeItem("stripe_onramp_session_id");
+                sessionStorage.removeItem(sessionKey);
               }
               if (onrampRef.current) {
                 try { onrampRef.current.destroy(); } catch {}
@@ -2522,7 +2539,7 @@ export function useStripeEmbeddedOnramp({
                   sessionIdRef.current = null;
                   setSessionId(null);
                   if (typeof window !== "undefined") {
-                    sessionStorage.removeItem("stripe_onramp_session_id");
+                    sessionStorage.removeItem(sessionKey);
                   }
                   if (onrampRef.current) {
                     try { onrampRef.current.destroy(); } catch {}
@@ -2578,7 +2595,7 @@ export function useStripeEmbeddedOnramp({
         sessionStorage.removeItem("stripe_onramp_customer_id");
         sessionStorage.removeItem("stripe_onramp_oauth_token");
         sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-        sessionStorage.removeItem("stripe_onramp_session_id");
+        sessionStorage.removeItem(sessionKey);
         sessionStorage.removeItem("stripe_onramp_email");
 
         customerIdRef.current = null;
@@ -3073,7 +3090,7 @@ export function useStripeEmbeddedOnramp({
             sessionStorage.removeItem("stripe_onramp_customer_id");
             sessionStorage.removeItem("stripe_onramp_oauth_token");
             sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-            sessionStorage.removeItem("stripe_onramp_session_id");
+            sessionStorage.removeItem(sessionKey);
           }
           
           customerIdRef.current = null;
@@ -3287,7 +3304,7 @@ export function useStripeEmbeddedOnramp({
             sessionIdRef.current = null;
             setSessionId(null);
             if (typeof window !== "undefined") {
-              sessionStorage.removeItem("stripe_onramp_session_id");
+              sessionStorage.removeItem(sessionKey);
             }
             if (onrampRef.current) {
               try { onrampRef.current.destroy(); } catch {}
@@ -3452,7 +3469,7 @@ export function useStripeEmbeddedOnramp({
             sessionIdRef.current = null;
             setSessionId(null);
             if (typeof window !== "undefined") {
-              sessionStorage.removeItem("stripe_onramp_session_id");
+              sessionStorage.removeItem(sessionKey);
             }
             if (onrampRef.current) {
               try { onrampRef.current.destroy(); } catch {}
