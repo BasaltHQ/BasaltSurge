@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
       };
     } else if (isPartner && currentBrandKey) {
       querySpec = {
-        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'onramp_completed' OR c.status = 'reconciled' OR c.status = 'paid' OR c.status = 'paid - ach pending' OR c.status = 'ach_pending') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr) AND c.brandKey = @brandKey",
+        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'onramp_completed' OR c.status = 'reconciled' OR c.status = 'paid' OR c.status = 'paid - ach pending' OR c.status = 'ach_pending') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr) AND c.brandKey = @brandKey AND (NOT IS_DEFINED(c.reconciledFailed) OR c.reconciledFailed = false)",
         parameters: [
           { name: "@minTime", value: minTime },
           { name: "@minTimeStr", value: minTimeStr },
@@ -160,7 +160,7 @@ export async function POST(req: NextRequest) {
       };
     } else {
       querySpec = {
-        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'onramp_completed' OR c.status = 'reconciled' OR c.status = 'paid' OR c.status = 'paid - ach pending' OR c.status = 'ach_pending') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr)",
+        query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.status = 'failed' OR c.status = 'pending' OR c.status = 'onramp_completed' OR c.status = 'reconciled' OR c.status = 'paid' OR c.status = 'paid - ach pending' OR c.status = 'ach_pending') AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending' OR c.transactionHash = 'ach_pending') AND (c.createdAt > @minTime OR c.createdAt > @minTimeStr) AND (NOT IS_DEFINED(c.reconciledFailed) OR c.reconciledFailed = false)",
         parameters: [
           { name: "@minTime", value: minTime },
           { name: "@minTimeStr", value: minTimeStr }
@@ -412,6 +412,7 @@ export async function POST(req: NextRequest) {
             console.warn(`[cron/reconcile-stuck] Definitively failing receipt ${receiptId}. Status: ${stripeStatus}, Expired: ${isExpired}`);
             
             receipt.status = "failed";
+            receipt.reconciledFailed = true;
             receipt.statusHistory = Array.isArray(receipt.statusHistory)
               ? [...receipt.statusHistory, { status: "failed", ts: Date.now() }]
               : [{ status: "failed", ts: Date.now() }];

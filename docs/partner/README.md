@@ -17,6 +17,10 @@ As a Partner, your administrator wallet gives you control over the tenant contai
 
 ## Guide Index
 
+*   [Cloudflare Rules & Edge Configuration](./cloudflare-rules-setup.md)  
+    Exact Cloudflare Cache, CORS Transform, WAF, and SSL/TLS rule specifications for white-label partner domains.
+*   [Partner Container Routing & Domain Setup](./deployment-domain-setup.md)  
+    Registering main domain hosts, configuring brand key resolution, and verifying container routing.
 *   [Branding & Whitelabel Customization](./branding-whitelabel.md)  
     How to configure theme colors, customize dark mode accents, and upload brand assets (Symbol, Favicon, and App logos).
 *   [Merchant Management & Onboarding](./merchant-management.md)  
