@@ -43,6 +43,8 @@ export async function generateStaticParams() {
     { slug: ['merchant', 'portal-receipts'] },
     { slug: ['merchant', 'industry-packs'] },
     { slug: ['partner'] },
+    { slug: ['partner', 'cloudflare-rules-setup'] },
+    { slug: ['partner', 'deployment-domain-setup'] },
     { slug: ['partner', 'branding-whitelabel'] },
     { slug: ['partner', 'merchant-management'] },
     { slug: ['partner', 'touchpoints-devices'] },

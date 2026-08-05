@@ -66,6 +66,8 @@ export const docsNavigation: DocNavSection[] = [
     title: 'Partner Manual',
     items: [
       { title: 'Overview', href: '/developers/docs/partner' },
+      { title: 'Cloudflare & Edge Rules', href: '/developers/docs/partner/cloudflare-rules-setup' },
+      { title: 'Domain Routing Setup', href: '/developers/docs/partner/deployment-domain-setup' },
       { title: 'Branding & Whitelabel', href: '/developers/docs/partner/branding-whitelabel' },
       { title: 'Merchant Management', href: '/developers/docs/partner/merchant-management' },
       { title: 'Touchpoint Devices', href: '/developers/docs/partner/touchpoints-devices' },

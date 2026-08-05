@@ -20,8 +20,16 @@ const globalForMongo = globalThis as unknown as {
 };
 
 async function getMongoClient(uri: string): Promise<MongoClient> {
-    if (globalForMongo._mongoClientPromise) {
-        return globalForMongo._mongoClientPromise;
+    if (globalForMongo._mongoClient && globalForMongo._mongoClientPromise) {
+        try {
+            // Verify connection pool is open
+            await globalForMongo._mongoClientPromise;
+            return globalForMongo._mongoClientPromise;
+        } catch {
+            // Reset stale/failed client promise
+            globalForMongo._mongoClient = null;
+            globalForMongo._mongoClientPromise = null;
+        }
     }
 
     const extraOptions: any = {

@@ -249,10 +249,11 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const splitAddrLower = splitAddress.toLowerCase();
+    const targetSplitAddress = String(splitAddress || "").toLowerCase();
+    const splitAddrLower = targetSplitAddress;
 
-  try {
-    // ── STEP 1: Try persisted split_index data first (unless ?live=true) ──
+    try {
+      // ── STEP 1: Try persisted split_index data first (unless ?live=true) ──
     if (!forceLive && merchantAddrLower && /^0x[a-f0-9]{40}$/i.test(merchantAddrLower)) {
       try {
         const container = await getContainer();

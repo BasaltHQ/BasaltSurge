@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Code, BookOpen, Zap, Shield, Wallet, GitBranch } from 'lucide-react';
+import { Code, BookOpen, Zap, Shield, Wallet, GitBranch, Server, Globe } from 'lucide-react';
 import type { Metadata } from 'next';
 import { getBrandConfig } from '@/config/brands';
 import { getBaseUrl } from '@/lib/base-url';
@@ -320,6 +320,82 @@ curl -X POST ${app}/api/orders \\
               <p className="text-sm text-muted-foreground">
                 Accept in-person crypto payments with terminal integration
               </p>
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Partner & Container Infrastructure */}
+      <section className="border-b bg-gradient-to-b from-background to-muted/20">
+        <div className="max-w-5xl mx-auto px-4 py-16">
+          <div className="text-center max-w-2xl mx-auto mb-12">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold mb-3">
+              <Server className="w-3.5 h-3.5" />
+              Whitelabel Partner Hub
+            </div>
+            <h2 className="text-2xl md:text-3xl font-bold">
+              Partner & Container Infrastructure
+            </h2>
+            <p className="text-sm text-muted-foreground mt-2">
+              Setup runbooks and specs for whitelabel partners deploying dedicated containers, custom domains, and Cloudflare edge proxies.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            <Link href="/developers/docs/partner/cloudflare-rules-setup" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group relative overflow-hidden">
+              <div className="flex items-center justify-between mb-4">
+                <Globe className="h-8 w-8 text-[var(--primary)]" />
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-blue-500/10 text-blue-500">
+                  Required
+                </span>
+              </div>
+              <h3 className="text-lg font-semibold mb-2 group-hover:text-[var(--primary)] transition-colors flex items-center justify-between">
+                Cloudflare Rules Setup
+                <span>→</span>
+              </h3>
+              <p className="text-xs text-muted-foreground mb-4">
+                Exact Cache Rules, CORS Response Header Transforms, WAF Managed exceptions, and SSL/TLS specifications.
+              </p>
+              <ul className="text-[11px] text-muted-foreground space-y-1">
+                <li>• Cache rule for `/_next/static/*`</li>
+                <li>• CORS `Access-Control-Allow-Origin`</li>
+                <li>• WAF exceptions for `/api/*`</li>
+                <li>• Full (strict) SSL configuration</li>
+              </ul>
+            </Link>
+
+            <Link href="/developers/docs/partner/deployment-domain-setup" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group">
+              <Server className="h-8 w-8 text-[var(--primary)] mb-4" />
+              <h3 className="text-lg font-semibold mb-2 group-hover:text-[var(--primary)] transition-colors flex items-center justify-between">
+                Domain Routing Setup
+                <span>→</span>
+              </h3>
+              <p className="text-xs text-muted-foreground mb-4">
+                Configure container domain registries, dynamic brand keys, and routing validation checks.
+              </p>
+              <ul className="text-[11px] text-muted-foreground space-y-1">
+                <li>• Register main domain hosts</li>
+                <li>• Map brand keys to hostnames</li>
+                <li>• Prevent shop rewrite 404s</li>
+                <li>• Deployment verification runbook</li>
+              </ul>
+            </Link>
+
+            <Link href="/developers/docs/partner/branding-whitelabel" className="glass-pane rounded-xl border p-6 hover:bg-foreground/5 transition-colors group">
+              <Shield className="h-8 w-8 text-[var(--primary)] mb-4" />
+              <h3 className="text-lg font-semibold mb-2 group-hover:text-[var(--primary)] transition-colors flex items-center justify-between">
+                Whitelabel Customization
+                <span>→</span>
+              </h3>
+              <p className="text-xs text-muted-foreground mb-4">
+                Customize dark mode theme accents, brand logos, favicon resolution, and merchant console tabs.
+              </p>
+              <ul className="text-[11px] text-muted-foreground space-y-1">
+                <li>• CSS theme token overrides</li>
+                <li>• App & favicon asset uploads</li>
+                <li>• Merchant sidebar module controls</li>
+                <li>• Basis point fee policies</li>
+              </ul>
             </Link>
           </div>
         </div>
