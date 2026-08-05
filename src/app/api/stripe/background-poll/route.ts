@@ -534,201 +534,6 @@ async function runBackgroundPoll(params: {
       return;
     } else {
       console.error("[BACKGROUND POLL] executeGaslessTransferServer failed.");
-          const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
-          const { resource: receipt } = await container.item(docId, merchantWallet).read();
-          if (receipt) {
-            if (receipt.detectedCardFunding) {
-              dbFunding = receipt.detectedCardFunding;
-            } else if (Array.isArray(receipt.customerSessions)) {
-              for (const s of receipt.customerSessions) {
-                const funding = s.paymentMethodDetails?.card?.funding;
-                if (funding) {
-                  dbFunding = funding;
-                  break;
-                }
-              }
-            }
-          }
-        } catch (dbErr) {
-          console.warn("[BACKGROUND POLL] Failed to query database receipt for funding:", dbErr);
-        }
-
-        resolvedFunding = stripeFunding || dbFunding || detectedCardFunding || null;
-        isCreditCard = resolvedFunding === "credit" || resolvedFunding === null || resolvedFunding === undefined;
-        break;
-      }
-
-      // Early exit if session failed
-      if (
-        status === "rejected" ||
-        lastError === "transaction_failed" ||
-        lastError === "location_not_supported" ||
-        lastError === "transaction_limit_reached"
-      ) {
-        console.warn(`[BACKGROUND POLL] Stripe session failed early: status=${status}, lastError=${lastError}`);
-        resolvedStatus = "failed";
-        isDefinitiveFailure = true;
-        break;
-      }
-    } catch (e) {
-      console.error(`[BACKGROUND POLL] Fetch error (attempt ${attempt + 1}):`, e);
-    }
-  }
-
-  // Handle results
-  if (resolvedStatus === "success") {
-    console.log(`[BACKGROUND POLL] Stripe onramp fulfilled. Executing EIP-7702 transfer...`);
-
-    let kycLevel = "L0";
-    const resolvedFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
-    const isAch = resolvedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account";
-    
-    if (isAch) {
-      kycLevel = "L2";
-    } else if (cryptoCustomerId) {
-      try {
-        const custResponse = await fetch(
-          `https://api.stripe.com/v1/crypto/customers/${encodeURIComponent(cryptoCustomerId)}`,
-          {
-            method: "GET",
-            headers: {
-              "Authorization": `Bearer ${stripeKey}`,
-              "Stripe-Version": STRIPE_API_VERSION,
-            },
-          }
-        );
-        if (custResponse.ok) {
-          const customerData = await custResponse.json();
-          const verifications = customerData.verifications || [];
-          const kycVerified = verifications.find((v: any) => v.name === "kyc_verified");
-          const idDocVerified = verifications.find((v: any) => v.name === "id_document_verified");
-          
-          const kycTiers = customerData.kyc_tiers || [];
-          const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
-          const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-          const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
-          
-          const isOverallKycVerified = kycVerified?.status === "approved" ||
-                                       kycVerified?.status === "verified" ||
-                                       kycVerified?.status === "completed";
-          const isOverallIdVerified = idDocVerified?.status === "approved" ||
-                                      idDocVerified?.status === "verified" ||
-                                      idDocVerified?.status === "completed";
-          
-          const isL0Verified = l0Tier 
-            ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
-            : isOverallKycVerified;
-          const isL1Verified = l1Tier 
-            ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
-            : isOverallKycVerified;
-          const isL2Verified = l2Tier 
-            ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
-            : isOverallIdVerified;
-            
-          if (isL2Verified) kycLevel = "L2";
-          else if (isL1Verified) kycLevel = "L1";
-          else kycLevel = "L0";
-          console.log(`[BACKGROUND POLL] Customer KYC level resolved from Stripe: ${kycLevel}`);
-        }
-      } catch (kycFetchErr) {
-        console.warn("[BACKGROUND POLL] Failed to fetch customer KYC level:", kycFetchErr);
-      }
-    }
-
-    const targetSplitAddress = (isCreditCard || resolvedFunding === "us_bank_account")
-      ? splitAddress
-      : (splitAddressCredit || splitAddress);
-
-    // Execute transfer
-    const txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey, true, kycLevel);
-
-    if (txHash) {
-      finalTxHash = txHash;
-      console.log(`[BACKGROUND POLL] Transfer succeeded: ${txHash}`);
-
-      // Update receipt in Cosmos DB
-      try {
-        const container = await getContainer();
-        const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
-        let receipt: any = null;
-        try {
-          const { resource } = await container.item(docId, merchantWallet ? merchantWallet.toLowerCase() : undefined).read();
-          receipt = resource;
-        } catch {}
-
-        if (!receipt) {
-          try {
-            const rawId = receiptId.replace(/^receipt:/, '');
-            const qSpec = {
-              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId OR c.id = @rawId)",
-              parameters: [
-                { name: "@rId", value: rawId },
-                { name: "@docId", value: docId },
-                { name: "@rawId", value: rawId }
-              ]
-            };
-            const { resources } = await container.items.query(qSpec).fetchAll();
-            if (resources && resources.length > 0) {
-              receipt = resources[0];
-            }
-          } catch (qErr) {
-            console.warn("[BACKGROUND POLL] Query fallback failed for receipt:", qErr);
-          }
-        }
-
-        if (receipt) {
-          receipt.status = "paid";
-          receipt.transactionHash = txHash;
-          receipt.transactionTimestamp = Date.now();
-          receipt.lastUpdatedAt = Date.now();
-          receipt.statusHistory = Array.isArray(receipt.statusHistory)
-            ? [...receipt.statusHistory, { status: "paid", ts: Date.now() }]
-            : [{ status: "paid", ts: Date.now() }];
-          // Set TTL to -1 to prevent auto-delete since it is paid
-          receipt.ttl = -1;
-
-          // Persist card funding if resolved
-          receipt.isCreditCard = isCreditCard;
-          receipt.detectedCardFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
-          receipt.kycLevel = kycLevel;
-          if (typeof kycOccurred === "boolean") {
-            receipt.kycOccurred = kycOccurred;
-          }
-
-          let finalReceipt = receipt;
-          try {
-            const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
-            const { readBrandOverridesCached } = await import("@/lib/brand-config");
-            const siteConfig = await getSiteConfigForWallet(merchantWallet);
-            const brandConfigDoc = brandKey ? await readBrandOverridesCached(brandKey) : null;
-            if (siteConfig) {
-              const funding = receipt.detectedCardFunding === "credit"
-                ? "credit"
-                : (receipt.detectedCardFunding === "us_bank_account" ? "us_bank_account" : "debit");
-              finalReceipt = recalculateReceiptForCardFunding(receipt, funding, siteConfig, brandConfigDoc);
-            }
-          } catch (recalcErr) {
-            console.error("[BACKGROUND POLL] Failed to recalculate receipt line items:", recalcErr);
-          }
-
-          try {
-            const { checkAndSyncShopifyOrder } = await import("@/lib/shopify/sync-order");
-            finalReceipt = await checkAndSyncShopifyOrder(finalReceipt, "paid");
-          } catch (shopifyErr) {
-            console.error("[BACKGROUND POLL] Failed to run Shopify sync:", shopifyErr);
-          }
-
-          await container.items.upsert(finalReceipt);
-          console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to paid with txHash: ${txHash}`);
-        } else {
-          console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found in DB`);
-        }
-      } catch (dbErr) {
-        console.error("[BACKGROUND POLL] Database update error:", dbErr);
-      }
-      return;
-    } else {
-      console.error("[BACKGROUND POLL] executeGaslessTransferServer failed.");
       resolvedStatus = "failed";
       isDefinitiveFailure = true;
     }
@@ -887,14 +692,14 @@ async function runBackgroundPoll(params: {
                 receiptId: receipt.id || receiptId,
                 status: "paid",
                 previousStatus: "failed",
-                transactionHash: gaslessTx || null,
-                buyerWallet: receipt.buyerWallet || null,
+                transactionHash: gaslessTx || undefined,
+                buyerWallet: receipt.buyerWallet || undefined,
                 merchantWallet: merchantWallet,
                 totalUsd: amount,
                 timestamp: Date.now(),
                 brandKey: brandKey || "aipowerpay",
                 stripeSessionId: sessionId
-              }, receipt.webhookSecret);
+              }, receipt.webhookSecret || undefined);
             }
           } else {
             console.log(`[10MIN SAFETY CHECK] Stripe session ${sessionId} status is still '${data.status}'. Failure confirmed.`);
@@ -962,18 +767,14 @@ export async function POST(req: NextRequest) {
     // Launch background task asynchronously without awaiting
     (async () => {
       try {
-        await executeBackgroundPollTask({
+        await runBackgroundPoll({
           sessionId,
           receiptId,
           merchantWallet,
           email,
-          buyerWallet: "",
           amount,
           splitAddress,
           splitAddressCredit,
-          network: "base",
-          destinationCurrency: "usdc",
-          stripeKey: process.env.STRIPE_SECRET_KEY || "",
           brandKey,
           detectedCardFunding,
           kycOccurred,
