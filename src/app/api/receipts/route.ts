@@ -67,9 +67,14 @@ export type Receipt = {
 export async function GET(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   const url = new URL(req.url);
-  const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 100)));
+  const limit = Math.max(1, Math.min(1000, Number(url.searchParams.get("limit") || 1000)));
   const startParam = Number(url.searchParams.get("start") || 0);
   const endParam = Number(url.searchParams.get("end") || 0);
+  const searchQuery = String(url.searchParams.get("search") || url.searchParams.get("q") || "").trim().toLowerCase();
+  const statusParam = String(url.searchParams.get("status") || "").trim().toLowerCase();
+  const employeeIdParam = String(url.searchParams.get("employeeId") || url.searchParams.get("staff") || "").trim();
+  const minAmountParam = Number(url.searchParams.get("minAmount") || NaN);
+  const maxAmountParam = Number(url.searchParams.get("maxAmount") || NaN);
 
   // Auto-detect seconds vs ms
   const startTs = startParam < 10000000000 ? startParam * 1000 : startParam;
@@ -103,7 +108,7 @@ export async function GET(req: NextRequest) {
   try {
     const container = await getContainer();
 
-    let query = `SELECT TOP @limit c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.brandName, c.status, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.buyerWallet, c.transactionHash, c.tipAmount, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions FROM c WHERE c.type='receipt' AND c.wallet=@wallet`;
+    let query = `SELECT TOP @limit c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.brandName, c.status, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.buyerWallet, c.transactionHash, c.tipAmount, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.employeeId FROM c WHERE c.type='receipt' AND c.wallet=@wallet`;
     const parameters: { name: string; value: any }[] = [{ name: "@wallet", value: wallet }, { name: "@limit", value: limit }];
 
     if (startTs > 0) {
@@ -113,6 +118,30 @@ export async function GET(req: NextRequest) {
     if (endTs > 0) {
       query += ` AND c.createdAt <= @end`;
       parameters.push({ name: "@end", value: endTs });
+    }
+    if (searchQuery) {
+      query += ` AND (CONTAINS(LOWER(c.receiptId), @search) OR CONTAINS(LOWER(c.buyerWallet), @search) OR CONTAINS(LOWER(c.brandName), @search) OR CONTAINS(LOWER(c.status), @search) OR CONTAINS(LOWER(c.employeeId), @search))`;
+      parameters.push({ name: "@search", value: searchQuery });
+    }
+    if (statusParam && statusParam !== "all") {
+      query += ` AND c.status = @statusParam`;
+      parameters.push({ name: "@statusParam", value: statusParam });
+    }
+    if (employeeIdParam && employeeIdParam !== "all") {
+      if (employeeIdParam === "admin") {
+        query += ` AND (c.employeeId = 'admin' OR NOT IS_DEFINED(c.employeeId) OR c.employeeId = null OR c.employeeId = '')`;
+      } else {
+        query += ` AND c.employeeId = @employeeIdParam`;
+        parameters.push({ name: "@employeeIdParam", value: employeeIdParam });
+      }
+    }
+    if (!isNaN(minAmountParam)) {
+      query += ` AND c.totalUsd >= @minAmountParam`;
+      parameters.push({ name: "@minAmountParam", value: minAmountParam });
+    }
+    if (!isNaN(maxAmountParam)) {
+      query += ` AND c.totalUsd <= @maxAmountParam`;
+      parameters.push({ name: "@maxAmountParam", value: maxAmountParam });
     }
 
     query += ` ORDER BY c.createdAt DESC`;
@@ -129,6 +158,7 @@ export async function GET(req: NextRequest) {
         createdAt: Number(row.createdAt || Date.now()),
         brandName: typeof row.brandName === "string" ? row.brandName : undefined,
         status: typeof row.status === "string" ? row.status : undefined,
+        employeeId: typeof row.employeeId === "string" ? row.employeeId : undefined,
         shippingAddress: row?.shippingAddress && typeof row.shippingAddress === "object" ? row.shippingAddress : undefined,
         tracking: row?.tracking && typeof row.tracking === "object" ? row.tracking : undefined,
         buyerWallet: typeof row.buyerWallet === "string" ? row.buyerWallet : undefined,

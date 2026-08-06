@@ -71,7 +71,12 @@ User-Agent: PortalPay-Webhook/1.0
   "timestamp": 1713200000000,
   "brandKey": "myshop",
   "stripeSessionId": "cos_8a7a48c2-6bae-4b08-9d36-35670b42dc8d",
-  "isStripeSessionUnique": true
+  "isStripeSessionUnique": true,
+  "transactionId": "TX-99882211",
+  "metadata": {
+    "orderRef": "ERP-PO-774",
+    "customerTier": "vip"
+  }
 }
 ```
 
@@ -89,6 +94,8 @@ User-Agent: PortalPay-Webhook/1.0
 | `totalUsd` | number | Receipt total in USD |
 | `stripeSessionId` | string \| null | Stripe Checkout/Onramp Session ID (if applicable) |
 | `isStripeSessionUnique` | boolean | `true` if the `stripeSessionId` is unique to this single receipt; `false` if shared or unpopulated |
+| `transactionId` | string \| null | Custom transaction reference ID passed at order creation |
+| `metadata` | object \| null | Custom key-value JSON metadata passed at order creation |
 | `timestamp` | number | Event timestamp (Unix ms) |
 
 ### Status Values

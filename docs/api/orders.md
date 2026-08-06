@@ -78,6 +78,8 @@ Body Parameters:
 | `billingAddressState` | string | No | State or region (2-letter code preferred) for the billing address (also accepted as `customerAddressState`) |
 | `billingAddressPostalCode` | string | No | Zip or postal code for the billing address (also accepted as `billingAddressZip` or `customerAddressPostalCode`) |
 | `billingAddressCountry` | string | No | Country code (2-letter ISO, e.g. "US") for the billing address (also accepted as `customerAddressCountry`) |
+| `transactionId` | string | No | Optional custom transaction or order reference ID from your system (also accepted as `clientTransactionId` or `externalTransactionId`) |
+| `metadata` | object | No | Optional key-value JSON object containing custom metadata (e.g. `{ "orderRef": "ERP-101", "source": "mobile_app" }`) |
 
 Example Requests:
 
@@ -178,7 +180,12 @@ Success (200 OK):
     "status": "generated",
     "jurisdictionCode": "US-CA",
     "taxRate": 0.095,
-    "taxComponents": ["state", "county", "district"]
+    "taxComponents": ["state", "county", "district"],
+    "transactionId": "TX-99882211",
+    "metadata": {
+      "orderRef": "ERP-PO-774",
+      "customerTier": "vip"
+    }
   }
 }
 ```

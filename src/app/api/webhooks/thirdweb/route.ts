@@ -86,6 +86,44 @@ async function resolveMerchantContext(
   return null;
 }
 
+// Helper to robustly extract receiptId from Thirdweb purchaseData, metadata, or data payloads
+function extractReceiptIdFromPurchaseData(purchaseData: any, data?: any): string | null {
+  if (purchaseData) {
+    if (typeof purchaseData.receiptId === "string" && purchaseData.receiptId.trim()) {
+      return purchaseData.receiptId.trim().replace(/^receipt:/, "");
+    }
+    if (typeof purchaseData.productId === "string" && purchaseData.productId.trim()) {
+      const raw = purchaseData.productId.trim();
+      if (raw.startsWith("portal:")) {
+        return raw.slice(7).replace(/^receipt:/, "");
+      }
+      if (/^R-\d+/i.test(raw)) {
+        return raw.replace(/^receipt:/, "");
+      }
+    }
+    if (typeof purchaseData.meta?.receiptId === "string" && purchaseData.meta.receiptId.trim()) {
+      return purchaseData.meta.receiptId.trim().replace(/^receipt:/, "");
+    }
+  }
+  if (data) {
+    if (typeof data.receiptId === "string" && data.receiptId.trim()) {
+      return data.receiptId.trim().replace(/^receipt:/, "");
+    }
+    if (typeof data.metadata?.receiptId === "string" && data.metadata.receiptId.trim()) {
+      return data.metadata.receiptId.trim().replace(/^receipt:/, "");
+    }
+    if (typeof data.clientMetadata?.receiptId === "string" && data.clientMetadata.receiptId.trim()) {
+      return data.clientMetadata.receiptId.trim().replace(/^receipt:/, "");
+    }
+  }
+  try {
+    const str = JSON.stringify({ purchaseData, data });
+    const match = str.match(/R-\d{6,}/i);
+    if (match) return match[0].toUpperCase();
+  } catch {}
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   
@@ -132,10 +170,11 @@ export async function POST(req: NextRequest) {
     const brandKey = getBrandKey();
     const container = await getContainer();
     
-    // Process based on webhook type
-    if (type === 'pay.onchain-transaction') {
+    // Process based on webhook type (supporting pay.onchain-transaction, pay.buy-with-crypto, pay.onramp-transaction, pay.buy-with-fiat)
+    const normType = String(type || "").toLowerCase();
+    if (normType === 'pay.onchain-transaction' || normType === 'pay.buy-with-crypto' || normType.includes('onchain')) {
       return await handleOnchainTransaction(data, container, brandKey, correlationId, req);
-    } else if (type === 'pay.onramp-transaction') {
+    } else if (normType === 'pay.onramp-transaction' || normType === 'pay.buy-with-fiat' || normType.includes('onramp')) {
       return await handleOnrampTransaction(data, container, brandKey, correlationId, req);
     } else {
       console.log(`[WEBHOOK] Unsupported webhook type: ${type}`);
@@ -264,14 +303,37 @@ async function handleOnchainTransaction(
     console.error('[WEBHOOK] Error storing payment event:', e);
   }
   
-  // If status is COMPLETED, trigger split indexing and reconciliation
-  if (status === 'COMPLETED' && splitAddress && merchantWallet) {
-    const baseOrigin = req.nextUrl.origin;
-    
+  const normStatus = String(status || "").toUpperCase();
+  const receiptId = extractReceiptIdFromPurchaseData(purchaseData, data);
+  const baseOrigin = req.nextUrl.origin;
+
+  // Handle failure / cancellation statuses
+  if (["FAILED", "CANCELLED", "EXPIRED", "REJECTED"].includes(normStatus)) {
+    if (receiptId && merchantWallet) {
+      console.log(`[WEBHOOK] Thirdweb onchain transaction ${transactionId} failed (${normStatus}). Updating receipt ${receiptId} status to 'failed'`);
+      try {
+        await fetch(`${baseOrigin}/api/receipts/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            receiptId,
+            wallet: merchantWallet,
+            status: 'failed',
+            error: `Thirdweb transaction ${normStatus.toLowerCase()}`
+          })
+        });
+      } catch (e) {
+        console.error('[WEBHOOK] Error updating receipt to failed:', e);
+      }
+    }
+  }
+
+  // If status is COMPLETED / SUCCESS, trigger split indexing and reconciliation
+  if (["COMPLETED", "SUCCESS", "MINED"].includes(normStatus) && splitAddress && merchantWallet) {
     // Extract Base chain (8453) transaction hashes
     const baseTxHashes = Array.isArray(transactions)
       ? transactions
-          .filter((tx: any) => tx.chainId === 8453)
+          .filter((tx: any) => tx.chainId === 8453 || String(tx.chainId) === "8453")
           .map((tx: any) => tx.transactionHash?.toLowerCase())
           .filter(Boolean)
       : [];
@@ -295,12 +357,11 @@ async function handleOnchainTransaction(
       const webhookData = await webhookRes.json().catch(() => ({}));
       console.log(`[WEBHOOK] Split indexing result:`, webhookData);
       
-      // If we have purchaseData with receiptId, update receipt status
-      if (purchaseData?.receiptId) {
-        const receiptId = String(purchaseData.receiptId);
-        console.log(`[WEBHOOK] Updating receipt ${receiptId} status`);
+      // If we extracted a valid receiptId, update receipt status
+      if (receiptId) {
+        console.log(`[WEBHOOK] Updating receipt ${receiptId} status to paid/reconciled`);
         
-        // Post tx_mined status
+        // Post tx_mined status if tx hash is present
         if (baseTxHashes.length > 0) {
           await fetch(`${baseOrigin}/api/receipts/status`, {
             method: 'POST',
@@ -315,7 +376,7 @@ async function handleOnchainTransaction(
           });
         }
         
-        // Post reconciled status after indexing
+        // Post reconciled/paid status after indexing
         await fetch(`${baseOrigin}/api/receipts/status`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -323,7 +384,8 @@ async function handleOnchainTransaction(
             receiptId,
             wallet: merchantWallet,
             status: 'reconciled',
-            buyerWallet: sender?.toLowerCase()
+            buyerWallet: sender?.toLowerCase(),
+            txHash: baseTxHashes[0] || undefined
           })
         });
       }
@@ -333,7 +395,7 @@ async function handleOnchainTransaction(
   }
   
   return NextResponse.json(
-    { ok: true, transactionId, status, merchantWallet },
+    { ok: true, transactionId, status, merchantWallet, receiptId },
     { headers: { 'x-correlation-id': correlationId } }
   );
 }
@@ -418,16 +480,37 @@ async function handleOnrampTransaction(
     console.error('[WEBHOOK] Error storing onramp event:', e);
   }
   
+  const normStatus = String(status || "").toUpperCase();
+  const receiptId = extractReceiptIdFromPurchaseData(purchaseData, data);
+  const baseOrigin = req.nextUrl.origin;
+
   // Handle based on status
-  if (status === 'PENDING' && purchaseData?.receiptId) {
+  if (["FAILED", "CANCELLED", "EXPIRED", "REJECTED"].includes(normStatus)) {
+    if (receiptId && merchantWallet) {
+      console.log(`[WEBHOOK] Thirdweb onramp transaction ${id} failed (${normStatus}). Updating receipt ${receiptId} status to 'failed'`);
+      try {
+        await fetch(`${baseOrigin}/api/receipts/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            receiptId,
+            wallet: merchantWallet,
+            status: 'failed',
+            error: `Thirdweb onramp transaction ${normStatus.toLowerCase()}`
+          })
+        });
+      } catch (e) {
+        console.error('[WEBHOOK] Error updating receipt to failed:', e);
+      }
+    }
+  } else if (normStatus === 'PENDING' && receiptId && merchantWallet) {
     // Update receipt to pending
-    const baseOrigin = req.nextUrl.origin;
     try {
       await fetch(`${baseOrigin}/api/receipts/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          receiptId: String(purchaseData.receiptId),
+          receiptId,
           wallet: merchantWallet,
           status: 'pending'
         })
@@ -435,10 +518,8 @@ async function handleOnrampTransaction(
     } catch (e) {
       console.error('[WEBHOOK] Error updating receipt to pending:', e);
     }
-  } else if (status === 'COMPLETED' && splitAddress && merchantWallet) {
+  } else if (["COMPLETED", "SUCCESS"].includes(normStatus) && splitAddress && merchantWallet) {
     // Trigger split indexing and reconciliation
-    const baseOrigin = req.nextUrl.origin;
-    
     console.log(`[WEBHOOK] Onramp COMPLETED, triggering split indexing for ${merchantWallet.slice(0,10)}...`);
     
     try {
@@ -453,12 +534,12 @@ async function handleOnrampTransaction(
         })
       });
       
-      if (purchaseData?.receiptId) {
+      if (receiptId) {
         await fetch(`${baseOrigin}/api/receipts/status`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            receiptId: String(purchaseData.receiptId),
+            receiptId,
             wallet: merchantWallet,
             status: 'reconciled'
           })
@@ -470,7 +551,7 @@ async function handleOnrampTransaction(
   }
   
   return NextResponse.json(
-    { ok: true, onrampId: id, status, merchantWallet },
+    { ok: true, onrampId: id, status, merchantWallet, receiptId },
     { headers: { 'x-correlation-id': correlationId } }
   );
 }

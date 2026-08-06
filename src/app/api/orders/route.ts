@@ -258,6 +258,10 @@ export async function POST(req: NextRequest) {
     const sessionId = typeof body?.sessionId === "string" ? body.sessionId : undefined;
     const paymentMethod = typeof body?.paymentMethod === "string" ? body.paymentMethod : undefined;
 
+    // Custom Transaction Metadata fields
+    const transactionId = typeof body?.transactionId === "string" ? body.transactionId.trim() : (typeof body?.clientTransactionId === "string" ? body.clientTransactionId.trim() : (typeof body?.externalTransactionId === "string" ? body.externalTransactionId.trim() : undefined));
+    const metadata = typeof body?.metadata === "object" && body?.metadata !== null ? body.metadata : undefined;
+
     // Optional redirect/webhook/onSuccess fields
     const rawRedirectUrl = String(body?.redirect_url || body?.redirectUrl || "").trim();
     const redirectUrl = rawRedirectUrl && isValidRedirectUrl(rawRedirectUrl) ? rawRedirectUrl : undefined;
@@ -1140,6 +1144,8 @@ export async function POST(req: NextRequest) {
       onSuccess,
       stripeEmail,
       billingAddress,
+      transactionId,
+      metadata,
       shopifyShop: typeof body.shopifyShop === "string" ? body.shopifyShop : undefined,
       ttl: typeof body.ttl === "number" ? body.ttl : undefined,
       ...(webhookUrl ? {

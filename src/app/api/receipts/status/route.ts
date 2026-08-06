@@ -280,7 +280,7 @@ export async function POST(req: NextRequest) {
           ...(typeof tipUsdIn === "number" ? { tipUsd: tipUsdIn } : {}),
           ...(typeof discountUsdIn === "number" ? { discountUsd: discountUsdIn } : {}),
           ...(shopSlug ? { shopSlug } : {}),
-          ...(stripeSessionId ? { stripeSessionId } : {}),
+          ...(stripeSessionId && (!resource?.stripeSessionId || resource.stripeSessionId === stripeSessionId) ? { stripeSessionId } : {}),
           ...(customerEmail ? { customerEmail } : {}),
           ...(detectedCardFunding ? { detectedCardFunding } : {}),
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
@@ -431,6 +431,8 @@ export async function POST(req: NextRequest) {
         // Use the signing secret stored on the receipt at creation time (container-stable)
         const signingSecret = next?.webhookSigningSecret || resource?.webhookSigningSecret;
         const activeStripeSessionId = stripeSessionId || next?.stripeSessionId || resource?.stripeSessionId;
+        const activeTxId = next?.transactionId || resource?.transactionId || null;
+        const activeMeta = next?.metadata || resource?.metadata || null;
         dispatchWebhookAsync(webhookTarget, {
           event: "receipt.status_updated",
           receiptId,
@@ -444,6 +446,8 @@ export async function POST(req: NextRequest) {
           timestamp: Date.now(),
           brandKey,
           stripeSessionId: activeStripeSessionId,
+          transactionId: activeTxId,
+          metadata: activeMeta,
         } as WebhookPayload, signingSecret);
       }
 

@@ -174,7 +174,29 @@ export async function POST(req: NextRequest) {
 
     receipt.customerSessions = sessions;
     
-    receipt.stripeSessionId = stripeSessionId || receipt.stripeSessionId;
+    // SAFEGUARD: Only set receipt.stripeSessionId if not already set and not bound to a foreign receipt
+    if (stripeSessionId && typeof stripeSessionId === "string" && stripeSessionId.trim()) {
+      const cleanSessionId = stripeSessionId.trim();
+      if (!receipt.stripeSessionId) {
+        try {
+          const checkQuery = {
+            query: "SELECT c.id FROM c WHERE c.type = 'receipt' AND c.stripeSessionId = @sessionId AND c.id != @currentId",
+            parameters: [
+              { name: "@sessionId", value: cleanSessionId },
+              { name: "@currentId", value: receipt.id }
+            ]
+          };
+          const { resources: foreignReceipts } = await container.items.query(checkQuery).fetchAll();
+          if (foreignReceipts && foreignReceipts.length > 0) {
+            console.warn(`[ONRAMP LIMITS] stripeSessionId ${cleanSessionId} is already bound to receipt ${foreignReceipts[0].id}. Skipping assignment to ${receipt.id}.`);
+          } else {
+            receipt.stripeSessionId = cleanSessionId;
+          }
+        } catch (checkErr) {
+          console.warn("[ONRAMP LIMITS] Failed to check stripeSessionId uniqueness:", checkErr);
+        }
+      }
+    }
     receipt.stripeEmail = customerEmail;
     receipt.customerEmail = customerEmail;
     receipt.updatedAt = Date.now();
