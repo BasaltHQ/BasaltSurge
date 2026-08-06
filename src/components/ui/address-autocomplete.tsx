@@ -192,9 +192,12 @@ export function AddressAutocompleteForm({
 
           {/* Google Places Suggestions Dropdown */}
           {showDropdown && predictions.length > 0 && (
-            <div className="absolute z-50 left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl overflow-hidden divide-y divide-gray-700/50 max-h-60 overflow-y-auto">
+            <div
+              className="absolute z-[999] left-0 right-0 mt-1 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden divide-y divide-gray-700/50 max-h-60 overflow-y-auto"
+              style={{ backgroundColor: "#111827", opacity: 1 }}
+            >
               {/* Header with Mobile Close Button */}
-              <div className="px-3.5 py-2 bg-gray-900/80 border-b border-gray-700/60 flex items-center justify-between text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+              <div className="px-3.5 py-2 bg-gray-950 border-b border-gray-700/60 flex items-center justify-between text-[10px] font-semibold text-gray-400 uppercase tracking-wider" style={{ backgroundColor: "#030712" }}>
                 <span>Address Suggestions</span>
                 <button
                   type="button"
