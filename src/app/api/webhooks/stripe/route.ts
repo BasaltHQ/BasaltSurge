@@ -275,7 +275,27 @@ export async function POST(req: NextRequest) {
               parameters: [{ name: "@sessionId", value: sessionId }]
             };
             const { resources: linkedReceipts } = await container.items.query(querySpec).fetchAll();
+            const metaReceiptRaw = String(metadata.receiptId || "").replace(/^receipt:/, "").trim().toLowerCase();
+
             for (const r of linkedReceipts || []) {
+              const rIdRaw = String(r.receiptId || r.id || "").replace(/^receipt:/, "").trim().toLowerCase();
+              
+              // SAFEGUARD: If metadata.receiptId is present, strictly enforce that DB receipt ID matches metadata.receiptId!
+              if (metaReceiptRaw && rIdRaw && rIdRaw !== metaReceiptRaw) {
+                console.warn(`[STRIPE WEBHOOK] Foreign receipt ${r.id} shares stripeSessionId ${sessionId} but does not match session metadata receiptId ${metadata.receiptId}. Skipping foreign receipt.`);
+                continue;
+              }
+
+              // SAFEGUARD: Verify amount discrepancy if sourceAmount is available
+              const sourceAmount = Number(txDetails.source_amount || 0);
+              if (typeof r.totalUsd === "number" && r.totalUsd > 0 && sourceAmount > 0) {
+                const minExpected = +(r.totalUsd * 0.95).toFixed(2);
+                if (sourceAmount < minExpected) {
+                  console.warn(`[STRIPE WEBHOOK] Amount discrepancy detected for receipt ${r.id}: charged $${sourceAmount} vs receipt total $${r.totalUsd}. Skipping paid status update.`);
+                  continue;
+                }
+              }
+
               if (r.status !== "paid" && r.status !== "paid - ach pending" && r.status !== "checkout_success") {
                 r.status = nextStatus;
                 if (isAch) {

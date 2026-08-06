@@ -33,6 +33,8 @@ export type WebhookPayload = {
   brandKey?: string;
   stripeSessionId?: string | null;
   isStripeSessionUnique?: boolean;
+  transactionId?: string | null;
+  metadata?: Record<string, any> | null;
 };
 
 /**
@@ -151,6 +153,8 @@ export async function dispatchDeveloperWebhook(
     ...payload,
     stripeSessionId: payload.stripeSessionId || null,
     isStripeSessionUnique: isUnique !== undefined ? Boolean(isUnique) : (payload.stripeSessionId ? true : false),
+    transactionId: payload.transactionId || null,
+    metadata: payload.metadata || null,
     timestamp,
   };
   const body = JSON.stringify(finalPayload);

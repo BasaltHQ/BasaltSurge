@@ -2548,7 +2548,14 @@ function ReceiptsAdmin() {
     try {
       setLoading(true);
       setError("");
-      const r = await fetch(`/api/receipts?limit=100`, {
+      let apiUrl = `/api/receipts?limit=1000`;
+      if (receiptSearchQuery.trim()) apiUrl += `&search=${encodeURIComponent(receiptSearchQuery.trim())}`;
+      if (receiptStatusFilter && receiptStatusFilter !== "all") apiUrl += `&status=${encodeURIComponent(receiptStatusFilter)}`;
+      if (receiptStaffFilter && receiptStaffFilter !== "all") apiUrl += `&employeeId=${encodeURIComponent(receiptStaffFilter)}`;
+      if (receiptMinAmount) apiUrl += `&minAmount=${encodeURIComponent(receiptMinAmount)}`;
+      if (receiptMaxAmount) apiUrl += `&maxAmount=${encodeURIComponent(receiptMaxAmount)}`;
+
+      const r = await fetch(apiUrl, {
         cache: "no-store",
         credentials: "include",
         headers: {
@@ -2618,7 +2625,7 @@ function ReceiptsAdmin() {
 
   React.useEffect(() => {
     loadReceipts();
-  }, [account?.address]);
+  }, [account?.address, receiptSearchQuery, receiptStatusFilter, receiptStaffFilter, receiptMinAmount, receiptMaxAmount]);
 
   async function openQR(rec: any) {
     try {

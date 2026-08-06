@@ -384,6 +384,19 @@ export async function POST(req: NextRequest) {
         const onrampData = await stripeRes.json();
         const stripeStatus = onrampData.status;
 
+        // SAFEGUARD: Verify Stripe metadata receiptId matches candidate receiptId
+        const metaReceiptRaw = String(onrampData.metadata?.receiptId || "").replace(/^receipt:/, "").trim().toLowerCase();
+        const receiptIdRaw = String(receiptId || "").replace(/^receipt:/, "").trim().toLowerCase();
+        if (metaReceiptRaw && receiptIdRaw && metaReceiptRaw !== receiptIdRaw) {
+          console.warn(`[cron/reconcile-stuck] Misassociated Stripe session ${sessionId}! Stripe metadata receiptId is '${onrampData.metadata?.receiptId}', but candidate receipt is '${receiptId}'. Unsetting stripeSessionId from receipt ${receiptId}.`);
+          delete receipt.stripeSessionId;
+          receipt.lastUpdatedAt = Date.now();
+          await container.items.upsert(receipt);
+          skipped++;
+          results.push({ receiptId, status: "skipped", reason: "misassociated_session_metadata_mismatch" });
+          continue;
+        }
+
         try {
           const { enrichReceiptFromStripeData } = await import("@/lib/receipts");
           enrichReceiptFromStripeData(receipt, onrampData);

@@ -711,7 +711,8 @@ export function useStripeEmbeddedOnramp({
         if (storedCustId) customerIdRef.current = storedCustId;
         if (storedToken) oauthTokenRef.current = storedToken;
         if (storedWallet) buyerWalletRef.current = storedWallet;
-        if (storedSessionId) sessionIdRef.current = storedSessionId;
+        sessionIdRef.current = storedSessionId || null;
+        setSessionId(storedSessionId || null);
         if (storedFunding) sessionFundingRef.current = storedFunding;
 
         // Restore coordinator authenticated state if we have a valid customer session
