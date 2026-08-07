@@ -35,20 +35,13 @@ let lastDynamicDomainsFetch = 0;
 const DYNAMIC_DOMAINS_TTL = 10 * 60 * 1000; // 10 minutes cache TTL to prevent Cosmos DB stampedes
 let dynamicDomainsPromise: Promise<Record<string, string>> | null = null;
 
-export async function getDynamicPartnerDomains(): Promise<Record<string, string>> {
-  const now = Date.now();
-  
-  // 1. Return cached domains if still within TTL and cache is not empty
-  if (now - lastDynamicDomainsFetch < DYNAMIC_DOMAINS_TTL && Object.keys(DYNAMIC_PARTNER_DOMAINS).length > 0) {
-    return DYNAMIC_PARTNER_DOMAINS;
-  }
+/**
+ * Triggers a background fetch of dynamic partner domains from Cosmos DB
+ * without blocking incoming requests (Stale-While-Revalidate pattern).
+ */
+function fetchDynamicDomainsInBackground(): Promise<Record<string, string>> {
+  if (dynamicDomainsPromise) return dynamicDomainsPromise;
 
-  // 2. Coalesce concurrent requests: if a fetch is already in progress, await the same promise
-  if (dynamicDomainsPromise) {
-    return dynamicDomainsPromise;
-  }
-
-  // 3. Launch a single database query to load the mappings
   dynamicDomainsPromise = (async () => {
     const domains: Record<string, string> = {};
     try {
@@ -80,6 +73,15 @@ export async function getDynamicPartnerDomains(): Promise<Record<string, string>
                 } else {
                   domains[`www.${hostname}`] = brandKey;
                 }
+
+                // Also index root domain parts for subdomain wildcard resolution
+                const parts = hostname.split(".");
+                if (parts.length >= 2) {
+                  const rootDomain = parts.slice(-2).join(".");
+                  if (rootDomain && !domains[rootDomain]) {
+                    domains[rootDomain] = brandKey;
+                  }
+                }
               }
             } catch {
               // ignore invalid domains
@@ -104,15 +106,41 @@ export async function getDynamicPartnerDomains(): Promise<Record<string, string>
       return domains;
     } catch (err) {
       console.error("[brand-config] Failed to fetch dynamic partner domains:", err);
-      // Resilient fallback: return existing cache on error instead of resetting it
+      // Resilient fallback: retain existing in-memory cache on error
       return DYNAMIC_PARTNER_DOMAINS || {};
     } finally {
-      // Clear promise reference once finished so future expired requests trigger fresh query
       dynamicDomainsPromise = null;
     }
   })();
 
   return dynamicDomainsPromise;
+}
+
+export async function getDynamicPartnerDomains(): Promise<Record<string, string>> {
+  const now = Date.now();
+  const hasCache = Object.keys(DYNAMIC_PARTNER_DOMAINS).length > 0;
+  const isStale = now - lastDynamicDomainsFetch >= DYNAMIC_DOMAINS_TTL;
+
+  // 1. If we have a cached map and it's fresh, return immediately (0ms latency)
+  if (hasCache && !isStale) {
+    return DYNAMIC_PARTNER_DOMAINS;
+  }
+
+  // 2. Stale-While-Revalidate: If we have an existing cache, return it instantly and refresh in background
+  if (hasCache && isStale) {
+    fetchDynamicDomainsInBackground().catch(() => {});
+    return DYNAMIC_PARTNER_DOMAINS;
+  }
+
+  // 3. Cold start (no cache): await the initial background fetch
+  return fetchDynamicDomainsInBackground();
+}
+
+// Eager background pre-warming at module load (server-side only)
+if (typeof window === "undefined") {
+  setTimeout(() => {
+    fetchDynamicDomainsInBackground().catch(() => {});
+  }, 100);
 }
 
 // Main platform hostnames that should NOT be treated as partner containers (without subdomains)
