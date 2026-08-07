@@ -36,7 +36,9 @@ export function getClient() {
         "xpaypass.com": "xoinpay",
         "www.xpaypass.com": "xoinpay",
         "bt-checkout.aipowerpay.com": "aipowerpay",
-        "www.bt-checkout.aipowerpay.com": "aipowerpay"
+        "www.bt-checkout.aipowerpay.com": "aipowerpay",
+        "pay.lucky13marketing.com": "lucky13",
+        "www.pay.lucky13marketing.com": "lucky13"
       };
       if (KNOWN_PARTNER_DOMAINS[hostLower]) {
         brandKey = KNOWN_PARTNER_DOMAINS[hostLower];
@@ -53,6 +55,8 @@ export function getClient() {
           xoinpay: "xoinpay",
           icunow: "icunow-store",
           aipowerpay: "aipowerpay",
+          lucky13: "lucky13",
+          lucky13marketing: "lucky13",
         };
         brandKey = KNOWN_PARTNER_PATTERNS[candidate] || candidate;
       }

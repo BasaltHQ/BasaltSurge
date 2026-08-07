@@ -52,6 +52,8 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   xoinpay: "xoinpay",
   icunow: "icunow-store",
   aipowerpay: "aipowerpay",
+  lucky13: "lucky13",
+  lucky13marketing: "lucky13",
   // Add more partner brands here as needed
 };
 
@@ -63,7 +65,9 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "xpaypass.com": "xoinpay",
   "www.xpaypass.com": "xoinpay",
   "bt-checkout.aipowerpay.com": "aipowerpay",
-  "www.bt-checkout.aipowerpay.com": "aipowerpay"
+  "www.bt-checkout.aipowerpay.com": "aipowerpay",
+  "pay.lucky13marketing.com": "lucky13",
+  "www.pay.lucky13marketing.com": "lucky13"
   // Add more custom partner domains here as needed
 };
 

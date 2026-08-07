@@ -13,6 +13,8 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   xpaypass: "xoinpay", // Added to support xpaypass.com
   icunow: "icunow-store",
   aipowerpay: "aipowerpay",
+  lucky13: "lucky13",
+  lucky13marketing: "lucky13",
   // Add more partner brands here as needed
 };
 
@@ -26,7 +28,9 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "checkout.aipowerpay.com": "aipowerpay",
   "www.checkout.aipowerpay.com": "aipowerpay",
   "bt-checkout.aipowerpay.com": "aipowerpay",
-  "www.bt-checkout.aipowerpay.com": "aipowerpay"
+  "www.bt-checkout.aipowerpay.com": "aipowerpay",
+  "pay.lucky13marketing.com": "lucky13",
+  "www.pay.lucky13marketing.com": "lucky13"
 };
 
 // Cache and variables for dynamic partner domains from DB
@@ -337,6 +341,7 @@ export async function deriveContainerIdentityFromHostname(host: string, cookieHe
   if (hostLower.includes("xpaypass") || hostLower.includes("xoinpay")) return { brandKey: "xoinpay", containerType: "partner" };
   if (hostLower.includes("icunow")) return { brandKey: "icunow-store", containerType: "partner" };
   if (hostLower.includes("aipowerpay")) return { brandKey: "aipowerpay", containerType: "partner" };
+  if (hostLower.includes("lucky13")) return { brandKey: "lucky13", containerType: "partner" };
 
   return null;
 }
