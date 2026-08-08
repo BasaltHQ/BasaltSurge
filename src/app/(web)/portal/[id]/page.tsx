@@ -5958,7 +5958,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
                                   if (safeCountry === "US") {
                                     l1Payload.id_number = {
-                                      value: kycSsn.trim(),
+                                      value: kycSsn.replace(/\D/g, ""),
                                       type: "us_ssn"
                                     };
                                   } else {
@@ -6142,7 +6142,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 {/* Auth Element Container */}
                 <div
                   className="w-full h-full flex flex-col items-stretch"
-                  style={{ display: ["authenticating", "verifying_identity"].includes(headlessStep as string) && headlessAuthElement ? "block" : "none" }}
+                  style={{ display: ["authenticating"].includes(headlessStep as string) && headlessAuthElement ? "block" : "none" }}
                   ref={(el) => {
                     if (el && headlessAuthElement && !el.contains(headlessAuthElement)) {
                       el.innerHTML = "";
@@ -6154,7 +6154,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 {/* Payment Element Container */}
                 <div
                   className="w-full h-full flex flex-col items-stretch"
-                  style={{ display: headlessStep === "collecting_payment" && headlessPaymentElement ? "block" : "none" }}
+                  style={{ display: ["collecting_payment", "verifying_identity"].includes(headlessStep as string) && headlessPaymentElement ? "block" : "none" }}
                   ref={(el) => {
                     if (el && headlessPaymentElement && !el.contains(headlessPaymentElement)) {
                       el.innerHTML = "";

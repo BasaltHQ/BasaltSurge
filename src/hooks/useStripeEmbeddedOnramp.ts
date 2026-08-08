@@ -1031,7 +1031,7 @@ export function useStripeEmbeddedOnramp({
                   updateStep("checking_kyc");
                   let success = false;
                   if (customerIdRef.current) {
-                    success = await pollKycStatus(customerIdRef.current);
+                    success = await pollKycStatus(customerIdRef.current, "l2");
                   }
                   
                   if (!success) {
@@ -1582,7 +1582,7 @@ export function useStripeEmbeddedOnramp({
                 const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
                 let isL1Verified = l1Tier 
                   ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
-                  : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+                  : false;
                 
                 // If L1 demographics are pending, poll and wait for L1 approval before L2
                 if (!isL1Verified && l1Tier?.verification_status === "pending") {
@@ -2206,7 +2206,7 @@ export function useStripeEmbeddedOnramp({
                     const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
                     let isL1Verified = l1Tier 
                       ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
-                      : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+                      : false;
                     
                     // If L1 demographics are pending, poll and wait for L1 approval before L2
                     if (!isL1Verified && l1Tier?.verification_status === "pending") {
@@ -2419,13 +2419,17 @@ export function useStripeEmbeddedOnramp({
     isRunningRef.current = true;
     try {
       kycOccurredRef.current = true;
-      // Normalize id_number string if passed directly as string
+      // Normalize id_number string if passed directly as string, stripping non-digits for SSN
       const payload = { ...kycInfo };
-      if (payload.id_number && typeof payload.id_number === "string") {
-        payload.id_number = {
-          value: payload.id_number.trim(),
-          type: "us_ssn"
-        };
+      if (payload.id_number) {
+        if (typeof payload.id_number === "string") {
+          payload.id_number = {
+            value: payload.id_number.replace(/\D/g, ""),
+            type: "us_ssn"
+          };
+        } else if (payload.id_number.value && typeof payload.id_number.value === "string") {
+          payload.id_number.value = payload.id_number.value.replace(/\D/g, "");
+        }
       }
       if (payload.address && typeof payload.address === "object") {
         const cleanAddr: Record<string, string> = {};
@@ -2921,7 +2925,7 @@ export function useStripeEmbeddedOnramp({
           : isOverallKycVerified;
         const isL1Verified = l1Tier 
           ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") 
-          : isOverallKycVerified;
+          : false;
         const isL2Verified = l2Tier 
           ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available") 
           : isOverallIdVerified;
@@ -3044,7 +3048,7 @@ export function useStripeEmbeddedOnramp({
                 
                 console.log("[EMBEDDED ONRAMP] L2 document verification finished. Polling status...");
                 updateStep("checking_kyc");
-                const success = await pollKycStatus(customerId || "");
+                const success = await pollKycStatus(customerId || "", "l2");
                 if (!success) {
                   throw new Error("Identity verification not approved");
                 }
@@ -3377,7 +3381,7 @@ export function useStripeEmbeddedOnramp({
 
             const isL1Verified = l1Tier 
               ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
-              : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+              : false;
 
             const isOverallIdVerified = kycData.idDocStatus === "approved" ||
                                         kycData.idDocStatus === "verified" ||
@@ -3410,7 +3414,7 @@ export function useStripeEmbeddedOnramp({
                   
                   console.log("[EMBEDDED ONRAMP] ACH L2 document verification finished. Polling status...");
                   updateStep("checking_kyc");
-                  const success = await pollKycStatus(customerId || "");
+                  const success = await pollKycStatus(customerId || "", "l2");
                   if (!success) {
                     throw new Error("Identity verification not approved");
                   }
@@ -3629,7 +3633,7 @@ export function useStripeEmbeddedOnramp({
           }
           console.log("[EMBEDDED ONRAMP] KYC/Document verification completed. Polling status...");
           updateStep("checking_kyc");
-          const success = await pollKycStatus(customerIdRef.current || "");
+          const success = await pollKycStatus(customerIdRef.current || "", "l2");
           if (!success) {
             handleError("Identity verification was not approved. Please try again.");
             return;
