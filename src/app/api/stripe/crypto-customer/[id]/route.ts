@@ -109,19 +109,23 @@ export async function GET(
     }
 
     const verifications = customer.verifications ?? [];
+    const kycTiers = customer.kyc_tiers ?? [];
+    const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
     console.log("[CRYPTO CUSTOMER] Full Customer payload:", JSON.stringify(customer, null, 2));
     const kycVerified = verifications.find((v: any) => v.name === "kyc_verified");
     const idDocVerified = verifications.find((v: any) => v.name === "id_document_verified");
 
-    console.log("[CRYPTO CUSTOMER] KYC status:", kycVerified?.status || "not_started");
+    const derivedIdDocStatus = idDocVerified?.status ?? (l2Tier?.verification_status ?? "not_started");
+
+    console.log("[CRYPTO CUSTOMER] KYC status:", kycVerified?.status || "not_started", "idDocStatus:", derivedIdDocStatus);
 
     return NextResponse.json({
       ok: true,
       customerId: customer.id,
       providedFields: customer.provided_fields ?? [],
       kycStatus: kycVerified?.status ?? "not_started",
-      idDocStatus: idDocVerified?.status ?? "not_started",
-      kycTiers: customer.kyc_tiers ?? [],
+      idDocStatus: derivedIdDocStatus,
+      kycTiers: kycTiers,
       ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
     }, {
       headers: {
