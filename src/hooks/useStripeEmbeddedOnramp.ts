@@ -1251,6 +1251,11 @@ export function useStripeEmbeddedOnramp({
           if (res.status === 401) {
             throw new Error("Stripe authentication token has expired. Please refresh the page.");
           }
+          if (res.status === 403 || res.status === 409 || res.status === 429) {
+            console.log(`[EMBEDDED ONRAMP] Transient status ${res.status} during KYC poll (Stripe verification processing lock). Retrying after backoff...`);
+            await new Promise(resolve => setTimeout(resolve, 2500));
+            continue;
+          }
           consecutiveErrors++;
           if (consecutiveErrors >= 5) {
             throw new Error(`KYC status check failed repeatedly (HTTP status: ${res.status}). Please check your connection.`);
