@@ -910,11 +910,30 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             -webkit-backdrop-filter: blur(${blur}) !important;
           }
 
-          .pp-portal-container .pp-currency-menu {
-            background: ${cardBg || t.surfaceBg || (isThemeDark ? '#0c0d14' : '#ffffff')} !important;
-            border-color: ${cardBorder || (isThemeDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)')} !important;
+          .pp-portal-container .pp-currency-menu,
+          .pp-portal-container .pp-address-menu,
+          .pp-portal-container [data-pp-address-dropdown] {
+            background: ${isThemeDark ? '#141522' : '#ffffff'} !important;
+            border-color: ${cardBorder || (isThemeDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.18)')} !important;
             border-radius: ${radius} !important;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4) !important;
+            box-shadow: 0 20px 40px -5px rgba(0, 0, 0, 0.7), 0 10px 20px -5px rgba(0, 0, 0, 0.5) !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            opacity: 1 !important;
+          }
+
+          .pp-portal-container .pp-address-menu button,
+          .pp-portal-container [data-pp-address-dropdown] button {
+            background: ${isThemeDark ? '#141522' : '#ffffff'} !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            color: ${isThemeDark ? '#ffffff' : '#0f172a'} !important;
+          }
+
+          .pp-portal-container .pp-address-menu button:hover,
+          .pp-portal-container [data-pp-address-dropdown] button:hover {
+            background: ${isThemeDark ? '#23263b' : '#f1f5f9'} !important;
+            color: ${isThemeDark ? '#ffffff' : '#0f172a'} !important;
           }
 
           /* All borders */
@@ -5227,13 +5246,23 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
                             {/* Google Places Autocomplete Predictions Dropdown */}
                             {showAddressSuggestions && addressSuggestions.length > 0 && (
-                              <div className={`absolute z-50 left-0 right-0 mt-1 rounded-xl shadow-2xl overflow-hidden border divide-y ${isLightText
-                                  ? 'bg-neutral-900 border-white/15 divide-white/10 text-white'
-                                  : 'bg-white border-black/15 divide-black/10 text-black'
-                                }`}>
+                              <div
+                                data-pp-address-dropdown="1"
+                                style={{
+                                  backgroundColor: isLightText ? "#141522" : "#ffffff",
+                                  borderColor: isLightText ? "rgba(255, 255, 255, 0.18)" : "rgba(0, 0, 0, 0.18)",
+                                  zIndex: 99999,
+                                }}
+                                className={`pp-address-menu absolute z-50 left-0 right-0 mt-1 rounded-xl shadow-2xl overflow-hidden border divide-y ${
+                                  isLightText
+                                    ? 'divide-white/10 text-white'
+                                    : 'divide-black/10 text-black'
+                                }`}
+                              >
                                 {/* Header with Mobile Close Button */}
-                                <div className={`px-3 py-1.5 flex items-center justify-between text-[10px] font-semibold tracking-wider uppercase border-b ${isLightText ? 'bg-white/5 border-white/10 text-white/60' : 'bg-black/5 border-black/10 text-black/60'
-                                  }`}>
+                                <div className={`px-3 py-1.5 flex items-center justify-between text-[10px] font-semibold tracking-wider uppercase border-b ${
+                                  isLightText ? 'bg-white/5 border-white/10 text-white/60' : 'bg-black/5 border-black/10 text-black/60'
+                                }`}>
                                   <span>Address Suggestions</span>
                                   <button
                                     type="button"
@@ -5253,10 +5282,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     key={item.placeId || idx}
                                     type="button"
                                     onClick={() => selectAddressSuggestion(item)}
-                                    className={`w-full text-left px-3 py-2.5 text-xs transition flex flex-col ${isLightText
-                                        ? 'hover:bg-white/10 text-gray-200'
-                                        : 'hover:bg-black/5 text-gray-800'
-                                      }`}
+                                    style={{
+                                      backgroundColor: isLightText ? "#141522" : "#ffffff",
+                                    }}
+                                    className={`w-full text-left px-3 py-2.5 text-xs transition flex flex-col cursor-pointer ${
+                                      isLightText
+                                        ? 'hover:!bg-[#23263b] !text-white'
+                                        : 'hover:!bg-[#f1f5f9] !text-slate-900'
+                                    }`}
                                   >
                                     <span className="font-semibold">{item.mainText || item.description}</span>
                                     {item.secondaryText && (

@@ -1249,6 +1249,12 @@ export function useStripeEmbeddedOnramp({
             return true;
           }
         } else {
+          if (res.status === 403 || res.status === 409 || res.status === 429) {
+            console.log(`[EMBEDDED ONRAMP] Transient status ${res.status} during KYC poll (Stripe verification processing lock). Retrying after backoff...`);
+            await new Promise(resolve => setTimeout(resolve, 2500));
+            continue;
+          }
+
           const errMsg = `[KYC POLL ERROR] Attempt ${i + 1}/90: HTTP status ${res.status}`;
           console.error(errMsg);
           fetch("/api/portal/log", {
@@ -1267,11 +1273,6 @@ export function useStripeEmbeddedOnramp({
 
           if (res.status === 401) {
             throw new Error("Stripe authentication token has expired. Please refresh the page.");
-          }
-          if (res.status === 403 || res.status === 409 || res.status === 429) {
-            console.log(`[EMBEDDED ONRAMP] Transient status ${res.status} during KYC poll (Stripe verification processing lock). Retrying after backoff...`);
-            await new Promise(resolve => setTimeout(resolve, 2500));
-            continue;
           }
           consecutiveErrors++;
           if (consecutiveErrors >= 5) {
@@ -3139,7 +3140,7 @@ export function useStripeEmbeddedOnramp({
         let errData: any = {};
         try { errData = JSON.parse(errText); } catch (_) {}
 
-        if (kycRes.status === 401 || kycRes.status === 404 || errData.error === "missing_oauth_token" || errData.error === "invalid_oauth_token" || errData.error === "customer_fetch_failed") {
+        if (kycRes.status === 401 || kycRes.status === 403 || kycRes.status === 404 || errData.error === "missing_oauth_token" || errData.error === "invalid_oauth_token" || errData.error === "customer_fetch_failed") {
           console.warn(`[EMBEDDED ONRAMP] Stale/invalid customer session detected (${kycRes.status}). Clearing Link session and restarting...`);
           if (typeof window !== "undefined") {
             sessionStorage.removeItem("stripe_onramp_customer_id");

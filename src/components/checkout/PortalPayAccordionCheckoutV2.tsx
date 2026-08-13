@@ -821,12 +821,13 @@ export function PortalPayAccordionCheckoutV2({
                   {/* Autocomplete Predictions */}
                   {showSuggestions && addressSuggestions.length > 0 && (
                     <div
+                      data-pp-address-dropdown="1"
                       style={{
-                        backgroundColor: isLightText ? "#161722" : "#ffffff",
+                        backgroundColor: isLightText ? "#141522" : "#ffffff",
                         borderColor: isLightText ? "rgba(255, 255, 255, 0.18)" : "rgba(0, 0, 0, 0.18)",
                         zIndex: 99999,
                       }}
-                      className={`absolute left-0 right-0 mt-1 rounded-xl max-h-60 overflow-y-auto shadow-2xl border divide-y ${
+                      className={`pp-address-menu absolute left-0 right-0 mt-1 rounded-xl max-h-60 overflow-y-auto shadow-2xl border divide-y ${
                         isLightText ? "divide-white/10 text-white" : "divide-black/10 text-black"
                       }`}
                     >
@@ -836,12 +837,12 @@ export function PortalPayAccordionCheckoutV2({
                           type="button"
                           onClick={() => handleSelectSuggestion(item)}
                           style={{
-                            backgroundColor: isLightText ? "#161722" : "#ffffff",
+                            backgroundColor: isLightText ? "#141522" : "#ffffff",
                           }}
-                          className={`w-full text-left px-3.5 py-2.5 text-xs transition flex flex-col ${
+                          className={`w-full text-left px-3.5 py-2.5 text-xs transition flex flex-col cursor-pointer ${
                             isLightText
-                              ? "hover:!bg-white/10 text-white"
-                              : "hover:!bg-black/5 text-black"
+                              ? "hover:!bg-[#23263b] !text-white"
+                              : "hover:!bg-[#f1f5f9] !text-slate-900"
                           }`}
                         >
                           <span className="font-bold flex items-center gap-2">
