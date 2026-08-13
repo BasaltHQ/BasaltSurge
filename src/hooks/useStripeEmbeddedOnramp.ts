@@ -2980,12 +2980,12 @@ export function useStripeEmbeddedOnramp({
           ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available") 
           : isOverallIdVerified;
 
-        setIsAllKycCompleted(Boolean(isL2Verified));
-
         // If ACH payment is chosen, we strictly enforce verification through L2.
         const isCustomerVerified = isAchEnforcedRef.current 
           ? isL2Verified 
           : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected"));
+
+        setIsAllKycCompleted(Boolean(isCustomerVerified));
 
         // 1. First, check if there is any pending verification.
         // Stripe returns a 400 error if we try to create a session while verification is pending.
@@ -3048,11 +3048,11 @@ export function useStripeEmbeddedOnramp({
               ? (freshL2.verification_status === "verified" || freshL2.verification_status === "not_available") 
               : isFreshOverallIdVerified;
 
-            setIsAllKycCompleted(Boolean(isFreshL2Verified));
-            
             const isFreshVerified = isAchEnforcedRef.current
               ? isFreshL2Verified
               : (isFreshL2Verified || isFreshL1Verified || (isFreshL0Verified && freshL0?.verification_status !== "rejected"));
+
+            setIsAllKycCompleted(Boolean(isFreshVerified));
 
             if (!isFreshVerified) {
               if (isAchEnforcedRef.current) {

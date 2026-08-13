@@ -242,7 +242,11 @@ export function PortalPayAccordionCheckoutV2({
     if (!headlessStep) return;
     if (headlessStep === "collecting_kyc" || headlessStep === "verifying_identity") {
       setIsSubmittingContact(false);
-      setActiveStep(2);
+      if (!isAllKycCompleted && effectiveStatus !== "verified") {
+        setActiveStep(2);
+      } else {
+        setActiveStep(3);
+      }
     } else if (
       headlessStep === "collecting_payment" ||
       headlessStep === "payment_method_required" ||
@@ -259,7 +263,16 @@ export function PortalPayAccordionCheckoutV2({
     ) {
       setActiveStep(4);
     }
-  }, [headlessStep]);
+  }, [headlessStep, isAllKycCompleted, effectiveStatus]);
+
+  // If KYC is already completed or verified, automatically skip or advance to Step 3
+  useEffect(() => {
+    if (isAllKycCompleted || effectiveStatus === "verified" || headlessStep === "collecting_payment") {
+      setIsSubmittingContact(false);
+      setIsSubmittingIdentity(false);
+      setActiveStep((prev) => (prev <= 2 ? 3 : prev));
+    }
+  }, [isAllKycCompleted, effectiveStatus, headlessStep]);
 
   // Step 1 Submit (Account & Contact)
   const handleContactSubmit = async (e: React.FormEvent) => {
@@ -272,7 +285,13 @@ export function PortalPayAccordionCheckoutV2({
         await onHeadlessSubmitEmailPhone(email, phone, country, `${firstName} ${lastName}`.trim());
       }
       if (!authElement && headlessStep !== "authenticating") {
-        if (simulatedPath === "skip_kyc") {
+        if (
+          simulatedPath === "skip_kyc" ||
+          isAllKycCompleted ||
+          effectiveStatus === "verified" ||
+          headlessStep === "collecting_payment" ||
+          headlessStep === "payment_method_required"
+        ) {
           setActiveStep(3); // Skip Identity directly to Payment
         } else {
           setActiveStep(2);
@@ -673,14 +692,14 @@ export function PortalPayAccordionCheckoutV2({
                 >
                   Tier {isL2Requirement ? "L2" : isL1Requirement ? "L1" : "L0"}
                 </span>
-                {isL2Approved && (
+                {(isL2Approved || isAllKycCompleted || effectiveStatus === "verified") && (
                   <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
                     <Check className="w-2.5 h-2.5 stroke-[3]" /> Verified
                   </span>
                 )}
               </div>
 
-              {(activeStep > 2 || effectiveStatus === "verified") && (
+              {(activeStep > 2 || effectiveStatus === "verified" || isAllKycCompleted) && (
                 <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
                   <User className="w-2.5 h-2.5 opacity-60" />
                   <span>{firstName} {lastName}</span>
@@ -780,7 +799,7 @@ export function PortalPayAccordionCheckoutV2({
             {/* Residential Address Autocomplete Single Input */}
             {!isAddressParsed && !city && !stateCode ? (
               <div className="space-y-1.5">
-                <div className="relative">
+                <div className="relative z-50">
                   <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                     <MapPin className="w-3 h-3" />
                     <span>Residential Address</span>
@@ -802,8 +821,13 @@ export function PortalPayAccordionCheckoutV2({
                   {/* Autocomplete Predictions */}
                   {showSuggestions && addressSuggestions.length > 0 && (
                     <div
-                      className={`absolute z-[9999] left-0 right-0 mt-1 rounded-xl max-h-60 overflow-y-auto shadow-2xl border divide-y ${
-                        isLightText ? "bg-neutral-900 border-white/20 divide-white/10 text-white" : "bg-white border-black/20 divide-black/10 text-black"
+                      style={{
+                        backgroundColor: isLightText ? "#161722" : "#ffffff",
+                        borderColor: isLightText ? "rgba(255, 255, 255, 0.18)" : "rgba(0, 0, 0, 0.18)",
+                        zIndex: 99999,
+                      }}
+                      className={`absolute left-0 right-0 mt-1 rounded-xl max-h-60 overflow-y-auto shadow-2xl border divide-y ${
+                        isLightText ? "divide-white/10 text-white" : "divide-black/10 text-black"
                       }`}
                     >
                       {addressSuggestions.map((item, idx) => (
@@ -811,13 +835,24 @@ export function PortalPayAccordionCheckoutV2({
                           key={item.placeId || idx}
                           type="button"
                           onClick={() => handleSelectSuggestion(item)}
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-amber-500/10 transition flex flex-col"
+                          style={{
+                            backgroundColor: isLightText ? "#161722" : "#ffffff",
+                          }}
+                          className={`w-full text-left px-3.5 py-2.5 text-xs transition flex flex-col ${
+                            isLightText
+                              ? "hover:!bg-white/10 text-white"
+                              : "hover:!bg-black/5 text-black"
+                          }`}
                         >
-                          <span className="font-bold flex items-center gap-1.5">
-                            <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
-                            {item.mainText || item.description}
+                          <span className="font-bold flex items-center gap-2">
+                            <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            <span>{item.mainText || item.description}</span>
                           </span>
-                          {item.secondaryText && <span className="text-[10px] opacity-60 ml-4.5">{item.secondaryText}</span>}
+                          {item.secondaryText && (
+                            <span className="text-[10.5px] opacity-70 ml-5.5 mt-0.5">
+                              {item.secondaryText}
+                            </span>
+                          )}
                         </button>
                       ))}
                     </div>
@@ -997,7 +1032,7 @@ export function PortalPayAccordionCheckoutV2({
                 !firstName ||
                 !lastName ||
                 !line1 ||
-                (isL1Requirement && (!dob || ssn.replace(/\D/g, "").length !== 9)) ||
+                (isL1Requirement && ((country === "US" && (!dob || ssn.replace(/\D/g, "").length !== 9)) || (country !== "US" && !dob))) ||
                 (isL2Requirement && !isL2Approved)
               }
               className={`w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg mt-2 ${
