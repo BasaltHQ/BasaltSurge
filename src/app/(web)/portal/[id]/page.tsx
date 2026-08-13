@@ -2382,6 +2382,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   });
 
   // ── Stripe Headless Onramp State ──
+  const [isV2Active, setIsV2Active] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const cookies = window.document.cookie || "";
+      if (cookies.includes("pp_sandbox_stripe_v2=true")) {
+        setIsV2Active(true);
+      } else if (cookies.includes("pp_sandbox_stripe_v2=false")) {
+        setIsV2Active(false);
+      } else {
+        setIsV2Active(process.env.NEXT_PUBLIC_STRIPEV2 === "true" || process.env.STRIPEV2 === "true");
+      }
+    }
+  }, []);
+
   const [headlessEmailPrompt, setHeadlessEmailPrompt] = useState(false);
   const [showUnsupportedLinkModal, setShowUnsupportedLinkModal] = useState(false);
   const [displayError, setDisplayError] = useState<string | null>(null);
@@ -2545,20 +2560,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
   const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
   const [isAddressParsed, setIsAddressParsed] = useState(false);
-  const [isV2Active, setIsV2Active] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const cookies = window.document.cookie || "";
-      if (cookies.includes("pp_sandbox_stripe_v2=true")) {
-        setIsV2Active(true);
-      } else if (cookies.includes("pp_sandbox_stripe_v2=false")) {
-        setIsV2Active(false);
-      } else {
-        setIsV2Active(process.env.NEXT_PUBLIC_STRIPEV2 === "true");
-      }
-    }
-  }, []);
 
   const STATE_MAP: Record<string, string> = {
     "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA", "colorado": "CO", "connecticut": "CT",
@@ -4737,9 +4738,28 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const isAchPending = receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending" || ((stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account") && headlessStep === "awaiting_funds");
 
   // ─── STRIPE HEADLESS INLINE UI ───
-  const stripeHeadlessUI = (headlessEmailPrompt || headlessActive || headlessInitiated) ? (
+  const stripeHeadlessUI = (isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? (
     <div className="w-full flex flex-col items-stretch justify-start animate-in fade-in duration-300">
-      {headlessEmailPrompt ? (
+      {isV2Active ? (
+        <PortalPayAccordionCheckoutV2
+          theme={theme}
+          isLightText={isLightText}
+          email={shipEmail || headlessEmailInput}
+          phone={headlessPhoneInput}
+          fullName={shipName}
+          amountUsd={totalUsd}
+          receiptId={receiptId}
+          headlessError={headlessError}
+          kycTierRequired={kycTierRequired}
+          isAllKycCompleted={isAllKycCompleted}
+          onHeadlessSubmitEmailPhone={startHeadlessOnramp}
+          onSubmitKycInfo={submitKycInfo}
+          paymentElement={headlessPaymentElement}
+          authElement={headlessAuthElement}
+          headlessStatus={headlessStatus}
+          headlessStep={headlessStep}
+        />
+      ) : headlessEmailPrompt ? (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -5063,25 +5083,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   Done
                 </button>
               </div>
-            ) : isV2Active ? (
-              <PortalPayAccordionCheckoutV2
-                theme={theme}
-                isLightText={isLightText}
-                email={shipEmail || headlessEmailInput}
-                phone={headlessPhoneInput}
-                fullName={shipName}
-                amountUsd={totalUsd}
-                receiptId={receiptId}
-                headlessError={headlessError}
-                kycTierRequired={kycTierRequired}
-                isAllKycCompleted={isAllKycCompleted}
-                onHeadlessSubmitEmailPhone={startHeadlessOnramp}
-                onSubmitKycInfo={submitKycInfo}
-                paymentElement={headlessPaymentElement}
-                authElement={headlessAuthElement}
-                headlessStatus={headlessStatus}
-                headlessStep={headlessStep}
-              />
             ) : headlessStep === "collecting_kyc" ? (
               <div className="w-full flex flex-col items-stretch justify-start p-1 md:p-2 animate-in zoom-in duration-300 pr-1 text-left">
                 <div className="mb-3">
@@ -7431,7 +7432,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                       </div>
                                       {shippingComplete && (
                                         <div className="px-2 pb-2">
-                                          {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                          {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
                                             <CheckoutWidget
                                               key={`${token}-${currency}`}
                                               className="w-full"
@@ -7526,7 +7527,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 {/* Non-shipping: render CheckoutWidget directly */}
                                 {!shippingRequired && (
                                   <>
-                                    {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                    {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
                                       <CheckoutWidget
                                         key={`noshp-${token}-${currency}`}
                                         className="w-full"
