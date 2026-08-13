@@ -179,6 +179,21 @@ export function PortalPayAccordionCheckoutV2({
     setLocalError(null);
   };
 
+  // Automatically advance accordion steps when live Stripe headlessStep transitions!
+  useEffect(() => {
+    if (!headlessStep) return;
+    if (headlessStep === "collecting_kyc") {
+      setIsSubmittingContact(false);
+      setActiveStep(2);
+    } else if (headlessStep === "collecting_payment" || headlessStep === "payment_method_required") {
+      setIsSubmittingContact(false);
+      setIsSubmittingIdentity(false);
+      setActiveStep(3);
+    } else if (headlessStep === "completed" || headlessStep === "awaiting_funds") {
+      setActiveStep(4);
+    }
+  }, [headlessStep]);
+
   // Step 1 Submit
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -189,10 +204,12 @@ export function PortalPayAccordionCheckoutV2({
       if (onHeadlessSubmitEmailPhone) {
         await onHeadlessSubmitEmailPhone(email, phone);
       }
-      if (simulatedPath === "skip_kyc") {
-        setActiveStep(3); // Skip Identity directly to Payment
-      } else {
-        setActiveStep(2);
+      if (!authElement && headlessStep !== "authenticating") {
+        if (simulatedPath === "skip_kyc") {
+          setActiveStep(3); // Skip Identity directly to Payment
+        } else {
+          setActiveStep(2);
+        }
       }
     } catch (err) {
       console.error("Contact submission error:", err);
@@ -424,7 +441,7 @@ export function PortalPayAccordionCheckoutV2({
               className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg"
               style={{ backgroundColor: primaryColor, color: "#fff" }}
             >
-              {isSubmittingContact ? "Checking Account..." : "Continue to Identity Verification ➔"}
+              {authElement ? "Enter 6-Digit Code Above ⬆" : isSubmittingContact ? "Checking Account..." : "Continue to Identity Verification ➔"}
             </button>
           </form>
         )}
