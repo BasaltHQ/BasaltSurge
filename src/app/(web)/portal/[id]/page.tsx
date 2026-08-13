@@ -2256,8 +2256,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const tipUsd = Number(receipt?.tipAmount || 0);
 
-  const handleTipUpdate = async (val: string | number) => {
-    if (!receiptId || updatingTip) return;
+  const tipUserInteractedRef = useRef(false);
+  const tipInitialSyncedRef = useRef(false);
+
+  const handleTipUpdate = useCallback(async (val: string | number) => {
+    if (!receiptId || updatingTip || !receipt) return;
 
     // Calculate intended amount from percentage
     let amount = 0;
@@ -2267,7 +2270,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       amount = Number(((pct / 100) * baseSubtotal).toFixed(2));
     }
 
-    // Skip redundant updates (like on-mount initialization to 0 when receipt already has 0 tip)
+    // Skip redundant updates
     const currentTip = Number(receipt?.tipAmount || 0);
     if (amount === currentTip) {
       return;
@@ -2286,23 +2289,45 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           setReceipt(j.receipt);
         }
       }
+    } catch (e) {
+      console.error("[PORTAL TIP] Failed to update tip:", e);
     } finally {
       setUpdatingTip(false);
     }
-  };
+  }, [receiptId, updatingTip, receipt, feeMinusEnabled, itemsSubtotalUsd, unscaleFactor]);
 
+  // Sync initial receipt tip to tipChoice when receipt is first loaded
   useEffect(() => {
+    if (!receipt || tipInitialSyncedRef.current) return;
+    tipInitialSyncedRef.current = true;
+    const initialTip = Number(receipt.tipAmount || 0);
+    if (initialTip > 0 && itemsSubtotalUsd > 0) {
+      const baseSubtotal = feeMinusEnabled ? (itemsSubtotalUsd * unscaleFactor) : itemsSubtotalUsd;
+      if (baseSubtotal > 0) {
+        const pct = Math.round((initialTip / baseSubtotal) * 100);
+        const presetMatch = merchantTipPresets.find((p) => p === pct);
+        if (presetMatch !== undefined) {
+          setTipChoice(String(presetMatch));
+        } else {
+          setTipChoice("custom");
+          setTipCustomPct(pct);
+        }
+      }
+    }
+  }, [receipt, itemsSubtotalUsd, feeMinusEnabled, unscaleFactor, merchantTipPresets]);
+
+  // Handle custom tip input with debounce (only when user actively changes it)
+  useEffect(() => {
+    if (!tipUserInteractedRef.current || !receipt) return;
     if (tipChoice === "custom") {
       const timer = setTimeout(() => {
         handleTipUpdate(tipCustomPct);
-      }, 800);
+      }, 600);
       return () => clearTimeout(timer);
-    } else {
-      handleTipUpdate(tipChoice);
     }
-  }, [tipChoice, tipCustomPct]);
+  }, [tipChoice, tipCustomPct, receipt, handleTipUpdate]);
 
-  // Auto-apply merchant default tip once receipt is loaded
+  // Auto-apply merchant default tip once receipt is loaded (if no existing tip)
   useEffect(() => {
     if (!merchantTipEnabled) return;
     if (pendingDefaultTip === null || !receiptId || !receipt) return;
@@ -2312,33 +2337,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       return;
     }
     const pct = pendingDefaultTip;
-    const subtotal = items
-      .filter((it) => !/processing fee|portal fee|tax|gratuity|tip|^shipping/i.test(it.label || ""))
-      .reduce((s, it) => s + Number(it.priceUsd || 0), 0);
-    if (subtotal <= 0) return;
-    const amount = Number(((pct / 100) * subtotal).toFixed(2));
-    if (amount <= 0) { setPendingDefaultTip(null); return; }
+    const baseSubtotal = feeMinusEnabled ? (itemsSubtotalUsd * unscaleFactor) : itemsSubtotalUsd;
+    if (baseSubtotal <= 0) return;
+    const amount = Number(((pct / 100) * baseSubtotal).toFixed(2));
+    if (amount <= 0) {
+      setPendingDefaultTip(null);
+      return;
+    }
 
     setTipChoice(String(pct));
     setPendingDefaultTip(null);
-    // Directly POST the default tip
-    (async () => {
-      setUpdatingTip(true);
-      try {
-        const res = await fetch(`/api/receipts/${receiptId}/tip`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tipAmount: amount }),
-        });
-        if (res.ok) {
-          const j = await res.json();
-          if (j.receipt) setReceipt(j.receipt);
-        }
-      } finally {
-        setUpdatingTip(false);
-      }
-    })();
-  }, [pendingDefaultTip, receiptId, receipt, merchantTipEnabled]);
+    handleTipUpdate(pct);
+  }, [pendingDefaultTip, receiptId, receipt, merchantTipEnabled, feeMinusEnabled, itemsSubtotalUsd, unscaleFactor, handleTipUpdate]);
 
   const baseWithoutFeeNoTipUsd = useMemo(
     () => +(itemsSubtotalUsd + taxUsd).toFixed(2),
@@ -2382,21 +2392,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   });
 
   // ── Stripe Headless Onramp State ──
-  const [isV2Active, setIsV2Active] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const cookies = window.document.cookie || "";
-      if (cookies.includes("pp_sandbox_stripe_v2=true")) {
-        setIsV2Active(true);
-      } else if (cookies.includes("pp_sandbox_stripe_v2=false")) {
-        setIsV2Active(false);
-      } else {
-        setIsV2Active(process.env.NEXT_PUBLIC_STRIPEV2 === "true" || process.env.STRIPEV2 === "true");
-      }
-    }
-  }, []);
-
   const [headlessEmailPrompt, setHeadlessEmailPrompt] = useState(false);
   const [showUnsupportedLinkModal, setShowUnsupportedLinkModal] = useState(false);
   const [displayError, setDisplayError] = useState<string | null>(null);
@@ -2994,6 +2989,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Onramp active state toggles
   const [stripeOnrampEnabled, setStripeOnrampEnabled] = useState<boolean>(true);
+  const [stripeOnrampV2Enabled, setStripeOnrampV2Enabled] = useState<boolean>(() => String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS_V2 || process.env.NEXT_PUBLIC_STRIPE_ONRAMP_V2 || "").toUpperCase() === "TRUE");
   const [coinbaseOnrampEnabled, setCoinbaseOnrampEnabled] = useState<boolean>(false);
   const [transakOnrampEnabled, setTransakOnrampEnabled] = useState<boolean>(false);
   const [rampnowOnrampEnabled, setRampnowOnrampEnabled] = useState<boolean>(false);
@@ -3060,6 +3056,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           if (typeof cfg.coinbaseOnrampEnabled === "boolean") setCoinbaseOnrampEnabled(cfg.coinbaseOnrampEnabled);
           if (typeof cfg.transakOnrampEnabled === "boolean") setTransakOnrampEnabled(cfg.transakOnrampEnabled);
           if (typeof cfg.rampnowOnrampEnabled === "boolean") setRampnowOnrampEnabled(cfg.rampnowOnrampEnabled);
+        }
+        if (typeof (cfg as any).stripeOnrampV2Enabled === "boolean") {
+          setStripeOnrampV2Enabled((cfg as any).stripeOnrampV2Enabled);
+        } else if (typeof (cfg as any).v2CheckoutEnabled === "boolean") {
+          setStripeOnrampV2Enabled((cfg as any).v2CheckoutEnabled);
         }
         setMerchantAchEnabled(cfg.achEnabled !== undefined ? !!cfg.achEnabled : true);
         if ((cfg as any).partnerAchEnabled !== undefined) {
@@ -3734,6 +3735,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [receipt?.billingAddress?.country, receipt?.shippingAddress?.country, clientCountry]);
 
   const stripeHeadless = (String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE") && !isExplicitlyUnsupportedRegion;
+
+  const isV2Active = useMemo(() => {
+    if (isExplicitlyUnsupportedRegion) return false;
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("v2") === "true" || sp.get("checkout") === "v2") return true;
+      if (sp.get("v2") === "false" || sp.get("checkout") === "v1") return false;
+
+      const cookies = window.document.cookie || "";
+      if (cookies.includes("pp_sandbox_stripe_v2=true")) return true;
+      if (cookies.includes("pp_sandbox_stripe_v2=false")) return false;
+    }
+    const envV2 = process.env.NEXT_PUBLIC_STRIPEV2 === "true" || process.env.STRIPEV2 === "true" || process.env.NEXT_PUBLIC_STRIPE_HEADLESS_V2 === "TRUE";
+    return stripeOnrampV2Enabled || (theme as any)?.stripeOnrampV2Enabled === true || (theme as any)?.v2CheckoutEnabled === true || envV2;
+  }, [isExplicitlyUnsupportedRegion, stripeOnrampV2Enabled, theme]);
 
   const payRef = useRef<HTMLDivElement | null>(null);
   const widgetRootRef = useRef<HTMLDivElement | null>(null);
@@ -6967,8 +6983,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 <button
                                   key={v}
                                   type="button"
-                                  onClick={() => setTipChoice(v)}
-                                  className={`pp-tip-btn px-2 py-1 rounded-md border text-xs transition-colors ${isLightText ? 'hover:bg-white/5' : 'hover:bg-black/5'} ${tipChoice === v ? (isLightText ? "bg-white/10 border-white/20" : "bg-black/10 border-black/20") : ""}`}
+                                  disabled={updatingTip}
+                                  onClick={() => {
+                                    tipUserInteractedRef.current = true;
+                                    setTipChoice(v);
+                                    if (v !== "custom") handleTipUpdate(v);
+                                  }}
+                                  className={`pp-tip-btn px-2 py-1 rounded-md border text-xs transition-colors ${isLightText ? 'hover:bg-white/5' : 'hover:bg-black/5'} ${tipChoice === v ? (isLightText ? "bg-white/10 border-white/20" : "bg-black/10 border-black/20") : ""} ${updatingTip ? "opacity-50 cursor-not-allowed" : ""}`}
                                   title={v === "custom" ? "Custom tip amount" : `Tip ${v}%`}
                                 >
                                   {v === "custom" ? "Custom" : `${v}%`}
@@ -6980,8 +7001,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   step="0.1"
                                   min="0"
                                   max="100"
+                                  disabled={updatingTip}
                                   value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
-                                  onChange={(e) => setTipCustomPct(Number(e.target.value))}
+                                  onChange={(e) => {
+                                    tipUserInteractedRef.current = true;
+                                    setTipCustomPct(Number(e.target.value));
+                                  }}
                                   placeholder="%"
                                   className={`h-7 px-2 rounded-md border text-xs w-20 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/75' : 'bg-black/5 border-black/10 text-black placeholder-black/75'}`}
                                   title="Enter tip percentage"
@@ -7766,6 +7791,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             type="button"
                             disabled={updatingTip}
                             onClick={() => {
+                              tipUserInteractedRef.current = true;
                               setTipChoice(v);
                               if (v !== "custom") handleTipUpdate(v);
                             }}
@@ -7783,7 +7809,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             max="100"
                             disabled={updatingTip}
                             value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
-                            onChange={(e) => setTipCustomPct(Number(e.target.value))}
+                            onChange={(e) => {
+                              tipUserInteractedRef.current = true;
+                              setTipCustomPct(Number(e.target.value));
+                            }}
                             onBlur={() => handleTipUpdate(tipCustomPct)}
                             placeholder="%"
                             className={`h-9 px-3 rounded-lg border text-sm w-24 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/75' : 'bg-black/5 border-black/10 text-black placeholder-black/75'}`}
