@@ -6,6 +6,8 @@ import {
   Edit2,
   Lock,
   Sparkles,
+  Shield,
+  ShieldCheck,
   AlertTriangle,
   FileText,
   BadgeCheck,
@@ -13,7 +15,14 @@ import {
   RefreshCw,
   CreditCard,
   Building2,
-  Loader2
+  Loader2,
+  Mail,
+  Phone,
+  MapPin,
+  User,
+  Calendar,
+  ArrowRight,
+  Search
 } from "lucide-react";
 
 export interface PortalPayAccordionCheckoutV2Props {
@@ -413,12 +422,12 @@ export function PortalPayAccordionCheckoutV2({
       {/* Top Global Trust Header */}
       <div className="flex items-center justify-between px-1 pb-1">
         <div className="flex items-center gap-1.5 text-amber-400">
-          <Sparkles className="w-4 h-4" />
+          <ShieldCheck className="w-4 h-4 text-emerald-400" />
           <span className="text-xs font-bold uppercase tracking-wider">
-            {theme?.brandName ? `${theme.brandName} Secure Checkout` : "Living Checkout Canvas (V2)"}
+            {theme?.brandName ? `${theme.brandName} Secure Checkout` : "Secure Checkout"}
           </span>
         </div>
-        <div className={`text-[10px] font-semibold flex items-center gap-1 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+        <div className={`text-[10px] font-semibold flex items-center gap-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
           <Lock className="w-3 h-3 text-emerald-400" />
           <span>256-Bit Encrypted</span>
         </div>
@@ -448,7 +457,7 @@ export function PortalPayAccordionCheckoutV2({
       )}
 
       {/* ==================================================================== */}
-      {/* STEP 1: ACCOUNT & CONTACT */}
+      {/* STEP 1: CONTACT & ACCOUNT */}
       {/* ==================================================================== */}
       <div
         className={`rounded-2xl border transition-all duration-300 overflow-hidden ${
@@ -470,8 +479,8 @@ export function PortalPayAccordionCheckoutV2({
         >
           <div className="flex items-center gap-2.5">
             {activeStep > 1 ? (
-              <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40 text-xs font-bold">
-                ✓
+              <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40">
+                <Check className="w-3 h-3 text-emerald-400 stroke-[3]" />
               </div>
             ) : (
               <div className="w-5 h-5 rounded-full bg-amber-500 text-black flex items-center justify-center text-xs font-bold">
@@ -480,11 +489,14 @@ export function PortalPayAccordionCheckoutV2({
             )}
             <div>
               <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
-                1. Account & Contact Information
+                1. Contact & Account Information
               </h4>
               {activeStep > 1 && (
-                <p className={`text-[11px] font-medium opacity-70 ${isLightText ? "text-white" : "text-black"}`}>
-                  {email} {phone ? `• ${phone}` : ""} {country ? `(${country})` : ""}
+                <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
+                  <Mail className="w-2.5 h-2.5 opacity-60" />
+                  <span>{email}</span>
+                  {phone && <span>• {phone}</span>}
+                  {country && <span>({country})</span>}
                 </p>
               )}
             </div>
@@ -503,13 +515,14 @@ export function PortalPayAccordionCheckoutV2({
         {activeStep === 1 && (
           <form onSubmit={handleContactSubmit} className="p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10">
             <div>
-              <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                Email Address
+              <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                <Mail className="w-3 h-3" />
+                <span>Email Address</span>
               </label>
               <input
                 type="email"
                 required
-                placeholder="email@example.com"
+                placeholder="name@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
@@ -522,8 +535,9 @@ export function PortalPayAccordionCheckoutV2({
 
             <div className="grid grid-cols-3 gap-2">
               <div className="col-span-2">
-                <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                  Mobile Phone (SMS)
+                <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                  <Phone className="w-3 h-3" />
+                  <span>Mobile Phone (SMS)</span>
                 </label>
                 <input
                   type="tel"
@@ -581,18 +595,24 @@ export function PortalPayAccordionCheckoutV2({
             <button
               type="submit"
               disabled={isSubmittingContact || !email}
-              className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg"
+              className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg"
               style={{ backgroundColor: primaryColor, color: "#fff" }}
             >
               {isSubmittingContact ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Checking Account & Link...</span>
+                  <span>Verifying Contact Information...</span>
                 </>
               ) : authElement ? (
-                "Enter 6-Digit Code Above ⬆"
+                <>
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Enter 6-Digit Code Above</span>
+                </>
               ) : (
-                "Continue to Identity Verification ➔"
+                <>
+                  <span>Continue to Identity Verification</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </>
               )}
             </button>
           </form>
@@ -600,7 +620,7 @@ export function PortalPayAccordionCheckoutV2({
       </div>
 
       {/* ==================================================================== */}
-      {/* STEP 2: LEGAL RESIDENTIAL IDENTITY (L0 / L1 / L2) */}
+      {/* STEP 2: LEGAL & RESIDENTIAL IDENTITY */}
       {/* ==================================================================== */}
       <div
         className={`rounded-2xl border transition-all duration-300 relative ${
@@ -624,8 +644,8 @@ export function PortalPayAccordionCheckoutV2({
         >
           <div className="flex items-center gap-2.5">
             {activeStep > 2 || effectiveStatus === "verified" || isAllKycCompleted ? (
-              <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40 text-xs font-bold">
-                ✓
+              <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40">
+                <Check className="w-3 h-3 text-emerald-400 stroke-[3]" />
               </div>
             ) : (
               <div
@@ -639,7 +659,7 @@ export function PortalPayAccordionCheckoutV2({
             <div>
               <div className="flex items-center gap-2">
                 <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
-                  2. Legal Residential Identity
+                  2. Identity & Residential Verification
                 </h4>
                 {/* KYC Level Badge Pill */}
                 <span
@@ -654,15 +674,17 @@ export function PortalPayAccordionCheckoutV2({
                   Tier {isL2Requirement ? "L2" : isL1Requirement ? "L1" : "L0"}
                 </span>
                 {isL2Approved && (
-                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                    Verified ✓
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" /> Verified
                   </span>
                 )}
               </div>
 
               {(activeStep > 2 || effectiveStatus === "verified") && (
-                <p className={`text-[11px] font-medium opacity-70 ${isLightText ? "text-white" : "text-black"}`}>
-                  {firstName} {lastName} {line1 ? `• ${line1}, ${city}` : "• Verified"}
+                <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
+                  <User className="w-2.5 h-2.5 opacity-60" />
+                  <span>{firstName} {lastName}</span>
+                  {line1 && <span>• {line1}, {city}</span>}
                 </p>
               )}
             </div>
@@ -687,7 +709,7 @@ export function PortalPayAccordionCheckoutV2({
               <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-[11px] flex items-center gap-2">
                 <BadgeCheck className="w-4 h-4 shrink-0 text-indigo-400" />
                 <span>
-                  <strong>Tier Step-Up Required:</strong> Please provide Date of Birth and SSN to unlock higher transaction limits.
+                  <strong>Verification Required:</strong> Please enter your Date of Birth and Social Security Number to satisfy compliance requirements.
                 </span>
               </div>
             )}
@@ -708,13 +730,13 @@ export function PortalPayAccordionCheckoutV2({
                 )}
                 <span>
                   {isL2Approved ? (
-                    <strong>Level 2 Document Verification Approved:</strong>
+                    <strong>Document Verification Approved:</strong>
                   ) : (
-                    <strong>Level 2 Verification:</strong>
+                    <strong>Document Verification Required:</strong>
                   )}{" "}
                   {isL2Approved
                     ? "Government ID and compliance checks verified."
-                    : "Government ID or Passport upload is required to unlock this transaction tier."}
+                    : "A valid government-issued ID or passport is required to unlock this transaction tier."}
                 </span>
               </div>
             )}
@@ -722,8 +744,9 @@ export function PortalPayAccordionCheckoutV2({
             {/* Legal Name */}
             <div className="grid grid-cols-2 gap-2.5">
               <div>
-                <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                  First Name
+                <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                  <User className="w-3 h-3" />
+                  <span>First Name</span>
                 </label>
                 <input
                   type="text"
@@ -737,8 +760,9 @@ export function PortalPayAccordionCheckoutV2({
                 />
               </div>
               <div>
-                <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                  Last Name
+                <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                  <User className="w-3 h-3" />
+                  <span>Last Name</span>
                 </label>
                 <input
                   type="text"
@@ -757,12 +781,13 @@ export function PortalPayAccordionCheckoutV2({
             {!isAddressParsed && !city && !stateCode ? (
               <div className="space-y-1.5">
                 <div className="relative">
-                  <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                    Residential Address (from ID)
+                  <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                    <MapPin className="w-3 h-3" />
+                    <span>Residential Address</span>
                   </label>
                   <input
                     type="text"
-                    placeholder="Start typing residential address (e.g. 123 Main St)..."
+                    placeholder="Enter residential street address (e.g., 123 Main St)..."
                     value={line1}
                     onChange={(e) => {
                       setLine1(e.target.value);
@@ -788,17 +813,23 @@ export function PortalPayAccordionCheckoutV2({
                           onClick={() => handleSelectSuggestion(item)}
                           className="w-full text-left px-3 py-2 text-xs hover:bg-amber-500/10 transition flex flex-col"
                         >
-                          <span className="font-bold">{item.mainText || item.description}</span>
-                          {item.secondaryText && <span className="text-[10px] opacity-60">{item.secondaryText}</span>}
+                          <span className="font-bold flex items-center gap-1.5">
+                            <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                            {item.mainText || item.description}
+                          </span>
+                          {item.secondaryText && <span className="text-[10px] opacity-60 ml-4.5">{item.secondaryText}</span>}
                         </button>
                       ))}
                     </div>
                   )}
                 </div>
                 <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-amber-400 font-medium">💡 Must match primary residence on government ID.</span>
+                  <span className="text-amber-400 font-medium flex items-center gap-1">
+                    <Shield className="w-3 h-3" />
+                    <span>Address must match primary residence on government ID.</span>
+                  </span>
                   <button type="button" onClick={() => setIsAddressParsed(true)} className="underline text-indigo-300">
-                    Enter manually
+                    Enter address manually
                   </button>
                 </div>
               </div>
@@ -806,7 +837,9 @@ export function PortalPayAccordionCheckoutV2({
               /* Expanded Address Component Inputs */
               <div className="space-y-2 animate-in fade-in duration-200">
                 <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-emerald-400 font-bold">✓ Address Components Verified</span>
+                  <span className="text-emerald-400 font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Address Verified
+                  </span>
                   <button
                     type="button"
                     onClick={() => {
@@ -816,15 +849,16 @@ export function PortalPayAccordionCheckoutV2({
                       setStateCode("");
                       setZipCode("");
                     }}
-                    className="underline opacity-70"
+                    className="underline opacity-70 flex items-center gap-1"
                   >
-                    ✏️ Search again
+                    <Search className="w-3 h-3" /> Search address again
                   </button>
                 </div>
 
                 <div>
-                  <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                    Street Address
+                  <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                    <MapPin className="w-3 h-3" />
+                    <span>Street Address</span>
                   </label>
                   <input
                     type="text"
@@ -865,7 +899,7 @@ export function PortalPayAccordionCheckoutV2({
                   </div>
                   <div className="col-span-3">
                     <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                      Zip
+                      Zip Code
                     </label>
                     <input
                       type="text"
@@ -884,8 +918,9 @@ export function PortalPayAccordionCheckoutV2({
             {isL1Requirement && (
               <div className="grid grid-cols-2 gap-2.5 pt-1.5 border-t border-white/10 animate-in fade-in duration-200">
                 <div>
-                  <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                    Date of Birth
+                  <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                    <Calendar className="w-3 h-3" />
+                    <span>Date of Birth</span>
                   </label>
                   <input
                     type="date"
@@ -898,8 +933,9 @@ export function PortalPayAccordionCheckoutV2({
                   />
                 </div>
                 <div>
-                  <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                    SSN (9 Digits)
+                  <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                    <Shield className="w-3 h-3" />
+                    <span>SSN (9 Digits)</span>
                   </label>
                   <input
                     type="text"
@@ -931,23 +967,23 @@ export function PortalPayAccordionCheckoutV2({
                   {isVerifyingDocs ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Verifying Government Documents with Stripe...</span>
+                      <span>Verifying identification with Stripe...</span>
                     </>
                   ) : isL2Approved ? (
                     <>
                       <CheckCircle2 className="w-4 h-4 text-white" />
-                      <span>Government ID Verified ✓</span>
+                      <span>Government ID Verified</span>
                     </>
                   ) : (
                     <>
                       <FileText className="w-4 h-4" />
-                      <span>Verify Government ID / Passport 🪪</span>
+                      <span>Verify Government-Issued ID</span>
                     </>
                   )}
                 </button>
                 {!isL2Approved && (
                   <p className="text-[10px] text-purple-300 text-center opacity-80">
-                    Upload official government ID to complete Level 2 verification.
+                    A valid government-issued ID or passport is required for Level 2 verification.
                   </p>
                 )}
               </div>
@@ -964,7 +1000,7 @@ export function PortalPayAccordionCheckoutV2({
                 (isL1Requirement && (!dob || ssn.replace(/\D/g, "").length !== 9)) ||
                 (isL2Requirement && !isL2Approved)
               }
-              className={`w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-lg mt-2 ${
+              className={`w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg mt-2 ${
                 isL2Requirement && !isL2Approved
                   ? "bg-white/10 text-white/40 cursor-not-allowed border border-white/10"
                   : ""
@@ -978,12 +1014,18 @@ export function PortalPayAccordionCheckoutV2({
               {isSubmittingIdentity ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Verifying Identity...</span>
+                  <span>Verifying Identity Details...</span>
                 </>
               ) : isL2Requirement && !isL2Approved ? (
-                <span>Complete Government ID Verification Above ⬆</span>
+                <>
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Complete ID Verification Above to Proceed</span>
+                </>
               ) : (
-                "Save & Continue to Payment ➔"
+                <>
+                  <span>Save & Continue to Payment</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </>
               )}
             </button>
           </form>
@@ -1013,8 +1055,8 @@ export function PortalPayAccordionCheckoutV2({
         >
           <div className="flex items-center gap-2.5">
             {activeStep > 3 ? (
-              <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40 text-xs font-bold">
-                ✓
+              <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40">
+                <Check className="w-3 h-3 text-emerald-400 stroke-[3]" />
               </div>
             ) : (
               <div
@@ -1030,8 +1072,9 @@ export function PortalPayAccordionCheckoutV2({
                 3. Payment Method
               </h4>
               {activeStep > 3 && (
-                <p className={`text-[11px] font-medium opacity-70 ${isLightText ? "text-white" : "text-black"}`}>
-                  Authorized via Stripe Secure Payment
+                <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
+                  <CreditCard className="w-2.5 h-2.5 opacity-60" />
+                  <span>Authorized via Stripe Secure Payment</span>
                 </p>
               )}
             </div>
@@ -1063,7 +1106,7 @@ export function PortalPayAccordionCheckoutV2({
                 {/* Subtitle explaining Stripe auto-progression on click */}
                 <div className="flex items-center justify-center gap-1.5 py-1 text-[11px] font-semibold text-amber-400/90 text-center animate-in fade-in">
                   <Lock className="w-3 h-3 text-emerald-400 shrink-0" />
-                  <span>Click &quot;Use this payment method&quot; in the form above to complete checkout.</span>
+                  <span>Please confirm your payment method in the secure form above to complete checkout.</span>
                 </div>
               </div>
             ) : (
@@ -1079,7 +1122,7 @@ export function PortalPayAccordionCheckoutV2({
                         : "bg-white/5 border-white/10 text-white/70"
                     }`}
                   >
-                    <span> Apple Pay</span>
+                    <span>Apple Pay</span>
                   </button>
                   <button
                     type="button"
@@ -1090,7 +1133,7 @@ export function PortalPayAccordionCheckoutV2({
                         : "bg-white/5 border-white/10 text-white/70"
                     }`}
                   >
-                    <span>G Google Pay</span>
+                    <span>Google Pay</span>
                   </button>
                   <button
                     type="button"
@@ -1102,7 +1145,7 @@ export function PortalPayAccordionCheckoutV2({
                     }`}
                   >
                     <CreditCard className="w-3.5 h-3.5" />
-                    <span>Debit / Credit Card</span>
+                    <span>Credit / Debit Card</span>
                   </button>
                   <button
                     type="button"
@@ -1122,7 +1165,7 @@ export function PortalPayAccordionCheckoutV2({
                   type="button"
                   onClick={handleSimulatedPaymentSubmit}
                   disabled={isSubmittingPayment}
-                  className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-xl mt-3"
+                  className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-xl mt-3"
                   style={{ backgroundColor: primaryColor, color: "#fff" }}
                 >
                   {isSubmittingPayment ? (
@@ -1131,7 +1174,11 @@ export function PortalPayAccordionCheckoutV2({
                       <span>Authorizing Payment...</span>
                     </>
                   ) : (
-                    `Simulate Pay $${amountUsd.toFixed(2)} USD ➔`
+                    <>
+                      <Lock className="w-3.5 h-3.5" />
+                      <span>Authorize Payment (${amountUsd.toFixed(2)} USD)</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </>
                   )}
                 </button>
               </div>
@@ -1165,11 +1212,15 @@ export function PortalPayAccordionCheckoutV2({
                   : "bg-white/10 text-white/40"
               }`}
             >
-              {fulfillmentStage === "complete" ? "✓" : "4"}
+              {fulfillmentStage === "complete" ? (
+                <Check className="w-3 h-3 text-black stroke-[3]" />
+              ) : (
+                "4"
+              )}
             </div>
             <div>
               <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
-                4. Order Processing & Fulfillment
+                4. Payment & Order Fulfillment
               </h4>
             </div>
           </div>
@@ -1187,8 +1238,8 @@ export function PortalPayAccordionCheckoutV2({
                   <Sparkles className="w-4 h-4 shrink-0" />
                   <span>
                     {fulfillmentStage === "processing"
-                      ? "Fulfilling Order & Settling Split Contract..."
-                      : "Generating Blockchain Receipt..."}
+                      ? "Processing payment and contract settlement..."
+                      : "Generating verification receipt..."}
                   </span>
                 </div>
               </div>
@@ -1198,7 +1249,7 @@ export function PortalPayAccordionCheckoutV2({
                 <div className="flex items-center gap-2 text-emerald-400">
                   <CheckCircle2 className="w-5 h-5" />
                   <span className="text-xs font-bold uppercase tracking-wider">
-                    Order #{receiptId} Completed!
+                    Order #{receiptId} Confirmed
                   </span>
                 </div>
 
@@ -1215,9 +1266,9 @@ export function PortalPayAccordionCheckoutV2({
                     <span className="opacity-60">Payment Method:</span>
                     <span className="font-semibold">
                       {selectedPaymentType === "applePay"
-                        ? " Apple Pay"
+                        ? "Apple Pay"
                         : selectedPaymentType === "googlePay"
-                        ? "G Google Pay"
+                        ? "Google Pay"
                         : selectedPaymentType === "bank"
                         ? "US Bank Account (ACH)"
                         : "Card (Stripe Onramp)"}
@@ -1225,7 +1276,10 @@ export function PortalPayAccordionCheckoutV2({
                   </div>
                   <div className="flex justify-between">
                     <span className="opacity-60">Status:</span>
-                    <span className="text-emerald-400 font-bold">Fulfilled & Verified ✓</span>
+                    <span className="text-emerald-400 font-bold inline-flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Payment Settled & Verified</span>
+                    </span>
                   </div>
                 </div>
 
@@ -1235,7 +1289,7 @@ export function PortalPayAccordionCheckoutV2({
                   className="w-full mt-2 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/10 flex items-center justify-center gap-2 transition"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Restart Checkout Simulation</span>
+                  <span>Reset Checkout Simulation</span>
                 </button>
               </div>
             )}

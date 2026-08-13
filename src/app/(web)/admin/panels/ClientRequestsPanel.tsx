@@ -14,7 +14,9 @@ import { ReserveSettings } from "@/components/admin/reserve/ReserveSettings";
 import { TouchpointThemeCards, ThemePickerModal } from "@/components/admin/TouchpointThemePicker";
 import { parseKioskConfig } from "@/lib/themes";
 import type { TouchpointType, ColorMode, KioskLayout } from "@/lib/themes";
-import { Lock, CreditCard, Lightbulb, AlertTriangle, HelpCircle, Inbox, Store, Utensils, Sun, Moon, Grid, List, Newspaper, Sparkles, Ban, Check, Key, RefreshCw, Eye, EyeOff, Copy, Trash2, Plus } from "lucide-react";
+import { Lock, CreditCard, Lightbulb, AlertTriangle, HelpCircle, Inbox, Store, Utensils, Sun, Moon, Grid, List, Newspaper, Sparkles, Ban, Check, Key, RefreshCw, Eye, EyeOff, Copy, Trash2, Plus, FileDown } from "lucide-react";
+import { pdf } from "@react-pdf/renderer";
+import { ClientRequestsKYBPDF } from "@/components/reports/ClientRequestsKYBPDF";
 
 type ClientRequest = {
     id: string;
@@ -664,6 +666,85 @@ export default function ClientRequestsPanel() {
 
     const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
     const paginatedItems = filteredItems.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+    const [exportingPdf, setExportingPdf] = useState(false);
+
+    const exportKYBPdf = useCallback(async (scope: "filtered" | "all" | "single", singleReq?: ClientRequest) => {
+        setExportingPdf(true);
+        try {
+            const targetItems = scope === "single" && singleReq
+                ? [singleReq]
+                : scope === "filtered"
+                    ? filteredItems
+                    : items;
+
+            if (!targetItems || targetItems.length === 0) {
+                setError("No client requests available to export.");
+                return;
+            }
+
+            const now = new Date();
+            const dateStr = now.toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+            });
+
+            const activeBrandName = (fetchedBrand?.name || brand?.name || brandKey || "PortalPay");
+            const activeBrandColor = (fetchedBrand?.colors?.primary || brand?.colors?.primary || "#10B981");
+
+            let scopeLabel = "All Active & Filtered Merchants";
+            if (scope === "single" && singleReq) {
+                scopeLabel = `Single Client: ${singleReq.legalBusinessName || singleReq.shopName || singleReq.wallet.slice(0, 8)}`;
+            } else if (statusFilter !== "all") {
+                scopeLabel = `Status Filter: ${statusFilter.toUpperCase()} (${targetItems.length})`;
+            } else if (searchQuery.trim()) {
+                scopeLabel = `Search Filter: "${searchQuery}" (${targetItems.length})`;
+            } else {
+                scopeLabel = `All Registered Merchants (${targetItems.length})`;
+            }
+
+            const doc = (
+                <ClientRequestsKYBPDF
+                    brandName={activeBrandName}
+                    brandKey={brandKey}
+                    brandColor={activeBrandColor}
+                    generatedAt={dateStr}
+                    generatedBy={account?.address || "Admin Operator"}
+                    scopeLabel={scopeLabel}
+                    items={targetItems as any}
+                    summaryStats={counts ? {
+                        total: counts.all ?? targetItems.length,
+                        approved: counts.approved ?? 0,
+                        pending: counts.pending ?? 0,
+                        rejected: counts.rejected ?? 0,
+                        blocked: counts.blocked ?? 0,
+                        orphaned: counts.orphaned ?? 0,
+                    } : undefined}
+                />
+            );
+
+            const blob = await pdf(doc).toBlob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            const cleanSlug = (singleReq?.slug || singleReq?.shopName || singleReq?.wallet?.slice(0, 8) || "merchant")
+                .toLowerCase()
+                .replace(/[^a-z0-9_-]/g, "_");
+            const filenameClean = scope === "single" && singleReq
+                ? `KYB_${cleanSlug}_${now.toISOString().split("T")[0]}.pdf`
+                : `KYB_Dossier_${brandKey || "portalpay"}_${now.toISOString().split("T")[0]}.pdf`;
+            a.download = filenameClean;
+            a.click();
+            URL.revokeObjectURL(url);
+            setInfo(`Successfully exported KYB PDF dossier (${targetItems.length} record${targetItems.length === 1 ? "" : "s"})`);
+        } catch (err: any) {
+            console.error("[ClientRequestsPanel] PDF export error:", err);
+            setError("Failed to generate KYB PDF: " + (err?.message || "Unknown error"));
+        } finally {
+            setExportingPdf(false);
+        }
+    }, [filteredItems, items, brandKey, fetchedBrand, brand, statusFilter, searchQuery, counts, account?.address]);
 
     const agentsBps = currentAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
     const merchantBps = 10000 - currentPlatformBps - currentPartnerBps - agentsBps;
@@ -1358,6 +1439,24 @@ export default function ClientRequestsPanel() {
                         </p>
                     </div>
                     <div className="flex items-center gap-3">
+                        <button
+                            onClick={() => exportKYBPdf("filtered")}
+                            disabled={loading || exportingPdf || filteredItems.length === 0}
+                            className="h-10 px-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 text-sm font-semibold transition-all shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                            title="Export bespoke KYB & Compliance PDF dossier for merchants"
+                        >
+                            {exportingPdf ? (
+                                <>
+                                    <RefreshCw className="w-4 h-4 animate-spin" />
+                                    <span>Exporting PDF...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <FileDown className="w-4 h-4" />
+                                    <span>Export KYB PDF ({filteredItems.length})</span>
+                                </>
+                            )}
+                        </button>
                         <button className="h-10 px-4 rounded-lg border border-foreground/[0.05] bg-background text-sm font-medium hover:bg-foreground/[0.02] transition-colors shadow-sm" onClick={load} disabled={loading}>
                             {loading ? "Refreshing…" : "Refresh"}
                         </button>
@@ -1731,6 +1830,15 @@ export default function ClientRequestsPanel() {
                                                         </button>
                                                     )}
                                                     <button
+                                                        className="px-2.5 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                                                        onClick={() => exportKYBPdf("single", req)}
+                                                        title="Export bespoke KYB PDF for this merchant"
+                                                        disabled={exportingPdf}
+                                                    >
+                                                        <FileDown className="w-3.5 h-3.5" />
+                                                        <span className="hidden xl:inline">KYB PDF</span>
+                                                    </button>
+                                                    <button
                                                         className="px-3 py-1.5 rounded-lg bg-gray-500/10 hover:bg-gray-500/20 text-gray-400 border border-gray-500/20 text-xs font-semibold transition-colors"
                                                         onClick={() => {
                                                             console.log("[ClientRequestsPanel] Clicked Delete button. req.id =", req.id, "req =", req);
@@ -1763,14 +1871,30 @@ export default function ClientRequestsPanel() {
                                                         </div>
 
                                                         {(activeTabs[req.id] || "details") === "details" ? (
-                                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in slide-in-from-top-1 duration-200">
-                                                                <div className="space-y-3">
-                                                                    <h4 className="text-xs font-mono uppercase text-muted-foreground tracking-wider mb-2">Business Details</h4>
-                                                                    <div className="space-y-2">
-                                                                        <div className="grid grid-cols-[80px_1fr] gap-2 text-sm">
-                                                                            <span className="text-muted-foreground">Legal Name</span>
-                                                                            <span className="select-all">{req.legalBusinessName || "—"}</span>
-                                                                        </div>
+                                                            <div className="space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                                                                <div className="flex items-center justify-between pb-2 border-b border-white/5">
+                                                                    <div className="text-xs text-muted-foreground">
+                                                                        Complete Know Your Business (KYB) compliance dossier and registered legal profile.
+                                                                    </div>
+                                                                    <button
+                                                                        onClick={() => exportKYBPdf("single", req)}
+                                                                        disabled={exportingPdf}
+                                                                        className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                                                                        title="Export bespoke KYB PDF card for this client"
+                                                                    >
+                                                                        <FileDown className="w-3.5 h-3.5" />
+                                                                        <span>Export Client KYB (PDF)</span>
+                                                                    </button>
+                                                                </div>
+
+                                                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                                                    <div className="space-y-3">
+                                                                        <h4 className="text-xs font-mono uppercase text-muted-foreground tracking-wider mb-2">Business Details</h4>
+                                                                        <div className="space-y-2">
+                                                                            <div className="grid grid-cols-[80px_1fr] gap-2 text-sm">
+                                                                                <span className="text-muted-foreground">Legal Name</span>
+                                                                                <span className="select-all">{req.legalBusinessName || "—"}</span>
+                                                                            </div>
                                                                         <div className="grid grid-cols-[80px_1fr] gap-2 text-sm">
                                                                             <span className="text-muted-foreground">DBA Name</span>
                                                                             <span className="select-all">{req.shopName}</span>
@@ -1840,6 +1964,7 @@ export default function ClientRequestsPanel() {
                                                                     </div>
                                                                 </div>
                                                             </div>
+                                                        </div>
                                                         ) : (activeTabs[req.id] === "team") ? (
                                                             <div className="animate-in fade-in slide-in-from-top-1 duration-200">
                                                                 <TeamManagementPanel
