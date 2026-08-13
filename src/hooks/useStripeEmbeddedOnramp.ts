@@ -934,8 +934,8 @@ export function useStripeEmbeddedOnramp({
                     return;
                   }
                 } else {
-                  console.log("[EMBEDDED ONRAMP] Global KYC check: L0 unverified. Directing to input...");
-                  setKycTierRequired(l0Tier?.verification_status === "rejected" ? "l1" : "l0");
+                  console.log("[EMBEDDED ONRAMP] Global KYC check: L0 unverified/rejected. Directing to full L0 input...");
+                  setKycTierRequired("l0");
                   updateStep("collecting_kyc");
                   isVerifyingRef.current = false;
                   isRunningRef.current = false;
@@ -1095,6 +1095,23 @@ export function useStripeEmbeddedOnramp({
     onErrorRef.current?.(err instanceof Error ? err : new Error(friendlyMessage));
     setAuthElement(null);
     setPaymentElement(null);
+
+    // Track client error explicitly in database
+    if (receiptId && merchantWallet) {
+      fetch("/api/receipts/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          receiptId,
+          wallet: merchantWallet,
+          status: "error",
+          error: friendlyMessage,
+          stripeSessionId: sessionIdRef.current,
+          customerEmail: activeEmailRef.current,
+        })
+      }).catch(() => {});
+    }
+
     if (detectedCardFunding !== "us_bank_account") {
       setDetectedCardFunding(null);
       setDetectedCardBrand(null);
@@ -1112,7 +1129,7 @@ export function useStripeEmbeddedOnramp({
     }
     updateStep(isCancellation ? "idle" : "error");
     onErrorRef.current?.(new Error(friendlyMessage));
-  }, [detectedCardFunding, updateStep]);
+  }, [detectedCardFunding, updateStep, receiptId, merchantWallet]);
 
   const pollKycStatus = useCallback(async (custId: string, targetTier?: "l0" | "l1" | "l2"): Promise<boolean> => {
     const startMsg = `[KYC POLL START] Polling KYC status for customer ${custId} (target: ${targetTier || 'legacy'})`;
@@ -2585,6 +2602,34 @@ export function useStripeEmbeddedOnramp({
       }
 
       console.error("[EMBEDDED ONRAMP] submitKycInfo error:", err);
+      const rawMsg = String(err?.message || err || "").toLowerCase();
+      const isAddressError = rawMsg.includes("address") || rawMsg.includes("postal") || rawMsg.includes("zip") || rawMsg.includes("subdivision") || rawMsg.includes("street") || rawMsg.includes("city");
+
+      if (isAddressError) {
+        console.warn("[EMBEDDED ONRAMP] Address verification failed on L0 submission. Displaying explicit error and allowing L0 address retry.");
+        const friendlyAddrErr = "We couldn't verify your home address. Please check your street address, city, and postal code and try again.";
+        setError(friendlyAddrErr);
+        setKycTierRequired("l0");
+        updateStep("collecting_kyc");
+        isRunningRef.current = false;
+
+        if (receiptId && merchantWallet) {
+          fetch("/api/receipts/status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              receiptId,
+              wallet: merchantWallet,
+              status: "error",
+              error: err?.message || friendlyAddrErr,
+              stripeSessionId: sessionIdRef.current,
+              customerEmail: activeEmailRef.current,
+            })
+          }).catch(() => {});
+        }
+        return;
+      }
+
       handleError(err?.message || "KYC submission failed");
     }
   }, [pollKycStatus, runCheckoutLoop, handleError, detectedCardFunding]);
@@ -2665,8 +2710,8 @@ export function useStripeEmbeddedOnramp({
         onramp = await loadCryptoOnrampAndInitialize(publishableKey, {
           theme,
           wallets: {
-            applePay: "auto",
-            googlePay: "auto",
+            applePay: "always",
+            googlePay: "always",
           },
         });
 
@@ -3178,7 +3223,7 @@ export function useStripeEmbeddedOnramp({
           onramp.collectPaymentMethod(
             {
               payment_method_types: achEnabled ? ["card", "us_bank_account"] : ["card"],
-              wallets: { applePay: "auto", googlePay: "auto" },
+              wallets: { applePay: "always", googlePay: "always" },
             },
             (result: any) => {
               console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);

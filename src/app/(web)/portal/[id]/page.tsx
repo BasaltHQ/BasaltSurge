@@ -19,6 +19,7 @@ import { fetchEthRates, fetchUsdRates, fetchBtcUsd, fetchXrpUsd, type EthRates }
 import { SUPPORTED_CURRENCIES, convertFromUsd, formatCurrency, getCurrencyFlag, roundForCurrency } from "@/lib/fx";
 import { useStripeOnrampInterceptor } from "@/hooks/useStripeOnrampInterceptor";
 import { useStripeEmbeddedOnramp } from "@/hooks/useStripeEmbeddedOnramp";
+import { PortalPayAccordionCheckoutV2 } from "@/components/checkout/PortalPayAccordionCheckoutV2";
 import { usePortalLogger } from "@/hooks/usePortalLogger";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
@@ -2543,6 +2544,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
   const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
   const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
+  const [isAddressParsed, setIsAddressParsed] = useState(false);
+  const [isV2Active, setIsV2Active] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const cookies = window.document.cookie || "";
+      if (cookies.includes("pp_sandbox_stripe_v2=true")) {
+        setIsV2Active(true);
+      } else if (cookies.includes("pp_sandbox_stripe_v2=false")) {
+        setIsV2Active(false);
+      } else {
+        setIsV2Active(process.env.NEXT_PUBLIC_STRIPEV2 === "true");
+      }
+    }
+  }, []);
 
   const STATE_MAP: Record<string, string> = {
     "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA", "colorado": "CO", "connecticut": "CT",
@@ -2603,6 +2619,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
     setAddressSuggestions([]);
     setShowAddressSuggestions(false);
+    setIsAddressParsed(true);
   };
 
   // Sync shipping info to KYC form demographics when toggle is active
@@ -5046,6 +5063,25 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   Done
                 </button>
               </div>
+            ) : isV2Active ? (
+              <PortalPayAccordionCheckoutV2
+                theme={theme}
+                isLightText={isLightText}
+                email={shipEmail || headlessEmailInput}
+                phone={headlessPhoneInput}
+                fullName={shipName}
+                amountUsd={totalUsd}
+                receiptId={receiptId}
+                headlessError={headlessError}
+                kycTierRequired={kycTierRequired}
+                isAllKycCompleted={isAllKycCompleted}
+                onHeadlessSubmitEmailPhone={startHeadlessOnramp}
+                onSubmitKycInfo={submitKycInfo}
+                paymentElement={headlessPaymentElement}
+                authElement={headlessAuthElement}
+                headlessStatus={headlessStatus}
+                headlessStep={headlessStep}
+              />
             ) : headlessStep === "collecting_kyc" ? (
               <div className="w-full flex flex-col items-stretch justify-start p-1 md:p-2 animate-in zoom-in duration-300 pr-1 text-left">
                 <div className="mb-3">
@@ -5060,6 +5096,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 </div>
 
                 <div className="space-y-3.5">
+                  {headlessError && (
+                    <div className={`p-3 rounded-xl border text-xs font-medium mb-2 ${
+                      isLightText 
+                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' 
+                        : 'bg-amber-50 border-amber-300 text-amber-800'
+                    }`}>
+                      ⚠️ {headlessError}
+                    </div>
+                  )}
                   {(kycTierRequired as string) === "l0" ? (
                     <>
                       {/* L0 Name Fields */}
@@ -5144,7 +5189,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           }}
                         >
                           <option value="US">United States</option>
-                          <option value="CA">Canada</option>
                           <option value="GB">United Kingdom</option>
                           <option value="DE">Germany</option>
                           <option value="FR">France</option>
@@ -5156,133 +5200,175 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       </div>
 
                       {/* L0 Address Fields */}
-                      <div className="space-y-2">
-                        <div className="relative">
-                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Home Address</label>
-                          <input
-                            type="text"
-                            placeholder="Start typing your home address..."
-                            autoComplete="address-line1"
-                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                              }`}
-                            value={kycLine1}
-                            onChange={(e) => {
-                              setKycLine1(e.target.value);
-                              fetchAddressSuggestions(e.target.value);
-                            }}
-                            onFocus={() => addressSuggestions.length > 0 && setShowAddressSuggestions(true)}
-                          />
+                      {!isAddressParsed && !kycCity && !kycState ? (
+                        <div className="space-y-2">
+                          <div className="relative">
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Residential Address (from ID)</label>
+                            <input
+                              type="text"
+                              placeholder="Start typing your residential address (e.g. 123 Main St)..."
+                              autoComplete="address-line1"
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                }`}
+                              value={kycLine1}
+                              onChange={(e) => {
+                                setKycLine1(e.target.value);
+                                fetchAddressSuggestions(e.target.value);
+                              }}
+                              onFocus={() => addressSuggestions.length > 0 && setShowAddressSuggestions(true)}
+                            />
 
-                          {/* Google Places Autocomplete Predictions Dropdown */}
-                          {showAddressSuggestions && addressSuggestions.length > 0 && (
-                            <div className={`absolute z-50 left-0 right-0 mt-1 rounded-xl shadow-2xl overflow-hidden border divide-y ${
-                              isLightText
-                                ? 'bg-neutral-900 border-white/15 divide-white/10 text-white'
-                                : 'bg-white border-black/15 divide-black/10 text-black'
-                            }`}>
-                              {/* Header with Mobile Close Button */}
-                              <div className={`px-3 py-1.5 flex items-center justify-between text-[10px] font-semibold tracking-wider uppercase border-b ${
-                                isLightText ? 'bg-white/5 border-white/10 text-white/60' : 'bg-black/5 border-black/10 text-black/60'
+                            {/* Google Places Autocomplete Predictions Dropdown */}
+                            {showAddressSuggestions && addressSuggestions.length > 0 && (
+                              <div className={`absolute z-50 left-0 right-0 mt-1 rounded-xl shadow-2xl overflow-hidden border divide-y ${
+                                isLightText
+                                  ? 'bg-neutral-900 border-white/15 divide-white/10 text-white'
+                                  : 'bg-white border-black/15 divide-black/10 text-black'
                               }`}>
-                                <span>Address Suggestions</span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setShowAddressSuggestions(false);
-                                  }}
-                                  className="px-2 py-0.5 rounded-md hover:bg-white/20 active:scale-95 transition flex items-center gap-1 text-[10px] font-bold text-gray-400 hover:text-white"
-                                >
-                                  ✕ Close
-                                </button>
+                                {/* Header with Mobile Close Button */}
+                                <div className={`px-3 py-1.5 flex items-center justify-between text-[10px] font-semibold tracking-wider uppercase border-b ${
+                                  isLightText ? 'bg-white/5 border-white/10 text-white/60' : 'bg-black/5 border-black/10 text-black/60'
+                                }`}>
+                                  <span>Address Suggestions</span>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setShowAddressSuggestions(false);
+                                    }}
+                                    className="px-2 py-0.5 rounded-md hover:bg-white/20 active:scale-95 transition flex items-center gap-1 text-[10px] font-bold text-gray-400 hover:text-white"
+                                  >
+                                    ✕ Close
+                                  </button>
+                                </div>
+
+                                {addressSuggestions.map((item: any, idx: number) => (
+                                  <button
+                                    key={item.placeId || idx}
+                                    type="button"
+                                    onClick={() => selectAddressSuggestion(item)}
+                                    className={`w-full text-left px-3 py-2.5 text-xs transition flex flex-col ${
+                                      isLightText
+                                        ? 'hover:bg-white/10 text-gray-200'
+                                        : 'hover:bg-black/5 text-gray-800'
+                                    }`}
+                                  >
+                                    <span className="font-semibold">{item.mainText || item.description}</span>
+                                    {item.secondaryText && (
+                                      <span className="text-[10px] opacity-60 mt-0.5">{item.secondaryText}</span>
+                                    )}
+                                  </button>
+                                ))}
                               </div>
+                            )}
 
-                              {addressSuggestions.map((item: any, idx: number) => (
-                                <button
-                                  key={item.placeId || idx}
-                                  type="button"
-                                  onClick={() => selectAddressSuggestion(item)}
-                                  className={`w-full text-left px-3 py-2.5 text-xs transition flex flex-col ${
-                                    isLightText
-                                      ? 'hover:bg-white/10 text-gray-200'
-                                      : 'hover:bg-black/5 text-gray-800'
-                                  }`}
-                                >
-                                  <span className="font-semibold">{item.mainText || item.description}</span>
-                                  {item.secondaryText && (
-                                    <span className="text-[10px] opacity-60 mt-0.5">{item.secondaryText}</span>
-                                  )}
-                                </button>
-                              ))}
+                            <div className="flex items-center justify-between mt-1.5">
+                              <p className={`text-[11px] font-medium flex items-center gap-1.5 ${isLightText ? 'text-amber-400/90' : 'text-amber-700'}`}>
+                                <span>💡 Must match your legal residential address on your ID (no P.O. Boxes or work addresses).</span>
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setIsAddressParsed(true)}
+                                className={`text-[11px] font-semibold underline hover:opacity-80 transition whitespace-nowrap ml-2 ${isLightText ? 'text-indigo-300' : 'text-indigo-600'}`}
+                              >
+                                Enter manually
+                              </button>
                             </div>
-                          )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                          <div className="flex items-center justify-between mb-1">
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider ${isLightText ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                              ✓ Address Components Verified
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsAddressParsed(false);
+                                setKycLine1("");
+                                setKycCity("");
+                                setKycState("");
+                                setKycZip("");
+                              }}
+                              className={`text-[10.5px] font-semibold underline hover:opacity-80 transition ${isLightText ? 'text-white/60' : 'text-black/60'}`}
+                            >
+                              ✏️ Search different address
+                            </button>
+                          </div>
 
-                          <p className={`text-[11px] mt-1.5 font-medium flex items-center gap-1.5 ${isLightText ? 'text-amber-400/90' : 'text-amber-700'}`}>
-                            <span>💡 Use your home residential address (no P.O. Boxes or business addresses).</span>
-                          </p>
-                        </div>
-                        <div>
-                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 2 (Optional)</label>
-                          <input
-                            type="text"
-                            placeholder="Apt, Suite, Unit"
-                            autoComplete="address-line2"
-                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                              }`}
-                            value={kycLine2}
-                            onChange={(e) => setKycLine2(e.target.value)}
-                          />
-                        </div>
-                        <div className="grid grid-cols-12 gap-2">
-                          <div className="col-span-5">
-                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>City</label>
+                          <div>
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Street Address</label>
                             <input
                               type="text"
-                              placeholder="Seattle"
-                              autoComplete="address-level2"
+                              placeholder="123 Main St"
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                   ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                   : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                                 }`}
-                              value={kycCity}
-                              onChange={(e) => setKycCity(e.target.value)}
+                              value={kycLine1}
+                              onChange={(e) => setKycLine1(e.target.value)}
                             />
                           </div>
-                          <div className="col-span-4">
-                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>State/Region</label>
+                          <div>
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 2 (Optional)</label>
                             <input
                               type="text"
-                              placeholder="WA"
-                              autoComplete="address-level1"
+                              placeholder="Apt, Suite, Unit"
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                   ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                   : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                                 }`}
-                              value={kycState}
-                              onChange={(e) => setKycState(e.target.value)}
+                              value={kycLine2}
+                              onChange={(e) => setKycLine2(e.target.value)}
                             />
                           </div>
-                          <div className="col-span-3">
-                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Zip/Postal</label>
-                            <input
-                              type="text"
-                              placeholder="98101"
-                              autoComplete="postal-code"
-                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                                }`}
-                              value={kycZip}
-                              onChange={(e) => setKycZip(e.target.value)}
-                            />
+                          <div className="grid grid-cols-12 gap-2">
+                            <div className="col-span-5">
+                              <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>City</label>
+                              <input
+                                type="text"
+                                placeholder="Seattle"
+                                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                  }`}
+                                value={kycCity}
+                                onChange={(e) => setKycCity(e.target.value)}
+                              />
+                            </div>
+                            <div className="col-span-4">
+                              <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>State/Region</label>
+                              <input
+                                type="text"
+                                placeholder="WA"
+                                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                  }`}
+                                value={kycState}
+                                onChange={(e) => setKycState(e.target.value)}
+                              />
+                            </div>
+                            <div className="col-span-3">
+                              <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Zip/Postal</label>
+                              <input
+                                type="text"
+                                placeholder="98101"
+                                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                  }`}
+                                value={kycZip}
+                                onChange={(e) => setKycZip(e.target.value)}
+                              />
+                            </div>
                           </div>
                         </div>
-                      </div>
+                      )}
                     </>
                   ) : (
                     <>
@@ -5386,7 +5472,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               }}
                             >
                               <option value="US">United States</option>
-                              <option value="CA">Canada</option>
                               <option value="GB">United Kingdom</option>
                               <option value="DE">Germany</option>
                               <option value="FR">France</option>

@@ -212,20 +212,53 @@ export async function POST(req: NextRequest) {
 
     console.log("[ONRAMP V2] Session created:", data.id, "status:", data.status);
 
-    if (receiptId && merchantWallet) {
+    if (receiptId) {
       try {
         const container = await getContainer();
         const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
-        const normalizedWallet = merchantWallet.toLowerCase();
-        const { resource: receipt } = await container.item(docId, normalizedWallet).read();
+        const rawId = receiptId.replace(/^receipt:/, "");
+        let receipt: any = null;
+
+        if (merchantWallet) {
+          try {
+            const normalizedWallet = merchantWallet.toLowerCase();
+            const { resource } = await container.item(docId, normalizedWallet).read();
+            receipt = resource;
+          } catch (readErr) {
+            // Point read failed, fallback to query
+          }
+        }
+
+        if (!receipt) {
+          try {
+            const qSpec = {
+              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId OR c.id = @rawId)",
+              parameters: [
+                { name: "@rId", value: rawId },
+                { name: "@docId", value: docId },
+                { name: "@rawId", value: rawId }
+              ]
+            };
+            const { resources } = await container.items.query(qSpec).fetchAll();
+            if (resources && resources.length > 0) {
+              receipt = resources[0];
+            }
+          } catch (queryErr) {
+            console.warn("[ONRAMP V2] Query fallback failed:", queryErr);
+          }
+        }
+
         if (receipt) {
           receipt.stripeSessionId = data.id;
+          if (!receipt.kycLevel || receipt.kycLevel === "N/A") {
+            receipt.kycLevel = "L0";
+          }
           if (sourceAmount && Number(sourceAmount) > 0) {
             receipt.totalUsd = Number(sourceAmount);
           }
           receipt.lastUpdatedAt = Date.now();
           await container.items.upsert(receipt);
-          console.log(`[ONRAMP V2] Successfully linked Stripe session ${data.id} to receipt ${receiptId}`);
+          console.log(`[ONRAMP V2] Successfully linked Stripe session ${data.id} and set kycLevel=L0 for receipt ${receiptId}`);
         } else {
           console.warn(`[ONRAMP V2] Receipt ${receiptId} not found in DB`);
         }

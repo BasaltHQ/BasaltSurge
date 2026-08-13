@@ -42,6 +42,7 @@ export function SandboxWidget() {
   const hideExtraSandboxControls = isLandingPage && !account?.address;
 
   const [hasChanges, setHasChanges] = useState(false);
+  const [stripeV2, setStripeV2] = useState<boolean>(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -59,14 +60,19 @@ export function SandboxWidget() {
     const mMatch = cookies.match(/pp_sandbox_merchant_wallet=([^;]+)/);
     const initialMerchant = mMatch ? mMatch[1].toLowerCase().trim() : "";
 
+    const v2Match = cookies.match(/pp_sandbox_stripe_v2=([^;]+)/);
+    const initialV2 = v2Match ? v2Match[1] === "true" : true;
+    setStripeV2(initialV2);
+
     const changed =
       feeMode !== initialFee ||
       splitMode !== initialSplit ||
       selectedBrand !== initialBrand ||
-      selectedMerchant !== initialMerchant;
+      selectedMerchant !== initialMerchant ||
+      stripeV2 !== initialV2;
 
     setHasChanges(changed);
-  }, [feeMode, splitMode, selectedBrand, selectedMerchant]);
+  }, [feeMode, splitMode, selectedBrand, selectedMerchant, stripeV2]);
 
   const updateCookie = (name: string, value: string) => {
     if (typeof window !== "undefined") {
@@ -360,6 +366,49 @@ export function SandboxWidget() {
                 </div>
               </div>
             )}
+
+            {/* Stripe V2 Accordion Checkout Engine Toggle */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide flex items-center justify-between">
+                <span className="flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  Checkout Engine (STRIPEV2)
+                </span>
+                <span className="text-[9px] text-zinc-400 font-mono">
+                  {stripeV2 ? "v2-accordion" : "v1-modal"}
+                </span>
+              </label>
+              <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStripeV2(false);
+                    updateCookie("pp_sandbox_stripe_v2", "false");
+                  }}
+                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
+                    !stripeV2
+                      ? "bg-amber-500 text-black shadow-md"
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  V1 Modal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStripeV2(true);
+                    updateCookie("pp_sandbox_stripe_v2", "true");
+                  }}
+                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
+                    stripeV2
+                      ? "bg-amber-500 text-black shadow-md"
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  V2 Accordion ⚡
+                </button>
+              </div>
+            </div>
 
             {/* Brand Key Selector */}
             <div className="space-y-1.5">
