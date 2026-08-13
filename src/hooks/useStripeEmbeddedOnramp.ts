@@ -1795,7 +1795,7 @@ export function useStripeEmbeddedOnramp({
           detectedCardFunding: fundingTypeToUse,
           kycOccurred: kycOccurredRef.current,
           kycLevel: kycOccurredRef.current
-            ? (kycTierRequired === "l2" ? "L2" : (kycTierRequired === "l1" ? "L1" : "L0"))
+            ? ((kycTierRequired as string) === "l2" ? "L2" : ((kycTierRequired as string) === "l1" ? "L1" : "L0"))
             : "N/AKYC",
         }),
       }).catch((err) => {
@@ -1905,7 +1905,7 @@ export function useStripeEmbeddedOnramp({
       sessionId,
       txHash,
       kycLevel: kycOccurredRef.current
-        ? (kycTierRequired === "l2" ? "L2" : (kycTierRequired === "l1" ? "L1" : "L0"))
+        ? ((kycTierRequired as string) === "l2" ? "L2" : ((kycTierRequired as string) === "l1" ? "L1" : "L0"))
         : "N/AKYC",
       detectedCardFunding: fundingTypeToUse || (isCreditCard ? "credit" : "debit"),
       isCreditCard: isCreditCard,
