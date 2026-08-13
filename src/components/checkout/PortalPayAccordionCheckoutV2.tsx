@@ -54,6 +54,11 @@ export interface PortalPayAccordionCheckoutV2Props {
   authElement?: HTMLElement | React.ReactNode | null;
   headlessStatus?: string;
   headlessStep?: string;
+  paymentConfirmed?: { txHash: string; amount: number; token: string; funding?: string } | null;
+  detectedCardFunding?: string | null;
+  detectedCardBrand?: string | null;
+  detectedCardLast4?: string | null;
+  onEmailReceipt?: () => void;
 }
 
 const formatSSN = (raw: string): string => {
@@ -93,6 +98,11 @@ export function PortalPayAccordionCheckoutV2({
   authElement,
   headlessStatus,
   headlessStep = "collecting_kyc",
+  paymentConfirmed,
+  detectedCardFunding,
+  detectedCardBrand,
+  detectedCardLast4,
+  onEmailReceipt,
 }: PortalPayAccordionCheckoutV2Props) {
   const primaryColor = theme?.primaryColor || "#635BFF";
 
@@ -239,6 +249,14 @@ export function PortalPayAccordionCheckoutV2({
 
   // Automatically advance accordion steps when live Stripe headlessStep transitions!
   useEffect(() => {
+    if (paymentConfirmed) {
+      setIsSubmittingContact(false);
+      setIsSubmittingIdentity(false);
+      setIsSubmittingPayment(false);
+      setActiveStep(4);
+      setFulfillmentStage("complete");
+      return;
+    }
     if (!headlessStep) return;
     if (headlessStep === "collecting_kyc" || headlessStep === "verifying_identity") {
       setIsSubmittingContact(false);
@@ -249,30 +267,47 @@ export function PortalPayAccordionCheckoutV2({
       }
     } else if (
       headlessStep === "collecting_payment" ||
-      headlessStep === "payment_method_required" ||
-      headlessStep === "creating_session"
+      headlessStep === "payment_method_required"
     ) {
       setIsSubmittingContact(false);
       setIsSubmittingIdentity(false);
       setActiveStep(3);
     } else if (
-      headlessStep === "completed" ||
-      headlessStep === "awaiting_funds" ||
+      headlessStep === "creating_session" ||
       headlessStep === "checking_out" ||
       headlessStep === "transferring"
     ) {
+      setIsSubmittingContact(false);
+      setIsSubmittingIdentity(false);
+      setIsSubmittingPayment(false);
       setActiveStep(4);
+      setFulfillmentStage("processing");
+    } else if (
+      headlessStep === "completed" ||
+      headlessStep === "awaiting_funds"
+    ) {
+      setIsSubmittingContact(false);
+      setIsSubmittingIdentity(false);
+      setIsSubmittingPayment(false);
+      setActiveStep(4);
+      setFulfillmentStage("complete");
     }
-  }, [headlessStep, isAllKycCompleted, effectiveStatus]);
+  }, [headlessStep, isAllKycCompleted, effectiveStatus, paymentConfirmed]);
 
-  // If KYC is already completed or verified, automatically skip or advance to Step 3
+  // If KYC is already completed or verified, automatically skip or advance to Step 3 (unless on payment execution/completion)
   useEffect(() => {
+    if (
+      ["creating_session", "checking_out", "transferring", "awaiting_funds", "completed"].includes(headlessStep as string) ||
+      paymentConfirmed
+    ) {
+      return;
+    }
     if (isAllKycCompleted || effectiveStatus === "verified" || headlessStep === "collecting_payment") {
       setIsSubmittingContact(false);
       setIsSubmittingIdentity(false);
       setActiveStep((prev) => (prev <= 2 ? 3 : prev));
     }
-  }, [isAllKycCompleted, effectiveStatus, headlessStep]);
+  }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed]);
 
   // Step 1 Submit (Account & Contact)
   const handleContactSubmit = async (e: React.FormEvent) => {
@@ -1265,23 +1300,23 @@ export function PortalPayAccordionCheckoutV2({
         {activeStep === 4 && (
           <div className="p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10">
             {fulfillmentStage !== "complete" ? (
-              <div className="p-3 rounded-xl bg-black/30 border border-white/10 space-y-2">
-                <div className="flex items-center gap-2 text-xs font-medium text-emerald-400">
+              <div className="p-4 rounded-xl bg-black/30 border border-white/10 space-y-2.5 animate-in fade-in duration-300">
+                <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
                   <Check className="w-4 h-4 shrink-0" />
                   <span>Payment Authorized via Stripe</span>
                 </div>
-                <div className="flex items-center gap-2 text-xs font-medium text-amber-400 animate-pulse">
-                  <Sparkles className="w-4 h-4 shrink-0" />
+                <div className="flex items-center gap-2.5 text-xs font-medium text-amber-400 animate-pulse">
+                  <Loader2 className="w-4 h-4 shrink-0 animate-spin text-amber-400" />
                   <span>
                     {fulfillmentStage === "processing"
-                      ? "Processing payment and contract settlement..."
-                      : "Generating verification receipt..."}
+                      ? "Authorizing payment and finalizing your order..."
+                      : "Generating order receipt..."}
                   </span>
                 </div>
               </div>
             ) : (
               /* Order Success Summary Receipt Card */
-              <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-3 animate-in zoom-in-95 duration-300">
+              <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-3.5 animate-in zoom-in-95 duration-300">
                 <div className="flex items-center gap-2 text-emerald-400">
                   <CheckCircle2 className="w-5 h-5" />
                   <span className="text-xs font-bold uppercase tracking-wider">
@@ -1289,7 +1324,7 @@ export function PortalPayAccordionCheckoutV2({
                   </span>
                 </div>
 
-                <div className="space-y-1.5 text-xs">
+                <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="opacity-60">Total Paid:</span>
                     <span className="font-bold">${amountUsd.toFixed(2)} USD</span>
@@ -1301,32 +1336,62 @@ export function PortalPayAccordionCheckoutV2({
                   <div className="flex justify-between">
                     <span className="opacity-60">Payment Method:</span>
                     <span className="font-semibold">
-                      {selectedPaymentType === "applePay"
+                      {detectedCardBrand && detectedCardLast4
+                        ? `${detectedCardBrand} •••• ${detectedCardLast4}`
+                        : selectedPaymentType === "applePay"
                         ? "Apple Pay"
                         : selectedPaymentType === "googlePay"
                         ? "Google Pay"
-                        : selectedPaymentType === "bank"
+                        : selectedPaymentType === "bank" || detectedCardFunding === "us_bank_account"
                         ? "US Bank Account (ACH)"
-                        : "Card (Stripe Onramp)"}
+                        : "Credit / Debit Card (Stripe)"}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="opacity-60">Status:</span>
                     <span className="text-emerald-400 font-bold inline-flex items-center gap-1">
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Payment Settled & Verified</span>
+                      <span>
+                        {detectedCardFunding === "us_bank_account" || paymentConfirmed?.funding === "us_bank_account" || headlessStep === "awaiting_funds"
+                          ? "Payment Authorized (ACH Pending)"
+                          : "Payment Confirmed"}
+                      </span>
                     </span>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleResetSimulation}
-                  className="w-full mt-2 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/10 flex items-center justify-center gap-2 transition"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Reset Checkout Simulation</span>
-                </button>
+                {(detectedCardFunding === "us_bank_account" || paymentConfirmed?.funding === "us_bank_account" || headlessStep === "awaiting_funds") && (
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 leading-relaxed">
+                    Funds will be deducted from your bank account within 2–3 business days. Your order is confirmed.
+                  </div>
+                )}
+
+                {email && (
+                  <p className="text-[11px] text-emerald-400 font-medium text-center">
+                    ✓ Receipt automatically sent to <span className="underline">{email}</span>
+                  </p>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => window.location.reload()}
+                    className="flex-1 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/10 flex items-center justify-center gap-2 transition active:scale-95"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Done</span>
+                  </button>
+                  {onEmailReceipt && !email && (
+                    <button
+                      type="button"
+                      onClick={onEmailReceipt}
+                      className="flex-1 py-2 rounded-xl text-xs font-bold shadow-lg transition active:scale-95 text-white"
+                      style={{ backgroundColor: primaryColor }}
+                    >
+                      Email Receipt
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>

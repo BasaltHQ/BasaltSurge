@@ -4793,6 +4793,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           authElement={headlessAuthElement}
           headlessStatus={headlessStatus}
           headlessStep={headlessStep}
+          paymentConfirmed={paymentConfirmed}
+          detectedCardFunding={stripeDetectedFunding || detectedCardFunding}
+          detectedCardBrand={detectedCardBrand}
+          detectedCardLast4={detectedCardLast4}
+          onEmailReceipt={() => setEmailModalOpen(true)}
         />
       ) : headlessEmailPrompt ? (
         <form
@@ -7142,7 +7147,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       <div ref={widgetRootRef} className={isEmbedded ? "mt-0 rounded-2xl p-3" : "mt-0 rounded-2xl p-3"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                         {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                           <>
-                            {(paymentConfirmed || isSettled(receipt.status) || isAchPending) ? (
+                            {(!isV2Active && (paymentConfirmed || isSettled(receipt.status) || isAchPending)) ? (
                               <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
                                 <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
                                   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -7911,7 +7916,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <div ref={widgetRootRef} className={isEmbedded ? "mt-1 flex-1 rounded-2xl p-3" : "mt-2 rounded-2xl p-3 flex-1"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                     {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                       <>
-                        {(paymentConfirmed || isSettled(receipt.status) || isAchPending) ? (
+                        {(!isV2Active && (paymentConfirmed || isSettled(receipt.status) || isAchPending)) ? (
                           <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
                             <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
                               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -8165,7 +8170,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   </div>
                                   {shippingComplete && (
                                     <div className="px-2 pb-2">
-                                      {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                      {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
                                         <CheckoutWidget
                                           key={`ship-${token}-${currency}`}
                                           className="w-full"
@@ -8221,7 +8226,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             {/* Non-shipping: render CheckoutWidget directly */}
                             {!shippingRequired && (
                               <>
-                                {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
                                   <CheckoutWidget
                                     key={`noshp-${token}-${currency}`}
                                     className="w-full"
