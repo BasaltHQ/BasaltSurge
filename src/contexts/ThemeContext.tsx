@@ -39,6 +39,8 @@ export type SiteTheme = {
   portalGradientEnabled?: boolean;
   portalGradientStart?: string;
   portalGradientEnd?: string;
+  stripeOnrampV2Enabled?: boolean;
+  v2CheckoutEnabled?: boolean;
 };
 
 type ThemeContextType = {
@@ -65,6 +67,8 @@ const defaultTheme: SiteTheme = {
   navbarMode: 'logo',
   brandKey: '',
   footerLogoUrl: '',
+  stripeOnrampV2Enabled: false,
+  v2CheckoutEnabled: false,
 };
 
 const ThemeContext = createContext<ThemeContextType>({
@@ -222,7 +226,18 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
         // Merge site config theme with shop theme - shop theme takes priority for branding
         const siteTheme = (j?.config?.theme || {}) as any;
-        let mergedTheme = { ...siteTheme };
+        const configStripeV2 = Boolean(
+          j?.config?.stripeOnrampV2Enabled ??
+          j?.config?.v2CheckoutEnabled ??
+          siteTheme?.stripeOnrampV2Enabled ??
+          siteTheme?.v2CheckoutEnabled ??
+          false
+        );
+        let mergedTheme = {
+          ...siteTheme,
+          stripeOnrampV2Enabled: configStripeV2,
+          v2CheckoutEnabled: configStripeV2,
+        };
 
 
         // Detect if we're in BasaltSurge context

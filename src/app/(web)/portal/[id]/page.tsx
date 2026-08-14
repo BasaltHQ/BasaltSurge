@@ -545,6 +545,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [partnerLogoFavicon, setPartnerLogoFavicon] = useState<string>("");
   const [partnerBrandName, setPartnerBrandName] = useState<string>("");
   const [partnerAchEnabled, setPartnerAchEnabled] = useState<boolean>(true);
+  const [partnerStripeV2Enabled, setPartnerStripeV2Enabled] = useState<boolean>(false);
 
 
 
@@ -1351,6 +1352,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             setPartnerLogoFavicon(logoFavicon);
             setPartnerBrandName(partnerName);
             setPartnerAchEnabled(pj?.brand?.achEnabled !== undefined ? !!pj?.brand?.achEnabled : false);
+            setPartnerStripeV2Enabled(!!(pj?.brand?.v2CheckoutEnabled ?? pj?.brand?.stripeOnrampV2Enabled ?? pj?.overrides?.v2CheckoutEnabled ?? pj?.overrides?.stripeOnrampV2Enabled));
 
             // If no merchant theme is expected, apply partner colors and brand name
             if (!hasMerchantForTheme && !forcePortalTheme) {
@@ -1505,7 +1507,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const isCachedGeneric = cachedTheme && (cachedTheme.brandName === "BasaltSurge" || cachedTheme.brandName === "PortalPay");
     const ignoreCache = isCachedGeneric && canUpgradeToPartner;
 
-    const isCachedStale = cachedTheme && !("discretePayWithCrypto" in cachedTheme);
+    const isCachedStale = cachedTheme && (!("discretePayWithCrypto" in cachedTheme) || !("stripeOnrampV2Enabled" in cachedTheme));
     if (cachedTheme && hasMerchantForTheme && !ignoreCache && !isCachedStale) {
       console.log('[PORTAL THEME DEBUG] Applying cached theme immediately');
       setTheme(cachedTheme);
@@ -1705,6 +1707,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             portalGradientStart: typeof t.portalGradientStart === "string" ? t.portalGradientStart : ((j.config as any)?.portalGradientStart || undefined),
             portalGradientEnd: typeof t.portalGradientEnd === "string" ? t.portalGradientEnd : ((j.config as any)?.portalGradientEnd || undefined),
             discretePayWithCrypto: typeof t.discretePayWithCrypto === "boolean" ? t.discretePayWithCrypto : (typeof (j.config as any)?.discretePayWithCrypto === "boolean" ? (j.config as any).discretePayWithCrypto : false),
+            stripeOnrampV2Enabled: typeof (j.config as any)?.stripeOnrampV2Enabled === "boolean" ? (j.config as any).stripeOnrampV2Enabled : (typeof (j.config as any)?.v2CheckoutEnabled === "boolean" ? (j.config as any).v2CheckoutEnabled : partnerStripeV2Enabled),
+            v2CheckoutEnabled: typeof (j.config as any)?.v2CheckoutEnabled === "boolean" ? (j.config as any).v2CheckoutEnabled : (typeof (j.config as any)?.stripeOnrampV2Enabled === "boolean" ? (j.config as any).stripeOnrampV2Enabled : partnerStripeV2Enabled),
           };
 
           // ── Portal Theme Playground overrides ──
@@ -3767,8 +3771,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       if (cookies.includes("pp_sandbox_stripe_v2=false")) return false;
     }
     const envV2 = process.env.NEXT_PUBLIC_STRIPEV2 === "true" || process.env.STRIPEV2 === "true" || process.env.NEXT_PUBLIC_STRIPE_HEADLESS_V2 === "TRUE";
-    return stripeOnrampV2Enabled || (theme as any)?.stripeOnrampV2Enabled === true || (theme as any)?.v2CheckoutEnabled === true || envV2;
-  }, [isExplicitlyUnsupportedRegion, stripeOnrampV2Enabled, theme]);
+    return partnerStripeV2Enabled || (theme as any)?.stripeOnrampV2Enabled === true || (theme as any)?.v2CheckoutEnabled === true || envV2;
+  }, [isExplicitlyUnsupportedRegion, partnerStripeV2Enabled, theme]);
 
   const payRef = useRef<HTMLDivElement | null>(null);
   const widgetRootRef = useRef<HTMLDivElement | null>(null);
