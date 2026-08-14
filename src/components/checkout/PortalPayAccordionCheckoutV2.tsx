@@ -653,7 +653,6 @@ export function PortalPayAccordionCheckoutV2({
                   }`}
                 >
                   <option value="US">United States (US)</option>
-                  <option value="CA">Canada (CA)</option>
                   <option value="GB">United Kingdom (GB)</option>
                   <option value="DE">Germany (DE)</option>
                   <option value="FR">France (FR)</option>
