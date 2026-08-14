@@ -1987,7 +1987,7 @@ export default function ClientRequestsPanel() {
                                                                 merchantWallet={req.wallet}
                                                                 adminWallet={account?.address || ""}
                                                                 brandKey={brandKey}
-                                                                partnerFeeMinusEnabled={fetchedBrand ? !!fetchedBrand.feeMinusEnabled : !!brand?.feeMinusEnabled}
+                                                                partnerFeeMinusEnabled={(!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge") ? true : (fetchedBrand ? !!fetchedBrand.feeMinusEnabled : !!brand?.feeMinusEnabled)}
                                                                 partnerAchEnabled={(!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge") ? true : (fetchedBrand ? !!fetchedBrand.achEnabled : !!brand?.achEnabled)}
                                                             />
                                                         ) : (activeTabs[req.id] === "themes") ? (

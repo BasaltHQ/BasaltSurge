@@ -202,6 +202,7 @@ const ROLE_PERMISSIONS: Record<string, AdminPermission[]> = {
 
 export type AdminPanel =
   | 'partners'        // Manage Partners
+  | 'platformSettings' // Platform Feature Switches
   | 'branding'        // Branding editor
   | 'merchants'       // Merchant list, inventory, orders
   | 'walletsSplit'    // Wallets/Split configuration
@@ -417,7 +418,8 @@ export function canAccessPanel(panel: AdminPanel, wallet?: string): boolean {
     'reportsPlatform',
     'notificationsPlatform',
     'nodeOperators',
-    'platformAnalytics'
+    'platformAnalytics',
+    'platformSettings'
   ];
 
   const isPartner = isPartnerCtx() || (typeof window !== 'undefined' && isPartnerContextClient());

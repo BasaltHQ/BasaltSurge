@@ -142,6 +142,7 @@ export type AdminTabKey =
   | 'emailConfig'
   | 'sandbox'
   | 'platformAnalytics'
+  | 'platformSettings'
   | 'agentUniversity';
 
 interface AdminSidebarProps {
@@ -602,6 +603,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Loyalty Config', key: 'loyaltyConfig' as AdminTabKey, icon: <Medal className="w-4 h-4" /> },
         { title: 'Applications', key: 'applications' as AdminTabKey, icon: <LayoutGrid className="w-4 h-4" /> },
         { title: 'Partners', key: 'partners' as AdminTabKey, icon: <Handshake className="w-4 h-4" /> },
+        { title: 'Settings', key: 'platformSettings' as AdminTabKey, icon: <Sliders className="w-4 h-4" /> },
         { title: 'Contracts', key: 'contracts' as AdminTabKey, icon: <FileSignature className="w-4 h-4" /> },
         { title: 'Plugin Studio', key: 'pluginStudio' as AdminTabKey, icon: <Code className="w-4 h-4" /> },
         { title: 'Support Admin', key: 'supportAdmin' as AdminTabKey, icon: <LifeBuoy className="w-4 h-4" /> },

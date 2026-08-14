@@ -511,7 +511,7 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
         const { brand: fetchedBrand } = await getBrandConfigFromCosmos(brandKeyForFees);
         if (fetchedBrand) {
           // Fallback logic for feeMinusEnabled and stripeOnrampEnabled when not defined or falsy on merchant config
-          cfg.feeMinusEnabled = cfg.feeMinusEnabled || !!fetchedBrand.feeMinusEnabled;
+          cfg.feeMinusEnabled = cfg.feeMinusEnabled !== undefined ? cfg.feeMinusEnabled : !!fetchedBrand.feeMinusEnabled;
           cfg.stripeOnrampEnabled = cfg.stripeOnrampEnabled || (fetchedBrand.stripeOnrampEnabled ?? true);
           cfg.stripeOnrampV2Enabled = (fetchedBrand as any).stripeOnrampV2Enabled ?? (fetchedBrand as any).v2CheckoutEnabled ?? false;
           cfg.v2CheckoutEnabled = cfg.stripeOnrampV2Enabled;
