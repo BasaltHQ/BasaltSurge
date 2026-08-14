@@ -314,6 +314,10 @@ export type UseStripeEmbeddedOnrampReturn = {
   sessionId: string | null;
   /** The dynamic KYC tier required */
   kycTierRequired?: "l0" | "l1" | "l2";
+  /** Canonical KYC level */
+  kycLevel?: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING";
+  /** KYC tier statuses */
+  kycTiers?: Array<{ tier: string; verification_status: string }>;
   /** Flag indicating if all KYC tiers have been completed */
   isAllKycCompleted?: boolean;
   /** Stripe onramp remaining transaction limits */
@@ -558,6 +562,8 @@ export function useStripeEmbeddedOnramp({
     }
   }, [sessionKey]);
   const [kycTierRequired, setKycTierRequired] = useState<"l0" | "l1" | "l2">("l0");
+  const [kycLevel, setKycLevel] = useState<"L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING">("REQUIRES_KYC");
+  const [kycTiers, setKycTiers] = useState<Array<{ tier: string; verification_status: string }>>([]);
   const [isAllKycCompleted, setIsAllKycCompleted] = useState<boolean>(false);
   const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
@@ -934,8 +940,8 @@ export function useStripeEmbeddedOnramp({
                     return;
                   }
                 } else {
-                  console.log("[EMBEDDED ONRAMP] Global KYC check: L0 unverified. Directing to input...");
-                  setKycTierRequired(l0Tier?.verification_status === "rejected" ? "l1" : "l0");
+                  console.log("[EMBEDDED ONRAMP] Global KYC check: L0 unverified/rejected. Directing to full L0 input...");
+                  setKycTierRequired("l0");
                   updateStep("collecting_kyc");
                   isVerifyingRef.current = false;
                   isRunningRef.current = false;
@@ -1095,6 +1101,23 @@ export function useStripeEmbeddedOnramp({
     onErrorRef.current?.(err instanceof Error ? err : new Error(friendlyMessage));
     setAuthElement(null);
     setPaymentElement(null);
+
+    // Track client error explicitly in database
+    if (receiptId && merchantWallet) {
+      fetch("/api/receipts/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          receiptId,
+          wallet: merchantWallet,
+          status: "error",
+          error: friendlyMessage,
+          stripeSessionId: sessionIdRef.current,
+          customerEmail: activeEmailRef.current,
+        })
+      }).catch(() => {});
+    }
+
     if (detectedCardFunding !== "us_bank_account") {
       setDetectedCardFunding(null);
       setDetectedCardBrand(null);
@@ -1112,7 +1135,7 @@ export function useStripeEmbeddedOnramp({
     }
     updateStep(isCancellation ? "idle" : "error");
     onErrorRef.current?.(new Error(friendlyMessage));
-  }, [detectedCardFunding, updateStep]);
+  }, [detectedCardFunding, updateStep, receiptId, merchantWallet]);
 
   const pollKycStatus = useCallback(async (custId: string, targetTier?: "l0" | "l1" | "l2"): Promise<boolean> => {
     const startMsg = `[KYC POLL START] Polling KYC status for customer ${custId} (target: ${targetTier || 'legacy'})`;
@@ -1232,6 +1255,12 @@ export function useStripeEmbeddedOnramp({
             return true;
           }
         } else {
+          if (res.status === 403 || res.status === 409 || res.status === 429) {
+            console.log(`[EMBEDDED ONRAMP] Transient status ${res.status} during KYC poll (Stripe verification processing lock). Retrying after backoff...`);
+            await new Promise(resolve => setTimeout(resolve, 2500));
+            continue;
+          }
+
           const errMsg = `[KYC POLL ERROR] Attempt ${i + 1}/90: HTTP status ${res.status}`;
           console.error(errMsg);
           fetch("/api/portal/log", {
@@ -1250,11 +1279,6 @@ export function useStripeEmbeddedOnramp({
 
           if (res.status === 401) {
             throw new Error("Stripe authentication token has expired. Please refresh the page.");
-          }
-          if (res.status === 403 || res.status === 409 || res.status === 429) {
-            console.log(`[EMBEDDED ONRAMP] Transient status ${res.status} during KYC poll (Stripe verification processing lock). Retrying after backoff...`);
-            await new Promise(resolve => setTimeout(resolve, 2500));
-            continue;
           }
           consecutiveErrors++;
           if (consecutiveErrors >= 5) {
@@ -1778,7 +1802,7 @@ export function useStripeEmbeddedOnramp({
           detectedCardFunding: fundingTypeToUse,
           kycOccurred: kycOccurredRef.current,
           kycLevel: kycOccurredRef.current
-            ? (kycTierRequired === "l2" ? "L2" : (kycTierRequired === "l1" ? "L1" : "L0"))
+            ? ((kycTierRequired as string) === "l2" ? "L2" : ((kycTierRequired as string) === "l1" ? "L1" : "L0"))
             : "N/AKYC",
         }),
       }).catch((err) => {
@@ -1888,7 +1912,7 @@ export function useStripeEmbeddedOnramp({
       sessionId,
       txHash,
       kycLevel: kycOccurredRef.current
-        ? (kycTierRequired === "l2" ? "L2" : (kycTierRequired === "l1" ? "L1" : "L0"))
+        ? ((kycTierRequired as string) === "l2" ? "L2" : ((kycTierRequired as string) === "l1" ? "L1" : "L0"))
         : "N/AKYC",
       detectedCardFunding: fundingTypeToUse || (isCreditCard ? "credit" : "debit"),
       isCreditCard: isCreditCard,
@@ -2436,6 +2460,18 @@ export function useStripeEmbeddedOnramp({
           payload.id_number.value = payload.id_number.value.replace(/\D/g, "");
         }
       }
+      if (payload.date_of_birth) {
+        if (typeof payload.date_of_birth === "string") {
+          const parts = payload.date_of_birth.split("-").map(Number);
+          if (parts.length === 3 && parts[0] && parts[1] && parts[2]) {
+            payload.date_of_birth = {
+              year: parts[0],
+              month: parts[1],
+              day: parts[2]
+            };
+          }
+        }
+      }
       if (payload.address && typeof payload.address === "object") {
         const cleanAddr: Record<string, string> = {};
         for (const [k, v] of Object.entries(payload.address)) {
@@ -2585,6 +2621,34 @@ export function useStripeEmbeddedOnramp({
       }
 
       console.error("[EMBEDDED ONRAMP] submitKycInfo error:", err);
+      const rawMsg = String(err?.message || err || "").toLowerCase();
+      const isAddressError = rawMsg.includes("address") || rawMsg.includes("postal") || rawMsg.includes("zip") || rawMsg.includes("subdivision") || rawMsg.includes("street") || rawMsg.includes("city");
+
+      if (isAddressError) {
+        console.warn("[EMBEDDED ONRAMP] Address verification failed on L0 submission. Displaying explicit error and allowing L0 address retry.");
+        const friendlyAddrErr = "We couldn't verify your home address. Please check your street address, city, and postal code and try again.";
+        setError(friendlyAddrErr);
+        setKycTierRequired("l0");
+        updateStep("collecting_kyc");
+        isRunningRef.current = false;
+
+        if (receiptId && merchantWallet) {
+          fetch("/api/receipts/status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              receiptId,
+              wallet: merchantWallet,
+              status: "error",
+              error: err?.message || friendlyAddrErr,
+              stripeSessionId: sessionIdRef.current,
+              customerEmail: activeEmailRef.current,
+            })
+          }).catch(() => {});
+        }
+        return;
+      }
+
       handleError(err?.message || "KYC submission failed");
     }
   }, [pollKycStatus, runCheckoutLoop, handleError, detectedCardFunding]);
@@ -2665,8 +2729,8 @@ export function useStripeEmbeddedOnramp({
         onramp = await loadCryptoOnrampAndInitialize(publishableKey, {
           theme,
           wallets: {
-            applePay: "auto",
-            googlePay: "auto",
+            applePay: "always",
+            googlePay: "always",
           },
         });
 
@@ -2912,6 +2976,7 @@ export function useStripeEmbeddedOnramp({
           }
         }
         const kycTiers = kycData.kycTiers || [];
+        setKycTiers(kycTiers);
 
         const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
         const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
@@ -2930,17 +2995,33 @@ export function useStripeEmbeddedOnramp({
           : isOverallKycVerified;
         const isL1Verified = l1Tier 
           ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") 
-          : false;
+          : isOverallKycVerified;
         const isL2Verified = l2Tier 
           ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available") 
           : isOverallIdVerified;
 
-        setIsAllKycCompleted(Boolean(isL2Verified));
+        let computedLevel: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING" = "REQUIRES_KYC";
+        if (isL2Verified) {
+          computedLevel = "L2";
+        } else if (isL1Verified) {
+          computedLevel = "L1";
+        } else if (isL0Verified && l0Tier?.verification_status !== "rejected") {
+          computedLevel = "L0";
+        } else if (l0Tier?.verification_status === "pending" || l1Tier?.verification_status === "pending" || l2Tier?.verification_status === "pending" || kycData.kycStatus === "pending") {
+          computedLevel = "PENDING";
+        } else if (l0Tier?.verification_status === "rejected" || l1Tier?.verification_status === "rejected" || l2Tier?.verification_status === "rejected" || kycData.kycStatus === "rejected") {
+          computedLevel = "REJECTED";
+        } else {
+          computedLevel = "REQUIRES_KYC";
+        }
+        setKycLevel(computedLevel);
 
         // If ACH payment is chosen, we strictly enforce verification through L2.
         const isCustomerVerified = isAchEnforcedRef.current 
           ? isL2Verified 
           : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected"));
+
+        setIsAllKycCompleted(Boolean(isCustomerVerified));
 
         // 1. First, check if there is any pending verification.
         // Stripe returns a 400 error if we try to create a session while verification is pending.
@@ -3003,11 +3084,11 @@ export function useStripeEmbeddedOnramp({
               ? (freshL2.verification_status === "verified" || freshL2.verification_status === "not_available") 
               : isFreshOverallIdVerified;
 
-            setIsAllKycCompleted(Boolean(isFreshL2Verified));
-            
             const isFreshVerified = isAchEnforcedRef.current
               ? isFreshL2Verified
               : (isFreshL2Verified || isFreshL1Verified || (isFreshL0Verified && freshL0?.verification_status !== "rejected"));
+
+            setIsAllKycCompleted(Boolean(isFreshVerified));
 
             if (!isFreshVerified) {
               if (isAchEnforcedRef.current) {
@@ -3094,7 +3175,7 @@ export function useStripeEmbeddedOnramp({
         let errData: any = {};
         try { errData = JSON.parse(errText); } catch (_) {}
 
-        if (kycRes.status === 401 || kycRes.status === 404 || errData.error === "missing_oauth_token" || errData.error === "invalid_oauth_token" || errData.error === "customer_fetch_failed") {
+        if (kycRes.status === 401 || kycRes.status === 403 || kycRes.status === 404 || errData.error === "missing_oauth_token" || errData.error === "invalid_oauth_token" || errData.error === "customer_fetch_failed") {
           console.warn(`[EMBEDDED ONRAMP] Stale/invalid customer session detected (${kycRes.status}). Clearing Link session and restarting...`);
           if (typeof window !== "undefined") {
             sessionStorage.removeItem("stripe_onramp_customer_id");
@@ -3178,7 +3259,7 @@ export function useStripeEmbeddedOnramp({
           onramp.collectPaymentMethod(
             {
               payment_method_types: achEnabled ? ["card", "us_bank_account"] : ["card"],
-              wallets: { applePay: "auto", googlePay: "auto" },
+              wallets: { applePay: "always", googlePay: "always" },
             },
             (result: any) => {
               console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
@@ -3705,6 +3786,8 @@ export function useStripeEmbeddedOnramp({
     detectedCardLast4,
     sessionId,
     kycTierRequired,
+    kycLevel,
+    kycTiers,
     isAllKycCompleted,
     onrampLimits,
     showSpeedSelection,

@@ -161,6 +161,8 @@ export default function PartnerManagementPanel() {
       if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
       if (config?.feeMinusEnabled !== undefined) body.feeMinusEnabled = Boolean(config.feeMinusEnabled);
       if (config?.achEnabled !== undefined) body.achEnabled = Boolean(config.achEnabled);
+      if (config?.v2CheckoutEnabled !== undefined) body.v2CheckoutEnabled = Boolean(config.v2CheckoutEnabled);
+      if (config?.stripeOnrampV2Enabled !== undefined) body.stripeOnrampV2Enabled = Boolean(config.stripeOnrampV2Enabled);
       if (typeof config?.presentedFeeBps === "number") {
         body.presentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.presentedFeeBps))));
       }
@@ -577,6 +579,9 @@ export default function PartnerManagementPanel() {
           PARTNER_WALLET: (config?.partnerWallet ? String(config.partnerWallet) : undefined),
           NEXT_PUBLIC_PARTNER_WALLET: (config?.partnerWallet ? String(config.partnerWallet) : undefined),
 
+          // V2 Checkout Onramp Flag
+          NEXT_PUBLIC_STRIPE_HEADLESS_V2: (config?.v2CheckoutEnabled || config?.stripeOnrampV2Enabled ? "TRUE" : undefined),
+
           // Brand-scoped variables for container
           BRAND_KEY: key || undefined,
           NEXT_PUBLIC_BRAND_KEY: key || undefined,
@@ -892,6 +897,8 @@ export default function PartnerManagementPanel() {
       if (config?.unifiedFeeEnabled !== undefined) body.unifiedFeeEnabled = Boolean(config.unifiedFeeEnabled);
       if (config?.feeMinusEnabled !== undefined) body.feeMinusEnabled = Boolean(config.feeMinusEnabled);
       if (config?.achEnabled !== undefined) body.achEnabled = Boolean(config.achEnabled);
+      if (config?.v2CheckoutEnabled !== undefined) body.v2CheckoutEnabled = Boolean(config.v2CheckoutEnabled);
+      if (config?.stripeOnrampV2Enabled !== undefined) body.stripeOnrampV2Enabled = Boolean(config.stripeOnrampV2Enabled);
       if (typeof config?.presentedFeeBps === "number")
         body.presentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.presentedFeeBps))));
       if (typeof config?.creditPresentedFeeBps === "number")
@@ -2115,6 +2122,37 @@ export default function PartnerManagementPanel() {
                   <span
                     className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
                       config?.achEnabled ? "translate-x-4" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+              <div className="flex items-center justify-between p-3 rounded-lg bg-foreground/[0.02] border border-white/5 mt-5 w-full">
+                <div>
+                  <div className="text-xs font-semibold flex items-center gap-1.5">
+                    <span>Stripe Headless V2 Checkout</span>
+                    {(config?.v2CheckoutEnabled ?? config?.stripeOnrampV2Enabled) ? (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        Active
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">Enable modern 4-step accordion checkout with tier-gated KYC and payment method selection.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setConfig((prev: any) => {
+                      const nextVal = !(prev?.v2CheckoutEnabled ?? prev?.stripeOnrampV2Enabled);
+                      return { ...prev, v2CheckoutEnabled: nextVal, stripeOnrampV2Enabled: nextVal };
+                    })
+                  }
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    (config?.v2CheckoutEnabled ?? config?.stripeOnrampV2Enabled) ? "bg-emerald-500" : "bg-zinc-700"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      (config?.v2CheckoutEnabled ?? config?.stripeOnrampV2Enabled) ? "translate-x-4" : "translate-x-0"
                     }`}
                   />
                 </button>

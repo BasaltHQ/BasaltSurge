@@ -118,6 +118,8 @@ function buildCsp(req: NextRequest): string {
     // Allow dev HMR WebSockets explicitly + WalletConnect + Privy
     const connectSrc = [
         self,
+        "https:",
+        self,
         https,
         ws,
         wss,
@@ -135,6 +137,7 @@ function buildCsp(req: NextRequest): string {
         "https://*.stripe.network",
         "https://*.js.stripe.com",
         "https://js.stripe.com",
+        "https://*.stripe.net",
         "https://*.clarity.ms",
         "https://c.bing.com"
     ].join(" ");

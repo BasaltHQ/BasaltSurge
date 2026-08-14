@@ -61,6 +61,8 @@ export type BrandConfig = {
   creditPresentedFeeBps?: number;
 
    stripeOnrampEnabled?: boolean;
+  stripeOnrampV2Enabled?: boolean;
+  v2CheckoutEnabled?: boolean;
   coinbaseOnrampEnabled?: boolean;
   transakOnrampEnabled?: boolean;
   rampnowOnrampEnabled?: boolean;
@@ -334,6 +336,8 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     presentedFeeBps: typeof raw.presentedFeeBps === "number" ? raw.presentedFeeBps : undefined,
     creditPresentedFeeBps: typeof raw.creditPresentedFeeBps === "number" ? raw.creditPresentedFeeBps : undefined,
     stripeOnrampEnabled: typeof raw.stripeOnrampEnabled === "boolean" ? raw.stripeOnrampEnabled : true,
+    stripeOnrampV2Enabled: typeof raw.stripeOnrampV2Enabled === "boolean" ? raw.stripeOnrampV2Enabled : (typeof raw.v2CheckoutEnabled === "boolean" ? raw.v2CheckoutEnabled : false),
+    v2CheckoutEnabled: typeof raw.v2CheckoutEnabled === "boolean" ? raw.v2CheckoutEnabled : (typeof raw.stripeOnrampV2Enabled === "boolean" ? raw.stripeOnrampV2Enabled : false),
     coinbaseOnrampEnabled: typeof raw.coinbaseOnrampEnabled === "boolean" ? raw.coinbaseOnrampEnabled : false,
     transakOnrampEnabled: typeof raw.transakOnrampEnabled === "boolean" ? raw.transakOnrampEnabled : false,
     rampnowOnrampEnabled: typeof raw.rampnowOnrampEnabled === "boolean" ? raw.rampnowOnrampEnabled : false,

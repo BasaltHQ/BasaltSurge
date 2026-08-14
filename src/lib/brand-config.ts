@@ -211,6 +211,8 @@ export type BrandConfigDoc = {
   creditPresentedFeeBps?: number;
 
   stripeOnrampEnabled?: boolean;
+  stripeOnrampV2Enabled?: boolean;
+  v2CheckoutEnabled?: boolean;
   coinbaseOnrampEnabled?: boolean;
   transakOnrampEnabled?: boolean;
   rampnowOnrampEnabled?: boolean;
@@ -469,6 +471,8 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     presentedFeeBps: undefined,
     creditPresentedFeeBps: undefined,
     stripeOnrampEnabled: true,
+    stripeOnrampV2Enabled: false,
+    v2CheckoutEnabled: false,
     coinbaseOnrampEnabled: false,
     transakOnrampEnabled: false,
     rampnowOnrampEnabled: false,
@@ -523,6 +527,8 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     presentedFeeBps: typeof overrides.presentedFeeBps === "number" ? overrides.presentedFeeBps : withDefaults.presentedFeeBps,
     creditPresentedFeeBps: typeof overrides.creditPresentedFeeBps === "number" ? overrides.creditPresentedFeeBps : withDefaults.creditPresentedFeeBps,
     stripeOnrampEnabled: typeof overrides.stripeOnrampEnabled === "boolean" ? overrides.stripeOnrampEnabled : withDefaults.stripeOnrampEnabled,
+    stripeOnrampV2Enabled: typeof overrides.stripeOnrampV2Enabled === "boolean" ? overrides.stripeOnrampV2Enabled : (typeof overrides.v2CheckoutEnabled === "boolean" ? overrides.v2CheckoutEnabled : withDefaults.stripeOnrampV2Enabled),
+    v2CheckoutEnabled: typeof overrides.v2CheckoutEnabled === "boolean" ? overrides.v2CheckoutEnabled : (typeof overrides.stripeOnrampV2Enabled === "boolean" ? overrides.stripeOnrampV2Enabled : withDefaults.v2CheckoutEnabled),
     coinbaseOnrampEnabled: typeof overrides.coinbaseOnrampEnabled === "boolean" ? overrides.coinbaseOnrampEnabled : withDefaults.coinbaseOnrampEnabled,
     transakOnrampEnabled: typeof overrides.transakOnrampEnabled === "boolean" ? overrides.transakOnrampEnabled : withDefaults.transakOnrampEnabled,
     rampnowOnrampEnabled: typeof overrides.rampnowOnrampEnabled === "boolean" ? overrides.rampnowOnrampEnabled : withDefaults.rampnowOnrampEnabled,

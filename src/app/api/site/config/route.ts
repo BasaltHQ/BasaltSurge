@@ -513,6 +513,8 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
           // Fallback logic for feeMinusEnabled and stripeOnrampEnabled when not defined or falsy on merchant config
           cfg.feeMinusEnabled = cfg.feeMinusEnabled || !!fetchedBrand.feeMinusEnabled;
           cfg.stripeOnrampEnabled = cfg.stripeOnrampEnabled || (fetchedBrand.stripeOnrampEnabled ?? true);
+          cfg.stripeOnrampV2Enabled = (fetchedBrand as any).stripeOnrampV2Enabled ?? (fetchedBrand as any).v2CheckoutEnabled ?? false;
+          cfg.v2CheckoutEnabled = cfg.stripeOnrampV2Enabled;
 
           cfg.coinbaseOnrampEnabled = fetchedBrand.coinbaseOnrampEnabled ?? false;
           cfg.transakOnrampEnabled = fetchedBrand.transakOnrampEnabled ?? false;

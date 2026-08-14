@@ -73,12 +73,15 @@ export async function GET(
 
     const errorMsg = String(customer.error?.message || "").toLowerCase();
     const isOAuthError = response.status === 401 || 
+                         response.status === 403 ||
                          errorMsg.includes("oauth") || 
+                         errorMsg.includes("permission") ||
+                         errorMsg.includes("forbidden") ||
                          customer.error?.param === "HTTP_HEADER[Stripe-OAuth-Token]" ||
                          customer.error?.code === "parameter_missing";
 
     if (isOAuthError && id) {
-      console.log("[CRYPTO CUSTOMER] OAuth token expired or rejected. Attempting background token refresh...");
+      console.log("[CRYPTO CUSTOMER] OAuth token expired or returned 401/403. Attempting background token refresh...");
       const { refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
       const refreshedToken = await refreshOAuthToken(id);
       if (refreshedToken) {
@@ -98,6 +101,31 @@ export async function GET(
         );
         customer = await response.json();
       }
+    }
+
+    // If Stripe is in a transient processing lock (403/409/429), treat as pending verification rather than failing
+    if (response.status === 403 || response.status === 409 || response.status === 429) {
+      console.log(`[CRYPTO CUSTOMER] Stripe transient processing lock (${response.status}), returning pending status...`);
+      return NextResponse.json({
+        ok: true,
+        customerId: id,
+        providedFields: [],
+        kycStatus: "pending",
+        idDocStatus: "pending",
+        kycTiers: [
+          { tier: "l0", verification_status: "pending" },
+          { tier: "l1", verification_status: "pending" },
+          { tier: "l2", verification_status: "pending" }
+        ],
+        transient: true,
+        ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
+      }, {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+          "Pragma": "no-cache",
+          "Expires": "0"
+        }
+      });
     }
 
     if (!response.ok) {

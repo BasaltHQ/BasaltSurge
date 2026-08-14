@@ -19,6 +19,7 @@ import { fetchEthRates, fetchUsdRates, fetchBtcUsd, fetchXrpUsd, type EthRates }
 import { SUPPORTED_CURRENCIES, convertFromUsd, formatCurrency, getCurrencyFlag, roundForCurrency } from "@/lib/fx";
 import { useStripeOnrampInterceptor } from "@/hooks/useStripeOnrampInterceptor";
 import { useStripeEmbeddedOnramp } from "@/hooks/useStripeEmbeddedOnramp";
+import { PortalPayAccordionCheckoutV2 } from "@/components/checkout/PortalPayAccordionCheckoutV2";
 import { usePortalLogger } from "@/hooks/usePortalLogger";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
@@ -909,11 +910,30 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             -webkit-backdrop-filter: blur(${blur}) !important;
           }
 
-          .pp-portal-container .pp-currency-menu {
-            background: ${cardBg || t.surfaceBg || (isThemeDark ? '#0c0d14' : '#ffffff')} !important;
-            border-color: ${cardBorder || (isThemeDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)')} !important;
+          .pp-portal-container .pp-currency-menu,
+          .pp-portal-container .pp-address-menu,
+          .pp-portal-container [data-pp-address-dropdown] {
+            background: ${isThemeDark ? '#141522' : '#ffffff'} !important;
+            border-color: ${cardBorder || (isThemeDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.18)')} !important;
             border-radius: ${radius} !important;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4) !important;
+            box-shadow: 0 20px 40px -5px rgba(0, 0, 0, 0.7), 0 10px 20px -5px rgba(0, 0, 0, 0.5) !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            opacity: 1 !important;
+          }
+
+          .pp-portal-container .pp-address-menu button,
+          .pp-portal-container [data-pp-address-dropdown] button {
+            background: ${isThemeDark ? '#141522' : '#ffffff'} !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            color: ${isThemeDark ? '#ffffff' : '#0f172a'} !important;
+          }
+
+          .pp-portal-container .pp-address-menu button:hover,
+          .pp-portal-container [data-pp-address-dropdown] button:hover {
+            background: ${isThemeDark ? '#23263b' : '#f1f5f9'} !important;
+            color: ${isThemeDark ? '#ffffff' : '#0f172a'} !important;
           }
 
           /* All borders */
@@ -1178,7 +1198,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           // If the shop logo is missing OR matches a platform default/placeholder,
           // and we have a valid PFP, use the PFP instead.
           // Note: Since we ignored siteRes, 'effectiveLogo' is solely from Shop Config now.
-          const isGenericLogo = !effectiveLogo || 
+          const isGenericLogo = !effectiveLogo ||
             (() => {
               const lower = effectiveLogo.toLowerCase();
               const partnerLogoLower = String(partnerLogoApp || "").toLowerCase();
@@ -2255,8 +2275,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const tipUsd = Number(receipt?.tipAmount || 0);
 
-  const handleTipUpdate = async (val: string | number) => {
-    if (!receiptId || updatingTip) return;
+  const tipUserInteractedRef = useRef(false);
+  const tipInitialSyncedRef = useRef(false);
+
+  const handleTipUpdate = useCallback(async (val: string | number) => {
+    if (!receiptId || updatingTip || !receipt) return;
 
     // Calculate intended amount from percentage
     let amount = 0;
@@ -2266,7 +2289,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       amount = Number(((pct / 100) * baseSubtotal).toFixed(2));
     }
 
-    // Skip redundant updates (like on-mount initialization to 0 when receipt already has 0 tip)
+    // Skip redundant updates
     const currentTip = Number(receipt?.tipAmount || 0);
     if (amount === currentTip) {
       return;
@@ -2285,23 +2308,45 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           setReceipt(j.receipt);
         }
       }
+    } catch (e) {
+      console.error("[PORTAL TIP] Failed to update tip:", e);
     } finally {
       setUpdatingTip(false);
     }
-  };
+  }, [receiptId, updatingTip, receipt, feeMinusEnabled, itemsSubtotalUsd, unscaleFactor]);
 
+  // Sync initial receipt tip to tipChoice when receipt is first loaded
   useEffect(() => {
+    if (!receipt || tipInitialSyncedRef.current) return;
+    tipInitialSyncedRef.current = true;
+    const initialTip = Number(receipt.tipAmount || 0);
+    if (initialTip > 0 && itemsSubtotalUsd > 0) {
+      const baseSubtotal = feeMinusEnabled ? (itemsSubtotalUsd * unscaleFactor) : itemsSubtotalUsd;
+      if (baseSubtotal > 0) {
+        const pct = Math.round((initialTip / baseSubtotal) * 100);
+        const presetMatch = merchantTipPresets.find((p) => p === pct);
+        if (presetMatch !== undefined) {
+          setTipChoice(String(presetMatch));
+        } else {
+          setTipChoice("custom");
+          setTipCustomPct(pct);
+        }
+      }
+    }
+  }, [receipt, itemsSubtotalUsd, feeMinusEnabled, unscaleFactor, merchantTipPresets]);
+
+  // Handle custom tip input with debounce (only when user actively changes it)
+  useEffect(() => {
+    if (!tipUserInteractedRef.current || !receipt) return;
     if (tipChoice === "custom") {
       const timer = setTimeout(() => {
         handleTipUpdate(tipCustomPct);
-      }, 800);
+      }, 600);
       return () => clearTimeout(timer);
-    } else {
-      handleTipUpdate(tipChoice);
     }
-  }, [tipChoice, tipCustomPct]);
+  }, [tipChoice, tipCustomPct, receipt, handleTipUpdate]);
 
-  // Auto-apply merchant default tip once receipt is loaded
+  // Auto-apply merchant default tip once receipt is loaded (if no existing tip)
   useEffect(() => {
     if (!merchantTipEnabled) return;
     if (pendingDefaultTip === null || !receiptId || !receipt) return;
@@ -2311,33 +2356,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       return;
     }
     const pct = pendingDefaultTip;
-    const subtotal = items
-      .filter((it) => !/processing fee|portal fee|tax|gratuity|tip|^shipping/i.test(it.label || ""))
-      .reduce((s, it) => s + Number(it.priceUsd || 0), 0);
-    if (subtotal <= 0) return;
-    const amount = Number(((pct / 100) * subtotal).toFixed(2));
-    if (amount <= 0) { setPendingDefaultTip(null); return; }
+    const baseSubtotal = feeMinusEnabled ? (itemsSubtotalUsd * unscaleFactor) : itemsSubtotalUsd;
+    if (baseSubtotal <= 0) return;
+    const amount = Number(((pct / 100) * baseSubtotal).toFixed(2));
+    if (amount <= 0) {
+      setPendingDefaultTip(null);
+      return;
+    }
 
     setTipChoice(String(pct));
     setPendingDefaultTip(null);
-    // Directly POST the default tip
-    (async () => {
-      setUpdatingTip(true);
-      try {
-        const res = await fetch(`/api/receipts/${receiptId}/tip`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tipAmount: amount }),
-        });
-        if (res.ok) {
-          const j = await res.json();
-          if (j.receipt) setReceipt(j.receipt);
-        }
-      } finally {
-        setUpdatingTip(false);
-      }
-    })();
-  }, [pendingDefaultTip, receiptId, receipt, merchantTipEnabled]);
+    handleTipUpdate(pct);
+  }, [pendingDefaultTip, receiptId, receipt, merchantTipEnabled, feeMinusEnabled, itemsSubtotalUsd, unscaleFactor, handleTipUpdate]);
 
   const baseWithoutFeeNoTipUsd = useMemo(
     () => +(itemsSubtotalUsd + taxUsd).toFixed(2),
@@ -2543,6 +2573,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
   const [showAddressSuggestions, setShowAddressSuggestions] = useState(false);
   const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
+  const [isAddressParsed, setIsAddressParsed] = useState(false);
 
   const STATE_MAP: Record<string, string> = {
     "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA", "colorado": "CO", "connecticut": "CT",
@@ -2603,6 +2634,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
     setAddressSuggestions([]);
     setShowAddressSuggestions(false);
+    setIsAddressParsed(true);
   };
 
   // Sync shipping info to KYC form demographics when toggle is active
@@ -2778,18 +2810,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const stripePct = funding === "us_bank_account"
       ? (achSpeed === "standard" ? 0.6 : 4.0)
       : (funding === "credit" ? creditStripeFeePct : debitStripeFeePct);
-      
+
     if (feeMinusEnabled) {
       return +(totalUsd / (1 + stripePct / 100)).toFixed(2);
     }
-    
+
     const hasPresentedBps = presentedFeeBps !== undefined || creditPresentedFeeBps !== undefined;
     const activeStripePct = hasPresentedBps ? 0 : stripePct;
-    
+
     const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0) + activeStripePct) / 100);
     const feeUsd = +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
     const totalForFunding = +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + feeUsd).toFixed(2);
-    
+
     return +(totalForFunding / (1 + stripePct / 100)).toFixed(2);
   }, [receipt, achSpeed, creditStripeFeePct, debitStripeFeePct, feeMinusEnabled, totalUsd, effectiveBasePlatformFeePct, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, presentedFeeBps, creditPresentedFeeBps]);
 
@@ -2976,6 +3008,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Onramp active state toggles
   const [stripeOnrampEnabled, setStripeOnrampEnabled] = useState<boolean>(true);
+  const [stripeOnrampV2Enabled, setStripeOnrampV2Enabled] = useState<boolean>(() => String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS_V2 || process.env.NEXT_PUBLIC_STRIPE_ONRAMP_V2 || "").toUpperCase() === "TRUE");
   const [coinbaseOnrampEnabled, setCoinbaseOnrampEnabled] = useState<boolean>(false);
   const [transakOnrampEnabled, setTransakOnrampEnabled] = useState<boolean>(false);
   const [rampnowOnrampEnabled, setRampnowOnrampEnabled] = useState<boolean>(false);
@@ -3042,6 +3075,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           if (typeof cfg.coinbaseOnrampEnabled === "boolean") setCoinbaseOnrampEnabled(cfg.coinbaseOnrampEnabled);
           if (typeof cfg.transakOnrampEnabled === "boolean") setTransakOnrampEnabled(cfg.transakOnrampEnabled);
           if (typeof cfg.rampnowOnrampEnabled === "boolean") setRampnowOnrampEnabled(cfg.rampnowOnrampEnabled);
+        }
+        if (typeof (cfg as any).stripeOnrampV2Enabled === "boolean") {
+          setStripeOnrampV2Enabled((cfg as any).stripeOnrampV2Enabled);
+        } else if (typeof (cfg as any).v2CheckoutEnabled === "boolean") {
+          setStripeOnrampV2Enabled((cfg as any).v2CheckoutEnabled);
         }
         setMerchantAchEnabled(cfg.achEnabled !== undefined ? !!cfg.achEnabled : true);
         if ((cfg as any).partnerAchEnabled !== undefined) {
@@ -3681,8 +3719,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Supported ONLY in US and EU/EEA countries (including UK, Switzerland, Norway, Iceland, Liechtenstein).
   const isExplicitlyUnsupportedRegion = useMemo(() => {
     const STRIPE_ONRAMP_SUPPORTED_COUNTRIES = new Set([
-      "US", "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", 
-      "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", 
+      "US", "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI",
+      "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT",
       "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"
     ]);
 
@@ -3716,6 +3754,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [receipt?.billingAddress?.country, receipt?.shippingAddress?.country, clientCountry]);
 
   const stripeHeadless = (String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE") && !isExplicitlyUnsupportedRegion;
+
+  const isV2Active = useMemo(() => {
+    if (isExplicitlyUnsupportedRegion) return false;
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("v2") === "true" || sp.get("checkout") === "v2") return true;
+      if (sp.get("v2") === "false" || sp.get("checkout") === "v1") return false;
+
+      const cookies = window.document.cookie || "";
+      if (cookies.includes("pp_sandbox_stripe_v2=true")) return true;
+      if (cookies.includes("pp_sandbox_stripe_v2=false")) return false;
+    }
+    const envV2 = process.env.NEXT_PUBLIC_STRIPEV2 === "true" || process.env.STRIPEV2 === "true" || process.env.NEXT_PUBLIC_STRIPE_HEADLESS_V2 === "TRUE";
+    return stripeOnrampV2Enabled || (theme as any)?.stripeOnrampV2Enabled === true || (theme as any)?.v2CheckoutEnabled === true || envV2;
+  }, [isExplicitlyUnsupportedRegion, stripeOnrampV2Enabled, theme]);
 
   const payRef = useRef<HTMLDivElement | null>(null);
   const widgetRootRef = useRef<HTMLDivElement | null>(null);
@@ -3920,6 +3973,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     submitKycInfo,
     reset: resetHeadlessOnramp,
     kycTierRequired,
+    kycLevel: headlessKycLevel,
+    kycTiers: headlessKycTiers,
     isAllKycCompleted,
     onrampLimits: headlessOnrampLimits,
     detectedCardFunding: stripeDetectedFunding,
@@ -4021,7 +4076,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         funding: isAch ? "us_bank_account" : undefined,
       });
       postStatus(statusToPost, {
-          txHash,
+        txHash,
         paymentMethod: "stripe_headless",
         stripeSessionId: result.sessionId,
         customerEmail: shipEmail || headlessEmailInput || undefined,
@@ -4042,7 +4097,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       ) {
         setShowUnsupportedLinkModal(true);
       } else {
-        postStatus("failed", { 
+        postStatus("failed", {
           error: String((error as any)?.message || error),
           stripeSessionId: headlessSessionId || undefined
         });
@@ -4150,11 +4205,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           const src = iframe.getAttribute("src") || "";
           const iframeName = iframe.getAttribute("name") || "";
           const iframeId = iframe.getAttribute("id") || "";
-          const isTestWidget = src.includes("controller-onramp") || 
-                               src.includes("test-mode-options") || 
-                               src.includes("m-outer") ||
-                               iframeName.includes("controller-onramp") ||
-                               iframeId.includes("controller-onramp");
+          const isTestWidget = src.includes("controller-onramp") ||
+            src.includes("test-mode-options") ||
+            src.includes("m-outer") ||
+            iframeName.includes("controller-onramp") ||
+            iframeId.includes("controller-onramp");
 
           if (isTestWidget) {
             return; // Skip hiding the test mode widget/controller helper
@@ -4165,7 +4220,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             if (iframe.parentNode && iframe.parentNode !== document.body) {
               try {
                 iframe.parentNode.removeChild(iframe);
-              } catch {}
+              } catch { }
             }
           }
         });
@@ -4204,10 +4259,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         if (observer) observer.disconnect();
         replaceTextInNode(document.body, "BasaltHQ, Inc.", targetBrand);
         replaceTextInNode(document.body, "BasaltHQ", targetBrand);
-      } catch {} finally {
+      } catch { } finally {
         try {
           if (observer) observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-        } catch {}
+        } catch { }
       }
     };
 
@@ -4223,7 +4278,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             if (doc) {
               replaceTextInNode(doc, target, replacement);
             }
-          } catch {}
+          } catch { }
         }
         if (node instanceof HTMLElement && node.shadowRoot) {
           replaceTextInNode(node.shadowRoot, target, replacement);
@@ -4720,9 +4775,35 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const isAchPending = receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending" || ((stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account") && headlessStep === "awaiting_funds");
 
   // ─── STRIPE HEADLESS INLINE UI ───
-  const stripeHeadlessUI = (headlessEmailPrompt || headlessActive || headlessInitiated) ? (
+  const stripeHeadlessUI = (isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? (
     <div className="w-full flex flex-col items-stretch justify-start animate-in fade-in duration-300">
-      {headlessEmailPrompt ? (
+      {isV2Active ? (
+        <PortalPayAccordionCheckoutV2
+          theme={theme}
+          isLightText={isLightText}
+          email={shipEmail || headlessEmailInput}
+          phone={headlessPhoneInput}
+          fullName={shipName}
+          amountUsd={totalUsd}
+          receiptId={receiptId}
+          headlessError={headlessError}
+          kycTierRequired={kycTierRequired}
+          kycLevel={headlessKycLevel}
+          kycTiers={headlessKycTiers}
+          isAllKycCompleted={isAllKycCompleted}
+          onHeadlessSubmitEmailPhone={startHeadlessOnramp}
+          onSubmitKycInfo={submitKycInfo}
+          paymentElement={headlessPaymentElement}
+          authElement={headlessAuthElement}
+          headlessStatus={headlessStatus}
+          headlessStep={headlessStep}
+          paymentConfirmed={paymentConfirmed}
+          detectedCardFunding={stripeDetectedFunding || detectedCardFunding}
+          detectedCardBrand={detectedCardBrand}
+          detectedCardLast4={detectedCardLast4}
+          onEmailReceipt={() => setEmailModalOpen(true)}
+        />
+      ) : headlessEmailPrompt ? (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -4734,9 +4815,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
             }
           }}
-          className={`w-full rounded-2xl md:rounded-3xl border p-6 md:p-8 flex flex-col items-stretch animate-in zoom-in duration-300 backdrop-blur-2xl shadow-2xl ${
-            isLightText ? 'border-white/10 bg-neutral-900/90 shadow-black/80' : 'border-black/10 bg-white/95 shadow-black/10'
-          }`}
+          className={`w-full rounded-2xl md:rounded-3xl border p-6 md:p-8 flex flex-col items-stretch animate-in zoom-in duration-300 backdrop-blur-2xl shadow-2xl ${isLightText ? 'border-white/10 bg-neutral-900/90 shadow-black/80' : 'border-black/10 bg-white/95 shadow-black/10'
+            }`}
         >
           {/* Header Title & Stripe Link Badge */}
           <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -4757,9 +4837,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </p>
 
           {/* Payment Methods Badges Bar - Guaranteed Single Row */}
-          <div className={`flex items-center justify-between px-3 py-2 rounded-xl mb-5 border ${
-            isLightText ? 'bg-white/[0.03] border-white/10' : 'bg-black/[0.03] border-black/10'
-          }`}>
+          <div className={`flex items-center justify-between px-3 py-2 rounded-xl mb-5 border ${isLightText ? 'bg-white/[0.03] border-white/10' : 'bg-black/[0.03] border-black/10'
+            }`}>
             <span className={`text-[10px] font-bold uppercase tracking-wider shrink-0 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
               Accepted
             </span>
@@ -4787,7 +4866,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               {/* ACH Bank Badge */}
               <span className="h-5 px-1.5 rounded bg-emerald-950/80 border border-emerald-500/30 text-[8.5px] font-bold text-emerald-300 flex items-center gap-1 select-none shadow-sm shrink-0" title="ACH Bank Transfer">
                 <svg className="w-2.5 h-2.5 fill-current text-emerald-400 shrink-0" viewBox="0 0 24 24">
-                  <path d="M2 10h20v2H2zm2-7h16l2 4H2zm3 9h2v7H7zm5 0h2v7h-2zm5 0h2v7h-2zm-13 8h16v2H4z"/>
+                  <path d="M2 10h20v2H2zm2-7h16l2 4H2zm3 9h2v7H7zm5 0h2v7h-2zm5 0h2v7h-2zm-13 8h16v2H4z" />
                 </svg>
                 <span>ACH</span>
               </span>
@@ -4795,11 +4874,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
 
           {/* Total Amount Glass Box */}
-          <div className={`flex items-center justify-between p-5 rounded-2xl mb-5 border relative overflow-hidden ${
-            isLightText
+          <div className={`flex items-center justify-between p-5 rounded-2xl mb-5 border relative overflow-hidden ${isLightText
               ? 'bg-gradient-to-br from-white/[0.06] to-white/[0.02] border-white/10 text-white shadow-inner'
               : 'bg-gradient-to-br from-black/[0.06] to-black/[0.02] border-black/10 text-black shadow-inner'
-          }`}>
+            }`}>
             <div>
               <span className={`text-[10px] font-bold uppercase tracking-wider block ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
                 Total Amount Due
@@ -4813,9 +4891,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
           {/* Email Input Field */}
           <div className="mb-4">
-            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1.5 ${
-              isLightText ? 'text-white/60' : 'text-black/60'
-            }`}>
+            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1.5 ${isLightText ? 'text-white/60' : 'text-black/60'
+              }`}>
               Email Address for Receipt & Order Updates
             </label>
             <div className="relative">
@@ -4824,11 +4901,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 name="email"
                 autoComplete="email"
                 placeholder="name@example.com"
-                className={`w-full h-12 pl-3.5 pr-4 rounded-xl focus:outline-none transition-all text-sm font-semibold ${
-                  isLightText
+                className={`w-full h-12 pl-3.5 pr-4 rounded-xl focus:outline-none transition-all text-sm font-semibold ${isLightText
                     ? 'bg-white/5 border border-white/15 text-white placeholder-white/40 focus:border-[#635BFF] focus:bg-white/10 focus:ring-2 focus:ring-[#635BFF]/40'
                     : 'bg-black/5 border border-black/15 text-black placeholder-black/40 focus:border-[#635BFF] focus:bg-black/10 focus:ring-2 focus:ring-[#635BFF]/40'
-                }`}
+                  }`}
                 value={headlessEmailInput}
                 onChange={(e) => setHeadlessEmailInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -4880,9 +4956,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 </button>
                 <button
                   type="button"
-                  className={`text-xs underline hover:opacity-85 transition-opacity block mx-auto font-semibold py-1 ${
-                    isLightText ? 'text-white/60 hover:text-white' : 'text-black/60 hover:text-black'
-                  }`}
+                  className={`text-xs underline hover:opacity-85 transition-opacity block mx-auto font-semibold py-1 ${isLightText ? 'text-white/60 hover:text-white' : 'text-black/60 hover:text-black'
+                    }`}
                   onClick={() => {
                     setUserOptedOutOfStripeBypass(true);
                     setHeadlessEmailPrompt(false);
@@ -4920,11 +4995,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 </button>
                 <button
                   type="button"
-                  className={`sm:flex-1 h-12 rounded-xl font-semibold border transition-all text-xs ${
-                    isLightText
+                  className={`sm:flex-1 h-12 rounded-xl font-semibold border transition-all text-xs ${isLightText
                       ? 'bg-white/[0.04] text-white/80 border-white/10 hover:bg-white/[0.08] hover:text-white'
                       : 'bg-black/[0.04] text-black/80 border-black/10 hover:bg-black/[0.08] hover:text-black'
-                  }`}
+                    }`}
                   onClick={() => {
                     setUserOptedOutOfStripeBypass(true);
                     setHeadlessEmailPrompt(false);
@@ -4952,10 +5026,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
         </form>
       ) : (
-        <div className={`w-full h-auto flex flex-col relative transition-all duration-300 ${
-            (["authenticating", "collecting_payment"].includes(headlessStep as string) && (headlessAuthElement || headlessPaymentElement))
-              ? "border-0 bg-transparent shadow-none"
-              : `rounded-xl shadow-xl backdrop-blur-xl overflow-hidden border ${isLightText ? 'bg-white/[0.02] border-white/5' : 'bg-black/[0.02] border-black/5'}`
+        <div className={`w-full h-auto flex flex-col relative transition-all duration-300 ${(["authenticating", "collecting_payment"].includes(headlessStep as string) && (headlessAuthElement || headlessPaymentElement))
+            ? "border-0 bg-transparent shadow-none"
+            : `rounded-xl shadow-xl backdrop-blur-xl overflow-hidden border ${isLightText ? 'bg-white/[0.02] border-white/5' : 'bg-black/[0.02] border-black/5'}`
           }`}>
           {/* Header */}
           <div className={`p-4 border-b flex items-center justify-between shrink-0 ${isLightText ? 'border-white/5' : 'border-black/5'}`}>
@@ -4972,11 +5045,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   setHeadlessEmailPrompt(true);
                   setHeadlessInitiated(false);
                 }}
-                className={`transition-all text-xs font-semibold px-2.5 py-1 rounded-lg border active:scale-95 duration-100 ${
-                  isLightText 
-                    ? 'text-white/60 hover:text-white border-white/10 hover:bg-white/5' 
+                className={`transition-all text-xs font-semibold px-2.5 py-1 rounded-lg border active:scale-95 duration-100 ${isLightText
+                    ? 'text-white/60 hover:text-white border-white/10 hover:bg-white/5'
                     : 'text-black/60 hover:text-black border-black/10 hover:bg-black/5'
-                }`}
+                  }`}
               >
                 Cancel
               </button>
@@ -4984,11 +5056,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           </div>
 
           {/* Content Body */}
-          <div className={`w-full flex flex-col items-stretch justify-start relative shrink-0 ${
-            (["authenticating", "collecting_payment"].includes(headlessStep as string) && (headlessAuthElement || headlessPaymentElement))
+          <div className={`w-full flex flex-col items-stretch justify-start relative shrink-0 ${(["authenticating", "collecting_payment"].includes(headlessStep as string) && (headlessAuthElement || headlessPaymentElement))
               ? "p-0 w-full"
               : "p-3.5 md:p-5"
-          }`}>
+            }`}>
             {headlessStep === "error" ? (
               <div className="text-center px-4 py-6 flex flex-col items-center w-full">
                 <div className="w-14 h-14 bg-red-500/10 rounded-full flex items-center justify-center mb-4 text-red-500 border border-red-500/20">
@@ -5026,11 +5097,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 {!shipEmail && (
                   <button
                     onClick={() => setEmailModalOpen(true)}
-                    className={`w-full mb-3 py-2 rounded-xl font-bold transition-all text-xs hover:opacity-90 shadow-md ${
-                      isLightText 
-                        ? "bg-white/10 hover:bg-white/20 text-white" 
+                    className={`w-full mb-3 py-2 rounded-xl font-bold transition-all text-xs hover:opacity-90 shadow-md ${isLightText
+                        ? "bg-white/10 hover:bg-white/20 text-white"
                         : "bg-black/10 hover:bg-black/20 text-black"
-                    }`}
+                      }`}
                   >
                     Email Receipt
                   </button>
@@ -5053,13 +5123,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     {(kycTierRequired as string) === "l0" ? "KYC & Compliance Verification" : "Identity Verification"}
                   </h3>
                   <p className={`text-xs font-medium mb-1 ${isLightText ? 'text-white/80' : 'text-black/80'}`}>
-                    {(kycTierRequired as string) === "l0" 
+                    {(kycTierRequired as string) === "l0"
                       ? "Enter your full name and primary home address required for regulatory compliance."
                       : "Stripe requires additional demographics to complete authorization."}
                   </p>
                 </div>
 
                 <div className="space-y-3.5">
+                  {headlessError && (
+                    <div className={`p-3 rounded-xl border text-xs font-medium mb-2 ${isLightText
+                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                        : 'bg-amber-50 border-amber-300 text-amber-800'
+                      }`}>
+                      ⚠️ {headlessError}
+                    </div>
+                  )}
                   {(kycTierRequired as string) === "l0" ? (
                     <>
                       {/* L0 Name Fields */}
@@ -5070,8 +5148,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             type="text"
                             placeholder="John"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                              : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
                             value={kycFirstName}
                             onChange={(e) => setKycFirstName(e.target.value)}
@@ -5083,8 +5161,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             type="text"
                             placeholder="Smith"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                              : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
                             value={kycLastName}
                             onChange={(e) => setKycLastName(e.target.value)}
@@ -5102,8 +5180,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             autoComplete="email"
                             placeholder="email@example.com"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                              : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
                             value={shipEmail || headlessEmailInput}
                             onChange={(e) => {
@@ -5119,8 +5197,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             autoComplete="tel"
                             placeholder="+15555555555"
                             className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                              ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                              : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                               }`}
                             value={headlessPhoneInput}
                             onChange={(e) => setHeadlessPhoneInput(e.target.value)}
@@ -5133,8 +5211,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Country</label>
                         <select
                           className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                              ? 'bg-white/5 border border-white/10 text-white focus:border-white/20 focus:bg-white/10 [&>option]:bg-neutral-900 [&>option]:text-white'
-                              : 'bg-black/5 border border-black/10 text-black focus:border-black/20 focus:bg-black/10 [&>option]:bg-white [&>option]:text-black'
+                            ? 'bg-white/5 border border-white/10 text-white focus:border-white/20 focus:bg-white/10 [&>option]:bg-neutral-900 [&>option]:text-white'
+                            : 'bg-black/5 border border-black/10 text-black focus:border-black/20 focus:bg-black/10 [&>option]:bg-white [&>option]:text-black'
                             }`}
                           value={kycCountry}
                           onChange={(e) => {
@@ -5144,7 +5222,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           }}
                         >
                           <option value="US">United States</option>
-                          <option value="CA">Canada</option>
                           <option value="GB">United Kingdom</option>
                           <option value="DE">Germany</option>
                           <option value="FR">France</option>
@@ -5156,147 +5233,198 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       </div>
 
                       {/* L0 Address Fields */}
-                      <div className="space-y-2">
-                        <div className="relative">
-                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Home Address</label>
-                          <input
-                            type="text"
-                            placeholder="Start typing your home address..."
-                            autoComplete="address-line1"
-                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                      {!isAddressParsed && !kycCity && !kycState ? (
+                        <div className="space-y-2">
+                          <div className="relative">
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Residential Address (from ID)</label>
+                            <input
+                              type="text"
+                              placeholder="Start typing your residential address (e.g. 123 Main St)..."
+                              autoComplete="address-line1"
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                 : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                              }`}
-                            value={kycLine1}
-                            onChange={(e) => {
-                              setKycLine1(e.target.value);
-                              fetchAddressSuggestions(e.target.value);
-                            }}
-                            onFocus={() => addressSuggestions.length > 0 && setShowAddressSuggestions(true)}
-                          />
+                                }`}
+                              value={kycLine1}
+                              onChange={(e) => {
+                                setKycLine1(e.target.value);
+                                fetchAddressSuggestions(e.target.value);
+                              }}
+                              onFocus={() => addressSuggestions.length > 0 && setShowAddressSuggestions(true)}
+                            />
 
-                          {/* Google Places Autocomplete Predictions Dropdown */}
-                          {showAddressSuggestions && addressSuggestions.length > 0 && (
-                            <div className={`absolute z-50 left-0 right-0 mt-1 rounded-xl shadow-2xl overflow-hidden border divide-y ${
-                              isLightText
-                                ? 'bg-neutral-900 border-white/15 divide-white/10 text-white'
-                                : 'bg-white border-black/15 divide-black/10 text-black'
-                            }`}>
-                              {/* Header with Mobile Close Button */}
-                              <div className={`px-3 py-1.5 flex items-center justify-between text-[10px] font-semibold tracking-wider uppercase border-b ${
-                                isLightText ? 'bg-white/5 border-white/10 text-white/60' : 'bg-black/5 border-black/10 text-black/60'
-                              }`}>
-                                <span>Address Suggestions</span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    setShowAddressSuggestions(false);
-                                  }}
-                                  className="px-2 py-0.5 rounded-md hover:bg-white/20 active:scale-95 transition flex items-center gap-1 text-[10px] font-bold text-gray-400 hover:text-white"
-                                >
-                                  ✕ Close
-                                </button>
+                            {/* Google Places Autocomplete Predictions Dropdown */}
+                            {showAddressSuggestions && addressSuggestions.length > 0 && (
+                              <div
+                                data-pp-address-dropdown="1"
+                                style={{
+                                  backgroundColor: isLightText ? "#141522" : "#ffffff",
+                                  borderColor: isLightText ? "rgba(255, 255, 255, 0.18)" : "rgba(0, 0, 0, 0.18)",
+                                  zIndex: 99999,
+                                }}
+                                className={`pp-address-menu absolute z-50 left-0 right-0 mt-1 rounded-xl shadow-2xl overflow-hidden border divide-y ${
+                                  isLightText
+                                    ? 'divide-white/10 text-white'
+                                    : 'divide-black/10 text-black'
+                                }`}
+                              >
+                                {/* Header with Mobile Close Button */}
+                                <div className={`px-3 py-1.5 flex items-center justify-between text-[10px] font-semibold tracking-wider uppercase border-b ${
+                                  isLightText ? 'bg-white/5 border-white/10 text-white/60' : 'bg-black/5 border-black/10 text-black/60'
+                                }`}>
+                                  <span>Address Suggestions</span>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      setShowAddressSuggestions(false);
+                                    }}
+                                    className="px-2 py-0.5 rounded-md hover:bg-white/20 active:scale-95 transition flex items-center gap-1 text-[10px] font-bold text-gray-400 hover:text-white"
+                                  >
+                                    ✕ Close
+                                  </button>
+                                </div>
+
+                                {addressSuggestions.map((item: any, idx: number) => (
+                                  <button
+                                    key={item.placeId || idx}
+                                    type="button"
+                                    onClick={() => selectAddressSuggestion(item)}
+                                    style={{
+                                      backgroundColor: isLightText ? "#141522" : "#ffffff",
+                                    }}
+                                    className={`w-full text-left px-3 py-2.5 text-xs transition flex flex-col cursor-pointer ${
+                                      isLightText
+                                        ? 'hover:!bg-[#23263b] !text-white'
+                                        : 'hover:!bg-[#f1f5f9] !text-slate-900'
+                                    }`}
+                                  >
+                                    <span className="font-semibold">{item.mainText || item.description}</span>
+                                    {item.secondaryText && (
+                                      <span className="text-[10px] opacity-60 mt-0.5">{item.secondaryText}</span>
+                                    )}
+                                  </button>
+                                ))}
                               </div>
+                            )}
 
-                              {addressSuggestions.map((item: any, idx: number) => (
-                                <button
-                                  key={item.placeId || idx}
-                                  type="button"
-                                  onClick={() => selectAddressSuggestion(item)}
-                                  className={`w-full text-left px-3 py-2.5 text-xs transition flex flex-col ${
-                                    isLightText
-                                      ? 'hover:bg-white/10 text-gray-200'
-                                      : 'hover:bg-black/5 text-gray-800'
-                                  }`}
-                                >
-                                  <span className="font-semibold">{item.mainText || item.description}</span>
-                                  {item.secondaryText && (
-                                    <span className="text-[10px] opacity-60 mt-0.5">{item.secondaryText}</span>
-                                  )}
-                                </button>
-                              ))}
+                            <div className="flex items-center justify-between mt-1.5">
+                              <p className={`text-[11px] font-medium flex items-center gap-1.5 ${isLightText ? 'text-amber-400/90' : 'text-amber-700'}`}>
+                                <span>💡 Must match your legal residential address on your ID (no P.O. Boxes or work addresses).</span>
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setIsAddressParsed(true)}
+                                className={`text-[11px] font-semibold underline hover:opacity-80 transition whitespace-nowrap ml-2 ${isLightText ? 'text-indigo-300' : 'text-indigo-600'}`}
+                              >
+                                Enter manually
+                              </button>
                             </div>
-                          )}
-
-                          <p className={`text-[11px] mt-1.5 font-medium flex items-center gap-1.5 ${isLightText ? 'text-amber-400/90' : 'text-amber-700'}`}>
-                            <span>💡 Use your home residential address (no P.O. Boxes or business addresses).</span>
-                          </p>
+                          </div>
                         </div>
-                        <div>
-                          <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 2 (Optional)</label>
-                          <input
-                            type="text"
-                            placeholder="Apt, Suite, Unit"
-                            autoComplete="address-line2"
-                            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                      ) : (
+                        <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                          <div className="flex items-center justify-between mb-1">
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider ${isLightText ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                              ✓ Address Components Verified
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsAddressParsed(false);
+                                setKycLine1("");
+                                setKycCity("");
+                                setKycState("");
+                                setKycZip("");
+                              }}
+                              className={`text-[10.5px] font-semibold underline hover:opacity-80 transition ${isLightText ? 'text-white/60' : 'text-black/60'}`}
+                            >
+                              ✏️ Search different address
+                            </button>
+                          </div>
+
+                          <div>
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Street Address</label>
+                            <input
+                              type="text"
+                              placeholder="123 Main St"
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
                                 ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                 : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                              }`}
-                            value={kycLine2}
-                            onChange={(e) => setKycLine2(e.target.value)}
-                          />
+                                }`}
+                              value={kycLine1}
+                              onChange={(e) => setKycLine1(e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Address Line 2 (Optional)</label>
+                            <input
+                              type="text"
+                              placeholder="Apt, Suite, Unit"
+                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                }`}
+                              value={kycLine2}
+                              onChange={(e) => setKycLine2(e.target.value)}
+                            />
+                          </div>
+                          <div className="grid grid-cols-12 gap-2">
+                            <div className="col-span-5">
+                              <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>City</label>
+                              <input
+                                type="text"
+                                placeholder="Seattle"
+                                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                  }`}
+                                value={kycCity}
+                                onChange={(e) => setKycCity(e.target.value)}
+                              />
+                            </div>
+                            <div className="col-span-4">
+                              <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>State/Region</label>
+                              <input
+                                type="text"
+                                placeholder="WA"
+                                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                  }`}
+                                value={kycState}
+                                onChange={(e) => setKycState(e.target.value)}
+                              />
+                            </div>
+                            <div className="col-span-3">
+                              <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Zip/Postal</label>
+                              <input
+                                type="text"
+                                placeholder="98101"
+                                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                  }`}
+                                value={kycZip}
+                                onChange={(e) => setKycZip(e.target.value)}
+                              />
+                            </div>
+                          </div>
                         </div>
-                        <div className="grid grid-cols-12 gap-2">
-                          <div className="col-span-5">
-                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>City</label>
-                            <input
-                              type="text"
-                              placeholder="Seattle"
-                              autoComplete="address-level2"
-                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                                }`}
-                              value={kycCity}
-                              onChange={(e) => setKycCity(e.target.value)}
-                            />
-                          </div>
-                          <div className="col-span-4">
-                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>State/Region</label>
-                            <input
-                              type="text"
-                              placeholder="WA"
-                              autoComplete="address-level1"
-                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                                }`}
-                              value={kycState}
-                              onChange={(e) => setKycState(e.target.value)}
-                            />
-                          </div>
-                          <div className="col-span-3">
-                            <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Zip/Postal</label>
-                            <input
-                              type="text"
-                              placeholder="98101"
-                              autoComplete="postal-code"
-                              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
-                                }`}
-                              value={kycZip}
-                              onChange={(e) => setKycZip(e.target.value)}
-                            />
-                          </div>
-                        </div>
-                      </div>
+                      )}
                     </>
                   ) : (
                     <>
                       {/* L1 Form - Collapsible Address Accordion (Starts Collapsed) */}
-                      <details 
+                      <details
                         open={isAccordionOpen}
                         onToggle={(e) => setIsAccordionOpen((e.target as HTMLDetailsElement).open)}
-                        className={`group rounded-xl border overflow-hidden transition-all duration-200 ${
-                          isLightText ? 'border-white/10 bg-white/[0.02]' : 'border-black/10 bg-black/[0.02]'
-                        }`}
+                        className={`group rounded-xl border overflow-hidden transition-all duration-200 ${isLightText ? 'border-white/10 bg-white/[0.02]' : 'border-black/10 bg-black/[0.02]'
+                          }`}
                       >
-                        <summary className={`p-3 text-[11px] font-semibold cursor-pointer select-none flex items-center justify-between hover:bg-white/[0.04] active:bg-white/[0.06] transition-colors ${
-                          isLightText ? 'text-white/80' : 'text-black/80'
-                        }`}>
+                        <summary className={`p-3 text-[11px] font-semibold cursor-pointer select-none flex items-center justify-between hover:bg-white/[0.04] active:bg-white/[0.06] transition-colors ${isLightText ? 'text-white/80' : 'text-black/80'
+                          }`}>
                           <div className="flex items-center gap-1.5">
                             <svg className="w-3.5 h-3.5 text-emerald-400 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2.5">
                               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043 3.745 3.745 0 01-1.043-3.296A3.745 3.745 0 013 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 011.043-3.296 3.746 3.746 0 013.296-1.043A3.746 3.746 0 0112 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 013.296 1.043 3.746 3.746 0 011.043 3.296A3.745 3.745 0 0121 12z" />
@@ -5315,8 +5443,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 type="text"
                                 placeholder="John"
                                 className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
-                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
-                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
                                   }`}
                                 value={kycFirstName}
                                 onChange={(e) => setKycFirstName(e.target.value)}
@@ -5328,8 +5456,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 type="text"
                                 placeholder="Smith"
                                 className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
-                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
-                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
                                   }`}
                                 value={kycLastName}
                                 onChange={(e) => setKycLastName(e.target.value)}
@@ -5345,8 +5473,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 type="email"
                                 placeholder="email@example.com"
                                 className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
-                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
-                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
                                   }`}
                                 value={shipEmail || headlessEmailInput}
                                 onChange={(e) => {
@@ -5361,8 +5489,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 type="tel"
                                 placeholder="+15555555555"
                                 className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
-                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
-                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
                                   }`}
                                 value={headlessPhoneInput}
                                 onChange={(e) => setHeadlessPhoneInput(e.target.value)}
@@ -5375,8 +5503,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             <label className={`block text-[10.2px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>Country</label>
                             <select
                               className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
-                                  ? 'bg-neutral-800 border border-white/10 text-white [&>option]:bg-neutral-900'
-                                  : 'bg-white border border-black/10 text-black [&>option]:bg-white'
+                                ? 'bg-neutral-800 border border-white/10 text-white [&>option]:bg-neutral-900'
+                                : 'bg-white border border-black/10 text-black [&>option]:bg-white'
                                 }`}
                               value={kycCountry}
                               onChange={(e) => {
@@ -5386,7 +5514,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               }}
                             >
                               <option value="US">United States</option>
-                              <option value="CA">Canada</option>
                               <option value="GB">United Kingdom</option>
                               <option value="DE">Germany</option>
                               <option value="FR">France</option>
@@ -5405,8 +5532,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 type="text"
                                 placeholder="123 Main St"
                                 className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
-                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
-                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
                                   }`}
                                 value={kycLine1}
                                 onChange={(e) => setKycLine1(e.target.value)}
@@ -5418,8 +5545,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 type="text"
                                 placeholder="Apt, Suite, Unit"
                                 className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
-                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
-                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
                                   }`}
                                 value={kycLine2}
                                 onChange={(e) => setKycLine2(e.target.value)}
@@ -5431,8 +5558,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 <input
                                   type="text"
                                   className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
-                                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
-                                      : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
                                     }`}
                                   value={kycCity}
                                   onChange={(e) => setKycCity(e.target.value)}
@@ -5443,8 +5570,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 <input
                                   type="text"
                                   className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
-                                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
-                                      : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
                                     }`}
                                   value={kycState}
                                   onChange={(e) => setKycState(e.target.value)}
@@ -5455,8 +5582,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 <input
                                   type="text"
                                   className={`w-full h-8.5 px-2.5 rounded-lg focus:outline-none transition-all text-xs font-medium ${isLightText
-                                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
-                                      : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
+                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40'
+                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40'
                                     }`}
                                   value={kycZip}
                                   onChange={(e) => setKycZip(e.target.value)}
@@ -5485,9 +5612,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   }
                                 }
                               }}
-                              className={`flex items-center gap-1 text-[10.5px] font-semibold transition-colors hover:underline cursor-pointer ${
-                                isLightText ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-700'
-                              }`}
+                              className={`flex items-center gap-1 text-[10.5px] font-semibold transition-colors hover:underline cursor-pointer ${isLightText ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-700'
+                                }`}
                             >
                               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
@@ -5523,8 +5649,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               placeholder="Month (MM)"
                               maxLength={2}
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                                 }`}
                               value={kycDobMonth}
                               onChange={(e) => {
@@ -5543,8 +5669,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               placeholder="Day (DD)"
                               maxLength={2}
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                                 }`}
                               value={kycDobDay}
                               onChange={(e) => {
@@ -5563,8 +5689,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               placeholder="Year (YYYY)"
                               maxLength={4}
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                                 }`}
                               value={kycDobYear}
                               onChange={(e) => {
@@ -5581,47 +5707,41 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
                       {/* Conditional KYC identification fields based on region */}
                       {kycCountry === "US" ? (
-                        <div className={`p-4 sm:p-5 rounded-2xl border transition-all duration-200 relative overflow-hidden ${
-                          isLightText 
-                            ? 'bg-gradient-to-b from-amber-950/25 via-emerald-950/30 to-slate-950/90 border-amber-500/40 shadow-xl shadow-emerald-950/30' 
+                        <div className={`p-4 sm:p-5 rounded-2xl border transition-all duration-200 relative overflow-hidden ${isLightText
+                            ? 'bg-gradient-to-b from-amber-950/25 via-emerald-950/30 to-slate-950/90 border-amber-500/40 shadow-xl shadow-emerald-950/30'
                             : 'bg-amber-50/50 border-2 border-amber-400/80 shadow-md shadow-amber-900/5'
-                        }`}>
-                          {/* Top Security Banner Ribbon (HIGH CONTRAST FIX) */}
-                          <div className={`flex items-center justify-between gap-2 px-3.5 py-2 -mx-4 -mt-4 sm:-mx-5 sm:-mt-5 mb-3.5 border-b ${
-                            isLightText 
-                              ? 'bg-gradient-to-r from-amber-500/20 via-emerald-500/15 to-amber-500/20 border-amber-500/30' 
-                              : 'bg-amber-100 border-amber-300/90'
                           }`}>
+                          {/* Top Security Banner Ribbon (HIGH CONTRAST FIX) */}
+                          <div className={`flex items-center justify-between gap-2 px-3.5 py-2 -mx-4 -mt-4 sm:-mx-5 sm:-mt-5 mb-3.5 border-b ${isLightText
+                              ? 'bg-gradient-to-r from-amber-500/20 via-emerald-500/15 to-amber-500/20 border-amber-500/30'
+                              : 'bg-amber-100 border-amber-300/90'
+                            }`}>
                             <div className="flex items-center gap-2">
                               <svg className={`w-3.5 h-3.5 shrink-0 ${isLightText ? 'text-amber-400' : 'text-amber-900'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                               </svg>
-                              <span className={`text-[9.5px] uppercase tracking-wider ${
-                                isLightText ? 'text-amber-300 font-black' : 'text-amber-950 font-extrabold'
-                              }`}>
+                              <span className={`text-[9.5px] uppercase tracking-wider ${isLightText ? 'text-amber-300 font-black' : 'text-amber-950 font-extrabold'
+                                }`}>
                                 U.S. FINCEN & PATRIOT ACT CIP COMPLIANCE · CITATION 31 U.S.C. § 5318
                               </span>
                             </div>
-                            <span className={`hidden sm:inline-block text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${
-                              isLightText 
-                                ? 'bg-amber-500/30 text-amber-300 border-amber-400/40' 
+                            <span className={`hidden sm:inline-block text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${isLightText
+                                ? 'bg-amber-500/30 text-amber-300 border-amber-400/40'
                                 : 'bg-amber-200 text-amber-950 border-amber-400 font-extrabold'
-                            }`}>
+                              }`}>
                               OFFICIAL
                             </span>
                           </div>
 
                           {/* Main Header with Seal & Title */}
-                          <div className={`flex items-center justify-between gap-2 pb-3 mb-3 border-b ${
-                            isLightText ? 'border-amber-500/20' : 'border-amber-200'
-                          }`}>
+                          <div className={`flex items-center justify-between gap-2 pb-3 mb-3 border-b ${isLightText ? 'border-amber-500/20' : 'border-amber-200'
+                            }`}>
                             <div className="flex items-center gap-2.5">
                               {/* Official Eagle Shield Seal Emblem */}
-                              <div className={`w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 shadow-sm ${
-                                isLightText 
-                                  ? 'bg-gradient-to-br from-amber-500/20 to-emerald-500/20 border-amber-500/50' 
+                              <div className={`w-8 h-8 rounded-xl border flex items-center justify-center shrink-0 shadow-sm ${isLightText
+                                  ? 'bg-gradient-to-br from-amber-500/20 to-emerald-500/20 border-amber-500/50'
                                   : 'bg-amber-100 border-amber-400/80'
-                              }`}>
+                                }`}>
                                 <svg className={`w-4.5 h-4.5 ${isLightText ? 'text-amber-400' : 'text-amber-800'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 2L3 7v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-9-5z" />
                                   <path strokeLinecap="round" strokeLinejoin="round" fill="currentColor" fillOpacity="0.25" d="M12 4.5L5 8.5v4.5c0 4.2 2.9 8.1 7 9.1 4.1-1 7-4.9 7-9.1V8.5l-7-4z" />
@@ -5639,11 +5759,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               </div>
                             </div>
 
-                            <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[9.5px] font-extrabold shrink-0 border ${
-                              isLightText 
-                                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                            <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[9.5px] font-extrabold shrink-0 border ${isLightText
+                                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
                                 : 'bg-emerald-100 border-emerald-400 text-emerald-900'
-                            }`}>
+                              }`}>
                               <svg className="w-3 h-3 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                               </svg>
@@ -5696,13 +5815,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     pattern="[0-9]*"
                                     placeholder="000 - 00 - 0000"
                                     maxLength={17}
-                                    className={`w-full h-11 pl-10 pr-24 rounded-xl focus:outline-none transition-all text-sm font-mono font-bold tracking-widest ${
-                                      isComplete
+                                    className={`w-full h-11 pl-10 pr-24 rounded-xl focus:outline-none transition-all text-sm font-mono font-bold tracking-widest ${isComplete
                                         ? (isLightText ? 'bg-emerald-950/50 border-2 border-emerald-400 text-white shadow-md shadow-emerald-500/20' : 'bg-emerald-50 border-2 border-emerald-600 text-slate-950 shadow-sm')
                                         : totalDigits > 0
                                           ? (isLightText ? 'bg-amber-950/40 border-2 border-amber-400 text-white' : 'bg-amber-50 border-2 border-amber-600 text-slate-950')
                                           : (isLightText ? 'bg-slate-950/80 border border-amber-500/30 text-white placeholder-white/30 focus:border-amber-400' : 'bg-white border border-slate-300 text-slate-950 placeholder-slate-400 focus:border-amber-600')
-                                    }`}
+                                      }`}
                                     value={getFormattedValue()}
                                     onChange={handleInputChange}
                                   />
@@ -5710,9 +5828,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   {/* Right Action Icons: Show/Hide + Checkmark */}
                                   <div className="absolute right-2.5 flex items-center gap-1.5">
                                     {isComplete && (
-                                      <span className={`hidden sm:flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border ${
-                                        isLightText ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' : 'text-emerald-900 bg-emerald-100 border-emerald-400'
-                                      }`}>
+                                      <span className={`hidden sm:flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg border ${isLightText ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' : 'text-emerald-900 bg-emerald-100 border-emerald-400'
+                                        }`}>
                                         ✓ Valid
                                       </span>
                                     )}
@@ -5720,11 +5837,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     <button
                                       type="button"
                                       onClick={() => setShowSsn(!showSsn)}
-                                      className={`h-8 px-2.5 rounded-lg border flex items-center gap-1 text-[10.5px] font-bold transition-all focus:outline-none active:scale-95 ${
-                                        isLightText 
-                                          ? 'bg-white/10 border-white/15 text-white/80 hover:text-white hover:bg-white/15' 
+                                      className={`h-8 px-2.5 rounded-lg border flex items-center gap-1 text-[10.5px] font-bold transition-all focus:outline-none active:scale-95 ${isLightText
+                                          ? 'bg-white/10 border-white/15 text-white/80 hover:text-white hover:bg-white/15'
                                           : 'bg-slate-100 border-slate-300 text-slate-800 hover:text-slate-950 hover:bg-slate-200'
-                                      }`}
+                                        }`}
                                       title={showSsn ? "Hide SSN" : "Show SSN"}
                                     >
                                       {showSsn ? "Hide" : "Show"}
@@ -5771,8 +5887,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 placeholder="e.g. DE, FR"
                                 maxLength={2}
                                 className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium uppercase ${isLightText
-                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                                   }`}
                                 value={kycNationalities}
                                 onChange={(e) => setKycNationalities(e.target.value.toUpperCase())}
@@ -5785,8 +5901,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 placeholder="e.g. DE, FR"
                                 maxLength={2}
                                 className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium uppercase ${isLightText
-                                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                    : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                                   }`}
                                 value={kycBirthCountry}
                                 onChange={(e) => setKycBirthCountry(e.target.value.toUpperCase())}
@@ -5799,8 +5915,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               type="text"
                               placeholder="e.g. Berlin"
                               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${isLightText
-                                  ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
-                                  : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
+                                ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
+                                : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                                 }`}
                               value={kycBirthCity}
                               onChange={(e) => setKycBirthCity(e.target.value)}
@@ -5809,11 +5925,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         </div>
                       )}
                       {/* Secure connection badge */}
-                      <div className={`mt-4 p-3 rounded-xl border flex items-start gap-2.5 text-[10.5px] leading-relaxed transition-all ${
-                        isLightText 
-                          ? 'border-white/5 bg-white/[0.01] text-white/50' 
+                      <div className={`mt-4 p-3 rounded-xl border flex items-start gap-2.5 text-[10.5px] leading-relaxed transition-all ${isLightText
+                          ? 'border-white/5 bg-white/[0.01] text-white/50'
                           : 'border-black/5 bg-black/[0.01] text-black/50'
-                      }`}>
+                        }`}>
                         <svg className="w-4.5 h-4.5 mt-0.5 flex-shrink-0 text-emerald-400 fill-none stroke-current" viewBox="0 0 24 24" strokeWidth="2.5">
                           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                           <path d="M7 11V7a5 5 0 0110 0v4" strokeLinecap="round" strokeLinejoin="round" />
@@ -5827,189 +5942,183 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     </>
                   )}
 
-                    {/* Dynamic Industry-Standard Form Completeness Banner & Submit Button */}
-                      {(() => {
-                        const targetCountry = String(kycCountry || shipCountry || clientCountry || "US").trim().toUpperCase();
-                        const isEuRegion = ["AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"].includes(targetCountry);
+                  {/* Dynamic Industry-Standard Form Completeness Banner & Submit Button */}
+                  {(() => {
+                    const targetCountry = String(kycCountry || shipCountry || clientCountry || "US").trim().toUpperCase();
+                    const isEuRegion = ["AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"].includes(targetCountry);
 
-                        const missingFields: string[] = [];
-                        if (!kycFirstName.trim()) missingFields.push("First Name");
-                        if (!kycLastName.trim()) missingFields.push("Last Name");
+                    const missingFields: string[] = [];
+                    if (!kycFirstName.trim()) missingFields.push("First Name");
+                    if (!kycLastName.trim()) missingFields.push("Last Name");
 
-                        const currentEmail = shipEmail ? shipEmail.trim() : headlessEmailInput.trim();
-                        if (!currentEmail || !isValidEmail(currentEmail)) missingFields.push("Valid Email");
+                    const currentEmail = shipEmail ? shipEmail.trim() : headlessEmailInput.trim();
+                    if (!currentEmail || !isValidEmail(currentEmail)) missingFields.push("Valid Email");
 
-                        if (!headlessPhoneInput || headlessPhoneInput.trim().length < 8) missingFields.push("Phone Number");
+                    if (!headlessPhoneInput || headlessPhoneInput.trim().length < 8) missingFields.push("Phone Number");
 
-                        if (!kycLine1.trim()) missingFields.push("Address Line 1");
-                        if (!kycCity.trim()) missingFields.push("City");
-                        if (!kycState.trim()) missingFields.push("State/Region");
-                        if (!kycZip.trim()) missingFields.push("Zip Code");
+                    if (!kycLine1.trim()) missingFields.push("Address Line 1");
+                    if (!kycCity.trim()) missingFields.push("City");
+                    if (!kycState.trim()) missingFields.push("State/Region");
+                    if (!kycZip.trim()) missingFields.push("Zip Code");
 
-                        if (targetCountry !== "US" || isEuRegion) {
-                          const hasDob = kycDobDay && kycDobMonth && kycDobYear.length === 4;
-                          if (!hasDob) missingFields.push("Date of Birth");
-                          if (!kycBirthCity.trim()) missingFields.push("Birth City");
-                          if (!kycBirthCountry.trim()) missingFields.push("Birth Country");
-                          if (!kycNationalities.trim()) missingFields.push("Nationality");
-                        }
+                    if (targetCountry !== "US" || isEuRegion) {
+                      const hasDob = kycDobDay && kycDobMonth && kycDobYear.length === 4;
+                      if (!hasDob) missingFields.push("Date of Birth");
+                      if (!kycBirthCity.trim()) missingFields.push("Birth City");
+                      if (!kycBirthCountry.trim()) missingFields.push("Birth Country");
+                      if (!kycNationalities.trim()) missingFields.push("Nationality");
+                    }
 
-                        if ((kycTierRequired as string) !== "l0" && targetCountry === "US") {
-                          if (kycSsn.length < 9) missingFields.push(`SSN (${9 - kycSsn.length} digits left)`);
-                        }
+                    if ((kycTierRequired as string) !== "l0" && targetCountry === "US") {
+                      if (kycSsn.length < 9) missingFields.push(`SSN (${9 - kycSsn.length} digits left)`);
+                    }
 
-                        const isFormComplete = missingFields.length === 0;
+                    const isFormComplete = missingFields.length === 0;
 
-                        return (
-                          <div className="space-y-3 mt-4">
-                            {/* Live Completeness Status Feedback Box */}
-                            {!isFormComplete ? (
-                              <div className={`p-3 rounded-xl border animate-in fade-in duration-200 ${
-                                isLightText ? 'bg-amber-950/20 border-amber-500/30 text-amber-300' : 'bg-amber-50/70 border-amber-500/40 text-amber-900'
-                              }`}>
-                                <div className="font-bold flex items-center justify-between mb-1.5 text-[11px] uppercase tracking-wider">
-                                  <span className="flex items-center gap-1.5">
-                                    <span>⚠️</span>
-                                    <span>Action Required ({missingFields.length} {missingFields.length === 1 ? 'field' : 'fields'} remaining)</span>
-                                  </span>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {missingFields.map((field, idx) => (
-                                    <span key={idx} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-semibold border ${
-                                      isLightText ? 'bg-amber-500/15 border-amber-500/30 text-amber-200' : 'bg-amber-100 border-amber-300 text-amber-900'
-                                    }`}>
-                                      • {field}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : (
-                              <div className={`p-2.5 rounded-xl border flex items-center gap-2 text-xs font-semibold animate-in fade-in duration-200 ${
-                                isLightText ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300' : 'bg-emerald-50/70 border-emerald-500/40 text-emerald-900'
-                              }`}>
-                                <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                                </svg>
-                                <span>All required details provided. Ready for identity verification.</span>
-                              </div>
-                            )}
-
-                            {/* Submit Button */}
-                            <button
-                              type="button"
-                              className={`w-full h-11 rounded-xl font-semibold transition-all text-xs hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex items-center justify-center gap-1.5 ${
-                                isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
-                              }`}
-                              style={{
-                                backgroundColor: isFormComplete ? (theme.primaryColor || "#635BFF") : (isLightText ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"),
-                                color: isFormComplete ? (isColorLight(theme.primaryColor || "#635BFF") ? "#09090b" : "#ffffff") : (isLightText ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)"),
-                              }}
-                              disabled={!isFormComplete}
-                              onClick={() => {
-                                const safeCountry = String(kycCountry || shipCountry || clientCountry || "US").trim().toUpperCase() || "US";
-                                const isEuRegion = ["AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"].includes(safeCountry);
-                                
-                                const rawStateLower = kycState.trim().toLowerCase();
-                                const normalizedState = STATE_MAP[rawStateLower] || kycState.trim().toUpperCase();
-
-                                const dobDay = Number(kycDobDay);
-                                const dobMonth = Number(kycDobMonth);
-                                const dobYear = Number(kycDobYear);
-                                const hasValidDob = dobDay > 0 && dobMonth > 0 && dobYear > 1900;
-
-                                const addressObj: Record<string, string> = {
-                                  line1: kycLine1.trim(),
-                                  city: kycCity.trim(),
-                                  state: normalizedState,
-                                  postal_code: kycZip.trim().toUpperCase(),
-                                  country: safeCountry
-                                };
-                                if (kycLine2 && kycLine2.trim()) {
-                                  addressObj.line2 = kycLine2.trim();
-                                }
-
-                                if ((kycTierRequired as string) === "l0") {
-                                  const l0Payload: any = {
-                                    given_name: kycFirstName.trim(),
-                                    surname: kycLastName.trim(),
-                                    address: addressObj
-                                  };
-
-                                  if (safeCountry !== "US" || isEuRegion) {
-                                    l0Payload.birth_city = (kycBirthCity || kycCity).trim();
-                                    l0Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
-                                    l0Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
-                                    if (hasValidDob) {
-                                      l0Payload.date_of_birth = {
-                                        day: dobDay,
-                                        month: dobMonth,
-                                        year: dobYear
-                                      };
-                                    }
-                                  }
-
-                                  submitKycInfo(l0Payload);
-                                } else {
-                                  const l1Payload: any = {
-                                    given_name: kycFirstName.trim(),
-                                    surname: kycLastName.trim(),
-                                    address: addressObj
-                                  };
-
-                                  if (safeCountry === "US") {
-                                    l1Payload.id_number = {
-                                      value: kycSsn.replace(/\D/g, ""),
-                                      type: "us_ssn"
-                                    };
-                                  } else {
-                                    if (hasValidDob) {
-                                      l1Payload.date_of_birth = {
-                                        day: dobDay,
-                                        month: dobMonth,
-                                        year: dobYear
-                                      };
-                                    }
-                                    l1Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
-                                    l1Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
-                                    l1Payload.birth_city = (kycBirthCity || kycCity).trim();
-                                  }
-
-                                  submitKycInfo(l1Payload);
-                                }
-                              }}
-                            >
-                              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
-                                <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1s1 .45 1 1v3c0 .55-.45 1-1 1zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
-                              </svg>
-                              {isFormComplete 
-                                ? ((kycTierRequired as string) === "l0" ? "Submit KYC Verification" : "Submit KYC Details") 
-                                : `Complete ${missingFields.length} ${missingFields.length === 1 ? 'Field' : 'Fields'} to Continue`
-                              }
-                            </button>
+                    return (
+                      <div className="space-y-3 mt-4">
+                        {/* Live Completeness Status Feedback Box */}
+                        {!isFormComplete ? (
+                          <div className={`p-3 rounded-xl border animate-in fade-in duration-200 ${isLightText ? 'bg-amber-950/20 border-amber-500/30 text-amber-300' : 'bg-amber-50/70 border-amber-500/40 text-amber-900'
+                            }`}>
+                            <div className="font-bold flex items-center justify-between mb-1.5 text-[11px] uppercase tracking-wider">
+                              <span className="flex items-center gap-1.5">
+                                <span>⚠️</span>
+                                <span>Action Required ({missingFields.length} {missingFields.length === 1 ? 'field' : 'fields'} remaining)</span>
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {missingFields.map((field, idx) => (
+                                <span key={idx} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10.5px] font-semibold border ${isLightText ? 'bg-amber-500/15 border-amber-500/30 text-amber-200' : 'bg-amber-100 border-amber-300 text-amber-900'
+                                  }`}>
+                                  • {field}
+                                </span>
+                              ))}
+                            </div>
                           </div>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                ) : headlessStep === "submitting_kyc" ? (
+                        ) : (
+                          <div className={`p-2.5 rounded-xl border flex items-center gap-2 text-xs font-semibold animate-in fade-in duration-200 ${isLightText ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-300' : 'bg-emerald-50/70 border-emerald-500/40 text-emerald-900'
+                            }`}>
+                            <svg className="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                            <span>All required details provided. Ready for identity verification.</span>
+                          </div>
+                        )}
+
+                        {/* Submit Button */}
+                        <button
+                          type="button"
+                          className={`w-full h-11 rounded-xl font-semibold transition-all text-xs hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-md flex items-center justify-center gap-1.5 ${isColorLight(theme.primaryColor || "#635BFF") ? "text-neutral-900 !text-neutral-900" : "text-white !text-white"
+                            }`}
+                          style={{
+                            backgroundColor: isFormComplete ? (theme.primaryColor || "#635BFF") : (isLightText ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"),
+                            color: isFormComplete ? (isColorLight(theme.primaryColor || "#635BFF") ? "#09090b" : "#ffffff") : (isLightText ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)"),
+                          }}
+                          disabled={!isFormComplete}
+                          onClick={() => {
+                            const safeCountry = String(kycCountry || shipCountry || clientCountry || "US").trim().toUpperCase() || "US";
+                            const isEuRegion = ["AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"].includes(safeCountry);
+
+                            const rawStateLower = kycState.trim().toLowerCase();
+                            const normalizedState = STATE_MAP[rawStateLower] || kycState.trim().toUpperCase();
+
+                            const dobDay = Number(kycDobDay);
+                            const dobMonth = Number(kycDobMonth);
+                            const dobYear = Number(kycDobYear);
+                            const hasValidDob = dobDay > 0 && dobMonth > 0 && dobYear > 1900;
+
+                            const addressObj: Record<string, string> = {
+                              line1: kycLine1.trim(),
+                              city: kycCity.trim(),
+                              state: normalizedState,
+                              postal_code: kycZip.trim().toUpperCase(),
+                              country: safeCountry
+                            };
+                            if (kycLine2 && kycLine2.trim()) {
+                              addressObj.line2 = kycLine2.trim();
+                            }
+
+                            if ((kycTierRequired as string) === "l0") {
+                              const l0Payload: any = {
+                                given_name: kycFirstName.trim(),
+                                surname: kycLastName.trim(),
+                                address: addressObj
+                              };
+
+                              if (safeCountry !== "US" || isEuRegion) {
+                                l0Payload.birth_city = (kycBirthCity || kycCity).trim();
+                                l0Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
+                                l0Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
+                                if (hasValidDob) {
+                                  l0Payload.date_of_birth = {
+                                    day: dobDay,
+                                    month: dobMonth,
+                                    year: dobYear
+                                  };
+                                }
+                              }
+
+                              submitKycInfo(l0Payload);
+                            } else {
+                              const l1Payload: any = {
+                                given_name: kycFirstName.trim(),
+                                surname: kycLastName.trim(),
+                                address: addressObj
+                              };
+
+                              if (safeCountry === "US") {
+                                l1Payload.id_number = {
+                                  value: kycSsn.replace(/\D/g, ""),
+                                  type: "us_ssn"
+                                };
+                              } else {
+                                if (hasValidDob) {
+                                  l1Payload.date_of_birth = {
+                                    day: dobDay,
+                                    month: dobMonth,
+                                    year: dobYear
+                                  };
+                                }
+                                l1Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
+                                l1Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
+                                l1Payload.birth_city = (kycBirthCity || kycCity).trim();
+                              }
+
+                              submitKycInfo(l1Payload);
+                            }
+                          }}
+                        >
+                          <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+                            <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1s1 .45 1 1v3c0 .55-.45 1-1 1zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
+                          </svg>
+                          {isFormComplete
+                            ? ((kycTierRequired as string) === "l0" ? "Submit KYC Verification" : "Submit KYC Details")
+                            : `Complete ${missingFields.length} ${missingFields.length === 1 ? 'Field' : 'Fields'} to Continue`
+                          }
+                        </button>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            ) : headlessStep === "submitting_kyc" ? (
               <div className="text-center flex flex-col items-center justify-center gap-4 min-h-[320px] px-4 py-8 w-full animate-in fade-in duration-300">
                 <p className={`font-semibold text-sm tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>Submitting KYC Details...</p>
                 <div className="relative flex items-center justify-center mt-2 mb-4 scale-110">
-                  <div 
+                  <div
                     className="absolute w-24 h-24 rounded-full blur-xl opacity-20 animate-pulse duration-2000"
                     style={{ backgroundColor: theme.primaryColor || "#635BFF" }}
                   />
-                  <div 
-                    className={`absolute w-18 h-18 rounded-full border-2 border-dashed animate-spin duration-10000 ${
-                      isLightText ? 'border-white/10 border-t-white/40' : 'border-black/10 border-t-black/40'
-                    }`}
+                  <div
+                    className={`absolute w-18 h-18 rounded-full border-2 border-dashed animate-spin duration-10000 ${isLightText ? 'border-white/10 border-t-white/40' : 'border-black/10 border-t-black/40'
+                      }`}
                   />
-                  <div 
-                    className={`w-10.5 h-10.5 rounded-full border flex items-center justify-center shadow-lg transition-all ${
-                      isLightText 
-                        ? 'bg-white/[0.04] border-white/15 text-emerald-400 shadow-white/5' 
+                  <div
+                    className={`w-10.5 h-10.5 rounded-full border flex items-center justify-center shadow-lg transition-all ${isLightText
+                        ? 'bg-white/[0.04] border-white/15 text-emerald-400 shadow-white/5'
                         : 'bg-black/[0.04] border-black/15 text-[#635BFF] shadow-black/5'
-                    }`}
+                      }`}
                   >
                     <svg className="h-5 w-5 animate-pulse duration-1500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -6028,29 +6137,27 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 `}</style>
                 <div className="relative flex items-center justify-center scale-125 mb-4 mt-2">
                   {/* Glowing blur background */}
-                  <div 
+                  <div
                     className="absolute w-24 h-24 rounded-full blur-xl opacity-20 animate-pulse duration-2000"
                     style={{ backgroundColor: "#10b981" }}
                   />
-                  
+
                   {/* Outer scan ring ping animation */}
                   <div className="absolute w-20 h-20 rounded-full border-2 border-emerald-500/20 animate-ping duration-3000" />
-                  
+
                   {/* Rotating Outer Dashed Ring */}
-                  <div 
-                    className={`absolute w-18 h-18 rounded-full border-2 border-dashed animate-spin duration-10000 ${
-                      isLightText ? 'border-white/10 border-t-emerald-500/40' : 'border-black/10 border-t-emerald-500/40'
-                    }`}
+                  <div
+                    className={`absolute w-18 h-18 rounded-full border-2 border-dashed animate-spin duration-10000 ${isLightText ? 'border-white/10 border-t-emerald-500/40' : 'border-black/10 border-t-emerald-500/40'
+                      }`}
                   />
-                  
+
                   {/* Rotating Inner Ring (reverse spin) */}
-                  <div 
-                    className={`absolute w-14 h-14 rounded-full border border-dotted animate-spin duration-3000 ${
-                      isLightText ? 'border-white/20 border-t-emerald-400' : 'border-black/20 border-t-[#635BFF]'
-                    }`}
+                  <div
+                    className={`absolute w-14 h-14 rounded-full border border-dotted animate-spin duration-3000 ${isLightText ? 'border-white/20 border-t-emerald-400' : 'border-black/20 border-t-[#635BFF]'
+                      }`}
                     style={{ animationDirection: "reverse" }}
                   />
-                  
+
                   {/* Green pulse core */}
                   <div className="w-10.5 h-10.5 rounded-full border border-emerald-500/30 flex items-center justify-center bg-emerald-500/10 text-emerald-400 shadow-lg shadow-emerald-500/10 relative overflow-hidden z-10">
                     <svg className="h-5 w-5 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -6058,8 +6165,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       <path d="m9 12 2 2 4-4" />
                     </svg>
                     {/* Scan line laser overlay */}
-                    <div 
-                      className="absolute left-0 right-0 h-[2px] bg-emerald-400 shadow-[0_0_8px_#34d399]" 
+                    <div
+                      className="absolute left-0 right-0 h-[2px] bg-emerald-400 shadow-[0_0_8px_#34d399]"
                       style={{ animation: "laserScan 2s infinite ease-in-out" }}
                     />
                   </div>
@@ -6088,8 +6195,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   autoComplete="tel"
                   placeholder="Phone number (+1 555-555-5555)"
                   className={`w-full h-11 px-3 rounded-xl mb-4 focus:outline-none transition-all text-sm font-medium ${isLightText
-                      ? 'bg-white/5 border border-white/10 text-white placeholder-white/75 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
-                      : 'bg-black/5 border border-black/10 text-black placeholder-black/75 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
+                    ? 'bg-white/5 border border-white/10 text-white placeholder-white/75 focus:border-white/20 focus:bg-white/10 focus:ring-1 focus:ring-white/20'
+                    : 'bg-black/5 border border-black/10 text-black placeholder-black/75 focus:border-black/20 focus:bg-black/10 focus:ring-1 focus:ring-black/20'
                     }`}
                   value={headlessPhoneInput}
                   onChange={(e) => setHeadlessPhoneInput(e.target.value)}
@@ -6123,7 +6230,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               <div className="w-full h-full flex flex-col items-stretch stripe-embedded-container animate-in fade-in duration-300 relative">
                 {headlessError && (
                   <div className="mx-4 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs font-semibold flex items-center gap-2 mb-2 animate-in slide-in-from-top duration-300">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></svg>
                     <span>{headlessError}</span>
                   </div>
                 )}
@@ -6185,36 +6292,33 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             ) : (
               <div className="text-center flex flex-col items-center justify-center gap-4 min-h-[320px] px-4 py-8 w-full animate-in fade-in duration-300">
                 <p className={`font-semibold text-sm tracking-tight ${isLightText ? 'text-white' : 'text-black'}`}>{headlessStatus}</p>
-                
+
                 <div className="relative flex items-center justify-center mt-2 mb-4 scale-110">
                   {/* Glowing blur background */}
-                  <div 
+                  <div
                     className="absolute w-24 h-24 rounded-full blur-xl opacity-20 animate-pulse duration-2000"
                     style={{ backgroundColor: theme.primaryColor || "#635BFF" }}
                   />
-                  
+
                   {/* Rotating Outer Dashed Ring */}
-                  <div 
-                    className={`absolute w-18 h-18 rounded-full border-2 border-dashed animate-spin duration-10000 ${
-                      isLightText ? 'border-white/10 border-t-white/40' : 'border-black/10 border-t-black/40'
-                    }`}
+                  <div
+                    className={`absolute w-18 h-18 rounded-full border-2 border-dashed animate-spin duration-10000 ${isLightText ? 'border-white/10 border-t-white/40' : 'border-black/10 border-t-black/40'
+                      }`}
                   />
-                  
+
                   {/* Rotating Inner Ring (reverse spin) */}
-                  <div 
-                    className={`absolute w-14 h-14 rounded-full border border-dotted animate-spin duration-3000 ${
-                      isLightText ? 'border-white/20 border-t-emerald-400' : 'border-black/20 border-t-[#635BFF]'
-                    }`}
+                  <div
+                    className={`absolute w-14 h-14 rounded-full border border-dotted animate-spin duration-3000 ${isLightText ? 'border-white/20 border-t-emerald-400' : 'border-black/20 border-t-[#635BFF]'
+                      }`}
                     style={{ animationDirection: "reverse" }}
                   />
-                  
+
                   {/* Glowing Core */}
-                  <div 
-                    className={`w-10.5 h-10.5 rounded-full border flex items-center justify-center shadow-lg transition-all ${
-                      isLightText 
-                        ? 'bg-white/[0.04] border-white/15 text-emerald-400 shadow-white/5' 
+                  <div
+                    className={`w-10.5 h-10.5 rounded-full border flex items-center justify-center shadow-lg transition-all ${isLightText
+                        ? 'bg-white/[0.04] border-white/15 text-emerald-400 shadow-white/5'
                         : 'bg-black/[0.04] border-black/15 text-[#635BFF] shadow-black/5'
-                    }`}
+                      }`}
                   >
                     <svg className="h-5 w-5 animate-pulse duration-1500" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-.55 0-1-.45-1-1v-3c0-.55.45-1 1-1s1 .45 1 1v3c0 .55-.45 1-1 1zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
@@ -6730,7 +6834,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
         <div
           ref={contentRef}
-          className={`flex-1 flex flex-col ${isTwoColumnLayout ? ("items-stretch justify-start py-6 md:py-10 w-full " + (isInvoiceLayout ? "max-w-none !max-w-none !p-0 !py-0" : "max-w-6xl")) : "items-center justify-start max-w-[428px]"} ${isEmbedded && !isTwoColumnLayout ? "px-3" : "px-3"} mx-auto`}
+          className={`flex-1 flex flex-col ${isTwoColumnLayout ? ("items-stretch justify-center py-6 md:py-10 w-full " + (isInvoiceLayout ? "max-w-none !max-w-none !p-0 !py-0" : "max-w-6xl")) : "items-center justify-center max-w-[428px] my-auto"} ${isEmbedded && !isTwoColumnLayout ? "px-3" : "px-3"} mx-auto`}
           style={{
             backdropFilter: "saturate(1.02) contrast(1.02)",
             paddingTop: isInvoiceLayout ? 0 : (isEmbedded ? "8px" : undefined),
@@ -6746,14 +6850,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             touchAction: "pan-y",
             position: "relative",
             flexGrow: isEmbedded ? 1 : undefined,
-            justifyContent: isEmbedded ? "space-between" : undefined,
+            justifyContent: isEmbedded ? "space-between" : "center",
           }}
         >
           {isTwoColumnLayout ? (
             <>
 
-              <div className={`${isTwoColumnLayout ? (isInvoiceLayout ? "w-full flex-1 min-h-[calc(var(--pp-vh)-56px)] m-0 md:m-0" : (isEmbedded ? "mt-4 mb-2 w-full" : "mt-8 md:my-auto md:py-4 mb-4 w-full")) : "my-auto"} grid ${isTwoColumnLayout ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"} ${isTwoColumnLayout && isInvoiceLayout ? "gap-0 md:gap-0" : "gap-3 md:gap-6"} items-stretch`}>
-                <div 
+              <div className={`${isTwoColumnLayout ? (isInvoiceLayout ? "w-full flex-1 min-h-[calc(var(--pp-vh)-56px)] m-0 md:m-0" : (isEmbedded ? "my-auto w-full" : "my-auto py-4 w-full")) : "my-auto py-4 w-full"} grid ${isTwoColumnLayout ? "grid-cols-1 md:grid-cols-2" : "grid-cols-1"} ${isTwoColumnLayout && isInvoiceLayout ? "gap-0 md:gap-0" : "gap-3 md:gap-6"} items-stretch`}>
+                <div
                   className={`relative overflow-visible p-3 h-full flex flex-col justify-center ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : "md:p-4"} ${isTwoColumnLayout && isInvoiceLayout && isVibrantLayout ? "vibrant-left-pane" : ""}`}
                   style={{
                     background: isTwoColumnLayout && isInvoiceLayout && isVibrantLayout
@@ -6821,8 +6925,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     )}
 
                     {/* Receipt */}
-                    <div className={isVibrantLayout 
-                      ? "p-6 md:p-8 rounded-3xl bg-background border border-primary/20 shadow-2xl shadow-primary/10 animate-in fade-in slide-in-from-left-4 duration-500" 
+                    <div className={isVibrantLayout
+                      ? "p-6 md:p-8 rounded-3xl bg-background border border-primary/20 shadow-2xl shadow-primary/10 animate-in fade-in slide-in-from-left-4 duration-500"
                       : "p-3"}>
                       <div className="flex items-center gap-3">
                         {getSymbolLogo() && (
@@ -6881,8 +6985,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 <button
                                   key={v}
                                   type="button"
-                                  onClick={() => setTipChoice(v)}
-                                  className={`pp-tip-btn px-2 py-1 rounded-md border text-xs transition-colors ${isLightText ? 'hover:bg-white/5' : 'hover:bg-black/5'} ${tipChoice === v ? (isLightText ? "bg-white/10 border-white/20" : "bg-black/10 border-black/20") : ""}`}
+                                  disabled={updatingTip}
+                                  onClick={() => {
+                                    tipUserInteractedRef.current = true;
+                                    setTipChoice(v);
+                                    if (v !== "custom") handleTipUpdate(v);
+                                  }}
+                                  className={`pp-tip-btn px-2 py-1 rounded-md border text-xs transition-colors ${isLightText ? 'hover:bg-white/5' : 'hover:bg-black/5'} ${tipChoice === v ? (isLightText ? "bg-white/10 border-white/20" : "bg-black/10 border-black/20") : ""} ${updatingTip ? "opacity-50 cursor-not-allowed" : ""}`}
                                   title={v === "custom" ? "Custom tip amount" : `Tip ${v}%`}
                                 >
                                   {v === "custom" ? "Custom" : `${v}%`}
@@ -6894,8 +7003,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   step="0.1"
                                   min="0"
                                   max="100"
+                                  disabled={updatingTip}
                                   value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
-                                  onChange={(e) => setTipCustomPct(Number(e.target.value))}
+                                  onChange={(e) => {
+                                    tipUserInteractedRef.current = true;
+                                    setTipCustomPct(Number(e.target.value));
+                                  }}
                                   placeholder="%"
                                   className={`h-7 px-2 rounded-md border text-xs w-20 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/75' : 'bg-black/5 border-black/10 text-black placeholder-black/75'}`}
                                   title="Enter tip percentage"
@@ -6939,7 +7052,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             <span className="opacity-80">Tip</span>
                             <span>{(() => {
                               if (currency === "USD") {
-                                  return formatCurrency(tipUsd, "USD");
+                                return formatCurrency(tipUsd, "USD");
                               }
                               const converted = convertFromUsd(tipUsd, currency, rates);
                               const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
@@ -6966,13 +7079,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               <span>Processing Fee ({activeFeePct.toFixed(2)}%)</span>
                               {detectedCardFunding && (
                                 <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
-                                    {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
+                                  {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
                                 </span>
                               )}
                             </span>
                             <span>{(() => {
                               if (currency === "USD") {
-                                  return formatCurrency(processingFeeUsd, "USD");
+                                return formatCurrency(processingFeeUsd, "USD");
                               }
                               const converted = convertFromUsd(processingFeeUsd, currency, rates);
                               const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
@@ -7026,7 +7139,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   </div>
                 </div>
                 <div
-                  className={`h-full flex flex-col ${((shippingRequired && !shippingComplete) || headlessStep === "collecting_kyc") ? "justify-start md:py-6" : "justify-center"} ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : ""}`}
+                  className={`h-full flex flex-col justify-center ${isTwoColumnLayout && isInvoiceLayout ? "md:p-12 w-full" : ""}`}
                   style={{
                     background: rightSideBackground,
                     borderLeft: isTwoColumnLayout && isInvoiceLayout ? (isLightText ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(0,0,0,0.06)") : undefined,
@@ -7034,11 +7147,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 >
                   <div className={isTwoColumnLayout && isInvoiceLayout ? "w-full md:max-w-[490px] md:mr-auto" : "w-full"}>
                     {/* Payment Section */}
-                    <div ref={payRef} className={`mt-0 md:mt-0 ${isEmbedded ? "rounded-none border-0 p-0 bg-transparent" : "rounded-2xl border p-3 bg-background/70"} flex flex-col ${((shippingRequired && !shippingComplete) || headlessStep === "collecting_kyc") ? "justify-start" : "justify-center"}`}>
+                    <div ref={payRef} className={`mt-0 md:mt-0 ${isEmbedded ? "rounded-none border-0 p-0 bg-transparent" : "rounded-2xl border p-3 bg-background/70"} flex flex-col justify-center`}>
                       <div ref={widgetRootRef} className={isEmbedded ? "mt-0 rounded-2xl p-3" : "mt-0 rounded-2xl p-3"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                         {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                           <>
-                            {(paymentConfirmed || isSettled(receipt.status) || isAchPending) ? (
+                            {(!isV2Active && (paymentConfirmed || isSettled(receipt.status) || isAchPending)) ? (
                               <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
                                 <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
                                   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -7282,16 +7395,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                                 <div className="grid grid-cols-2 gap-2">
                                                   <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="ZIP / Postal *" value={shipZip} onChange={(e) => setShipZip(e.target.value)} />
                                                   <select
-                                                     className={`w-full h-9 px-3 py-1 rounded-lg border text-sm appearance-none cursor-pointer ${isLightText ? 'border-white/10 bg-zinc-900 text-white' : 'border-black/10 bg-white text-black'}`}
-                                                     value={shipCountry || "US"}
-                                                     onChange={(e) => setShipCountry(e.target.value)}
-                                                   >
-                                                     {COUNTRY_OPTIONS.map((c) => (
-                                                       <option key={c.code} value={c.code} className={isLightText ? "bg-zinc-900 text-white" : "bg-white text-black"}>
-                                                         {c.name} ({c.code})
-                                                       </option>
-                                                     ))}
-                                                   </select>
+                                                    className={`w-full h-9 px-3 py-1 rounded-lg border text-sm appearance-none cursor-pointer ${isLightText ? 'border-white/10 bg-zinc-900 text-white' : 'border-black/10 bg-white text-black'}`}
+                                                    value={shipCountry || "US"}
+                                                    onChange={(e) => setShipCountry(e.target.value)}
+                                                  >
+                                                    {COUNTRY_OPTIONS.map((c) => (
+                                                      <option key={c.code} value={c.code} className={isLightText ? "bg-zinc-900 text-white" : "bg-white text-black"}>
+                                                        {c.name} ({c.code})
+                                                      </option>
+                                                    ))}
+                                                  </select>
                                                 </div>
                                               </div>
 
@@ -7346,7 +7459,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                       </div>
                                       {shippingComplete && (
                                         <div className="px-2 pb-2">
-                                          {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                          {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
                                             <CheckoutWidget
                                               key={`${token}-${currency}`}
                                               className="w-full"
@@ -7441,7 +7554,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 {/* Non-shipping: render CheckoutWidget directly */}
                                 {!shippingRequired && (
                                   <>
-                                    {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                    {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
                                       <CheckoutWidget
                                         key={`noshp-${token}-${currency}`}
                                         className="w-full"
@@ -7575,66 +7688,66 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             <>
               {/* Currency equivalents selector */}
               {currencySelectionEnabled && (
-              <div className={isEmbedded ? "rounded-none border-0 bg-transparent px-1" : "rounded-xl border bg-background/80 p-3"} ref={currencyRef}>
-                <div className="flex items-baseline justify-between">
-                  <div className="text-sm font-semibold">Order Preview</div>
-                  <div className="microtext text-muted-foreground/60 tabular-nums">
-                    {ratesUpdatedAt ? `Rates · ${ratesUpdatedAt.toLocaleTimeString()}` : "Loading rates…"}
+                <div className={isEmbedded ? "rounded-none border-0 bg-transparent px-1" : "rounded-xl border bg-background/80 p-3"} ref={currencyRef}>
+                  <div className="flex items-baseline justify-between">
+                    <div className="text-sm font-semibold">Order Preview</div>
+                    <div className="microtext text-muted-foreground/60 tabular-nums">
+                      {ratesUpdatedAt ? `Rates · ${ratesUpdatedAt.toLocaleTimeString()}` : "Loading rates…"}
+                    </div>
                   </div>
-                </div>
-                <div className="microtext text-muted-foreground/50 mt-0.5">
-                  Totals are shown in the selected currency. USD equivalent is shown when applicable.
-                </div>
+                  <div className="microtext text-muted-foreground/50 mt-0.5">
+                    Totals are shown in the selected currency. USD equivalent is shown when applicable.
+                  </div>
 
-                <div className="mt-3">
-                  <label className="text-xs text-muted-foreground">Select currency</label>
-                  <div className="relative mt-1">
-                    <button
-                      type="button"
-                      onClick={() => setCurrencyOpen((v) => !v)}
-                      className="pp-currency-btn h-10 px-3 text-left border transition-colors flex items-center gap-3 w-full"
-                      title="View currency equivalents"
-                    >
-                      <span className="inline-flex items-center justify-center">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          alt={currency}
-                          src={getCurrencyFlag(currency)}
-                          className="w-[18px] h-[14px] rounded-[2px] ring-1 ring-foreground/10"
-                        />
-                      </span>
-                      <span className="truncate">
-                        {currency} — {(availableFiatCurrencies as readonly any[]).find((x) => x.code === currency)?.name || ""}
-                      </span>
-                      <span className="ml-auto opacity-70">▾</span>
-                    </button>
-                    {currencyOpen && (
-                      <div className="pp-currency-menu absolute z-[20005] mt-1 w-full border p-1 max-h-64 overflow-y-auto">
-                        {availableFiatCurrencies.map((c) => (
-                          <button
-                            key={c.code}
-                            type="button"
-                            onClick={() => {
-                              setCurrency(c.code);
-                              setCurrencyOpen(false);
-                            }}
-                            className="w-full px-2 py-2 rounded-md hover:bg-foreground/5 flex items-center gap-2 text-sm transition-colors"
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              alt={c.code}
-                              src={getCurrencyFlag(c.code)}
-                              className="w-[18px] h-[14px] rounded-[2px] ring-1 ring-foreground/10"
-                            />
-                            <span className="font-medium">{c.code}</span>
-                            <span className="text-muted-foreground">— {c.name}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                  <div className="mt-3">
+                    <label className="text-xs text-muted-foreground">Select currency</label>
+                    <div className="relative mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setCurrencyOpen((v) => !v)}
+                        className="pp-currency-btn h-10 px-3 text-left border transition-colors flex items-center gap-3 w-full"
+                        title="View currency equivalents"
+                      >
+                        <span className="inline-flex items-center justify-center">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            alt={currency}
+                            src={getCurrencyFlag(currency)}
+                            className="w-[18px] h-[14px] rounded-[2px] ring-1 ring-foreground/10"
+                          />
+                        </span>
+                        <span className="truncate">
+                          {currency} — {(availableFiatCurrencies as readonly any[]).find((x) => x.code === currency)?.name || ""}
+                        </span>
+                        <span className="ml-auto opacity-70">▾</span>
+                      </button>
+                      {currencyOpen && (
+                        <div className="pp-currency-menu absolute z-[20005] mt-1 w-full border p-1 max-h-64 overflow-y-auto">
+                          {availableFiatCurrencies.map((c) => (
+                            <button
+                              key={c.code}
+                              type="button"
+                              onClick={() => {
+                                setCurrency(c.code);
+                                setCurrencyOpen(false);
+                              }}
+                              className="w-full px-2 py-2 rounded-md hover:bg-foreground/5 flex items-center gap-2 text-sm transition-colors"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                alt={c.code}
+                                src={getCurrencyFlag(c.code)}
+                                className="w-[18px] h-[14px] rounded-[2px] ring-1 ring-foreground/10"
+                              />
+                              <span className="font-medium">{c.code}</span>
+                              <span className="text-muted-foreground">— {c.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
               )}
 
               {/* Receipt */}
@@ -7680,6 +7793,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             type="button"
                             disabled={updatingTip}
                             onClick={() => {
+                              tipUserInteractedRef.current = true;
                               setTipChoice(v);
                               if (v !== "custom") handleTipUpdate(v);
                             }}
@@ -7697,7 +7811,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             max="100"
                             disabled={updatingTip}
                             value={Number.isFinite(tipCustomPct) ? String(tipCustomPct) : ""}
-                            onChange={(e) => setTipCustomPct(Number(e.target.value))}
+                            onChange={(e) => {
+                              tipUserInteractedRef.current = true;
+                              setTipCustomPct(Number(e.target.value));
+                            }}
                             onBlur={() => handleTipUpdate(tipCustomPct)}
                             placeholder="%"
                             className={`h-9 px-3 rounded-lg border text-sm w-24 ${isLightText ? 'bg-white/5 border-white/10 text-white placeholder-white/75' : 'bg-black/5 border-black/10 text-black placeholder-black/75'}`}
@@ -7803,7 +7920,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <div ref={widgetRootRef} className={isEmbedded ? "mt-1 flex-1 rounded-2xl p-3" : "mt-2 rounded-2xl p-3 flex-1"} style={{ minHeight: isEmbedded ? `${EMBEDDED_WIDGET_HEIGHT}px` : undefined, overflow: isEmbedded ? "auto" : undefined }}>
                     {!loadingReceipt && receipt && totalUsd > 0 && amountReady && merchantWallet && tokenDef && hasTokenAddr && widgetSupported ? (
                       <>
-                        {(paymentConfirmed || isSettled(receipt.status) || isAchPending) ? (
+                        {(!isV2Active && (paymentConfirmed || isSettled(receipt.status) || isAchPending)) ? (
                           <div className="w-full flex flex-col items-center justify-center gap-4 py-8 text-center animate-in fade-in zoom-in duration-300">
                             <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center text-green-500 mb-2">
                               <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -7998,16 +8115,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                             <div className="grid grid-cols-2 gap-2">
                                               <input className={`w-full h-9 px-3 py-1 rounded-lg border text-sm ${isLightText ? 'border-white/10 bg-white/5 text-white placeholder-white/75' : 'border-black/10 bg-black/5 text-black placeholder-black/75'}`} placeholder="ZIP / Postal *" value={shipZip} onChange={(e) => setShipZip(e.target.value)} />
                                               <select
-                                                 className={`w-full h-9 px-3 py-1 rounded-lg border text-sm appearance-none cursor-pointer ${isLightText ? 'border-white/10 bg-zinc-900 text-white' : 'border-black/10 bg-white text-black'}`}
-                                                 value={shipCountry || "US"}
-                                                 onChange={(e) => setShipCountry(e.target.value)}
-                                               >
-                                                 {COUNTRY_OPTIONS.map((c) => (
-                                                   <option key={c.code} value={c.code} className={isLightText ? "bg-zinc-900 text-white" : "bg-white text-black"}>
-                                                     {c.name} ({c.code})
-                                                   </option>
-                                                 ))}
-                                               </select>
+                                                className={`w-full h-9 px-3 py-1 rounded-lg border text-sm appearance-none cursor-pointer ${isLightText ? 'border-white/10 bg-zinc-900 text-white' : 'border-black/10 bg-white text-black'}`}
+                                                value={shipCountry || "US"}
+                                                onChange={(e) => setShipCountry(e.target.value)}
+                                              >
+                                                {COUNTRY_OPTIONS.map((c) => (
+                                                  <option key={c.code} value={c.code} className={isLightText ? "bg-zinc-900 text-white" : "bg-white text-black"}>
+                                                    {c.name} ({c.code})
+                                                  </option>
+                                                ))}
+                                              </select>
                                             </div>
                                           </div>
                                           <div>
@@ -8057,7 +8174,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   </div>
                                   {shippingComplete && (
                                     <div className="px-2 pb-2">
-                                      {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                      {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
                                         <CheckoutWidget
                                           key={`ship-${token}-${currency}`}
                                           className="w-full"
@@ -8113,7 +8230,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             {/* Non-shipping: render CheckoutWidget directly */}
                             {!shippingRequired && (
                               <>
-                                {(headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
                                   <CheckoutWidget
                                     key={`noshp-${token}-${currency}`}
                                     className="w-full"
@@ -8324,31 +8441,29 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       {/* Pristine Error Modal */}
       {displayError && typeof window !== "undefined" && createPortal(
         <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm grid place-items-center p-4 animate-in fade-in text-left">
-          <div className={`rounded-2xl max-w-sm w-full p-6 relative shadow-2xl border transition-all duration-300 ${
-            isLightText 
-              ? 'bg-neutral-900 border-white/10 text-white' 
+          <div className={`rounded-2xl max-w-sm w-full p-6 relative shadow-2xl border transition-all duration-300 ${isLightText
+              ? 'bg-neutral-900 border-white/10 text-white'
               : 'bg-white border-black/10 text-black'
-          }`}>
+            }`}>
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-red-500/10 rounded-full flex items-center justify-center text-red-500 border border-red-500/20">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></svg>
               </div>
               <h2 className={`text-lg font-bold ${isLightText ? 'text-white' : 'text-neutral-900'}`}>Payment Error</h2>
             </div>
-            
+
             <p className={`text-sm mb-6 leading-relaxed ${isLightText ? 'text-neutral-300' : 'text-neutral-600'}`}>
               {displayError}
             </p>
-            
+
             <div className="flex gap-3">
               <button
                 onClick={() => {
                   setDisplayError(null);
                   resetHeadlessOnramp();
                 }}
-                className={`flex-1 px-4 py-3 font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all shadow-md text-center text-sm ${
-                  isColorLight(theme.primaryColor || '#635BFF') ? 'text-neutral-900' : 'text-white'
-                }`}
+                className={`flex-1 px-4 py-3 font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all shadow-md text-center text-sm ${isColorLight(theme.primaryColor || '#635BFF') ? 'text-neutral-900' : 'text-white'
+                  }`}
                 style={{ backgroundColor: theme.primaryColor || '#635BFF' }}
               >
                 Close & Try Again
@@ -8362,24 +8477,23 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       {/* Limit Warning Modal */}
       {showLimitWarning && limitWarningInfo && typeof window !== "undefined" && createPortal(
         <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm grid place-items-center p-4 animate-in fade-in text-left">
-          <div className={`rounded-2xl max-w-sm w-full p-6 relative shadow-2xl border transition-all duration-300 ${
-            isLightText 
-              ? 'bg-neutral-900 border-white/10 text-white' 
+          <div className={`rounded-2xl max-w-sm w-full p-6 relative shadow-2xl border transition-all duration-300 ${isLightText
+              ? 'bg-neutral-900 border-white/10 text-white'
               : 'bg-white border-black/10 text-black'
-          }`}>
+            }`}>
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-amber-500/10 rounded-full flex items-center justify-center text-amber-500 border border-amber-500/20">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><line x1="12" x2="12" y1="9" y2="13" /><line x1="12" x2="12.01" y1="17" y2="17" /></svg>
               </div>
               <h2 className={`text-lg font-bold ${isLightText ? 'text-white' : 'text-neutral-900'}`}>Transaction Limit Warning</h2>
             </div>
-            
+
             <p className={`text-sm mb-6 leading-relaxed ${isLightText ? 'text-neutral-300' : 'text-neutral-600'}`}>
-              Your transaction total of <strong>{formatCurrency(limitWarningInfo.total, "USD")}</strong> exceeds the suggested limit of <strong>{formatCurrency(limitWarningInfo.limit, "USD")}</strong> for this {limitWarningInfo.method} payment method. 
-              <br/><br/>
+              Your transaction total of <strong>{formatCurrency(limitWarningInfo.total, "USD")}</strong> exceeds the suggested limit of <strong>{formatCurrency(limitWarningInfo.limit, "USD")}</strong> for this {limitWarningInfo.method} payment method.
+              <br /><br />
               The transaction may not complete, or you may be required to complete additional verification (KYC). Would you like to proceed anyway or cancel to choose a different payment method?
             </p>
-            
+
             <div className="flex gap-3">
               <button
                 onClick={() => {
@@ -8395,9 +8509,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   setShowLimitWarning(false);
                   resetHeadlessOnramp();
                 }}
-                className={`flex-1 px-4 py-3 font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all shadow-md text-center text-sm border border-neutral-300 dark:border-neutral-700 ${
-                  isLightText ? 'text-white hover:bg-neutral-800' : 'text-neutral-700 hover:bg-neutral-100'
-                }`}
+                className={`flex-1 px-4 py-3 font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all shadow-md text-center text-sm border border-neutral-300 dark:border-neutral-700 ${isLightText ? 'text-white hover:bg-neutral-800' : 'text-neutral-700 hover:bg-neutral-100'
+                  }`}
               >
                 Cancel
               </button>
@@ -8407,8 +8520,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         document.body
       )}
 
-      {/* Success Animation Overlay */}
-      {paymentConfirmed && (
+      {/* Success Animation Overlay (Legacy V1 only) */}
+      {!isV2Active && paymentConfirmed && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-500">
           <div className="text-center p-6 max-w-sm mx-auto">
             <div className="mb-6 flex justify-center">
@@ -8423,12 +8536,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               {formatCurrency(paymentConfirmed.amount, "USD")}
             </div>
             {(() => {
-              const isAch = 
-                paymentConfirmed?.funding === "us_bank_account" || 
-                stripeDetectedFunding === "us_bank_account" || 
+              const isAch =
+                paymentConfirmed?.funding === "us_bank_account" ||
+                stripeDetectedFunding === "us_bank_account" ||
                 detectedCardFunding === "us_bank_account" ||
-                receipt?.detectedCardFunding === "us_bank_account" || 
-                receipt?.status === "paid - ach pending" || 
+                receipt?.detectedCardFunding === "us_bank_account" ||
+                receipt?.status === "paid - ach pending" ||
                 receipt?.status === "ach_pending" ||
                 (Array.isArray(receipt?.customerSessions) && receipt.customerSessions.some((s: any) => s.paymentMethodDetails?.type === "us_bank_account"));
 
@@ -8562,9 +8675,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       {/* Unsupported Stripe Link Account Custom Modal */}
       {showUnsupportedLinkModal && (
         <div className="fixed inset-0 z-[30000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-          <div className={`w-full max-w-md p-6 rounded-2xl md:rounded-3xl border shadow-2xl animate-in zoom-in-95 duration-200 ${
-            isLightText ? 'bg-neutral-900 border-white/15 text-white' : 'bg-white border-black/15 text-black'
-          }`}>
+          <div className={`w-full max-w-md p-6 rounded-2xl md:rounded-3xl border shadow-2xl animate-in zoom-in-95 duration-200 ${isLightText ? 'bg-neutral-900 border-white/15 text-white' : 'bg-white border-black/15 text-black'
+            }`}>
             <div className="flex items-center gap-3.5 mb-4">
               <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0 text-amber-400">
                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -8579,9 +8691,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               </div>
             </div>
 
-            <div className={`text-xs md:text-sm leading-relaxed p-4 rounded-xl mb-5 border ${
-              isLightText ? 'bg-white/5 border-white/10 text-white/90' : 'bg-black/5 border-black/10 text-black/90'
-            }`}>
+            <div className={`text-xs md:text-sm leading-relaxed p-4 rounded-xl mb-5 border ${isLightText ? 'bg-white/5 border-white/10 text-white/90' : 'bg-black/5 border-black/10 text-black/90'
+              }`}>
               Stripe Link cannot process 1-click payments for this email account at this time (<span className="font-mono text-amber-400 font-medium">support.link.com</span>).
               <br /><br />
               Please enter a different email address to continue with your checkout, or switch payment methods.
@@ -8611,9 +8722,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
               <button
                 type="button"
-                className={`w-full h-10 rounded-xl font-semibold text-xs border transition-all ${
-                  isLightText ? 'border-white/15 text-white/70 hover:bg-white/5' : 'border-black/15 text-black/70 hover:bg-black/5'
-                }`}
+                className={`w-full h-10 rounded-xl font-semibold text-xs border transition-all ${isLightText ? 'border-white/15 text-white/70 hover:bg-white/5' : 'border-black/15 text-black/70 hover:bg-black/5'
+                  }`}
                 onClick={() => {
                   setShowUnsupportedLinkModal(false);
                   resetHeadlessOnramp();
