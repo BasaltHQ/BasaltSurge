@@ -85,7 +85,7 @@ export function PortalPayAccordionCheckoutV2({
   kycTierRequired = "l0",
   kycLevel = "L0",
   simulatedTier,
-  simulatedStatus = "normal",
+  simulatedStatus,
   simulatedError = "none",
   simulatedPath = "normal",
   isAllKycCompleted = false,
@@ -97,7 +97,7 @@ export function PortalPayAccordionCheckoutV2({
   paymentElement,
   authElement,
   headlessStatus,
-  headlessStep = "collecting_kyc",
+  headlessStep,
   paymentConfirmed,
   detectedCardFunding,
   detectedCardBrand,
@@ -184,9 +184,9 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [paymentElement]);
 
-  // Handle Step 4 Fulfillment Progression
+  // Handle Step 4 Fulfillment Progression (Simulation preview only)
   useEffect(() => {
-    if (activeStep === 4) {
+    if (activeStep === 4 && (!headlessStep || headlessStep === "idle")) {
       setFulfillmentStage("processing");
       const t1 = setTimeout(() => setFulfillmentStage("confirming"), 1200);
       const t2 = setTimeout(() => setFulfillmentStage("complete"), 2500);
@@ -195,7 +195,7 @@ export function PortalPayAccordionCheckoutV2({
         clearTimeout(t2);
       };
     }
-  }, [activeStep]);
+  }, [activeStep, headlessStep]);
 
   // Address Autocomplete handler
   const handleFetchSuggestions = async (input: string) => {
@@ -319,24 +319,22 @@ export function PortalPayAccordionCheckoutV2({
     try {
       if (onHeadlessSubmitEmailPhone) {
         await onHeadlessSubmitEmailPhone(email, phone, country, `${firstName} ${lastName}`.trim());
-      }
-      if (!authElement && headlessStep !== "authenticating") {
+      } else {
+        // Pure simulation mode without backend
         if (
           simulatedPath === "skip_kyc" ||
           isAllKycCompleted ||
-          effectiveStatus === "verified" ||
-          headlessStep === "collecting_payment" ||
-          headlessStep === "payment_method_required"
+          effectiveStatus === "verified"
         ) {
-          setActiveStep(3); // Skip Identity directly to Payment
+          setActiveStep(3);
         } else {
           setActiveStep(2);
         }
+        setIsSubmittingContact(false);
       }
     } catch (err: any) {
       console.error("Contact submission error:", err);
       setLocalError(err?.message || "Failed to submit contact information.");
-    } finally {
       setIsSubmittingContact(false);
     }
   };
@@ -716,18 +714,6 @@ export function PortalPayAccordionCheckoutV2({
                 <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
                   2. Identity & Residential Verification
                 </h4>
-                {/* KYC Level Badge Pill */}
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
-                    isL2Requirement
-                      ? "bg-purple-500/20 text-purple-400 border border-purple-500/30"
-                      : isL1Requirement
-                      ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/30"
-                      : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                  }`}
-                >
-                  Tier {isL2Requirement ? "L2" : isL1Requirement ? "L1" : "L0"}
-                </span>
                 {(isL2Approved || isAllKycCompleted || effectiveStatus === "verified") && (
                   <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
                     <Check className="w-2.5 h-2.5 stroke-[3]" /> Verified
@@ -791,7 +777,7 @@ export function PortalPayAccordionCheckoutV2({
                   )}{" "}
                   {isL2Approved
                     ? "Government ID and compliance checks verified."
-                    : "A valid government-issued ID or passport is required to unlock this transaction tier."}
+                    : "A valid government-issued ID or passport is required to complete verification for this transaction."}
                 </span>
               </div>
             )}
