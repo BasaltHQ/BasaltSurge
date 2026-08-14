@@ -429,6 +429,31 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     };
   });
 
+  // Inject Google Fonts stylesheet once into document.head to prevent repeated inline style re-evaluations
+  useEffect(() => {
+    if (!theme?.fontFamily || typeof document === "undefined") return;
+    let fontUrl = "";
+    if (theme.fontFamily.includes("Space Grotesk")) {
+      fontUrl = "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap";
+    } else if (theme.fontFamily.includes("Poppins")) {
+      fontUrl = "https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap";
+    } else if (theme.fontFamily.includes("Roboto")) {
+      fontUrl = "https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&display=swap";
+    } else if (theme.fontFamily.includes("Merriweather")) {
+      fontUrl = "https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,300;0,400;0,700;0,900;1,300&display=swap";
+    }
+    if (!fontUrl) return;
+
+    const existing = document.querySelector(`link[data-pp-font="${fontUrl}"]`);
+    if (existing) return;
+
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = fontUrl;
+    link.setAttribute("data-pp-font", fontUrl);
+    document.head.appendChild(link);
+  }, [theme?.fontFamily]);
+
   // Playground widget overrides (received via PostMessage from theme controls)
   const [playgroundWidgetOverrides, setPlaygroundWidgetOverrides] = useState<{
     buttonBg?: string; buttonTextColor?: string; cardBg?: string;
@@ -2144,10 +2169,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 setHeadlessEmailInput((prev) => prev || emailVal);
               }
             }
-            if (rec.billingAddress) {
-              const b = rec.billingAddress;
+            const b = rec.billingAddress || rec.shippingAddress || (rec as any).customerAddress || (rec as any).billing;
+            if (b) {
               if (b.firstName) setKycFirstName((prev) => prev || b.firstName || "");
               if (b.lastName) setKycLastName((prev) => prev || b.lastName || "");
+              if (!b.firstName && !b.lastName && (b.name || (rec as any).customerName)) {
+                const p = String(b.name || (rec as any).customerName).trim().split(/\s+/);
+                setKycFirstName((prev) => prev || p[0] || "");
+                setKycLastName((prev) => prev || p.slice(1).join(" ") || "");
+              }
+              if (b.firstName || b.lastName) {
+                setShipName((prev) => prev || [b.firstName, b.lastName].filter(Boolean).join(" "));
+              }
               if (b.phone) {
                 setHeadlessPhoneInput((prev) => prev || formatPhoneAsYouType(b.phone || ""));
               }
@@ -2155,19 +2188,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 setShipEmail((prev) => prev || b.email || "");
                 setHeadlessEmailInput((prev) => prev || b.email || "");
               }
-              if (b.line1) setKycLine1((prev) => prev || b.line1 || "");
-              if (b.line2) setKycLine2((prev) => prev || b.line2 || "");
+              if (b.line1 || b.address) setKycLine1((prev) => prev || b.line1 || b.address || "");
+              if (b.line2 || b.apartment) setKycLine2((prev) => prev || b.line2 || b.apartment || "");
               if (b.city) setKycCity((prev) => prev || b.city || "");
               if (b.state) setKycState((prev) => prev || b.state || "");
-              if (b.zip) setKycZip((prev) => prev || b.zip || "");
+              if (b.zip || b.postalCode) setKycZip((prev) => prev || b.zip || b.postalCode || "");
               if (b.country) {
                 setKycCountry((prev) => prev || b.country || "");
                 setKycNationalities((prev) => prev || b.country || "");
                 setKycBirthCountry((prev) => prev || b.country || "");
-              }
-              const hasMissing = !b.firstName || !b.lastName || !b.line1 || !b.city || !b.zip || !b.phone;
-              if (hasMissing) {
-                // Removed automatic open
               }
             }
             try {
@@ -3495,7 +3524,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   useEffect(() => {
     try {
       const emailToSend = shipEmail || (receipt as any)?.customerEmail || (receipt as any)?.buyerEmail || receipt?.stripeEmail;
-      if (paymentConfirmed && emailToSend && emailToSend.includes("@") && receiptId) {
+      const receiptStatus = receipt?.status || "";
+      const isActuallyPaid = (receiptStatus && ["paid", "paid - ach pending", "checkout_success", "reconciled", "confirmed"].includes(receiptStatus)) || !!paymentConfirmed?.txHash;
+      if (paymentConfirmed && isActuallyPaid && emailToSend && emailToSend.includes("@") && receiptId) {
         if (!autoEmailSentRef.current) {
           autoEmailSentRef.current = true;
           console.log("[PORTAL] Triggering client-side auto-email to:", emailToSend);
@@ -4787,7 +4818,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           isLightText={isLightText}
           email={shipEmail || headlessEmailInput}
           phone={headlessPhoneInput}
-          fullName={shipName}
+          fullName={shipName || (kycFirstName && kycLastName ? `${kycFirstName} ${kycLastName}` : kycFirstName || kycLastName || "")}
+          firstName={kycFirstName}
+          lastName={kycLastName}
+          line1={kycLine1}
+          line2={kycLine2}
+          city={kycCity}
+          stateCode={kycState}
+          zipCode={kycZip}
+          country={kycCountry || clientCountry || "US"}
           amountUsd={totalUsd}
           receiptId={receiptId}
           headlessError={headlessError}
@@ -6508,14 +6547,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       >
         <style dangerouslySetInnerHTML={{
           __html: `
-            ${theme.fontFamily ? (() => {
-              if (theme.fontFamily.includes("Space Grotesk")) return `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');`;
-              if (theme.fontFamily.includes("Poppins")) return `@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap');`;
-              if (theme.fontFamily.includes("Roboto")) return `@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&display=swap');`;
-              if (theme.fontFamily.includes("Merriweather")) return `@import url('https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,300;0,400;0,700;0,900;1,300&display=swap');`;
-              return "";
-            })() : ""}
-
             :root {
               --background: ${isLightBackground ? (theme.pageBg || '#ffffff') : (theme.pageBg || '#0a0a0a')} !important;
               --foreground: ${isLightBackground ? (theme.headerTextColor || '#111827') : (theme.headerTextColor || '#ededed')} !important;
