@@ -41,6 +41,15 @@ export interface PortalPayAccordionCheckoutV2Props {
   email?: string;
   phone?: string;
   fullName?: string;
+  firstName?: string;
+  lastName?: string;
+  line1?: string;
+  line2?: string;
+  city?: string;
+  stateCode?: string;
+  zipCode?: string;
+  country?: string;
+  dob?: string;
   amountUsd?: number;
   receiptId?: string;
   headlessError?: string | null;
@@ -519,6 +528,15 @@ export function PortalPayAccordionCheckoutV2({
   email: initialEmail = "",
   phone: initialPhone = "",
   fullName: initialFullName = "",
+  firstName: initialFirstName = "",
+  lastName: initialLastName = "",
+  line1: initialLine1 = "",
+  line2: initialLine2 = "",
+  city: initialCity = "",
+  stateCode: initialStateCode = "",
+  zipCode: initialZipCode = "",
+  country: initialCountry = "US",
+  dob: initialDob = "",
   amountUsd = 25.0,
   receiptId = "REC-88492-V2",
   headlessError: propError,
@@ -557,20 +575,28 @@ export function PortalPayAccordionCheckoutV2({
   // Step 1: Contact State
   const [email, setEmail] = useState(initialEmail);
   const [phone, setPhone] = useState(initialPhone);
-  const [country, setCountry] = useState("US");
+  const [country, setCountry] = useState(initialCountry || "US");
   const [isSubmittingContact, setIsSubmittingContact] = useState(false);
 
   // Step 2: Identity & Address State (L0, L1, L2)
   const parts = (initialFullName || "").trim().split(/\s+/);
-  const [firstName, setFirstName] = useState(parts[0] || "");
-  const [lastName, setLastName] = useState(parts.slice(1).join(" ") || "");
-  const [line1, setLine1] = useState("");
-  const [line2, setLine2] = useState("");
-  const [city, setCity] = useState("");
-  const [stateCode, setStateCode] = useState("");
-  const [zipCode, setZipCode] = useState("");
+  const [firstName, setFirstName] = useState(initialFirstName || parts[0] || "");
+  const [lastName, setLastName] = useState(initialLastName || parts.slice(1).join(" ") || "");
+  const [line1, setLine1] = useState(initialLine1 || "");
+  const [line2, setLine2] = useState(initialLine2 || "");
+  const [city, setCity] = useState(initialCity || "");
+  const [stateCode, setStateCode] = useState(initialStateCode || "");
+  const [zipCode, setZipCode] = useState(initialZipCode || "");
   const [ssn, setSsn] = useState("");
-  const [dob, setDob] = useState("");
+  const [dob, setDob] = useState(initialDob || "");
+
+  // Compiled single-line address for address lookup & autocomplete
+  const compiledInitialAddress = [initialLine1, initialLine2, initialCity, initialStateCode, initialZipCode]
+    .filter(Boolean)
+    .map((s) => String(s).trim())
+    .filter(Boolean)
+    .join(", ");
+  const [addressSearchInput, setAddressSearchInput] = useState(compiledInitialAddress || initialLine1 || "");
 
   const [isAddressParsed, setIsAddressParsed] = useState(false);
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
@@ -648,12 +674,35 @@ export function PortalPayAccordionCheckoutV2({
   useEffect(() => {
     if (initialEmail && !email) setEmail(initialEmail);
     if (initialPhone && !phone) setPhone(initialPhone);
-    if (initialFullName) {
+    if (initialFirstName && !firstName) setFirstName(initialFirstName);
+    if (initialLastName && !lastName) setLastName(initialLastName);
+    if (initialFullName && (!firstName || !lastName)) {
       const p = initialFullName.trim().split(/\s+/);
       if (!firstName) setFirstName(p[0] || "");
       if (!lastName) setLastName(p.slice(1).join(" ") || "");
     }
-  }, [initialEmail, initialPhone, initialFullName]);
+    if (initialLine1 && !line1) setLine1(initialLine1);
+    if (initialLine2 && !line2) setLine2(initialLine2);
+    if (initialCity && !city) setCity(initialCity);
+    if (initialStateCode && !stateCode) setStateCode(initialStateCode);
+    if (initialZipCode && !zipCode) setZipCode(initialZipCode);
+    if (initialCountry && (!country || country === "US")) setCountry(initialCountry);
+    if (initialDob && !dob) setDob(initialDob);
+
+    // Compile into one line for the address lookup field
+    const compiled = [initialLine1, initialLine2, initialCity, initialStateCode, initialZipCode]
+      .filter(Boolean)
+      .map((s) => String(s).trim())
+      .filter(Boolean)
+      .join(", ");
+
+    if (compiled) {
+      setAddressSearchInput((prev) => prev || compiled);
+      if (!addressSearchInput) {
+        handleFetchSuggestions(compiled);
+      }
+    }
+  }, [initialEmail, initialPhone, initialFullName, initialFirstName, initialLastName, initialLine1, initialLine2, initialCity, initialStateCode, initialZipCode, initialCountry, initialDob]);
 
   // Clean mounting of authElement into container
   useEffect(() => {
@@ -709,7 +758,9 @@ export function PortalPayAccordionCheckoutV2({
 
   const handleSelectSuggestion = async (item: any) => {
     if (!item) return;
-    setLine1(item.mainText || item.description);
+    const selectedText = item.mainText || item.description || "";
+    setAddressSearchInput(selectedText);
+    setLine1(selectedText);
     setShowSuggestions(false);
     if (item.placeId) {
       try {
@@ -1410,7 +1461,7 @@ export function PortalPayAccordionCheckoutV2({
                 </div>
 
                 {/* Residential Address Autocomplete Single Input */}
-                {!isAddressParsed && !city && !stateCode ? (
+                {!isAddressParsed ? (
                   <div className="space-y-1.5">
                     <div className="relative z-50">
                       <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
@@ -1424,13 +1475,21 @@ export function PortalPayAccordionCheckoutV2({
                       <input
                         type="text"
                         placeholder="Enter residential street address (e.g., 123 Main St)..."
-                        value={line1}
+                        value={addressSearchInput || line1}
                         onChange={(e) => {
+                          setAddressSearchInput(e.target.value);
                           setLine1(e.target.value);
                           handleFetchSuggestions(e.target.value);
                         }}
                         onBlur={() => markFieldTouched("line1")}
-                        onFocus={() => addressSuggestions.length > 0 && setShowSuggestions(true)}
+                        onFocus={() => {
+                          const q = addressSearchInput || line1;
+                          if (q && q.length >= 3) {
+                            handleFetchSuggestions(q);
+                          } else if (addressSuggestions.length > 0) {
+                            setShowSuggestions(true);
+                          }
+                        }}
                         className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium transition-all ${getFieldInputClass("line1")}`}
                       />
 

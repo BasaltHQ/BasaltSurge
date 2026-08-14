@@ -36,6 +36,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             return NextResponse.json({ error: "receipt_not_found" }, { status: 404, headers: { "x-correlation-id": correlationId } });
         }
 
+        // Strict guard: Do not send purchase receipt emails for unpaid or incomplete checkouts
+        const isPaidStatus = ["paid", "paid - ach pending", "ach_pending", "checkout_success", "reconciled", "confirmed", "tx_mined"].includes(receipt.status);
+        if (!isPaidStatus) {
+            console.warn(`[RECEIPT EMAIL] Blocked attempt to send receipt email for unpaid receipt ${id} (current status: '${receipt.status}')`);
+            return NextResponse.json(
+                { ok: false, error: "receipt_not_paid", message: "Receipt cannot be emailed because the transaction has not been completed or paid." },
+                { status: 400, headers: { "x-correlation-id": correlationId } }
+            );
+        }
+
         const wallet = receipt.wallet;
 
         let senderName = "PortalPay Receipts";
