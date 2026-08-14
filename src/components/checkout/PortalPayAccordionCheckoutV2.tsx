@@ -9,6 +9,7 @@ import {
   Shield,
   ShieldCheck,
   AlertTriangle,
+  AlertCircle,
   FileText,
   BadgeCheck,
   CheckCircle2,
@@ -21,6 +22,11 @@ import {
   MapPin,
   User,
   Calendar,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  X,
   ArrowRight,
   Search
 } from "lucide-react";
@@ -73,6 +79,439 @@ const formatPhoneInput = (raw: string): string => {
   const cleaned = raw.replace(/[^\d+]/g, "");
   return cleaned;
 };
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+
+interface DobPickerProps {
+  value: string; // YYYY-MM-DD
+  onChange: (val: string) => void;
+  onBlur?: () => void;
+  isLightText?: boolean;
+  primaryColor?: string;
+  hasError?: boolean;
+  isValid?: boolean;
+  onOpenStateChange?: (isOpen: boolean) => void;
+}
+
+function DobPicker({
+  value,
+  onChange,
+  onBlur,
+  isLightText = true,
+  primaryColor = "#635BFF",
+  hasError = false,
+  isValid = false,
+  onOpenStateChange,
+}: DobPickerProps) {
+  // Parse initial YYYY-MM-DD
+  const [year, setYear] = useState(() => (value && value.includes("-") ? value.split("-")[0] : ""));
+  const [month, setMonth] = useState(() => (value && value.includes("-") ? value.split("-")[1] : ""));
+  const [day, setDay] = useState(() => (value && value.includes("-") ? value.split("-")[2] : ""));
+
+  const [isOpen, setIsOpen] = useState(false);
+
+  // Default view: selected year or 20 years ago
+  const currentYear = new Date().getFullYear();
+  const maxAllowedYear = currentYear;
+  const [viewYear, setViewYear] = useState(() => (year ? parseInt(year, 10) : currentYear - 20));
+  const [viewMonth, setViewMonth] = useState(() => (month ? parseInt(month, 10) - 1 : 0));
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const monthRef = useRef<HTMLInputElement>(null);
+  const dayRef = useRef<HTMLInputElement>(null);
+  const yearRef = useRef<HTMLInputElement>(null);
+
+  // Sync internal state when external value changes
+  useEffect(() => {
+    if (value && value.includes("-")) {
+      const [y, m, d] = value.split("-");
+      if (y && y !== year) setYear(y);
+      if (m && m !== month) setMonth(m);
+      if (d && d !== day) setDay(d);
+    } else if (!value) {
+      setYear("");
+      setMonth("");
+      setDay("");
+    }
+  }, [value]);
+
+  const triggerOnChange = (m: string, d: string, y: string) => {
+    if (m && d && y && y.length === 4 && m.length === 2 && d.length === 2) {
+      onChange(`${y}-${m}-${d}`);
+    } else if (!m && !d && !y) {
+      onChange("");
+    } else {
+      onChange(`${y || ""}-${m || ""}-${d || ""}`);
+    }
+  };
+
+  const handleToggleOpen = () => {
+    const next = !isOpen;
+    setIsOpen(next);
+    onOpenStateChange?.(next);
+    if (next) {
+      if (year && month) {
+        setViewYear(parseInt(year, 10));
+        setViewMonth(parseInt(month, 10) - 1);
+      }
+    }
+  };
+
+  // Close on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+        onOpenStateChange?.(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isOpen, onOpenStateChange]);
+
+  const handleMonthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let val = e.target.value.replace(/\D/g, "").slice(0, 2);
+    if (val.length === 1 && parseInt(val, 10) > 1) {
+      val = `0${val}`;
+    }
+    if (parseInt(val, 10) > 12) {
+      val = "12";
+    }
+    setMonth(val);
+    triggerOnChange(val, day, year);
+    if (val.length === 2) {
+      dayRef.current?.focus();
+    }
+  };
+
+  const handleDayChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let val = e.target.value.replace(/\D/g, "").slice(0, 2);
+    if (val.length === 1 && parseInt(val, 10) > 3) {
+      val = `0${val}`;
+    }
+    if (parseInt(val, 10) > 31) {
+      val = "31";
+    }
+    setDay(val);
+    triggerOnChange(month, val, year);
+    if (val.length === 2) {
+      yearRef.current?.focus();
+    }
+  };
+
+  const handleYearChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.replace(/\D/g, "").slice(0, 4);
+    setYear(val);
+    triggerOnChange(month, day, val);
+  };
+
+  const handleKeyDown = (field: "m" | "d" | "y", e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Backspace") {
+      if (field === "d" && !day) {
+        monthRef.current?.focus();
+      } else if (field === "y" && !year) {
+        dayRef.current?.focus();
+      }
+    } else if (e.key === "ArrowRight") {
+      if (field === "m" && month.length > 0) dayRef.current?.focus();
+      if (field === "d" && day.length > 0) yearRef.current?.focus();
+    } else if (e.key === "ArrowLeft") {
+      if (field === "y") dayRef.current?.focus();
+      if (field === "d") monthRef.current?.focus();
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const text = e.clipboardData.getData("text").trim();
+    // Support formats like MM/DD/YYYY, YYYY-MM-DD, MMDDYYYY
+    if (text.includes("-")) {
+      const p = text.split("-");
+      if (p.length === 3 && p[0].length === 4) {
+        setYear(p[0]);
+        setMonth(p[1].padStart(2, "0"));
+        setDay(p[2].padStart(2, "0"));
+        triggerOnChange(p[1].padStart(2, "0"), p[2].padStart(2, "0"), p[0]);
+        e.preventDefault();
+        return;
+      }
+    }
+    const cleanDigits = text.replace(/\D/g, "");
+    if (cleanDigits.length === 8) {
+      // MM DD YYYY
+      const m = cleanDigits.slice(0, 2);
+      const d = cleanDigits.slice(2, 4);
+      const y = cleanDigits.slice(4, 8);
+      setMonth(m);
+      setDay(d);
+      setYear(y);
+      triggerOnChange(m, d, y);
+      e.preventDefault();
+    }
+  };
+
+  // Calendar calculations
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
+
+  const handleSelectDay = (selectedD: number) => {
+    const mStr = String(viewMonth + 1).padStart(2, "0");
+    const dStr = String(selectedD).padStart(2, "0");
+    const yStr = String(viewYear);
+    setMonth(mStr);
+    setDay(dStr);
+    setYear(yStr);
+    onChange(`${yStr}-${mStr}-${dStr}`);
+    setIsOpen(false);
+    onOpenStateChange?.(false);
+  };
+
+  // Check if a date in the calendar is on or before today
+  const isDateAllowed = (d: number) => {
+    const date = new Date(viewYear, viewMonth, d);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    return date <= today;
+  };
+
+  // Year options list: from maxAllowedYear down to 1920
+  const yearOptions = [];
+  for (let y = maxAllowedYear; y >= 1920; y--) {
+    yearOptions.push(y);
+  }
+
+  // Border & background styling based on validation
+  const containerClass = hasError
+    ? isLightText
+      ? "bg-red-500/10 border-2 border-red-500/80 ring-1 ring-red-500/30"
+      : "bg-red-50/80 border-2 border-red-500 ring-1 ring-red-500/20"
+    : isValid
+    ? isLightText
+      ? "bg-emerald-500/5 border border-emerald-500/40"
+      : "bg-emerald-50/40 border border-emerald-500/40"
+    : isLightText
+    ? "bg-white/5 border border-white/10 focus-within:border-indigo-400 focus-within:ring-1 focus-within:ring-indigo-400/30"
+    : "bg-black/5 border border-black/10 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500/30";
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      {/* 3-Segment Input Container */}
+      <div
+        className={`w-full h-10 px-2.5 rounded-xl flex items-center justify-between transition-all select-none ${containerClass}`}
+        onClick={() => {
+          if (!month) monthRef.current?.focus();
+        }}
+      >
+        <div className="flex items-center gap-1 font-mono text-xs font-medium" onPaste={handlePaste}>
+          <input
+            ref={monthRef}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={2}
+            placeholder="MM"
+            value={month}
+            onChange={handleMonthChange}
+            onKeyDown={(e) => handleKeyDown("m", e)}
+            onBlur={onBlur}
+            className={`w-7 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs ${
+              isLightText ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
+            }`}
+          />
+          <span className="opacity-30 text-xs">/</span>
+          <input
+            ref={dayRef}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={2}
+            placeholder="DD"
+            value={day}
+            onChange={handleDayChange}
+            onKeyDown={(e) => handleKeyDown("d", e)}
+            onBlur={onBlur}
+            className={`w-7 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs ${
+              isLightText ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
+            }`}
+          />
+          <span className="opacity-30 text-xs">/</span>
+          <input
+            ref={yearRef}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={4}
+            placeholder="YYYY"
+            value={year}
+            onChange={handleYearChange}
+            onKeyDown={(e) => handleKeyDown("y", e)}
+            onBlur={onBlur}
+            className={`w-12 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs ${
+              isLightText ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
+            }`}
+          />
+        </div>
+
+        {/* Calendar Picker Trigger Button */}
+        <button
+          type="button"
+          onClick={handleToggleOpen}
+          aria-label="Toggle calendar picker"
+          className={`p-1.5 rounded-lg transition flex items-center justify-center cursor-pointer ${
+            isOpen
+              ? "bg-amber-400/20 text-amber-400"
+              : isLightText
+              ? "text-white/60 hover:text-white hover:bg-white/10"
+              : "text-black/60 hover:text-black hover:bg-black/10"
+          }`}
+        >
+          <Calendar className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      {/* Interactive Calendar Popover */}
+      {isOpen && (
+        <div
+          className={`pp-calendar-popover absolute z-50 mt-1.5 left-0 right-0 sm:left-auto sm:right-0 sm:w-72 p-3 rounded-2xl shadow-2xl border backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-150 ${
+            isLightText
+              ? "bg-[#141624] border-white/20 text-white shadow-black/80"
+              : "bg-white border-black/15 text-black shadow-xl"
+          }`}
+          style={{ zIndex: 99999 }}
+        >
+          {/* Header Controls: Month & Year Dropdowns */}
+          <div className="flex items-center justify-between gap-1.5 mb-2.5 pb-2 border-b border-white/10">
+            <button
+              type="button"
+              onClick={() => {
+                if (viewMonth === 0) {
+                  setViewMonth(11);
+                  setViewYear((y) => y - 1);
+                } else {
+                  setViewMonth((m) => m - 1);
+                }
+              }}
+              className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition cursor-pointer"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="flex items-center gap-1">
+              {/* Month Select */}
+              <select
+                value={viewMonth}
+                onChange={(e) => setViewMonth(parseInt(e.target.value, 10))}
+                className="bg-white/10 border border-white/15 rounded-lg px-2 py-1 text-xs font-bold text-white focus:outline-none cursor-pointer"
+              >
+                {MONTH_NAMES.map((name, idx) => (
+                  <option key={name} value={idx} className="bg-[#141624] text-white">
+                    {name.slice(0, 3)}
+                  </option>
+                ))}
+              </select>
+
+              {/* Year Select */}
+              <select
+                value={viewYear}
+                onChange={(e) => setViewYear(parseInt(e.target.value, 10))}
+                className="bg-white/10 border border-white/15 rounded-lg px-2 py-1 text-xs font-bold text-white focus:outline-none cursor-pointer"
+              >
+                {yearOptions.map((y) => (
+                  <option key={y} value={y} className="bg-[#141624] text-white">
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button
+              type="button"
+              disabled={viewYear === maxAllowedYear && viewMonth >= new Date().getMonth()}
+              onClick={() => {
+                if (viewMonth === 11) {
+                  setViewMonth(0);
+                  setViewYear((y) => y + 1);
+                } else {
+                  setViewMonth((m) => m + 1);
+                }
+              }}
+              className="p-1 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition disabled:opacity-30 cursor-pointer"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Days of Week Row */}
+          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wider opacity-50 mb-1">
+            <span>Su</span>
+            <span>Mo</span>
+            <span>Tu</span>
+            <span>We</span>
+            <span>Th</span>
+            <span>Fr</span>
+            <span>Sa</span>
+          </div>
+
+          {/* Days Grid */}
+          <div className="grid grid-cols-7 gap-1">
+            {Array.from({ length: firstDayOfWeek }).map((_, i) => (
+              <div key={`empty-${i}`} className="h-7 w-7" />
+            ))}
+
+            {Array.from({ length: daysInMonth }).map((_, i) => {
+              const dNum = i + 1;
+              const allowed = isDateAllowed(dNum);
+              const isSelected =
+                parseInt(year, 10) === viewYear &&
+                parseInt(month, 10) === viewMonth + 1 &&
+                parseInt(day, 10) === dNum;
+
+              return (
+                <button
+                  key={dNum}
+                  type="button"
+                  disabled={!allowed}
+                  onClick={() => handleSelectDay(dNum)}
+                  className={`h-7 w-7 rounded-lg text-xs font-medium flex items-center justify-center transition cursor-pointer ${
+                    isSelected
+                      ? "text-white font-bold shadow-md ring-1 ring-white/40"
+                      : allowed
+                      ? "hover:bg-white/15 text-white/90"
+                      : "opacity-20 cursor-not-allowed text-white/40"
+                  }`}
+                  style={isSelected ? { backgroundColor: primaryColor } : {}}
+                >
+                  {dNum}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Footer note */}
+          <div className="mt-2 pt-2 border-t border-white/10 flex items-center justify-between text-[10.5px]">
+            <span className="text-white/50 font-medium">Select Date of Birth</span>
+            <button
+              type="button"
+              onClick={() => {
+                setIsOpen(false);
+                onOpenStateChange?.(false);
+              }}
+              className="text-white/60 hover:text-white font-semibold underline cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function PortalPayAccordionCheckoutV2({
   theme,
@@ -136,9 +575,59 @@ export function PortalPayAccordionCheckoutV2({
   const [isAddressParsed, setIsAddressParsed] = useState(false);
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [isSubmittingIdentity, setIsSubmittingIdentity] = useState(false);
   const [isVerifyingDocs, setIsVerifyingDocs] = useState(false);
   const [docVerificationSuccess, setDocVerificationSuccess] = useState(false);
+
+  // Step 2 Form validation tracking & visual highlighting
+  const [attemptedIdentitySubmit, setAttemptedIdentitySubmit] = useState(false);
+  const [touchedFields, setTouchedFields] = useState<Record<string, boolean>>({});
+
+  const markFieldTouched = (field: string) => {
+    setTouchedFields((prev) => ({ ...prev, [field]: true }));
+  };
+
+  const ssnDigits = (ssn || "").replace(/\D/g, "");
+
+  // Robust Date of Birth validation (YYYY-MM-DD, past date)
+  const validateDob = (val: string): { valid: boolean; age?: number; error?: string } => {
+    if (!val || val.length < 10) return { valid: false, error: "Date of birth is required" };
+    const parts = val.split("-").map(Number);
+    if (parts.length !== 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) {
+      return { valid: false, error: "Invalid date format" };
+    }
+    const [year, month, day] = parts;
+    const currentYear = new Date().getFullYear();
+    if (year < 1900 || year > currentYear || month < 1 || month > 12 || day < 1 || day > 31) {
+      return { valid: false, error: "Please enter a valid date" };
+    }
+    const birthDate = new Date(year, month - 1, day);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    if (birthDate > today) {
+      return { valid: false, error: "Date of birth cannot be in the future" };
+    }
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const mDiff = today.getMonth() - birthDate.getMonth();
+    if (mDiff < 0 || (mDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return { valid: true, age };
+  };
+
+  const dobStatus = validateDob(dob);
+
+  const fieldValidation = {
+    firstName: (firstName || "").trim().length >= 1,
+    lastName: (lastName || "").trim().length >= 1,
+    line1: (line1 || "").trim().length >= 3,
+    city: (city || "").trim().length >= 2,
+    stateCode: (stateCode || "").trim().length >= 2,
+    zipCode: (zipCode || "").trim().length >= 5,
+    dob: dobStatus.valid,
+    ssn: ssnDigits.length === 9,
+  };
 
   // Effective tier and status determination
   const effectiveTier: string = simulatedTier || kycTierRequired || "l0";
@@ -400,18 +889,69 @@ export function PortalPayAccordionCheckoutV2({
     }
   };
 
+  // Missing fields list for dynamic feedback
+  const missingIdentityFields: { key: string; label: string }[] = [];
+  if (showFullForm) {
+    if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
+    if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
+    if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
+    if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: "City" });
+    if (!fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: "State" });
+    if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: "Zip Code" });
+    if (!fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
+    if (!fieldValidation.ssn) missingIdentityFields.push({ key: "ssn", label: ssnDigits.length > 0 ? `SSN (${9 - ssnDigits.length} digits left)` : "9-Digit SSN" });
+  } else if (showStepUpForm) {
+    if (!fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
+    if (!fieldValidation.ssn) missingIdentityFields.push({ key: "ssn", label: ssnDigits.length > 0 ? `SSN (${9 - ssnDigits.length} digits left)` : "9-Digit SSN" });
+  }
+
+  const isIdentityComplete = missingIdentityFields.length === 0;
+
+  const isFieldInvalid = (field: keyof typeof fieldValidation) => {
+    return (attemptedIdentitySubmit || touchedFields[field]) && !fieldValidation[field];
+  };
+
+  const isFieldValid = (field: keyof typeof fieldValidation) => {
+    return touchedFields[field] && fieldValidation[field];
+  };
+
+  const getFieldInputClass = (field: keyof typeof fieldValidation) => {
+    const invalid = isFieldInvalid(field);
+    const valid = isFieldValid(field);
+    if (invalid) {
+      return isLightText
+        ? "bg-red-500/10 border-2 border-red-500/80 text-white placeholder-red-300/40 ring-1 ring-red-500/30 focus:border-red-400 focus:ring-red-400/40"
+        : "bg-red-50/80 border-2 border-red-500 text-red-900 placeholder-red-400/60 ring-1 ring-red-500/20 focus:border-red-600 focus:ring-red-600/30";
+    }
+    if (valid) {
+      return isLightText
+        ? "bg-emerald-500/5 border border-emerald-500/40 text-white focus:border-emerald-400"
+        : "bg-emerald-50/40 border border-emerald-500/40 text-black focus:border-emerald-600";
+    }
+    return isLightText
+      ? "bg-white/5 border border-white/10 text-white focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/30"
+      : "bg-black/5 border border-black/10 text-black focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30";
+  };
+
   // Step 2 Submit (L0 / L1 / L2)
   const handleIdentitySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSubmittingIdentity(true);
+    setAttemptedIdentitySubmit(true);
     setLocalError(null);
+
+    // Guard: Validate complete form before sending anything to Stripe!
+    if (!isIdentityComplete) {
+      setLocalError(`Please complete all required fields: ${missingIdentityFields.map((f) => f.label).join(", ")}`);
+      return;
+    }
 
     // If L2 is required and not yet approved, user MUST click the document upload button first!
     if (isL2Requirement && !isL2Approved) {
-      setIsSubmittingIdentity(false);
       setLocalError("Government ID / Document upload is required for Level 2 verification. Please click the upload button above.");
       return;
     }
+
+    setIsSubmittingIdentity(true);
 
     // Simulated Error Handling
     if (simulatedError === "address_error") {
@@ -431,7 +971,6 @@ export function PortalPayAccordionCheckoutV2({
     }
 
     try {
-      const ssnDigits = ssn.replace(/\D/g, "");
       let parsedDob: { year: number; month: number; day: number } | undefined = undefined;
       if (dob) {
         const parts = dob.split("-").map(Number);
@@ -448,14 +987,14 @@ export function PortalPayAccordionCheckoutV2({
           });
         } else {
           await onSubmitKycInfo({
-            given_name: firstName,
-            surname: lastName,
+            given_name: firstName.trim(),
+            surname: lastName.trim(),
             address: {
-              line1,
-              ...(line2 ? { line2 } : {}),
-              city,
-              state: stateCode,
-              postal_code: zipCode,
+              line1: line1.trim(),
+              ...(line2 ? { line2: line2.trim() } : {}),
+              city: city.trim(),
+              state: stateCode.trim(),
+              postal_code: zipCode.trim(),
               country: country || "US",
             },
             ...(parsedDob ? { date_of_birth: parsedDob } : {}),
@@ -711,7 +1250,7 @@ export function PortalPayAccordionCheckoutV2({
       {/* ==================================================================== */}
       <div
         className={`rounded-2xl border transition-all duration-300 relative ${
-          showSuggestions ? "z-40 overflow-visible" : "overflow-hidden"
+          showSuggestions || isCalendarOpen ? "z-40 overflow-visible" : "overflow-hidden"
         } ${
           activeStep === 2
             ? isLightText
@@ -821,9 +1360,13 @@ export function PortalPayAccordionCheckoutV2({
               <>
                 <div className="grid grid-cols-2 gap-2.5">
                   <div>
-                    <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                      <User className="w-3 h-3" />
-                      <span>First Name</span>
+                    <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                      <span className="flex items-center gap-1">
+                        <User className="w-3 h-3" />
+                        <span>First Name</span>
+                        <span className="text-red-400">*</span>
+                      </span>
+                      {isFieldValid("firstName") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                     </label>
                     <input
                       type="text"
@@ -831,15 +1374,23 @@ export function PortalPayAccordionCheckoutV2({
                       placeholder="Jane"
                       value={firstName}
                       onChange={(e) => setFirstName(e.target.value)}
-                      className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
-                        isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                      }`}
+                      onBlur={() => markFieldTouched("firstName")}
+                      className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium transition-all ${getFieldInputClass("firstName")}`}
                     />
+                    {isFieldInvalid("firstName") && (
+                      <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> First name is required
+                      </span>
+                    )}
                   </div>
                   <div>
-                    <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                      <User className="w-3 h-3" />
-                      <span>Last Name</span>
+                    <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                      <span className="flex items-center gap-1">
+                        <User className="w-3 h-3" />
+                        <span>Last Name</span>
+                        <span className="text-red-400">*</span>
+                      </span>
+                      {isFieldValid("lastName") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                     </label>
                     <input
                       type="text"
@@ -847,10 +1398,14 @@ export function PortalPayAccordionCheckoutV2({
                       placeholder="Doe"
                       value={lastName}
                       onChange={(e) => setLastName(e.target.value)}
-                      className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
-                        isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                      }`}
+                      onBlur={() => markFieldTouched("lastName")}
+                      className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium transition-all ${getFieldInputClass("lastName")}`}
                     />
+                    {isFieldInvalid("lastName") && (
+                      <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> Last name is required
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -858,9 +1413,13 @@ export function PortalPayAccordionCheckoutV2({
                 {!isAddressParsed && !city && !stateCode ? (
                   <div className="space-y-1.5">
                     <div className="relative z-50">
-                      <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                        <MapPin className="w-3 h-3" />
-                        <span>Residential Address</span>
+                      <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                        <span className="flex items-center gap-1">
+                          <MapPin className="w-3 h-3" />
+                          <span>Residential Street Address</span>
+                          <span className="text-red-400">*</span>
+                        </span>
+                        {isFieldValid("line1") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                       </label>
                       <input
                         type="text"
@@ -870,10 +1429,9 @@ export function PortalPayAccordionCheckoutV2({
                           setLine1(e.target.value);
                           handleFetchSuggestions(e.target.value);
                         }}
+                        onBlur={() => markFieldTouched("line1")}
                         onFocus={() => addressSuggestions.length > 0 && setShowSuggestions(true)}
-                        className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
-                          isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                        }`}
+                        className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium transition-all ${getFieldInputClass("line1")}`}
                       />
 
                       {/* Autocomplete Predictions */}
@@ -917,13 +1475,18 @@ export function PortalPayAccordionCheckoutV2({
                         </div>
                       )}
                     </div>
-                    <div className="flex items-center justify-between text-[11px]">
+                    {isFieldInvalid("line1") && (
+                      <span className="text-[10px] text-red-400 font-semibold flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> Street address is required
+                      </span>
+                    )}
+                    <div className="flex items-center justify-between text-[11px] pt-0.5">
                       <span className="text-amber-400 font-medium flex items-center gap-1">
                         <Shield className="w-3 h-3" />
-                        <span>Address must match primary residence on government ID.</span>
+                        <span>Address must match primary residence on ID.</span>
                       </span>
-                      <button type="button" onClick={() => setIsAddressParsed(true)} className="underline text-indigo-300">
-                        Enter address manually
+                      <button type="button" onClick={() => setIsAddressParsed(true)} className="underline text-indigo-400 hover:text-indigo-300 font-medium">
+                        Enter city & zip manually
                       </button>
                     </div>
                   </div>
@@ -932,77 +1495,102 @@ export function PortalPayAccordionCheckoutV2({
                   <div className="space-y-2 animate-in fade-in duration-200">
                     <div className="flex items-center justify-between text-[11px]">
                       <span className="text-emerald-400 font-bold flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Address Verified
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Address Details
                       </span>
                       <button
                         type="button"
                         onClick={() => {
                           setIsAddressParsed(false);
-                          setLine1("");
-                          setCity("");
-                          setStateCode("");
-                          setZipCode("");
                         }}
-                        className="underline opacity-70 flex items-center gap-1"
+                        className="underline opacity-70 hover:opacity-100 flex items-center gap-1 text-xs"
                       >
-                        <Search className="w-3 h-3" /> Search address again
+                        <Search className="w-3 h-3" /> Search with autocomplete
                       </button>
                     </div>
 
                     <div>
-                      <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                        <MapPin className="w-3 h-3" />
-                        <span>Street Address</span>
+                      <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                        <span className="flex items-center gap-1">
+                          <MapPin className="w-3 h-3" />
+                          <span>Street Address</span>
+                          <span className="text-red-400">*</span>
+                        </span>
+                        {isFieldValid("line1") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                       </label>
                       <input
                         type="text"
+                        placeholder="123 Main St"
                         value={line1}
                         onChange={(e) => setLine1(e.target.value)}
-                        className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
-                          isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                        }`}
+                        onBlur={() => markFieldTouched("line1")}
+                        className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium transition-all ${getFieldInputClass("line1")}`}
                       />
+                      {isFieldInvalid("line1") && (
+                        <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" /> Street address is required
+                        </span>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-12 gap-2">
                       <div className="col-span-5">
-                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                          City
+                        <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                          <span>City <span className="text-red-400">*</span></span>
+                          {isFieldValid("city") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                         </label>
                         <input
                           type="text"
+                          placeholder="Los Angeles"
                           value={city}
                           onChange={(e) => setCity(e.target.value)}
-                          className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
-                            isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                          }`}
+                          onBlur={() => markFieldTouched("city")}
+                          className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium transition-all ${getFieldInputClass("city")}`}
                         />
-                      </div>
-                      <div className="col-span-4">
-                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                          State
-                        </label>
-                        <input
-                          type="text"
-                          value={stateCode}
-                          onChange={(e) => setStateCode(e.target.value)}
-                          className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
-                            isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                          }`}
-                        />
+                        {isFieldInvalid("city") && (
+                          <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" /> Required
+                          </span>
+                        )}
                       </div>
                       <div className="col-span-3">
-                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                          Zip Code
+                        <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                          <span>State <span className="text-red-400">*</span></span>
+                          {isFieldValid("stateCode") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                         </label>
                         <input
                           type="text"
+                          placeholder="CA"
+                          maxLength={2}
+                          value={stateCode}
+                          onChange={(e) => setStateCode(e.target.value.toUpperCase())}
+                          onBlur={() => markFieldTouched("stateCode")}
+                          className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium uppercase text-center transition-all ${getFieldInputClass("stateCode")}`}
+                        />
+                        {isFieldInvalid("stateCode") && (
+                          <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" /> State
+                          </span>
+                        )}
+                      </div>
+                      <div className="col-span-4">
+                        <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                          <span>Zip Code <span className="text-red-400">*</span></span>
+                          {isFieldValid("zipCode") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="90210"
+                          maxLength={10}
                           value={zipCode}
                           onChange={(e) => setZipCode(e.target.value)}
-                          className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
-                            isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                          }`}
+                          onBlur={() => markFieldTouched("zipCode")}
+                          className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium font-mono text-center transition-all ${getFieldInputClass("zipCode")}`}
                         />
+                        {isFieldInvalid("zipCode") && (
+                          <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" /> 5-digit zip
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1012,37 +1600,90 @@ export function PortalPayAccordionCheckoutV2({
 
             {/* L1 Demographic Demands: Date of Birth & SSN */}
             {(showStepUpForm || showFullForm) && (
-              <div className="grid grid-cols-2 gap-2.5 pt-1.5 border-t border-white/10 animate-in fade-in duration-200">
+              <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-white/10 animate-in fade-in duration-200">
                 <div>
-                  <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                    <Calendar className="w-3 h-3" />
-                    <span>Date of Birth</span>
+                  <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      <span>Date of Birth</span>
+                      <span className="text-red-400">*</span>
+                    </span>
+                    {isFieldValid("dob") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                   </label>
-                  <input
-                    type="date"
-                    required={showStepUpForm}
+                  
+                  {/* Custom Mobile-Responsive DOB Input & Calendar Popover */}
+                  <DobPicker
                     value={dob}
-                    onChange={(e) => setDob(e.target.value)}
-                    className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
-                      isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                    }`}
+                    onChange={(val) => setDob(val)}
+                    onBlur={() => markFieldTouched("dob")}
+                    isLightText={isLightText}
+                    primaryColor={primaryColor}
+                    hasError={isFieldInvalid("dob")}
+                    isValid={isFieldValid("dob")}
+                    onOpenStateChange={setIsCalendarOpen}
                   />
+
+                  {isFieldInvalid("dob") ? (
+                    <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> {dobStatus.error || "Valid date of birth required"}
+                    </span>
+                  ) : dobStatus.valid ? (
+                    <span className="text-[10px] text-emerald-400 font-medium mt-1 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Date of Birth Verified
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground mt-1 block">MM / DD / YYYY</span>
+                  )}
                 </div>
                 <div>
-                  <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                    <Shield className="w-3 h-3" />
-                    <span>SSN (9 Digits)</span>
+                  <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                    <span className="flex items-center gap-1">
+                      <Shield className="w-3 h-3" />
+                      <span>SSN (9 Digits)</span>
+                      <span className="text-red-400">*</span>
+                    </span>
+                    {isFieldValid("ssn") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                   </label>
                   <input
                     type="text"
-                    required={showStepUpForm}
+                    required
                     placeholder="000-00-0000"
+                    maxLength={11}
                     value={formatSSN(ssn)}
                     onChange={(e) => setSsn(e.target.value)}
-                    className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium font-mono ${
-                      isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                    }`}
+                    onBlur={() => markFieldTouched("ssn")}
+                    className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium font-mono transition-all ${getFieldInputClass("ssn")}`}
                   />
+                  {isFieldInvalid("ssn") ? (
+                    <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Full 9-digit SSN required ({ssnDigits.length}/9)
+                    </span>
+                  ) : ssnDigits.length === 9 ? (
+                    <span className="text-[10px] text-emerald-400 font-medium mt-1 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> 9 Digits Encrypted
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground mt-1 block">
+                      {ssnDigits.length > 0 ? `${ssnDigits.length} of 9 digits entered` : "Encrypted directly to Stripe"}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Live Incomplete Checklist Banner if submit attempted without full info */}
+            {attemptedIdentitySubmit && !isIdentityComplete && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-bold text-white">Please complete the required details before continuing:</div>
+                  <div className="text-[11px] text-red-300 flex flex-wrap gap-1.5 items-center">
+                    {missingIdentityFields.map((f) => (
+                      <span key={f.key} className="px-2 py-0.5 rounded-md bg-red-500/20 border border-red-500/30 text-red-200 font-semibold">
+                        {f.label}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -1085,41 +1726,49 @@ export function PortalPayAccordionCheckoutV2({
               </div>
             )}
 
-            {/* Save & Continue Button - Gated strictly for L2 requirements */}
+            {/* Save & Continue Button */}
             <button
               type="submit"
               disabled={
                 isSubmittingIdentity ||
-                (showStepUpForm && !showFullForm
-                  ? !dob || ssn.replace(/\D/g, "").length !== 9
-                  : !firstName || !lastName || !line1 || (isL1Requirement && (!dob || ssn.replace(/\D/g, "").length !== 9))) ||
                 (isL2Requirement && !isL2Approved)
               }
-              className={`w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg mt-2 ${
-                isL2Requirement && !isL2Approved
+              className={`w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg mt-2 ${
+                isSubmittingIdentity
+                  ? "bg-emerald-600 text-white cursor-wait"
+                  : !isIdentityComplete
+                  ? isLightText
+                    ? "bg-white/10 hover:bg-white/15 text-white/50 border border-white/10 cursor-pointer"
+                    : "bg-black/10 hover:bg-black/15 text-black/50 border border-black/10 cursor-pointer"
+                  : isL2Requirement && !isL2Approved
                   ? "bg-white/10 text-white/40 cursor-not-allowed border border-white/10"
-                  : ""
+                  : "hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
               }`}
               style={
-                isL2Requirement && !isL2Approved
-                  ? {}
-                  : { backgroundColor: primaryColor, color: "#fff" }
+                isIdentityComplete && !isSubmittingIdentity && !(isL2Requirement && !isL2Approved)
+                  ? { backgroundColor: primaryColor, color: "#fff" }
+                  : {}
               }
             >
               {isSubmittingIdentity ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin" />
                   <span>Verifying Identity Details...</span>
                 </>
               ) : isL2Requirement && !isL2Approved ? (
                 <>
-                  <Lock className="w-3.5 h-3.5" />
+                  <Lock className="w-4 h-4" />
                   <span>Complete ID Verification Above to Proceed</span>
+                </>
+              ) : !isIdentityComplete ? (
+                <>
+                  <AlertCircle className="w-4 h-4 text-amber-400" />
+                  <span>Complete All Details to Continue ({missingIdentityFields.length} remaining)</span>
                 </>
               ) : (
                 <>
                   <span>Save & Continue to Payment</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </button>
