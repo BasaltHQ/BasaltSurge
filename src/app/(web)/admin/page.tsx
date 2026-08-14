@@ -34,6 +34,7 @@ import BrandingPanelExt from "@/app/(web)/admin/panels/BrandingPanel";
 import OnrampsPanel from "./panels/OnrampsPanel";
 import { Thumbnail, type ReserveBalancesResponse, type SiteConfig, type TaxCatalogEntry } from "@/app/(web)/admin/panels/common";
 import PartnerManagementPanelExt from "@/app/(web)/admin/panels/PartnerManagementPanel";
+import PlatformSettingsPanelExt from "@/app/(web)/admin/panels/PlatformSettingsPanel";
 import ApplicationsPanelExt from "@/app/(web)/admin/panels/ApplicationsPanel";
 import EndpointsPanel from "@/app/(web)/admin/panels/EndpointsPanel";
 import SplitConfigPanelExt from "@/app/(web)/admin/panels/SplitConfigPanel";
@@ -11952,6 +11953,9 @@ export default function AdminPage() {
         )}
         {activeTab === "partners" && canAccessPanel("partners", wallet) && (
           <PartnerManagementPanelExt />
+        )}
+        {activeTab === "platformSettings" && canAccessPanel("platformSettings" as any, wallet) && (
+          <PlatformSettingsPanelExt />
         )}
 
         {activeTab === "inventory" && (
