@@ -2,8 +2,10 @@
 
 import React, { useEffect, useState } from "react";
 import { Sliders, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
+import { useActiveAccount } from "thirdweb/react";
 
 export default function PlatformSettingsPanel() {
+  const account = useActiveAccount();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -67,8 +69,11 @@ export default function PlatformSettingsPanel() {
       };
 
       const res = await fetch("/api/platform/brands/basaltsurge/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-wallet": account?.address || "",
+        },
         credentials: "include",
         body: JSON.stringify(payload),
       });

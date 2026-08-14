@@ -631,3 +631,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ brandKey:
     );
   }
 }
+
+export const POST = PATCH;
+
