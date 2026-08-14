@@ -1460,21 +1460,21 @@ export function PortalPayAccordionCheckoutV2({
                   </div>
                 </div>
 
-                {/* Residential Address Autocomplete Single Input */}
+                {/* Full Residential Address Autocomplete Single Input */}
                 {!isAddressParsed ? (
                   <div className="space-y-1.5">
                     <div className="relative z-50">
                       <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                         <span className="flex items-center gap-1">
                           <MapPin className="w-3 h-3" />
-                          <span>Residential Street Address</span>
+                          <span>Full Residential Address</span>
                           <span className="text-red-400">*</span>
                         </span>
                         {isFieldValid("line1") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                       </label>
                       <input
                         type="text"
-                        placeholder="Enter residential street address (e.g., 123 Main St)..."
+                        placeholder="Enter full residential address (e.g., 123 Main St, City, State)..."
                         value={addressSearchInput || line1}
                         onChange={(e) => {
                           setAddressSearchInput(e.target.value);
@@ -1536,7 +1536,7 @@ export function PortalPayAccordionCheckoutV2({
                     </div>
                     {isFieldInvalid("line1") && (
                       <span className="text-[10px] text-red-400 font-semibold flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3" /> Street address is required
+                        <AlertCircle className="w-3 h-3" /> Full residential address is required
                       </span>
                     )}
                     <div className="flex items-center justify-between text-[11px] pt-0.5">
