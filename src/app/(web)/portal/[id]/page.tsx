@@ -3973,6 +3973,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     submitKycInfo,
     reset: resetHeadlessOnramp,
     kycTierRequired,
+    kycLevel: headlessKycLevel,
+    kycTiers: headlessKycTiers,
     isAllKycCompleted,
     onrampLimits: headlessOnrampLimits,
     detectedCardFunding: stripeDetectedFunding,
@@ -4786,6 +4788,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           receiptId={receiptId}
           headlessError={headlessError}
           kycTierRequired={kycTierRequired}
+          kycLevel={headlessKycLevel}
+          kycTiers={headlessKycTiers}
           isAllKycCompleted={isAllKycCompleted}
           onHeadlessSubmitEmailPhone={startHeadlessOnramp}
           onSubmitKycInfo={submitKycInfo}

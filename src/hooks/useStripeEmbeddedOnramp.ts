@@ -314,6 +314,10 @@ export type UseStripeEmbeddedOnrampReturn = {
   sessionId: string | null;
   /** The dynamic KYC tier required */
   kycTierRequired?: "l0" | "l1" | "l2";
+  /** Canonical KYC level */
+  kycLevel?: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING";
+  /** KYC tier statuses */
+  kycTiers?: Array<{ tier: string; verification_status: string }>;
   /** Flag indicating if all KYC tiers have been completed */
   isAllKycCompleted?: boolean;
   /** Stripe onramp remaining transaction limits */
@@ -558,6 +562,8 @@ export function useStripeEmbeddedOnramp({
     }
   }, [sessionKey]);
   const [kycTierRequired, setKycTierRequired] = useState<"l0" | "l1" | "l2">("l0");
+  const [kycLevel, setKycLevel] = useState<"L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING">("REQUIRES_KYC");
+  const [kycTiers, setKycTiers] = useState<Array<{ tier: string; verification_status: string }>>([]);
   const [isAllKycCompleted, setIsAllKycCompleted] = useState<boolean>(false);
   const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
@@ -2454,6 +2460,18 @@ export function useStripeEmbeddedOnramp({
           payload.id_number.value = payload.id_number.value.replace(/\D/g, "");
         }
       }
+      if (payload.date_of_birth) {
+        if (typeof payload.date_of_birth === "string") {
+          const parts = payload.date_of_birth.split("-").map(Number);
+          if (parts.length === 3 && parts[0] && parts[1] && parts[2]) {
+            payload.date_of_birth = {
+              year: parts[0],
+              month: parts[1],
+              day: parts[2]
+            };
+          }
+        }
+      }
       if (payload.address && typeof payload.address === "object") {
         const cleanAddr: Record<string, string> = {};
         for (const [k, v] of Object.entries(payload.address)) {
@@ -2958,6 +2976,7 @@ export function useStripeEmbeddedOnramp({
           }
         }
         const kycTiers = kycData.kycTiers || [];
+        setKycTiers(kycTiers);
 
         const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
         const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
@@ -2976,10 +2995,26 @@ export function useStripeEmbeddedOnramp({
           : isOverallKycVerified;
         const isL1Verified = l1Tier 
           ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") 
-          : false;
+          : isOverallKycVerified;
         const isL2Verified = l2Tier 
           ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available") 
           : isOverallIdVerified;
+
+        let computedLevel: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING" = "REQUIRES_KYC";
+        if (isL2Verified) {
+          computedLevel = "L2";
+        } else if (isL1Verified) {
+          computedLevel = "L1";
+        } else if (isL0Verified && l0Tier?.verification_status !== "rejected") {
+          computedLevel = "L0";
+        } else if (l0Tier?.verification_status === "pending" || l1Tier?.verification_status === "pending" || l2Tier?.verification_status === "pending" || kycData.kycStatus === "pending") {
+          computedLevel = "PENDING";
+        } else if (l0Tier?.verification_status === "rejected" || l1Tier?.verification_status === "rejected" || l2Tier?.verification_status === "rejected" || kycData.kycStatus === "rejected") {
+          computedLevel = "REJECTED";
+        } else {
+          computedLevel = "REQUIRES_KYC";
+        }
+        setKycLevel(computedLevel);
 
         // If ACH payment is chosen, we strictly enforce verification through L2.
         const isCustomerVerified = isAchEnforcedRef.current 
@@ -3751,6 +3786,8 @@ export function useStripeEmbeddedOnramp({
     detectedCardLast4,
     sessionId,
     kycTierRequired,
+    kycLevel,
+    kycTiers,
     isAllKycCompleted,
     onrampLimits,
     showSpeedSelection,

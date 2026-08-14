@@ -40,6 +40,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   headlessError?: string | null;
   kycTierRequired?: "l0" | "l1" | "l2" | string;
   kycLevel?: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING" | string;
+  kycTiers?: Array<{ tier: string; verification_status: string }>;
   simulatedTier?: "l0" | "l1" | "l2" | string;
   simulatedStatus?: "normal" | "step_up" | "doc_verify" | "verified" | string;
   simulatedError?: "none" | "address_error" | "payment_decline" | "kyc_rejection" | string;
@@ -84,6 +85,7 @@ export function PortalPayAccordionCheckoutV2({
   headlessError: propError,
   kycTierRequired = "l0",
   kycLevel = "L0",
+  kycTiers = [],
   simulatedTier,
   simulatedStatus,
   simulatedError = "none",
@@ -330,28 +332,46 @@ export function PortalPayAccordionCheckoutV2({
         } else {
           setActiveStep(2);
         }
-        setIsSubmittingContact(false);
       }
     } catch (err: any) {
       console.error("Contact submission error:", err);
       setLocalError(err?.message || "Failed to submit contact information.");
+    } finally {
       setIsSubmittingContact(false);
     }
   };
 
-  // Step 2 KYC Verification Helper Flags
-  const isL2Requirement =
-    effectiveTier === "l2" ||
-    effectiveStatus === "doc_verify" ||
-    (kycTierRequired as string) === "l2" ||
-    kycLevel === "L2" ||
-    (kycLevel === "REJECTED" && (effectiveTier === "l1" || effectiveTier === "l2"));
+  // Canonical Stripe Onramp KYC tier detection matching WizardView:
+  const l1Verified = (kycTiers || []).some(
+    (t: any) => t.tier === "l1" && t.verification_status === "verified",
+  );
+  const l1NotAvailable = (kycTiers || []).some(
+    (t: any) => t.tier === "l1" && t.verification_status === "not_available",
+  );
 
-  const isL1Requirement =
+  // Full L0 form (name, address, optional SSN/DOB): new users, or REJECTED where L1 itself failed
+  const showFullForm =
+    effectiveTier === "l0" ||
+    kycLevel === "REQUIRES_KYC" ||
+    (kycLevel === "REJECTED" && !l1Verified && !l1NotAvailable) ||
+    (!isAllKycCompleted && effectiveStatus !== "step_up" && effectiveStatus !== "doc_verify" && effectiveTier !== "l1" && effectiveTier !== "l2");
+
+  // L1 step-up form (SSN + DOB required to advance from L0 → L1)
+  const showStepUpForm =
     effectiveTier === "l1" ||
     effectiveStatus === "step_up" ||
-    (kycTierRequired as string) === "l1" ||
-    isL2Requirement;
+    kycLevel === "L0";
+
+  // Document verification button: user is at L1, or REJECTED but L1 was already verified or not_available
+  const showVerifyDocs =
+    effectiveTier === "l2" ||
+    effectiveStatus === "doc_verify" ||
+    kycLevel === "L1" ||
+    (kycLevel === "REJECTED" && l1Verified) ||
+    (kycLevel === "REJECTED" && l1NotAvailable);
+
+  const isL2Requirement = showVerifyDocs || effectiveTier === "l2" || (kycTierRequired as string) === "l2";
+  const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || (kycTierRequired as string) === "l1";
 
   const isL2Approved =
     isAllKycCompleted ||
@@ -412,21 +432,36 @@ export function PortalPayAccordionCheckoutV2({
 
     try {
       const ssnDigits = ssn.replace(/\D/g, "");
+      let parsedDob: { year: number; month: number; day: number } | undefined = undefined;
+      if (dob) {
+        const parts = dob.split("-").map(Number);
+        if (parts.length === 3 && parts[0] && parts[1] && parts[2]) {
+          parsedDob = { year: parts[0], month: parts[1], day: parts[2] };
+        }
+      }
+
       if (onSubmitKycInfo) {
-        await onSubmitKycInfo({
-          given_name: firstName,
-          surname: lastName,
-          address: {
-            line1,
-            line2,
-            city,
-            state: stateCode,
-            postal_code: zipCode,
-            country,
-          },
-          ...(dob ? { date_of_birth: dob } : {}),
-          ...(ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
-        });
+        if (showStepUpForm && !showFullForm) {
+          await onSubmitKycInfo({
+            ...(parsedDob ? { date_of_birth: parsedDob } : {}),
+            ...(ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
+          });
+        } else {
+          await onSubmitKycInfo({
+            given_name: firstName,
+            surname: lastName,
+            address: {
+              line1,
+              ...(line2 ? { line2 } : {}),
+              city,
+              state: stateCode,
+              postal_code: zipCode,
+              country: country || "US",
+            },
+            ...(parsedDob ? { date_of_birth: parsedDob } : {}),
+            ...(ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
+          });
+        }
       }
 
       if (isL2Requirement && !isL2Approved && onVerifyDocuments) {
@@ -586,11 +621,11 @@ export function PortalPayAccordionCheckoutV2({
               />
             </div>
 
-            <div className="grid grid-cols-3 gap-2">
-              <div className="col-span-2">
+            <div className="grid grid-cols-12 gap-2">
+              <div className="col-span-5">
                 <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                   <Phone className="w-3 h-3" />
-                  <span>Mobile Phone (SMS)</span>
+                  <span>Mobile Phone</span>
                 </label>
                 <input
                   type="tel"
@@ -604,7 +639,7 @@ export function PortalPayAccordionCheckoutV2({
                   }`}
                 />
               </div>
-              <div>
+              <div className="col-span-7">
                 <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                   Country
                 </label>
@@ -782,198 +817,202 @@ export function PortalPayAccordionCheckoutV2({
               </div>
             )}
 
-            {/* Legal Name */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div>
-                <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                  <User className="w-3 h-3" />
-                  <span>First Name</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Jane"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
-                    isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                  }`}
-                />
-              </div>
-              <div>
-                <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                  <User className="w-3 h-3" />
-                  <span>Last Name</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Doe"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
-                    isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                  }`}
-                />
-              </div>
-            </div>
-
-            {/* Residential Address Autocomplete Single Input */}
-            {!isAddressParsed && !city && !stateCode ? (
-              <div className="space-y-1.5">
-                <div className="relative z-50">
-                  <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                    <MapPin className="w-3 h-3" />
-                    <span>Residential Address</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Enter residential street address (e.g., 123 Main St)..."
-                    value={line1}
-                    onChange={(e) => {
-                      setLine1(e.target.value);
-                      handleFetchSuggestions(e.target.value);
-                    }}
-                    onFocus={() => addressSuggestions.length > 0 && setShowSuggestions(true)}
-                    className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
-                      isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                    }`}
-                  />
-
-                  {/* Autocomplete Predictions */}
-                  {showSuggestions && addressSuggestions.length > 0 && (
-                    <div
-                      data-pp-address-dropdown="1"
-                      style={{
-                        backgroundColor: isLightText ? "#141522" : "#ffffff",
-                        borderColor: isLightText ? "rgba(255, 255, 255, 0.18)" : "rgba(0, 0, 0, 0.18)",
-                        zIndex: 99999,
-                      }}
-                      className={`pp-address-menu absolute left-0 right-0 mt-1 rounded-xl max-h-60 overflow-y-auto shadow-2xl border divide-y ${
-                        isLightText ? "divide-white/10 text-white" : "divide-black/10 text-black"
+            {/* Legal Name & Residential Address (Full Form) */}
+            {showFullForm && (
+              <>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                      <User className="w-3 h-3" />
+                      <span>First Name</span>
+                    </label>
+                    <input
+                      type="text"
+                      required={showFullForm}
+                      placeholder="Jane"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
+                        isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
                       }`}
-                    >
-                      {addressSuggestions.map((item, idx) => (
-                        <button
-                          key={item.placeId || idx}
-                          type="button"
-                          onClick={() => handleSelectSuggestion(item)}
+                    />
+                  </div>
+                  <div>
+                    <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                      <User className="w-3 h-3" />
+                      <span>Last Name</span>
+                    </label>
+                    <input
+                      type="text"
+                      required={showFullForm}
+                      placeholder="Doe"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
+                        isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
+                      }`}
+                    />
+                  </div>
+                </div>
+
+                {/* Residential Address Autocomplete Single Input */}
+                {!isAddressParsed && !city && !stateCode ? (
+                  <div className="space-y-1.5">
+                    <div className="relative z-50">
+                      <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                        <MapPin className="w-3 h-3" />
+                        <span>Residential Address</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Enter residential street address (e.g., 123 Main St)..."
+                        value={line1}
+                        onChange={(e) => {
+                          setLine1(e.target.value);
+                          handleFetchSuggestions(e.target.value);
+                        }}
+                        onFocus={() => addressSuggestions.length > 0 && setShowSuggestions(true)}
+                        className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
+                          isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
+                        }`}
+                      />
+
+                      {/* Autocomplete Predictions */}
+                      {showSuggestions && addressSuggestions.length > 0 && (
+                        <div
+                          data-pp-address-dropdown="1"
                           style={{
                             backgroundColor: isLightText ? "#141522" : "#ffffff",
+                            borderColor: isLightText ? "rgba(255, 255, 255, 0.18)" : "rgba(0, 0, 0, 0.18)",
+                            zIndex: 99999,
                           }}
-                          className={`w-full text-left px-3.5 py-2.5 text-xs transition flex flex-col cursor-pointer ${
-                            isLightText
-                              ? "hover:!bg-[#23263b] !text-white"
-                              : "hover:!bg-[#f1f5f9] !text-slate-900"
+                          className={`pp-address-menu absolute left-0 right-0 mt-1 rounded-xl max-h-60 overflow-y-auto shadow-2xl border divide-y ${
+                            isLightText ? "divide-white/10 text-white" : "divide-black/10 text-black"
                           }`}
                         >
-                          <span className="font-bold flex items-center gap-2">
-                            <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                            <span>{item.mainText || item.description}</span>
-                          </span>
-                          {item.secondaryText && (
-                            <span className="text-[10.5px] opacity-70 ml-5.5 mt-0.5">
-                              {item.secondaryText}
-                            </span>
-                          )}
-                        </button>
-                      ))}
+                          {addressSuggestions.map((item, idx) => (
+                            <button
+                              key={item.placeId || idx}
+                              type="button"
+                              onClick={() => handleSelectSuggestion(item)}
+                              style={{
+                                backgroundColor: isLightText ? "#141522" : "#ffffff",
+                              }}
+                              className={`w-full text-left px-3.5 py-2.5 text-xs transition flex flex-col cursor-pointer ${
+                                isLightText
+                                  ? "hover:!bg-[#23263b] !text-white"
+                                  : "hover:!bg-[#f1f5f9] !text-slate-900"
+                              }`}
+                            >
+                              <span className="font-bold flex items-center gap-2">
+                                <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                <span>{item.mainText || item.description}</span>
+                              </span>
+                              {item.secondaryText && (
+                                <span className="text-[10.5px] opacity-70 ml-5.5 mt-0.5">
+                                  {item.secondaryText}
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-amber-400 font-medium flex items-center gap-1">
-                    <Shield className="w-3 h-3" />
-                    <span>Address must match primary residence on government ID.</span>
-                  </span>
-                  <button type="button" onClick={() => setIsAddressParsed(true)} className="underline text-indigo-300">
-                    Enter address manually
-                  </button>
-                </div>
-              </div>
-            ) : (
-              /* Expanded Address Component Inputs */
-              <div className="space-y-2 animate-in fade-in duration-200">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-emerald-400 font-bold flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Address Verified
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAddressParsed(false);
-                      setLine1("");
-                      setCity("");
-                      setStateCode("");
-                      setZipCode("");
-                    }}
-                    className="underline opacity-70 flex items-center gap-1"
-                  >
-                    <Search className="w-3 h-3" /> Search address again
-                  </button>
-                </div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-amber-400 font-medium flex items-center gap-1">
+                        <Shield className="w-3 h-3" />
+                        <span>Address must match primary residence on government ID.</span>
+                      </span>
+                      <button type="button" onClick={() => setIsAddressParsed(true)} className="underline text-indigo-300">
+                        Enter address manually
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Expanded Address Component Inputs */
+                  <div className="space-y-2 animate-in fade-in duration-200">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-emerald-400 font-bold flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Address Verified
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddressParsed(false);
+                          setLine1("");
+                          setCity("");
+                          setStateCode("");
+                          setZipCode("");
+                        }}
+                        className="underline opacity-70 flex items-center gap-1"
+                      >
+                        <Search className="w-3 h-3" /> Search address again
+                      </button>
+                    </div>
 
-                <div>
-                  <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                    <MapPin className="w-3 h-3" />
-                    <span>Street Address</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={line1}
-                    onChange={(e) => setLine1(e.target.value)}
-                    className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
-                      isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                    }`}
-                  />
-                </div>
+                    <div>
+                      <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                        <MapPin className="w-3 h-3" />
+                        <span>Street Address</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={line1}
+                        onChange={(e) => setLine1(e.target.value)}
+                        className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
+                          isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
+                        }`}
+                      />
+                    </div>
 
-                <div className="grid grid-cols-12 gap-2">
-                  <div className="col-span-5">
-                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                      City
-                    </label>
-                    <input
-                      type="text"
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                      className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
-                        isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                      }`}
-                    />
+                    <div className="grid grid-cols-12 gap-2">
+                      <div className="col-span-5">
+                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                          City
+                        </label>
+                        <input
+                          type="text"
+                          value={city}
+                          onChange={(e) => setCity(e.target.value)}
+                          className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
+                            isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
+                          }`}
+                        />
+                      </div>
+                      <div className="col-span-4">
+                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                          State
+                        </label>
+                        <input
+                          type="text"
+                          value={stateCode}
+                          onChange={(e) => setStateCode(e.target.value)}
+                          className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
+                            isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
+                          }`}
+                        />
+                      </div>
+                      <div className="col-span-3">
+                        <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                          Zip Code
+                        </label>
+                        <input
+                          type="text"
+                          value={zipCode}
+                          onChange={(e) => setZipCode(e.target.value)}
+                          className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
+                            isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
+                          }`}
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div className="col-span-4">
-                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                      State
-                    </label>
-                    <input
-                      type="text"
-                      value={stateCode}
-                      onChange={(e) => setStateCode(e.target.value)}
-                      className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
-                        isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                      }`}
-                    />
-                  </div>
-                  <div className="col-span-3">
-                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                      Zip Code
-                    </label>
-                    <input
-                      type="text"
-                      value={zipCode}
-                      onChange={(e) => setZipCode(e.target.value)}
-                      className={`w-full h-9 px-2.5 rounded-lg text-xs font-medium ${
-                        isLightText ? "bg-white/5 border border-white/10 text-white" : "bg-black/5 border border-black/10 text-black"
-                      }`}
-                    />
-                  </div>
-                </div>
-              </div>
+                )}
+              </>
             )}
 
             {/* L1 Demographic Demands: Date of Birth & SSN */}
-            {isL1Requirement && (
+            {(showStepUpForm || showFullForm) && (
               <div className="grid grid-cols-2 gap-2.5 pt-1.5 border-t border-white/10 animate-in fade-in duration-200">
                 <div>
                   <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
@@ -982,7 +1021,7 @@ export function PortalPayAccordionCheckoutV2({
                   </label>
                   <input
                     type="date"
-                    required={isL1Requirement}
+                    required={showStepUpForm}
                     value={dob}
                     onChange={(e) => setDob(e.target.value)}
                     className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${
@@ -997,7 +1036,7 @@ export function PortalPayAccordionCheckoutV2({
                   </label>
                   <input
                     type="text"
-                    required={isL1Requirement}
+                    required={showStepUpForm}
                     placeholder="000-00-0000"
                     value={formatSSN(ssn)}
                     onChange={(e) => setSsn(e.target.value)}
@@ -1052,10 +1091,9 @@ export function PortalPayAccordionCheckoutV2({
               type="submit"
               disabled={
                 isSubmittingIdentity ||
-                !firstName ||
-                !lastName ||
-                !line1 ||
-                (isL1Requirement && ((country === "US" && (!dob || ssn.replace(/\D/g, "").length !== 9)) || (country !== "US" && !dob))) ||
+                (showStepUpForm && !showFullForm
+                  ? !dob || ssn.replace(/\D/g, "").length !== 9
+                  : !firstName || !lastName || !line1 || (isL1Requirement && (!dob || ssn.replace(/\D/g, "").length !== 9))) ||
                 (isL2Requirement && !isL2Approved)
               }
               className={`w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg mt-2 ${
