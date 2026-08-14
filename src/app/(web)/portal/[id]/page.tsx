@@ -8516,8 +8516,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         document.body
       )}
 
-      {/* Success Animation Overlay */}
-      {paymentConfirmed && (
+      {/* Success Animation Overlay (Legacy V1 only) */}
+      {!isV2Active && paymentConfirmed && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-500">
           <div className="text-center p-6 max-w-sm mx-auto">
             <div className="mb-6 flex justify-center">

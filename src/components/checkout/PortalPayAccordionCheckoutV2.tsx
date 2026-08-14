@@ -275,7 +275,8 @@ export function PortalPayAccordionCheckoutV2({
     } else if (
       headlessStep === "creating_session" ||
       headlessStep === "checking_out" ||
-      headlessStep === "transferring"
+      headlessStep === "transferring" ||
+      (headlessStep === "awaiting_funds" && detectedCardFunding !== "us_bank_account")
     ) {
       setIsSubmittingContact(false);
       setIsSubmittingIdentity(false);
@@ -284,7 +285,7 @@ export function PortalPayAccordionCheckoutV2({
       setFulfillmentStage("processing");
     } else if (
       headlessStep === "completed" ||
-      headlessStep === "awaiting_funds"
+      (headlessStep === "awaiting_funds" && detectedCardFunding === "us_bank_account")
     ) {
       setIsSubmittingContact(false);
       setIsSubmittingIdentity(false);
@@ -1375,20 +1376,26 @@ export function PortalPayAccordionCheckoutV2({
                 <div className="flex gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => window.location.reload()}
-                    className="flex-1 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/10 flex items-center justify-center gap-2 transition active:scale-95"
+                    onClick={() => {
+                      if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+                        try {
+                          window.parent.postMessage({ type: "portalpay:checkout_complete", receiptId }, "*");
+                        } catch {}
+                      }
+                    }}
+                    className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 text-white border border-white/10 flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
                     <span>Done</span>
                   </button>
-                  {onEmailReceipt && !email && (
+                  {onEmailReceipt && (
                     <button
                       type="button"
                       onClick={onEmailReceipt}
-                      className="flex-1 py-2 rounded-xl text-xs font-bold shadow-lg transition active:scale-95 text-white"
+                      className="flex-1 py-2.5 rounded-xl text-xs font-bold shadow-lg transition active:scale-95 text-white flex items-center justify-center gap-1.5 cursor-pointer"
                       style={{ backgroundColor: primaryColor }}
                     >
-                      Email Receipt
+                      <span>Email Receipt</span>
                     </button>
                   )}
                 </div>
