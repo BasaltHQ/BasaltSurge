@@ -568,6 +568,7 @@ export function PortalPayAccordionCheckoutV2({
   // Active accordion step: 1 = Contact & Account, 2 = Identity (L0/L1/L2), 3 = Payment, 4 = Order Processing
   const [activeStep, setActiveStep] = useState<number>(1);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [manualEditAddress, setManualEditAddress] = useState<boolean>(false);
 
   // Format and translate raw errors into clear customer guidance
   const formatErrorMessage = (err?: string | null): string | null => {
@@ -878,6 +879,15 @@ export function PortalPayAccordionCheckoutV2({
     }
     if (!headlessStep) return;
     if (
+      headlessStep === "checking_link" ||
+      headlessStep === "registering_link" ||
+      headlessStep === "authenticating" ||
+      headlessStep === "collecting_phone"
+    ) {
+      if (authElement || headlessStep === "collecting_phone" || headlessStep === "authenticating") {
+        setActiveStep(1);
+      }
+    } else if (
       headlessStep === "checking_kyc" ||
       headlessStep === "collecting_kyc" ||
       headlessStep === "submitting_kyc" ||
@@ -922,7 +932,7 @@ export function PortalPayAccordionCheckoutV2({
       setActiveStep(4);
       setFulfillmentStage("complete");
     }
-  }, [headlessStep, isAllKycCompleted, effectiveStatus, paymentConfirmed, propError, localError, detectedCardFunding]);
+  }, [headlessStep, authElement, isAllKycCompleted, effectiveStatus, paymentConfirmed, propError, localError, detectedCardFunding]);
 
   // If KYC is already completed or verified, automatically skip or advance to Step 3 (unless on payment execution/completion or error)
   useEffect(() => {
@@ -990,18 +1000,18 @@ export function PortalPayAccordionCheckoutV2({
     (t: any) => t.tier === "l1" && t.verification_status === "not_available",
   );
 
-  // Full L0 form (name, address, optional SSN/DOB): new users, or REJECTED where L1 itself failed
-  const showFullForm =
-    effectiveTier === "l0" ||
-    kycLevel === "REQUIRES_KYC" ||
-    (kycLevel === "REJECTED" && !l1Verified && !l1NotAvailable) ||
-    (!isAllKycCompleted && effectiveStatus !== "step_up" && effectiveStatus !== "doc_verify" && effectiveTier !== "l1" && effectiveTier !== "l2");
-
   // L1 step-up form (SSN + DOB required to advance from L0 → L1)
   const showStepUpForm =
     effectiveTier === "l1" ||
     effectiveStatus === "step_up" ||
     kycLevel === "L0";
+
+  // Full L0 form (name, address): initial users, or when manual address editing is active in step-up
+  const showFullForm =
+    !showStepUpForm ||
+    manualEditAddress ||
+    kycLevel === "REQUIRES_KYC" ||
+    (kycLevel === "REJECTED" && !l1Verified && !l1NotAvailable);
 
   // Document verification button: user is at L1, or REJECTED but L1 was already verified or not_available
   const showVerifyDocs =
@@ -1043,18 +1053,24 @@ export function PortalPayAccordionCheckoutV2({
 
   // Missing fields list for dynamic feedback
   const missingIdentityFields: { key: string; label: string }[] = [];
-  if (showFullForm) {
+  if (showStepUpForm) {
+    if (!fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
+    if (!fieldValidation.ssn) missingIdentityFields.push({ key: "ssn", label: ssnDigits.length > 0 ? `SSN (${9 - ssnDigits.length} digits left)` : "9-Digit SSN" });
+    if (manualEditAddress) {
+      if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
+      if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
+      if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
+      if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: "City" });
+      if (!fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: "State" });
+      if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: "Zip Code" });
+    }
+  } else if (showFullForm) {
     if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
     if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
     if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
     if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: "City" });
     if (!fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: "State" });
     if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: "Zip Code" });
-    if (!fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
-    if (!fieldValidation.ssn) missingIdentityFields.push({ key: "ssn", label: ssnDigits.length > 0 ? `SSN (${9 - ssnDigits.length} digits left)` : "9-Digit SSN" });
-  } else if (showStepUpForm) {
-    if (!fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
-    if (!fieldValidation.ssn) missingIdentityFields.push({ key: "ssn", label: ssnDigits.length > 0 ? `SSN (${9 - ssnDigits.length} digits left)` : "9-Digit SSN" });
   }
 
   const isIdentityComplete = missingIdentityFields.length === 0;
@@ -1179,7 +1195,7 @@ export function PortalPayAccordionCheckoutV2({
       }
 
       if (onSubmitKycInfo) {
-        if (showStepUpForm && !showFullForm) {
+        if (showStepUpForm && !manualEditAddress) {
           await onSubmitKycInfo({
             ...(parsedDob ? { date_of_birth: parsedDob } : {}),
             ...(ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
@@ -1196,8 +1212,8 @@ export function PortalPayAccordionCheckoutV2({
               postal_code: zipCode.trim(),
               country: country || "US",
             },
-            ...(parsedDob ? { date_of_birth: parsedDob } : {}),
-            ...(ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
+            ...(showStepUpForm && parsedDob ? { date_of_birth: parsedDob } : {}),
+            ...(showStepUpForm && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
           });
         }
       }
@@ -1340,8 +1356,7 @@ export function PortalPayAccordionCheckoutV2({
         </div>
 
         {/* Step 1 Expanded Body */}
-        {activeStep === 1 && (
-          <form onSubmit={handleContactSubmit} className="p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10">
+        <form onSubmit={handleContactSubmit} className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${activeStep === 1 ? "" : "hidden"}`}>
             <div>
               <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                 <Mail className="w-3 h-3" />
@@ -1465,8 +1480,7 @@ export function PortalPayAccordionCheckoutV2({
                 </>
               )}
             </button>
-          </form>
-        )}
+        </form>
       </div>
 
       {/* ==================================================================== */}
@@ -1539,16 +1553,38 @@ export function PortalPayAccordionCheckoutV2({
         </div>
 
         {/* Step 2 Expanded Body */}
-        {activeStep === 2 && (
-          <form onSubmit={handleIdentitySubmit} className="p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10">
+        <form onSubmit={handleIdentitySubmit} className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${activeStep === 2 ? "" : "hidden"}`}>
             
             {/* Step-Up Notice Banner (L1) */}
-            {(effectiveStatus === "step_up" || effectiveTier === "l1") && !isL2Requirement && (
-              <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-[11px] flex items-center gap-2">
-                <BadgeCheck className="w-4 h-4 shrink-0 text-indigo-400" />
-                <span>
-                  <strong>Verification Required:</strong> Please enter your Date of Birth and Social Security Number to satisfy compliance requirements.
-                </span>
+            {showStepUpForm && !isL2Requirement && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+                <Shield className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-bold text-amber-200">Identity Step-Up Required (Level 1):</div>
+                  <div className="text-[11px] leading-relaxed text-amber-300">
+                    Stripe requires your Date of Birth and Social Security Number to verify your identity and authorize this transaction.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Address Summary Pill when in Step-Up Mode */}
+            {showStepUpForm && !manualEditAddress && (firstName || line1) && (
+              <div className="p-2.5 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between text-xs animate-in fade-in duration-200">
+                <div className="flex items-center gap-2">
+                  <User className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <div>
+                    <span className="font-semibold text-white">{firstName} {lastName}</span>
+                    {line1 && <span className="text-white/60 text-[11px] ml-1.5">• {line1}, {city}</span>}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setManualEditAddress(true)}
+                  className="text-[11px] font-semibold text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Edit2 className="w-3 h-3" /> Edit Address
+                </button>
               </div>
             )}
 
@@ -1830,8 +1866,8 @@ export function PortalPayAccordionCheckoutV2({
               </>
             )}
 
-            {/* L1 Demographic Demands: Date of Birth & SSN */}
-            {(showStepUpForm || showFullForm) && (
+            {/* L1 Demographic Demands: Date of Birth & SSN (Rendered strictly when Step-Up is required) */}
+            {showStepUpForm && (
               <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-white/10 animate-in fade-in duration-200">
                 <div>
                   <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
@@ -2037,15 +2073,19 @@ export function PortalPayAccordionCheckoutV2({
                   <AlertCircle className="w-4 h-4 text-amber-400" />
                   <span>Complete All Details to Continue ({missingIdentityFields.length} remaining)</span>
                 </>
+              ) : showStepUpForm ? (
+                <>
+                  <span>Verify Identity & Continue</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
               ) : (
                 <>
-                  <span>Save & Continue to Payment</span>
+                  <span>Save Address & Continue</span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </button>
-          </form>
-        )}
+        </form>
       </div>
 
       {/* ==================================================================== */}
@@ -2106,8 +2146,7 @@ export function PortalPayAccordionCheckoutV2({
         </div>
 
         {/* Step 3 Expanded Body */}
-        {activeStep === 3 && (
-          <div className="p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10">
+        <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${activeStep === 3 ? "" : "hidden"}`}>
             {/* Embedded Live Stripe Payment Element */}
             {paymentElement ? (
               <div className="space-y-2">
@@ -2239,8 +2278,7 @@ export function PortalPayAccordionCheckoutV2({
                 </p>
               </div>
             )}
-          </div>
-        )}
+        </div>
       </div>
 
       {/* ==================================================================== */}
@@ -2282,8 +2320,7 @@ export function PortalPayAccordionCheckoutV2({
           </div>
         </div>
 
-        {activeStep === 4 && (
-          <div className="p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10">
+        <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${activeStep === 4 ? "" : "hidden"}`}>
             {!isOrderConfirmed ? (
               <div className="p-4 rounded-xl bg-black/30 border border-white/10 space-y-2.5 animate-in fade-in duration-300">
                 <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
@@ -2382,8 +2419,7 @@ export function PortalPayAccordionCheckoutV2({
                 </div>
               </div>
             )}
-          </div>
-        )}
+        </div>
       </div>
 
     </div>

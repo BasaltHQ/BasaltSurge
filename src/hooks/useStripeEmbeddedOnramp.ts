@@ -2525,10 +2525,23 @@ export function useStripeEmbeddedOnramp({
       updateStep("checking_kyc");
       const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
       if (!kycApproved) {
+        if (submittedTier === "l0") {
+          console.log("[EMBEDDED ONRAMP] L0 verification requires step up. Transitioning to L1...");
+          setKycTierRequired("l1");
+          setKycLevel("L0");
+          updateStep("collecting_kyc");
+          isRunningRef.current = false;
+          return;
+        }
         throw new Error(`KYC ${submittedTier.toUpperCase()} verification was not approved.`);
       }
 
       console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
+      setIsAllKycCompleted(true);
+      setKycLevel(submittedTier === "l1" ? "L1" : "L0");
+      setKycTierRequired(submittedTier);
+      kycOccurredRef.current = false;
+
       if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
         if (paymentTokenRef.current) {
           runCheckoutLoop(
@@ -2553,6 +2566,7 @@ export function useStripeEmbeddedOnramp({
                 try { onrampRef.current.destroy(); } catch {}
                 onrampRef.current = null;
               }
+              isCoordinatorAuthedRef.current = false;
               setDetectedCardFunding(null);
               setDetectedCardBrand(null);
               setDetectedCardLast4(null);
@@ -2788,7 +2802,7 @@ export function useStripeEmbeddedOnramp({
       let customerId = customerIdRef.current;
       let buyerWallet = buyerWalletRef.current;
 
-      if (onramp && isCoordinatorAuthedRef.current && customerId && oauthTokenRef.current && buyerWallet && !kycOccurredRef.current) {
+      if (onramp && isCoordinatorAuthedRef.current && customerId && oauthTokenRef.current && buyerWallet) {
         console.log("[EMBEDDED ONRAMP] Reusing active authenticated onramp coordinator and customer session:", customerId);
       } else {
         if (onrampRef.current) {
@@ -3101,7 +3115,7 @@ export function useStripeEmbeddedOnramp({
         // If ACH payment is chosen, we strictly enforce verification through L2.
         const isCustomerVerified = isAchEnforcedRef.current 
           ? isL2Verified 
-          : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected"));
+          : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected") || isAllKycCompleted || computedLevel === "L1" || computedLevel === "L0");
 
         setIsAllKycCompleted(Boolean(isCustomerVerified));
 
@@ -3634,9 +3648,7 @@ export function useStripeEmbeddedOnramp({
           }
         }
 
-        // Now clear element if we are proceeding to checkout
-        setPaymentElement(null);
-
+        // Keep paymentElement mounted in DOM so Stripe SDK performCheckout and 3DS modal can execute
         // Save state in refs for KYC/error recovery
         activeEmailRef.current = activeEmail;
         customerIdRef.current = customerId;
@@ -3663,6 +3675,7 @@ export function useStripeEmbeddedOnramp({
               try { onrampRef.current.destroy(); } catch {}
               onrampRef.current = null;
             }
+            isCoordinatorAuthedRef.current = false;
             setDetectedCardFunding(null);
             setDetectedCardBrand(null);
             setDetectedCardLast4(null);
