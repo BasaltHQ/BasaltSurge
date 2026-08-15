@@ -581,6 +581,27 @@ export function PortalPayAccordionCheckoutV2({
     ) {
       return "Instant card checkout is currently unavailable for this residential address or state (e.g., NY, HI, or US territories) due to regional crypto regulations. Please verify your address or use an alternative payment method.";
     }
+    if (lower.includes("card_declined") || lower.includes("do_not_honor") || lower.includes("card was declined")) {
+      return "Your card was declined by your issuing bank. Please check your card balance, contact your bank, or select another payment method.";
+    }
+    if (lower.includes("insufficient_funds")) {
+      return "Payment failed due to insufficient funds on this card. Please try another card or bank account.";
+    }
+    if (lower.includes("expired_card")) {
+      return "This card has expired. Please enter an active card.";
+    }
+    if (lower.includes("incorrect_cvc") || lower.includes("invalid_cvc")) {
+      return "The security code (CVC) entered is incorrect. Please verify the 3 or 4-digit code on your card.";
+    }
+    if (lower.includes("amount_above_maximum") || lower.includes("exceeds the maximum")) {
+      return "This order exceeds the single-transaction limit for this payment method. Please select a bank account or contact support.";
+    }
+    if (lower.includes("amount_below_minimum")) {
+      return "This order is below the minimum supported purchase limit.";
+    }
+    if (lower.includes("unsupportable_customer") || lower.includes("unsupported link account")) {
+      return "This Link account cannot be used for this checkout. Please verify your details or use another payment method.";
+    }
     return err;
   };
 
@@ -1030,11 +1051,58 @@ export function PortalPayAccordionCheckoutV2({
 
   const isIdentityComplete = missingIdentityFields.length === 0;
 
+  const errText = String(activeError || "").toLowerCase();
+  const hasAddressError = Boolean(
+    errText &&
+    (errText.includes("address") ||
+     errText.includes("postal") ||
+     errText.includes("zip") ||
+     errText.includes("street") ||
+     errText.includes("city") ||
+     errText.includes("headless mode") ||
+     errText.includes("unsupported_region") ||
+     errText.includes("unsupported_country"))
+  );
+  const hasDobError = Boolean(errText && (errText.includes("date_of_birth") || errText.includes("birth") || errText.includes("dob") || errText.includes("18 years")));
+  const hasSsnError = Boolean(errText && (errText.includes("ssn") || errText.includes("id_number") || errText.includes("social security")));
+  const hasNameError = Boolean(
+    errText &&
+    (errText.includes("given_name") ||
+     errText.includes("surname") ||
+     (errText.includes("name") && !errText.includes("bank_name")) ||
+     errText.includes("legal details") ||
+     errText.includes("identity verification details were rejected"))
+  );
+
   const isFieldInvalid = (field: keyof typeof fieldValidation) => {
+    if (hasNameError && (field === "firstName" || field === "lastName")) {
+      return true;
+    }
+    if (hasAddressError && (field === "line1" || field === "city" || field === "stateCode" || field === "zipCode")) {
+      return true;
+    }
+    if (hasDobError && field === "dob") {
+      return true;
+    }
+    if (hasSsnError && field === "ssn") {
+      return true;
+    }
     return (attemptedIdentitySubmit || touchedFields[field]) && !fieldValidation[field];
   };
 
   const isFieldValid = (field: keyof typeof fieldValidation) => {
+    if (hasNameError && (field === "firstName" || field === "lastName")) {
+      return false;
+    }
+    if (hasAddressError && (field === "line1" || field === "city" || field === "stateCode" || field === "zipCode")) {
+      return false;
+    }
+    if (hasDobError && field === "dob") {
+      return false;
+    }
+    if (hasSsnError && field === "ssn") {
+      return false;
+    }
     return touchedFields[field] && fieldValidation[field];
   };
 
@@ -1130,7 +1198,9 @@ export function PortalPayAccordionCheckoutV2({
         await onVerifyDocuments();
       }
 
-      setActiveStep(3);
+      if (!propError && headlessStep !== "error") {
+        setActiveStep(3);
+      }
     } catch (err: any) {
       console.error("Identity submission error:", err);
       setLocalError(err?.message || "Failed to submit identity details.");
@@ -1337,6 +1407,19 @@ export function PortalPayAccordionCheckoutV2({
                   {typeof authElement !== "object" || !("nodeType" in (authElement || {}))
                     ? (authElement as React.ReactNode)
                     : null}
+                </div>
+              </div>
+            )}
+
+            {/* Inline Step 1 Error Notice */}
+            {activeError && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-bold text-amber-200">Account Notice:</div>
+                  <div className="text-[11px] leading-relaxed text-amber-300">
+                    {activeError}
+                  </div>
                 </div>
               </div>
             )}
@@ -1814,6 +1897,19 @@ export function PortalPayAccordionCheckoutV2({
                         {f.label}
                       </span>
                     ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Inline Verification Notice / Error Alert */}
+            {activeError && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-bold text-amber-200">Verification Notice:</div>
+                  <div className="text-[11px] leading-relaxed text-amber-300">
+                    {activeError}
                   </div>
                 </div>
               </div>
