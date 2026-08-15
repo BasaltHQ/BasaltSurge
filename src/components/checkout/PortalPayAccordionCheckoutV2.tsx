@@ -736,7 +736,7 @@ export function PortalPayAccordionCheckoutV2({
       container.innerHTML = "";
       container.appendChild(authElement as HTMLElement);
     }
-  }, [authElement]);
+  }, [authElement, activeStep]);
 
   // Clean mounting of paymentElement into container
   useEffect(() => {
@@ -746,7 +746,7 @@ export function PortalPayAccordionCheckoutV2({
       container.innerHTML = "";
       container.appendChild(paymentElement as HTMLElement);
     }
-  }, [paymentElement]);
+  }, [paymentElement, activeStep]);
 
   // Handle Step 4 Fulfillment Progression (Simulation preview only — strictly disabled in live production mode)
   useEffect(() => {
@@ -854,7 +854,12 @@ export function PortalPayAccordionCheckoutV2({
       return;
     }
     if (!headlessStep) return;
-    if (headlessStep === "collecting_kyc" || headlessStep === "verifying_identity") {
+    if (
+      headlessStep === "checking_kyc" ||
+      headlessStep === "collecting_kyc" ||
+      headlessStep === "submitting_kyc" ||
+      headlessStep === "verifying_identity"
+    ) {
       setIsSubmittingContact(false);
       if (!isAllKycCompleted && effectiveStatus !== "verified") {
         setActiveStep(2);
@@ -862,6 +867,8 @@ export function PortalPayAccordionCheckoutV2({
         setActiveStep(3);
       }
     } else if (
+      headlessStep === "creating_wallet" ||
+      headlessStep === "registering_wallet" ||
       headlessStep === "collecting_payment" ||
       headlessStep === "payment_method_required"
     ) {
@@ -870,6 +877,7 @@ export function PortalPayAccordionCheckoutV2({
       setActiveStep(3);
     } else if (
       headlessStep === "creating_session" ||
+      headlessStep === "confirming_fees" ||
       headlessStep === "checking_out" ||
       headlessStep === "transferring" ||
       (headlessStep === "awaiting_funds" && detectedCardFunding !== "us_bank_account")
@@ -894,7 +902,15 @@ export function PortalPayAccordionCheckoutV2({
   // If KYC is already completed or verified, automatically skip or advance to Step 3 (unless on payment execution/completion or error)
   useEffect(() => {
     if (
-      ["creating_session", "checking_out", "transferring", "awaiting_funds", "completed", "error"].includes(headlessStep as string) ||
+      [
+        "creating_session",
+        "confirming_fees",
+        "checking_out",
+        "transferring",
+        "awaiting_funds",
+        "completed",
+        "error",
+      ].includes(headlessStep as string) ||
       paymentConfirmed ||
       propError ||
       localError
@@ -1411,7 +1427,7 @@ export function PortalPayAccordionCheckoutV2({
             </div>
           </div>
 
-          {activeStep > 2 && effectiveStatus !== "verified" && (
+          {activeStep > 2 && (
             <button
               type="button"
               className="text-[11px] font-semibold text-amber-400 flex items-center gap-1 hover:underline"
@@ -2039,6 +2055,28 @@ export function PortalPayAccordionCheckoutV2({
                       <ArrowRight className="w-3.5 h-3.5" />
                     </>
                   )}
+                </button>
+              </div>
+            ) : activeError ? (
+              /* Live Error & Retry State */
+              <div className="p-6 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
+                <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <AlertCircle className="w-5 h-5" />
+                </div>
+                <p className={`text-xs font-semibold max-w-sm leading-relaxed ${isLightText ? "text-amber-300" : "text-amber-900"}`}>
+                  {activeError}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLocalError(null);
+                    if (onHeadlessSubmitEmailPhone) {
+                      onHeadlessSubmitEmailPhone(email, phone);
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 active:scale-95 transition cursor-pointer"
+                >
+                  Retry Payment Selection
                 </button>
               </div>
             ) : (
