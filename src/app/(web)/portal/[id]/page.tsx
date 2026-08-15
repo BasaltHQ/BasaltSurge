@@ -4015,6 +4015,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     detectedCardFunding: stripeDetectedFunding,
     showSpeedSelection: headlessShowSpeedSelection,
     confirmSpeed: headlessConfirmSpeed,
+    verifyDocuments: headlessVerifyDocuments,
   } = useStripeEmbeddedOnramp({
     email: shipEmail || headlessEmailInput || undefined,
     fullName: shipName || undefined,
@@ -4836,6 +4837,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           isAllKycCompleted={isAllKycCompleted}
           onHeadlessSubmitEmailPhone={startHeadlessOnramp}
           onSubmitKycInfo={submitKycInfo}
+          onVerifyDocuments={headlessVerifyDocuments}
           paymentElement={headlessPaymentElement}
           authElement={headlessAuthElement}
           headlessStatus={headlessStatus}
