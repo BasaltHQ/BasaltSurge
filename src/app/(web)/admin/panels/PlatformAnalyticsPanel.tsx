@@ -37,7 +37,12 @@ import {
   GitBranch,
   Wrench,
   Zap,
-  ShieldCheck
+  ShieldCheck,
+  HelpCircle,
+  X,
+  Sparkles,
+  Layers,
+  Clock
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 import RollercoasterOverlay from "../components/RollercoasterOverlay";
@@ -80,6 +85,11 @@ interface Stat {
   totalPaid: number;
   totalFailed: number;
   successRate: number;
+  dedupedTotalCreated?: number;
+  dedupedTotalPaid?: number;
+  dedupedTotalFailed?: number;
+  trueIntegrationRate?: number;
+  trueProcessRate?: number;
   totalGmv: number;
   totalFees: number;
   aov: number;
@@ -101,6 +111,10 @@ interface BrandStat {
   gmv: number;
   fees: number;
   successRate: number;
+  dedupedTotal?: number;
+  dedupedPaid?: number;
+  dedupedFailed?: number;
+  trueSuccessRate?: number;
 }
 
 interface ReceiptLog {
@@ -195,6 +209,177 @@ const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
   }
   return "L0";
 };
+
+const isSettledStatus = (s?: string | null) => ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(String(s || "").toLowerCase());
+const isFailedStatus = (s?: string | null) => String(s || "").toLowerCase() === "failed";
+
+export function deduplicateReceipts<T extends Partial<ReceiptInfo> & Record<string, any>>(receiptList: T[]): {
+  clusters: Array<{
+    id: string;
+    brandKey: string;
+    merchantKey: string;
+    emails: Set<string>;
+    wallets: Set<string>;
+    ips: Set<string>;
+    stripeSessions: Set<string>;
+    receipts: T[];
+    startTime: number;
+    endTime: number;
+    isPaid: boolean;
+    isFailed: boolean;
+    paidReceipt?: T;
+    latestReceipt: T;
+  }>;
+  dedupedTotalCreated: number;
+  dedupedTotalPaid: number;
+  dedupedTotalFailed: number;
+  trueIntegrationRate: number;
+  trueProcessRate: number;
+  clusterSizeMap: Map<string, number>;
+} {
+  if (!receiptList || receiptList.length === 0) {
+    return {
+      clusters: [],
+      dedupedTotalCreated: 0,
+      dedupedTotalPaid: 0,
+      dedupedTotalFailed: 0,
+      trueIntegrationRate: 0,
+      trueProcessRate: 0,
+      clusterSizeMap: new Map()
+    };
+  }
+
+  const sorted = [...receiptList].sort((a, b) => {
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return timeA - timeB;
+  });
+
+  const clusters: Array<{
+    id: string;
+    brandKey: string;
+    merchantKey: string;
+    emails: Set<string>;
+    wallets: Set<string>;
+    ips: Set<string>;
+    stripeSessions: Set<string>;
+    receipts: T[];
+    startTime: number;
+    endTime: number;
+    isPaid: boolean;
+    isFailed: boolean;
+    paidReceipt?: T;
+    latestReceipt: T;
+  }> = [];
+
+  const SESSION_INACTIVITY_MS = 30 * 60 * 1000; // 30 minutes
+  const MAX_SESSION_MS = 2 * 60 * 60 * 1000; // 2 hours max session span
+
+  for (const r of sorted) {
+    const ts = r.createdAt ? new Date(r.createdAt).getTime() : 0;
+    const bKey = r.brandKey || "basaltsurge";
+    const merchantKey = String(r.wallet || r.shopSlug || "").trim().toLowerCase();
+    
+    let email = String(r.customerEmail || r.stripeEmail || r.email || "").trim().toLowerCase();
+    if (email === "anonymous" || !email.includes("@")) email = "";
+
+    const wallet = String(r.buyerWallet || "").trim().toLowerCase();
+    const ip = String(r.ipAddress || "").trim();
+    const stripeSession = String(r.stripeSessionId || "").trim();
+    const settled = isSettledStatus(r.status);
+    const failed = isFailedStatus(r.status);
+
+    let matchedCluster: typeof clusters[0] | null = null;
+
+    // Search recent active clusters in reverse
+    for (let i = clusters.length - 1; i >= 0; i--) {
+      const c = clusters[i];
+      const timeSinceLast = ts - c.endTime;
+      const sessionDuration = ts - c.startTime;
+
+      if (timeSinceLast > SESSION_INACTIVITY_MS || sessionDuration > MAX_SESSION_MS) {
+        continue;
+      }
+
+      if (c.brandKey !== bKey) continue;
+      if (merchantKey && c.merchantKey && c.merchantKey !== merchantKey) continue;
+
+      let identityMatch = false;
+      if (email && c.emails.has(email)) identityMatch = true;
+      else if (wallet && c.wallets.has(wallet)) identityMatch = true;
+      else if (stripeSession && c.stripeSessions.has(stripeSession)) identityMatch = true;
+      else if (ip && c.ips.has(ip)) identityMatch = true;
+      else if (!c.isPaid && !c.isFailed && timeSinceLast <= 15 * 60 * 1000 && c.receipts.length < 5) {
+        // Anonymous cart revisions within 15m on same merchant/brand
+        identityMatch = true;
+      }
+
+      if (identityMatch) {
+        matchedCluster = c;
+        break;
+      }
+    }
+
+    if (matchedCluster) {
+      matchedCluster.receipts.push(r);
+      matchedCluster.endTime = Math.max(matchedCluster.endTime, ts);
+      matchedCluster.latestReceipt = r;
+      if (email) matchedCluster.emails.add(email);
+      if (wallet) matchedCluster.wallets.add(wallet);
+      if (ip) matchedCluster.ips.add(ip);
+      if (stripeSession) matchedCluster.stripeSessions.add(stripeSession);
+      if (settled) {
+        matchedCluster.isPaid = true;
+        matchedCluster.isFailed = false;
+        matchedCluster.paidReceipt = r;
+      } else if (failed && !matchedCluster.isPaid) {
+        matchedCluster.isFailed = true;
+      }
+    } else {
+      clusters.push({
+        id: `cluster-${r.receiptId || r.id || clusters.length}`,
+        brandKey: bKey,
+        merchantKey,
+        emails: new Set(email ? [email] : []),
+        wallets: new Set(wallet ? [wallet] : []),
+        ips: new Set(ip ? [ip] : []),
+        stripeSessions: new Set(stripeSession ? [stripeSession] : []),
+        receipts: [r],
+        startTime: ts,
+        endTime: ts,
+        isPaid: settled,
+        isFailed: failed && !settled,
+        paidReceipt: settled ? r : undefined,
+        latestReceipt: r
+      });
+    }
+  }
+
+  const clusterSizeMap = new Map<string, number>();
+  for (const c of clusters) {
+    const size = c.receipts.length;
+    for (const r of c.receipts) {
+      const key = r.receiptId || r.id;
+      if (key) clusterSizeMap.set(key, size);
+    }
+  }
+
+  const dedupedTotalCreated = clusters.length;
+  const dedupedTotalPaid = clusters.filter(c => c.isPaid).length;
+  const dedupedTotalFailed = clusters.filter(c => c.isFailed).length;
+  const trueIntegrationRate = dedupedTotalCreated > 0 ? +((dedupedTotalPaid / dedupedTotalCreated) * 100).toFixed(1) : 0;
+  const trueProcessRate = (dedupedTotalPaid + dedupedTotalFailed) > 0 ? +((dedupedTotalPaid / (dedupedTotalPaid + dedupedTotalFailed)) * 100).toFixed(1) : 0;
+
+  return {
+    clusters,
+    dedupedTotalCreated,
+    dedupedTotalPaid,
+    dedupedTotalFailed,
+    trueIntegrationRate,
+    trueProcessRate,
+    clusterSizeMap
+  };
+}
 
 const LOADING_STAGES = [
   { label: "Connecting to Analytics Gateway", detail: "Establishing secure session with platform API..." },
@@ -749,9 +934,15 @@ export default function PlatformAnalyticsPanel() {
   // Pagination State
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(25);
-  const [successRateMode, setSuccessRateMode] = useState<"integration" | "process">("integration");
+  const [successRateMode, setSuccessRateMode] = useState<"true_integration" | "integration" | "process">("true_integration");
   const [timezoneMode, setTimezoneMode] = useState<"system" | "dynamic">("system");
   const [fetchLimit, setFetchLimit] = useState<number | "all">(500);
+
+  // Session deduplication cluster map for highlighting cart revisions
+  const [isAlgorithmModalOpen, setIsAlgorithmModalOpen] = useState<boolean>(false);
+  const receiptClusterSizeMap = useMemo(() => {
+    return deduplicateReceipts(recentReceipts).clusterSizeMap;
+  }, [recentReceipts]);
 
   // Reset page when filters change
   useEffect(() => {
@@ -1195,6 +1386,7 @@ export default function PlatformAnalyticsPanel() {
     const hasComplexFilters = searchQuery.trim() !== "" || statusFilter !== "all" || kycFilter !== "all";
 
     if (hasComplexFilters) {
+      const dedupResult = deduplicateReceipts(baseFilteredReceipts);
       const totalCreated = baseFilteredReceipts.length;
       let totalPaid = 0;
       let totalFailed = 0;
@@ -1205,7 +1397,7 @@ export default function PlatformAnalyticsPanel() {
       const receiptsForProfiles = baseFilteredReceipts;
 
       receiptsForProfiles.forEach(r => {
-        if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) {
+        if (isSettledStatus(r.status)) {
           totalPaid++;
           totalGmv += r.totalUsd;
           totalFees += r.platformFee || 0;
@@ -1257,6 +1449,11 @@ export default function PlatformAnalyticsPanel() {
         totalPaid,
         totalFailed,
         successRate: +successRate.toFixed(1),
+        dedupedTotalCreated: dedupResult.dedupedTotalCreated,
+        dedupedTotalPaid: dedupResult.dedupedTotalPaid,
+        dedupedTotalFailed: dedupResult.dedupedTotalFailed,
+        trueIntegrationRate: dedupResult.trueIntegrationRate,
+        trueProcessRate: dedupResult.trueProcessRate,
         totalGmv: +totalGmv.toFixed(2),
         totalFees: +totalFees.toFixed(2),
         aov: +aov.toFixed(2),
@@ -1269,6 +1466,9 @@ export default function PlatformAnalyticsPanel() {
     let totalCreated = 0;
     let totalPaid = 0;
     let totalFailed = 0;
+    let dedupedTotalCreated = 0;
+    let dedupedTotalPaid = 0;
+    let dedupedTotalFailed = 0;
     let totalGmv = 0;
     let totalFees = 0;
     const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
@@ -1311,6 +1511,9 @@ export default function PlatformAnalyticsPanel() {
         totalCreated += day.allTotal || 0;
         totalPaid += day.allPaid || 0;
         totalFailed += day.allFailed || 0;
+        dedupedTotalCreated += day.allDedupedTotal ?? day.allTotal ?? 0;
+        dedupedTotalPaid += day.allDedupedPaid ?? day.allPaid ?? 0;
+        dedupedTotalFailed += day.allDedupedFailed ?? day.allFailed ?? 0;
         totalGmv += day.allGmv || 0;
         totalFees += day.allFees || 0;
       } else {
@@ -1319,6 +1522,9 @@ export default function PlatformAnalyticsPanel() {
           totalCreated += b.total || 0;
           totalPaid += b.paid || 0;
           totalFailed += b.failed || 0;
+          dedupedTotalCreated += b.dedupedTotal ?? b.total ?? 0;
+          dedupedTotalPaid += b.dedupedPaid ?? b.paid ?? 0;
+          dedupedTotalFailed += b.dedupedFailed ?? b.failed ?? 0;
           totalGmv += b.gmv || 0;
           totalFees += b.fees || 0;
         }
@@ -1366,6 +1572,8 @@ export default function PlatformAnalyticsPanel() {
     });
 
     const successRate = totalCreated > 0 ? (totalPaid / totalCreated) * 100 : 0;
+    const trueIntegrationRate = dedupedTotalCreated > 0 ? (dedupedTotalPaid / dedupedTotalCreated) * 100 : 0;
+    const trueProcessRate = (dedupedTotalPaid + dedupedTotalFailed) > 0 ? (dedupedTotalPaid / (dedupedTotalPaid + dedupedTotalFailed)) * 100 : 0;
     const aov = totalPaid > 0 ? totalGmv / totalPaid : 0;
 
     return {
@@ -1373,6 +1581,11 @@ export default function PlatformAnalyticsPanel() {
       totalPaid,
       totalFailed,
       successRate: +successRate.toFixed(1),
+      dedupedTotalCreated,
+      dedupedTotalPaid,
+      dedupedTotalFailed,
+      trueIntegrationRate: +trueIntegrationRate.toFixed(1),
+      trueProcessRate: +trueProcessRate.toFixed(1),
       totalGmv: +totalGmv.toFixed(2),
       totalFees: +totalFees.toFixed(2),
       aov: +aov.toFixed(2),
@@ -1400,6 +1613,14 @@ export default function PlatformAnalyticsPanel() {
   }, [stats, dynamicStats, hasActiveFilters]);
 
   // Refined Success Rate Calculations based on selector mode
+  const trueIntegrationRate = useMemo(() => {
+    if (!displayStats) return 0;
+    if (typeof displayStats.trueIntegrationRate === "number") return displayStats.trueIntegrationRate;
+    const total = displayStats.dedupedTotalCreated ?? displayStats.totalCreated;
+    const paid = displayStats.dedupedTotalPaid ?? displayStats.totalPaid;
+    return total > 0 ? +((paid / total) * 100).toFixed(1) : 0;
+  }, [displayStats]);
+
   const integrationRate = useMemo(() => {
     if (!displayStats) return 0;
     return displayStats.totalCreated > 0 ? +((displayStats.totalPaid / displayStats.totalCreated) * 100).toFixed(1) : 0;
@@ -1412,8 +1633,10 @@ export default function PlatformAnalyticsPanel() {
   }, [displayStats]);
 
   const displayedSuccessRate = useMemo(() => {
-    return successRateMode === "integration" ? integrationRate : processRate;
-  }, [successRateMode, integrationRate, processRate]);
+    if (successRateMode === "true_integration") return trueIntegrationRate;
+    if (successRateMode === "integration") return integrationRate;
+    return processRate;
+  }, [successRateMode, trueIntegrationRate, integrationRate, processRate]);
 
   const displayedBrandStats = useMemo(() => {
     const now = new Date();
@@ -1446,9 +1669,9 @@ export default function PlatformAnalyticsPanel() {
       endMs = end.getTime();
     }
 
-    const brandMap: Record<string, { brandKey: string; total: number; paid: number; failed: number; gmv: number; fees: number }> = {};
+    const brandMap: Record<string, { brandKey: string; total: number; paid: number; failed: number; dedupedTotal: number; dedupedPaid: number; dedupedFailed: number; gmv: number; fees: number }> = {};
     allBrandKeys.forEach(bk => {
-      brandMap[bk] = { brandKey: bk, total: 0, paid: 0, failed: 0, gmv: 0, fees: 0 };
+      brandMap[bk] = { brandKey: bk, total: 0, paid: 0, failed: 0, dedupedTotal: 0, dedupedPaid: 0, dedupedFailed: 0, gmv: 0, fees: 0 };
     });
 
     dailySeries.forEach(day => {
@@ -1458,11 +1681,14 @@ export default function PlatformAnalyticsPanel() {
         Object.entries(day.brands).forEach(([bk, b]: [string, any]) => {
           if (bk === "unknown") return;
           if (!brandMap[bk]) {
-            brandMap[bk] = { brandKey: bk, total: 0, paid: 0, failed: 0, gmv: 0, fees: 0 };
+            brandMap[bk] = { brandKey: bk, total: 0, paid: 0, failed: 0, dedupedTotal: 0, dedupedPaid: 0, dedupedFailed: 0, gmv: 0, fees: 0 };
           }
           brandMap[bk].total += b.total || 0;
           brandMap[bk].paid += b.paid || 0;
           brandMap[bk].failed += b.failed || 0;
+          brandMap[bk].dedupedTotal += b.dedupedTotal ?? b.total ?? 0;
+          brandMap[bk].dedupedPaid += b.dedupedPaid ?? b.paid ?? 0;
+          brandMap[bk].dedupedFailed += b.dedupedFailed ?? b.failed ?? 0;
           brandMap[bk].gmv += b.gmv || 0;
           brandMap[bk].fees += b.fees || 0;
         });
@@ -1474,7 +1700,11 @@ export default function PlatformAnalyticsPanel() {
 
     return list.map(b => {
       let sr = 0;
-      if (successRateMode === "integration") {
+      if (successRateMode === "true_integration") {
+        const tot = b.dedupedTotal > 0 ? b.dedupedTotal : b.total;
+        const pd = b.dedupedPaid > 0 ? b.dedupedPaid : b.paid;
+        sr = tot > 0 ? (pd / tot) * 100 : 0;
+      } else if (successRateMode === "integration") {
         sr = b.total > 0 ? (b.paid / b.total) * 100 : 0;
       } else {
         const denom = b.paid + b.failed;
@@ -1483,7 +1713,9 @@ export default function PlatformAnalyticsPanel() {
       return {
         ...b,
         successRate: +sr.toFixed(1),
-        sessionsText: successRateMode === "integration"
+        sessionsText: successRateMode === "true_integration"
+          ? `${b.dedupedPaid > 0 ? b.dedupedPaid : b.paid} paid / ${b.dedupedTotal > 0 ? b.dedupedTotal : b.total} true intents`
+          : successRateMode === "integration"
           ? `${b.paid} paid / ${b.total} sessions`
           : `${b.paid} paid / ${b.paid + b.failed} finished`
       };
@@ -1546,7 +1778,12 @@ export default function PlatformAnalyticsPanel() {
       let totalCountForDetails = 0;
 
       if (chartMetric === "successRate") {
-        if (successRateMode === "integration") {
+        if (successRateMode === "true_integration") {
+          const tot = g.allDedupedTotal ?? g.allTotal ?? 0;
+          const pd = g.allDedupedPaid ?? g.allPaid ?? 0;
+          aggregate = tot > 0 ? (pd / tot) * 100 : 0;
+          totalCountForDetails = tot;
+        } else if (successRateMode === "integration") {
           aggregate = g.allTotal > 0 ? (g.allPaid / g.allTotal) * 100 : 0;
           totalCountForDetails = g.allTotal;
         } else {
@@ -1562,7 +1799,11 @@ export default function PlatformAnalyticsPanel() {
       const pt: Record<string, any> = {
         label: g.dateLabel,
         aggregate: +aggregate.toFixed(chartMetric === "successRate" ? 1 : 2),
-        aggregateDetails: { paid: g.allPaid, total: totalCountForDetails, gmv: g.allGmv || 0 }
+        aggregateDetails: {
+          paid: successRateMode === "true_integration" ? (g.allDedupedPaid ?? g.allPaid) : g.allPaid,
+          total: totalCountForDetails,
+          gmv: g.allGmv || 0
+        }
       };
 
       allBrandKeys.forEach(bk => {
@@ -1570,8 +1811,15 @@ export default function PlatformAnalyticsPanel() {
         if (bData) {
           let val = 0;
           let totalForBrandDetails = 0;
+          let paidForBrandDetails = bData.paid;
           if (chartMetric === "successRate") {
-            if (successRateMode === "integration") {
+            if (successRateMode === "true_integration") {
+              const bTot = bData.dedupedTotal ?? bData.total ?? 0;
+              const bPd = bData.dedupedPaid ?? bData.paid ?? 0;
+              val = bTot > 0 ? (bPd / bTot) * 100 : 0;
+              totalForBrandDetails = bTot;
+              paidForBrandDetails = bPd;
+            } else if (successRateMode === "integration") {
               val = bData.total > 0 ? (bData.paid / bData.total) * 100 : 0;
               totalForBrandDetails = bData.total;
             } else {
@@ -1584,7 +1832,7 @@ export default function PlatformAnalyticsPanel() {
             totalForBrandDetails = bData.total;
           }
           pt[bk] = +val.toFixed(chartMetric === "successRate" ? 1 : 2);
-          pt[`${bk}Details`] = { paid: bData.paid, total: totalForBrandDetails, gmv: bData.gmv || 0 };
+          pt[`${bk}Details`] = { paid: paidForBrandDetails, total: totalForBrandDetails, gmv: bData.gmv || 0 };
         } else {
           pt[bk] = null;
           pt[`${bk}Details`] = { paid: 0, total: 0, gmv: 0 };
@@ -1645,6 +1893,9 @@ export default function PlatformAnalyticsPanel() {
       let paidCount = 0;
       let failedCount = 0;
       let totalCount = 0;
+      let dedupedTotalCount = 0;
+      let dedupedPaidCount = 0;
+      let dedupedFailedCount = 0;
       let gmv = 0;
       let fees = 0;
 
@@ -1655,14 +1906,24 @@ export default function PlatformAnalyticsPanel() {
         totalCount += day.allTotal || 0;
         paidCount += day.allPaid || 0;
         failedCount += day.allFailed || 0;
+        dedupedTotalCount += day.allDedupedTotal ?? day.allTotal ?? 0;
+        dedupedPaidCount += day.allDedupedPaid ?? day.allPaid ?? 0;
+        dedupedFailedCount += day.allDedupedFailed ?? day.allFailed ?? 0;
         gmv += day.allGmv || 0;
         fees += day.allFees || 0;
       });
 
-      const denom = successRateMode === "integration" ? totalCount : (paidCount + failedCount);
-      const successRate = denom > 0 ? (paidCount / denom) * 100 : 0;
+      let denom = totalCount;
+      let pd = paidCount;
+      if (successRateMode === "true_integration") {
+        denom = dedupedTotalCount > 0 ? dedupedTotalCount : totalCount;
+        pd = dedupedPaidCount > 0 ? dedupedPaidCount : paidCount;
+      } else if (successRateMode === "process") {
+        denom = paidCount + failedCount;
+      }
+      const successRate = denom > 0 ? (pd / denom) * 100 : 0;
 
-      return { paidCount, totalCount, successRate, gmv, fees };
+      return { paidCount, totalCount, dedupedPaidCount, dedupedTotalCount, successRate, gmv, fees };
     };
 
     const todayStats = getSeriesRangeStats(startOfTodayMs);
@@ -1838,8 +2099,42 @@ export default function PlatformAnalyticsPanel() {
       </div>
 
       {/* Calculation Mode Selector Tabs */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-2xl border border-white/10 bg-zinc-950/60 backdrop-blur-xl gap-3">
-        <div className="flex bg-white/[0.04] p-1 rounded-xl border border-white/10 w-full sm:w-auto">
+      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between p-4 rounded-2xl border border-white/10 bg-zinc-950/60 backdrop-blur-xl gap-3">
+        <div className="flex flex-wrap bg-white/[0.04] p-1 rounded-xl border border-white/10 w-full lg:w-auto gap-1">
+          <button
+            onClick={() => setSuccessRateMode("true_integration")}
+            className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-between gap-2.5 ${successRateMode === "true_integration"
+                ? "bg-primary text-white shadow-md shadow-primary/20"
+                : "text-muted-foreground hover:text-white"
+              }`}
+          >
+            <div className="flex items-center gap-1.5">
+              <span>Estimated True Rate (Deduped)</span>
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsAlgorithmModalOpen(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.stopPropagation();
+                    setIsAlgorithmModalOpen(true);
+                  }
+                }}
+                className="p-0.5 rounded-md hover:bg-white/20 text-white/70 hover:text-white transition-colors cursor-pointer inline-flex items-center justify-center"
+                title="Explain Deduplication Algorithm"
+              >
+                <HelpCircle className="w-3.5 h-3.5" />
+              </span>
+            </div>
+            <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full border ${
+              successRateMode === "true_integration" ? "bg-white/20 text-white border-white/30" : "bg-white/10 text-purple-400 border-white/10"
+            }`}>
+              {trueIntegrationRate}%
+            </span>
+          </button>
           <button
             onClick={() => setSuccessRateMode("integration")}
             className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-between gap-2.5 ${successRateMode === "integration"
@@ -1870,8 +2165,10 @@ export default function PlatformAnalyticsPanel() {
           </button>
         </div>
         <div className="text-[11.5px] text-muted-foreground max-w-md leading-relaxed">
-          {successRateMode === "integration"
-            ? "Calculates success rate across all initialized checkouts (reflects total user intent & abandonment rates)."
+          {successRateMode === "true_integration"
+            ? "Estimates true conversion by clustering rapid duplicate receipts and cart item revisions before payment into single checkout sessions."
+            : successRateMode === "integration"
+            ? "Calculates success rate across all raw initialized checkouts (reflects total intents including cart edits & abandonment)."
             : "Refined metric focusing on submitted payment attempts, filtering out empty/unsubmitted sessions."
           }
         </div>
@@ -1883,7 +2180,16 @@ export default function PlatformAnalyticsPanel() {
 
           <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
             <div>
-              <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">Success Rate</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">
+                  {successRateMode === "true_integration" ? "Est. True Success Rate" : "Success Rate"}
+                </span>
+                {successRateMode === "true_integration" && (
+                  <span className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                    Deduped
+                  </span>
+                )}
+              </div>
               <div className="text-2xl sm:text-3xl font-extrabold mt-1 text-white tracking-tight flex items-baseline justify-between gap-2">
                 <span>{displayedSuccessRate}%</span>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${displayedSuccessRate >= 85 ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
@@ -1904,13 +2210,21 @@ export default function PlatformAnalyticsPanel() {
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Total:</span>
                 <span className="font-semibold text-white/90">
-                  {successRateMode === "integration" ? (
+                  {successRateMode === "true_integration" ? (
+                    `${displayStats.dedupedTotalPaid ?? displayStats.totalPaid} paid / ${displayStats.dedupedTotalCreated ?? displayStats.totalCreated} true intents`
+                  ) : successRateMode === "integration" ? (
                     `${displayStats.totalPaid} paid / ${displayStats.totalCreated} intents`
                   ) : (
                     `${displayStats.totalPaid} paid / ${displayStats.totalPaid + displayStats.totalFailed} finished`
                   )}
                 </span>
               </div>
+              {successRateMode === "true_integration" && (displayStats.totalCreated - (displayStats.dedupedTotalCreated ?? displayStats.totalCreated)) > 0 && (
+                <div className="flex items-center justify-between text-[10px] text-purple-400/80 font-mono pt-0.5">
+                  <span>Cart Revisions Deduped:</span>
+                  <span className="font-bold">+{displayStats.totalCreated - (displayStats.dedupedTotalCreated ?? displayStats.totalCreated)} duplicate receipts</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -3162,7 +3476,17 @@ export default function PlatformAnalyticsPanel() {
                         <div>
                           {/* Card Header Row */}
                           <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-white/10">
-                            <span className="font-mono font-black text-sm text-white tracking-tight">{r.receiptId}</span>
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span className="font-mono font-black text-sm text-white tracking-tight">{r.receiptId}</span>
+                              {receiptClusterSizeMap.get(r.receiptId) && (receiptClusterSizeMap.get(r.receiptId)! > 1) && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded text-[8px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"
+                                  title={`Part of multi-attempt checkout session (${receiptClusterSizeMap.get(r.receiptId)} revisions)`}
+                                >
+                                  x{receiptClusterSizeMap.get(r.receiptId)}
+                                </span>
+                              )}
+                            </div>
                             <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold border inline-flex items-center gap-1 shrink-0 ${
                               isSettled
                                 ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
@@ -3585,7 +3909,19 @@ export default function PlatformAnalyticsPanel() {
                     return (
                       <React.Fragment key={r.receiptId}>
                         <tr className={`hover:bg-white/[0.04] transition-colors ${isExpanded ? "bg-white/[0.05]" : ""}`}>
-                          <td className="py-3.5 px-4 font-mono font-bold text-white">{r.receiptId}</td>
+                          <td className="py-3.5 px-4 font-mono font-bold text-white">
+                            <div className="flex items-center gap-1.5">
+                              <span>{r.receiptId}</span>
+                              {receiptClusterSizeMap.get(r.receiptId) && (receiptClusterSizeMap.get(r.receiptId)! > 1) && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/30"
+                                  title={`Part of multi-attempt checkout session (${receiptClusterSizeMap.get(r.receiptId)} revisions)`}
+                                >
+                                  x{receiptClusterSizeMap.get(r.receiptId)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className="py-3.5 px-3 text-muted-foreground whitespace-nowrap">
                             {r.createdAt ? new Date(r.createdAt).toLocaleString("en-US", {
                               timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE,
@@ -5234,6 +5570,159 @@ export default function PlatformAnalyticsPanel() {
             </div>
           );
         })(),
+        document.body
+      )}
+
+      {/* Estimated True Integration Rate Algorithm Modal */}
+      {isAlgorithmModalOpen && typeof document !== "undefined" && createPortal(
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-6 select-text">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/80 backdrop-blur-md transition-opacity animate-in fade-in duration-200"
+            onClick={() => setIsAlgorithmModalOpen(false)}
+          />
+
+          {/* Modal Container */}
+          <div
+            className="relative w-full max-w-2xl max-h-[90vh] bg-zinc-950 border border-white/15 rounded-3xl p-5 sm:p-7 shadow-2xl backdrop-blur-2xl flex flex-col z-10 animate-in fade-in zoom-in-95 duration-200 overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-4 pb-4 border-b border-white/10 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0 shadow-inner">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight flex items-center gap-2">
+                    <span>Estimated True Integration Rate</span>
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase tracking-wider bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      Algo Spec
+                    </span>
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    How PortalPay clusters rapid checkout revisions to measure true buyer conversion.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setIsAlgorithmModalOpen(false)}
+                className="p-2 rounded-xl text-muted-foreground hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 transition-all shrink-0"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Scrollable Modal Content */}
+            <div className="flex-1 overflow-y-auto space-y-4 py-4 pr-1 text-xs leading-relaxed text-zinc-300">
+              
+              {/* Section 1: The Problem */}
+              <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
+                <div className="flex items-center gap-2 font-bold text-white text-xs">
+                  <span className="h-2 w-2 rounded-full bg-rose-400" />
+                  <span>The Problem: Cart Revisions & False Abandonment</span>
+                </div>
+                <p className="text-muted-foreground text-[11.5px]">
+                  When shoppers modify cart quantities, apply promo codes, switch tokens, or navigate back and forth during checkout, e-commerce integrations often generate a brand new <code className="text-purple-300 font-mono text-[11px] bg-purple-500/10 px-1 py-0.5 rounded">receiptId</code> with status <code className="text-amber-300 font-mono text-[11px] bg-amber-500/10 px-1 py-0.5 rounded">"pending"</code>.
+                </p>
+                <p className="text-muted-foreground text-[11.5px]">
+                  Standard analytics count every single draft receipt in the denominator. A customer who changes their cart 3 times before paying successfully produces 4 receipts (3 abandoned + 1 paid), causing raw conversion rates to drop to <span className="font-semibold text-rose-400">25%</span> despite <span className="font-semibold text-emerald-400">100% true customer conversion</span>.
+                </p>
+              </div>
+
+              {/* Section 2: Deduplication Rules */}
+              <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-3">
+                <div className="flex items-center gap-2 font-bold text-white text-xs">
+                  <span className="h-2 w-2 rounded-full bg-purple-400" />
+                  <span>How the Clustering Algorithm Works</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+                    <div className="font-bold text-[11px] text-purple-300 flex items-center gap-1.5">
+                      <Clock className="w-3 h-3" />
+                      <span>Temporal Sliding Window</span>
+                    </div>
+                    <p className="text-[10.5px] text-muted-foreground">
+                      Receipts within <span className="text-white font-semibold">30 minutes</span> of each other (up to a <span className="text-white font-semibold">2-hour maximum session span</span>) are grouped into the same checkout session.
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
+                    <div className="font-bold text-[11px] text-purple-300 flex items-center gap-1.5">
+                      <Layers className="w-3 h-3" />
+                      <span>Brand & Merchant Scoping</span>
+                    </div>
+                    <p className="text-[10.5px] text-muted-foreground">
+                      Only receipts created under the same <span className="text-white font-semibold">brandKey</span> and <span className="text-white font-semibold">merchant container</span> are eligible for clustering.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 pt-1">
+                  <div className="font-semibold text-white text-[11px]">5-Point Identity Linkage Hierarchy:</div>
+                  <ul className="space-y-1 text-[11px] text-muted-foreground list-disc pl-4">
+                    <li><strong className="text-zinc-200">Customer Email:</strong> Matches normalized email address (<code className="font-mono text-[10px] text-purple-300">customerEmail</code> or <code className="font-mono text-[10px] text-purple-300">stripeEmail</code>).</li>
+                    <li><strong className="text-zinc-200">Buyer Wallet:</strong> Matches connected Web3 wallet address (<code className="font-mono text-[10px] text-purple-300">buyerWallet</code>).</li>
+                    <li><strong className="text-zinc-200">Stripe Session ID:</strong> Matches shared onramp checkout session (<code className="font-mono text-[10px] text-purple-300">stripeSessionId</code>).</li>
+                    <li><strong className="text-zinc-200">IP Address:</strong> Correlates rapid device sessions from the same client origin.</li>
+                    <li><strong className="text-zinc-200">Anonymous Cart Edits:</strong> Clusters anonymous attempts on the same container occurring within 15 minutes.</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Section 3: Status & Outcome Resolution */}
+              <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2.5">
+                <div className="flex items-center gap-2 font-bold text-white text-xs">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  <span>Outcome Resolution</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10.5px]">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-0.5">
+                    <div className="font-bold text-emerald-400">1. Paid (Success)</div>
+                    <p className="text-muted-foreground">If <strong className="text-white">any</strong> receipt in the cluster settles as paid or mined, the entire session is marked <span className="text-emerald-400 font-semibold">1 Successful Conversion</span>.</p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 space-y-0.5">
+                    <div className="font-bold text-rose-400">2. Failed</div>
+                    <p className="text-muted-foreground">If an attempt in the cluster failed and none succeeded, the session counts as <span className="text-rose-400 font-semibold">1 Failed Attempt</span>.</p>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-0.5">
+                    <div className="font-bold text-amber-400">3. Abandoned</div>
+                    <p className="text-muted-foreground">Multiple unsubmitted draft receipts collapse into <span className="text-amber-400 font-semibold">1 Abandoned Intent</span> without inflating failure counts.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 4: Formula */}
+              <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/20 space-y-2">
+                <div className="font-bold text-purple-300 text-xs flex items-center justify-between">
+                  <span>Mathematical Formula</span>
+                  <span className="font-mono text-[10px] text-purple-400">EST_TRUE_INTEGRATION_RATE</span>
+                </div>
+                <div className="p-3 rounded-xl bg-black/60 border border-purple-500/30 font-mono text-center text-xs text-white">
+                  Estimated True Rate = ( Deduped Paid Sessions / Deduped Total Sessions ) × 100
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[10.5px] text-muted-foreground pt-1 gap-1">
+                  <span>Raw Integration: <span className="font-mono text-white">(Total Paid / All Raw Receipts) × 100</span></span>
+                  <span>Process Rate: <span className="font-mono text-white">(Total Paid / (Paid + Failed)) × 100</span></span>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer */}
+            <div className="pt-3 border-t border-white/10 flex items-center justify-end shrink-0">
+              <button
+                onClick={() => setIsAlgorithmModalOpen(false)}
+                className="px-5 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-semibold text-xs transition-all shadow-md shadow-primary/25"
+              >
+                Got It
+              </button>
+            </div>
+          </div>
+        </div>,
         document.body
       )}
 

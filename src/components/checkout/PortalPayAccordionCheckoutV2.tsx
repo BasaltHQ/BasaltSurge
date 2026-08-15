@@ -63,7 +63,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   isAllKycCompleted?: boolean;
   onHeadlessSubmitEmailPhone?: (email: string, phone: string, country?: string, fullName?: string) => Promise<void>;
   onSubmitKycInfo?: (info: any) => Promise<void>;
-  onVerifyDocuments?: () => Promise<void>;
+  onVerifyDocuments?: () => Promise<void | boolean>;
   onSelectPaymentMethod?: (type: string) => Promise<void>;
   onCompleteCheckout?: () => Promise<void>;
   paymentElement?: HTMLElement | React.ReactNode | null;
@@ -714,6 +714,7 @@ export function PortalPayAccordionCheckoutV2({
   // DOM Container Refs for Stripe Embedded Elements
   const authContainerRef = useRef<HTMLDivElement>(null);
   const paymentContainerRef = useRef<HTMLDivElement>(null);
+  const identityContainerRef = useRef<HTMLDivElement>(null);
 
   // Sync props when initial values change
   useEffect(() => {
@@ -759,15 +760,16 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [authElement, activeStep]);
 
-  // Clean mounting of paymentElement into container
+  // Clean mounting of paymentElement / identity verification element into container
   useEffect(() => {
-    const container = paymentContainerRef.current;
+    const isVerifying = headlessStep === "verifying_identity";
+    const container = isVerifying ? identityContainerRef.current : paymentContainerRef.current;
     if (!container) return;
     if (paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
       container.innerHTML = "";
       container.appendChild(paymentElement as HTMLElement);
     }
-  }, [paymentElement, activeStep]);
+  }, [paymentElement, activeStep, headlessStep]);
 
   // Handle Step 4 Fulfillment Progression (Simulation preview only — strictly disabled in live production mode)
   useEffect(() => {
@@ -882,7 +884,9 @@ export function PortalPayAccordionCheckoutV2({
       headlessStep === "verifying_identity"
     ) {
       setIsSubmittingContact(false);
-      if (!isAllKycCompleted && effectiveStatus !== "verified") {
+      if (headlessStep === "verifying_identity") {
+        setActiveStep(2);
+      } else if (!isAllKycCompleted && effectiveStatus !== "verified") {
         setActiveStep(2);
       } else {
         setActiveStep(3);
@@ -924,6 +928,10 @@ export function PortalPayAccordionCheckoutV2({
   useEffect(() => {
     if (
       [
+        "verifying_identity",
+        "checking_kyc",
+        "collecting_kyc",
+        "submitting_kyc",
         "creating_session",
         "confirming_fees",
         "checking_out",
@@ -938,7 +946,7 @@ export function PortalPayAccordionCheckoutV2({
     ) {
       return;
     }
-    if (isAllKycCompleted || effectiveStatus === "verified" || headlessStep === "collecting_payment") {
+    if ((isAllKycCompleted || effectiveStatus === "verified") && headlessStep === "collecting_payment") {
       setIsSubmittingContact(false);
       setIsSubmittingIdentity(false);
       setActiveStep((prev) => (prev <= 2 ? 3 : prev));
@@ -1403,7 +1411,17 @@ export function PortalPayAccordionCheckoutV2({
                 <p className="text-[11px] font-bold text-amber-400 mb-2 flex items-center gap-1.5">
                   <Lock className="w-3.5 h-3.5" /> Enter 6-Digit Link Security Code
                 </p>
-                <div ref={authContainerRef}>
+                <div
+                  ref={(el) => {
+                    (authContainerRef as any).current = el;
+                    if (el && authElement && typeof authElement === "object" && "nodeType" in authElement) {
+                      if (!el.contains(authElement as Node)) {
+                        el.innerHTML = "";
+                        el.appendChild(authElement as HTMLElement);
+                      }
+                    }
+                  }}
+                >
                   {typeof authElement !== "object" || !("nodeType" in (authElement || {}))
                     ? (authElement as React.ReactNode)
                     : null}
@@ -1915,20 +1933,47 @@ export function PortalPayAccordionCheckoutV2({
               </div>
             )}
 
-            {/* L2 Document Verification Action Button */}
+            {/* L2 Document Verification Container & Action */}
             {isL2Requirement && (
-              <div className="pt-2 space-y-1.5">
+              <div className="pt-2 space-y-2">
+                {headlessStep === "verifying_identity" && (
+                  <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/30 space-y-2 animate-in fade-in duration-200">
+                    <div className="flex items-center gap-1.5 text-purple-300 text-xs font-bold">
+                      <Shield className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                      <span>Stripe Identity Verification: Complete ID verification below</span>
+                    </div>
+                    <div
+                      className="p-2 rounded-xl bg-black/20 border border-white/10 min-h-[300px]"
+                      ref={(el) => {
+                        (identityContainerRef as any).current = el;
+                        if (el && paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
+                          if (!el.contains(paymentElement as Node)) {
+                            el.innerHTML = "";
+                            el.appendChild(paymentElement as HTMLElement);
+                          }
+                        }
+                      }}
+                    >
+                      {typeof paymentElement !== "object" || !("nodeType" in (paymentElement || {}))
+                        ? (paymentElement as React.ReactNode)
+                        : null}
+                    </div>
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={handleDocumentVerificationClick}
-                  disabled={isVerifyingDocs || isL2Approved}
+                  disabled={isVerifyingDocs || isL2Approved || headlessStep === "verifying_identity"}
                   className={`w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg ${
                     isL2Approved
                       ? "bg-emerald-600 text-white cursor-default"
+                      : headlessStep === "verifying_identity"
+                      ? "bg-purple-900/60 text-purple-200 border border-purple-500/40 cursor-wait"
                       : "bg-purple-600 hover:bg-purple-500 text-white animate-pulse"
                   }`}
                 >
-                  {isVerifyingDocs ? (
+                  {isVerifyingDocs || headlessStep === "verifying_identity" ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
                       <span>Verifying identification with Stripe...</span>
@@ -2067,7 +2112,17 @@ export function PortalPayAccordionCheckoutV2({
             {paymentElement ? (
               <div className="space-y-2">
                 <div className="p-3 rounded-xl bg-white/5 border border-white/10 my-2">
-                  <div ref={paymentContainerRef}>
+                  <div
+                    ref={(el) => {
+                      (paymentContainerRef as any).current = el;
+                      if (el && paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
+                        if (!el.contains(paymentElement as Node)) {
+                          el.innerHTML = "";
+                          el.appendChild(paymentElement as HTMLElement);
+                        }
+                      }
+                    }}
+                  >
                     {typeof paymentElement !== "object" || !("nodeType" in (paymentElement || {}))
                       ? (paymentElement as React.ReactNode)
                       : null}
