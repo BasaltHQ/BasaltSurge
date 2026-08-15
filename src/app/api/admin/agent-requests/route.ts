@@ -131,3 +131,98 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: err?.message || "Internal server error" }, { status: 500 });
     }
 }
+
+export async function DELETE(req: NextRequest) {
+    try {
+        const adminWallet = (req.headers.get("x-wallet") || "").toLowerCase();
+        if (!adminWallet || !hex(adminWallet)) {
+            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
+        const brandKey = getBrandKey(req);
+        const { searchParams } = new URL(req.url);
+        let id = searchParams.get("id");
+
+        if (!id) {
+            try {
+                const body = await req.json();
+                id = body?.id;
+            } catch {
+                // ignore
+            }
+        }
+
+        if (!id) {
+            return NextResponse.json({ error: "id is required" }, { status: 400 });
+        }
+
+        const container = await getContainer();
+
+        // 1. Fetch matching agent_request docs
+        const { resources } = await container.items.query({
+            query: `SELECT * FROM c
+                    WHERE c.type = 'agent_request'
+                      AND c.id = @id
+                      AND c.brandKey = @brandKey`,
+            parameters: [
+                { name: "@id", value: id },
+                { name: "@brandKey", value: brandKey },
+            ],
+        }).fetchAll();
+
+        if (!resources || resources.length === 0) {
+            return NextResponse.json({ error: "Agent request not found" }, { status: 404 });
+        }
+
+        // 2. Delete all matching agent_request records
+        for (const doc of resources) {
+            const pk = doc.wallet || doc.id;
+            try {
+                await container.item(doc.id, pk).delete();
+            } catch {
+                try {
+                    await container.item(doc.id, doc.wallet).delete();
+                } catch {
+                    try {
+                        await container.item(doc.id, undefined as any).delete();
+                    } catch {
+                        await container.item(doc.id, doc.id).delete();
+                    }
+                }
+            }
+
+            // 3. If there is a matching agent_profile for this wallet & brandKey, clean it up too
+            if (doc.wallet) {
+                try {
+                    const { resources: profiles } = await container.items.query({
+                        query: `SELECT * FROM c
+                                WHERE c.type = 'agent_profile'
+                                  AND c.wallet = @wallet
+                                  AND c.brandKey = @brandKey`,
+                        parameters: [
+                            { name: "@wallet", value: doc.wallet.toLowerCase() },
+                            { name: "@brandKey", value: brandKey },
+                        ],
+                    }).fetchAll();
+
+                    for (const prof of profiles || []) {
+                        try {
+                            await container.item(prof.id, prof.wallet || prof.id).delete();
+                        } catch {
+                            try {
+                                await container.item(prof.id, undefined as any).delete();
+                            } catch {}
+                        }
+                    }
+                } catch (profErr) {
+                    console.warn("[admin/agent-requests] Warning deleting linked agent_profile:", profErr);
+                }
+            }
+        }
+
+        return NextResponse.json({ success: true, id });
+    } catch (err: any) {
+        console.error("[admin/agent-requests] DELETE Error:", err);
+        return NextResponse.json({ error: err?.message || "Internal server error" }, { status: 500 });
+    }
+}

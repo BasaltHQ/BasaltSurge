@@ -123,7 +123,10 @@ export async function GET(req: NextRequest) {
             wallet: 1,
             shopSlug: 1,
             parentUrl: 1,
-            merchantName: 1
+            merchantName: 1,
+            ipAddress: 1,
+            buyerWallet: 1,
+            stripeSessionId: 1
           }
         }
       ).sort({ createdAt: -1 }).toArray();
@@ -230,7 +233,7 @@ export async function GET(req: NextRequest) {
     } else {
       // Fallback for Cosmos DB
       const querySpec = {
-        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.effectiveProcessingFeeBps, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet, c.shopSlug, c.parentUrl, c.merchantName, c.presentedFeeBps, c.creditPresentedFeeBps, c.splitConfig, c.splitConfigCredit, c.partnerBps, c.platformBps, c.feeMinusEnabled FROM c WHERE c.type = 'receipt'"
+        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.effectiveProcessingFeeBps, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet, c.shopSlug, c.parentUrl, c.merchantName, c.presentedFeeBps, c.creditPresentedFeeBps, c.splitConfig, c.splitConfigCredit, c.partnerBps, c.platformBps, c.feeMinusEnabled, c.ipAddress, c.buyerWallet, c.stripeSessionId FROM c WHERE c.type = 'receipt'"
       };
       const { resources } = await container.items.query(querySpec).fetchAll();
       allReceiptsLight = resources || [];
@@ -254,6 +257,10 @@ export async function GET(req: NextRequest) {
       failed: number;
       gmv: number;
       fees: number;
+      dedupedTotal?: number;
+      dedupedPaid?: number;
+      dedupedFailed?: number;
+      trueSuccessRate?: number;
     }> = {};
 
     const cardTypeMap = { credit: 0, debit: 0, bank: 0, unknown: 0 };
@@ -404,6 +411,141 @@ export async function GET(req: NextRequest) {
       return "basaltsurge";
     };
 
+    const isSettledStatus = (s: string) => ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(String(s || "").toLowerCase());
+    const isFailedStatus = (s: string) => String(s || "").toLowerCase() === "failed";
+
+    // Deduplication algorithm: cluster raw receipts into single checkout intent sessions
+    const deduplicateReceiptList = (receiptList: any[]) => {
+      if (!receiptList || receiptList.length === 0) {
+        return {
+          clusters: [],
+          dedupedTotalCreated: 0,
+          dedupedTotalPaid: 0,
+          dedupedTotalFailed: 0,
+          trueIntegrationRate: 0,
+          trueProcessRate: 0
+        };
+      }
+
+      const sorted = [...receiptList].sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeA - timeB;
+      });
+
+      const clusters: Array<{
+        id: string;
+        brandKey: string;
+        merchantKey: string;
+        emails: Set<string>;
+        wallets: Set<string>;
+        ips: Set<string>;
+        stripeSessions: Set<string>;
+        receipts: any[];
+        startTime: number;
+        endTime: number;
+        isPaid: boolean;
+        isFailed: boolean;
+      }> = [];
+
+      const SESSION_INACTIVITY_MS = 30 * 60 * 1000; // 30 minutes
+      const MAX_SESSION_MS = 2 * 60 * 60 * 1000; // 2 hours max session span
+
+      for (const r of sorted) {
+        const ts = r.createdAt ? new Date(r.createdAt).getTime() : 0;
+        const bKey = getReceiptBrandKey(r);
+        const merchantKey = String(r.wallet || r.shopSlug || "").trim().toLowerCase();
+        
+        let email = String(r.customerEmail || r.stripeEmail || r.email || "").trim().toLowerCase();
+        if (email === "anonymous" || !email.includes("@")) email = "";
+
+        const wallet = String(r.buyerWallet || "").trim().toLowerCase();
+        const ip = String(r.ipAddress || "").trim();
+        const stripeSession = String(r.stripeSessionId || "").trim();
+        const settled = isSettledStatus(r.status);
+        const failed = isFailedStatus(r.status);
+
+        let matchedCluster: typeof clusters[0] | null = null;
+
+        // Search recent active clusters in reverse
+        for (let i = clusters.length - 1; i >= 0; i--) {
+          const c = clusters[i];
+          const timeSinceLast = ts - c.endTime;
+          const sessionDuration = ts - c.startTime;
+
+          if (timeSinceLast > SESSION_INACTIVITY_MS || sessionDuration > MAX_SESSION_MS) {
+            continue;
+          }
+
+          if (c.brandKey !== bKey) continue;
+          if (merchantKey && c.merchantKey && c.merchantKey !== merchantKey) continue;
+
+          let identityMatch = false;
+          if (email && c.emails.has(email)) identityMatch = true;
+          else if (wallet && c.wallets.has(wallet)) identityMatch = true;
+          else if (stripeSession && c.stripeSessions.has(stripeSession)) identityMatch = true;
+          else if (ip && c.ips.has(ip)) identityMatch = true;
+          else if (!c.isPaid && !c.isFailed && timeSinceLast <= 15 * 60 * 1000 && c.receipts.length < 5) {
+            // Anonymous cart adjustments within 15m on same merchant/brand
+            identityMatch = true;
+          }
+
+          if (identityMatch) {
+            matchedCluster = c;
+            break;
+          }
+        }
+
+        if (matchedCluster) {
+          matchedCluster.receipts.push(r);
+          matchedCluster.endTime = Math.max(matchedCluster.endTime, ts);
+          if (email) matchedCluster.emails.add(email);
+          if (wallet) matchedCluster.wallets.add(wallet);
+          if (ip) matchedCluster.ips.add(ip);
+          if (stripeSession) matchedCluster.stripeSessions.add(stripeSession);
+          if (settled) {
+            matchedCluster.isPaid = true;
+            matchedCluster.isFailed = false;
+          } else if (failed && !matchedCluster.isPaid) {
+            matchedCluster.isFailed = true;
+          }
+        } else {
+          clusters.push({
+            id: `cluster-${r.receiptId || r.id || clusters.length}`,
+            brandKey: bKey,
+            merchantKey,
+            emails: new Set(email ? [email] : []),
+            wallets: new Set(wallet ? [wallet] : []),
+            ips: new Set(ip ? [ip] : []),
+            stripeSessions: new Set(stripeSession ? [stripeSession] : []),
+            receipts: [r],
+            startTime: ts,
+            endTime: ts,
+            isPaid: settled,
+            isFailed: failed && !settled
+          });
+        }
+      }
+
+      const dedupedTotalCreated = clusters.length;
+      const dedupedTotalPaid = clusters.filter(c => c.isPaid).length;
+      const dedupedTotalFailed = clusters.filter(c => c.isFailed).length;
+      const trueIntegrationRate = dedupedTotalCreated > 0 ? +((dedupedTotalPaid / dedupedTotalCreated) * 100).toFixed(1) : 0;
+      const trueProcessRate = (dedupedTotalPaid + dedupedTotalFailed) > 0 ? +((dedupedTotalPaid / (dedupedTotalPaid + dedupedTotalFailed)) * 100).toFixed(1) : 0;
+
+      return {
+        clusters,
+        dedupedTotalCreated,
+        dedupedTotalPaid,
+        dedupedTotalFailed,
+        trueIntegrationRate,
+        trueProcessRate
+      };
+    };
+
+    // Calculate all-time session deduplication metrics
+    const allTimeDedup = deduplicateReceiptList(allReceiptsLight);
+
     // Aggregate metrics over all historical lightweight records
     for (const r of allReceiptsLight) {
       const status = r.status || "pending";
@@ -416,7 +558,7 @@ export async function GET(req: NextRequest) {
       }
       brandMap[bKey].total++;
 
-      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
+      if (isSettledStatus(status)) {
         totalPaid++;
         const feeUsd = getReceiptFeeUsd(r);
         totalGmv += Number(r.totalUsd || 0);
@@ -492,9 +634,13 @@ export async function GET(req: NextRequest) {
       allPaid: number;
       allFailed: number;
       allTotal: number;
+      allDedupedTotal: number;
+      allDedupedPaid: number;
+      allDedupedFailed: number;
       allGmv: number;
       allFees: number;
-      brands: Record<string, { paid: number; failed: number; total: number; gmv: number; fees: number }>
+      rawReceipts: any[];
+      brands: Record<string, { paid: number; failed: number; total: number; dedupedTotal: number; dedupedPaid: number; dedupedFailed: number; gmv: number; fees: number; rawReceipts: any[] }>
     }> = {};
 
     for (const r of allReceiptsLight) {
@@ -521,17 +667,22 @@ export async function GET(req: NextRequest) {
           allPaid: 0,
           allFailed: 0,
           allTotal: 0,
+          allDedupedTotal: 0,
+          allDedupedPaid: 0,
+          allDedupedFailed: 0,
           allGmv: 0,
           allFees: 0,
+          rawReceipts: [],
           brands: {}
         };
       }
 
       const g = dailySeriesMap[dateStr];
+      g.rawReceipts.push(r);
       const status = r.status || "pending";
       g.allTotal++;
       
-      const isPaid = ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status);
+      const isPaid = isSettledStatus(status);
       const isFailed = status === "failed";
       const paymentGmv = isPaid ? Number(r.totalUsd || 0) : 0;
       const paymentFees = isPaid ? getReceiptFeeUsd(r) : 0;
@@ -546,8 +697,9 @@ export async function GET(req: NextRequest) {
 
       const bKey = getReceiptBrandKey(r);
       if (!g.brands[bKey]) {
-        g.brands[bKey] = { paid: 0, failed: 0, total: 0, gmv: 0, fees: 0 };
+        g.brands[bKey] = { paid: 0, failed: 0, total: 0, dedupedTotal: 0, dedupedPaid: 0, dedupedFailed: 0, gmv: 0, fees: 0, rawReceipts: [] };
       }
+      g.brands[bKey].rawReceipts.push(r);
       g.brands[bKey].total++;
       if (isPaid) {
         g.brands[bKey].paid++;
@@ -558,7 +710,34 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Run deduplication for each daily bucket and brand sub-bucket
+    Object.values(dailySeriesMap).forEach(dayBucket => {
+      const dayDedup = deduplicateReceiptList(dayBucket.rawReceipts);
+      dayBucket.allDedupedTotal = dayDedup.dedupedTotalCreated;
+      dayBucket.allDedupedPaid = dayDedup.dedupedTotalPaid;
+      dayBucket.allDedupedFailed = dayDedup.dedupedTotalFailed;
+
+      Object.values(dayBucket.brands).forEach(brandBucket => {
+        const bDedup = deduplicateReceiptList(brandBucket.rawReceipts);
+        brandBucket.dedupedTotal = bDedup.dedupedTotalCreated;
+        brandBucket.dedupedPaid = bDedup.dedupedTotalPaid;
+        brandBucket.dedupedFailed = bDedup.dedupedTotalFailed;
+        delete (brandBucket as any).rawReceipts;
+      });
+      delete (dayBucket as any).rawReceipts;
+    });
+
     const dailySeries = Object.values(dailySeriesMap).sort((a, b) => a.timestamp - b.timestamp);
+
+    // Compute deduplication per brand across all-time
+    Object.keys(brandMap).forEach(bk => {
+      const brandReceipts = allReceiptsLight.filter(r => getReceiptBrandKey(r) === bk);
+      const bDedup = deduplicateReceiptList(brandReceipts);
+      brandMap[bk].dedupedTotal = bDedup.dedupedTotalCreated;
+      brandMap[bk].dedupedPaid = bDedup.dedupedTotalPaid;
+      brandMap[bk].dedupedFailed = bDedup.dedupedTotalFailed;
+      brandMap[bk].trueSuccessRate = bDedup.trueIntegrationRate;
+    });
 
     const successRate = totalCreated > 0 ? (totalPaid / totalCreated) * 100 : 0;
     const aov = totalPaid > 0 ? totalGmv / totalPaid : 0;
@@ -570,6 +749,11 @@ export async function GET(req: NextRequest) {
         totalPaid,
         totalFailed,
         successRate: +successRate.toFixed(1),
+        dedupedTotalCreated: allTimeDedup.dedupedTotalCreated,
+        dedupedTotalPaid: allTimeDedup.dedupedTotalPaid,
+        dedupedTotalFailed: allTimeDedup.dedupedTotalFailed,
+        trueIntegrationRate: allTimeDedup.trueIntegrationRate,
+        trueProcessRate: allTimeDedup.trueProcessRate,
         totalGmv: +totalGmv.toFixed(2),
         totalFees: +totalFees.toFixed(2),
         aov: +aov.toFixed(2),
@@ -582,6 +766,7 @@ export async function GET(req: NextRequest) {
         .map(b => ({
           ...b,
           successRate: b.total > 0 ? +((b.paid / b.total) * 100).toFixed(1) : 0,
+          trueSuccessRate: b.trueSuccessRate ?? (b.total > 0 ? +((b.paid / b.total) * 100).toFixed(1) : 0),
           gmv: +b.gmv.toFixed(2),
           fees: +b.fees.toFixed(2)
         }))
@@ -594,3 +779,4 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: e?.message || "Internal server error" }, { status: 500 });
   }
 }
+

@@ -16,6 +16,7 @@ import {
     User,
     RefreshCcw,
     Plus,
+    Trash2,
 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 
@@ -55,6 +56,11 @@ export default function AgentRequestsPanel() {
     const [newNotes, setNewNotes] = useState("");
     const [addError, setAddError] = useState("");
     const [addLoading, setAddLoading] = useState(false);
+
+    // Modal state for agent deletion
+    const [agentToDelete, setAgentToDelete] = useState<AgentRequest | null>(null);
+    const [deleteLoading, setDeleteLoading] = useState(false);
+    const [deleteError, setDeleteError] = useState("");
 
     const load = useCallback(async () => {
         if (!adminWallet) return;
@@ -137,6 +143,28 @@ export default function AgentRequestsPanel() {
             setAddError(e.message);
         } finally {
             setAddLoading(false);
+        }
+    }
+
+    async function confirmDeleteAgent() {
+        if (!adminWallet || !agentToDelete) return;
+        setDeleteLoading(true);
+        setDeleteError("");
+        try {
+            const res = await fetch(`/api/admin/agent-requests?id=${encodeURIComponent(agentToDelete.id)}`, {
+                method: "DELETE",
+                headers: { "x-wallet": adminWallet },
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || "Failed to delete agent");
+            
+            setInfo(`Agent ${agentToDelete.name || agentToDelete.wallet} deleted permanently.`);
+            setAgentToDelete(null);
+            load();
+        } catch (e: any) {
+            setDeleteError(e.message);
+        } finally {
+            setDeleteLoading(false);
         }
     }
 
@@ -318,7 +346,7 @@ export default function AgentRequestsPanel() {
                                                         <button
                                                             onClick={(e) => { e.stopPropagation(); updateStatus(req.id, "rejected"); }}
                                                             disabled={updating === req.id}
-                                                            className="px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-semibold transition-colors disabled:opacity-50"
+                                                            className="px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 text-xs font-semibold transition-colors disabled:opacity-50"
                                                         >
                                                             Reject
                                                         </button>
@@ -328,7 +356,7 @@ export default function AgentRequestsPanel() {
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); updateStatus(req.id, "rejected"); }}
                                                         disabled={updating === req.id}
-                                                        className="px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-semibold transition-colors disabled:opacity-50"
+                                                        className="px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 text-xs font-semibold transition-colors disabled:opacity-50"
                                                     >
                                                         Revoke
                                                     </button>
@@ -342,6 +370,18 @@ export default function AgentRequestsPanel() {
                                                         Approve
                                                     </button>
                                                 )}
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setDeleteError("");
+                                                        setAgentToDelete(req);
+                                                    }}
+                                                    disabled={updating === req.id}
+                                                    className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-semibold transition-colors disabled:opacity-50 inline-flex items-center justify-center"
+                                                    title="Delete Agent Request Permanently"
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
@@ -371,15 +411,26 @@ export default function AgentRequestsPanel() {
                                                         <div className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-1">Wallet</div>
                                                         <div className="font-mono text-xs break-all select-all opacity-80">{req.wallet}</div>
                                                     </div>
-                                                    {req.reviewedBy && (
-                                                        <div className="md:col-span-3">
-                                                            <div className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-1">Reviewed By</div>
+                                                    <div className="md:col-span-3 flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-foreground/5">
+                                                        {req.reviewedBy ? (
                                                             <div className="text-xs">
+                                                                <span className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mr-1">Reviewed By:</span>
                                                                 <TruncatedAddress address={req.reviewedBy} />
                                                                 {req.reviewedAt ? ` — ${new Date(req.reviewedAt).toLocaleString()}` : ""}
                                                             </div>
-                                                        </div>
-                                                    )}
+                                                        ) : <div />}
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setDeleteError("");
+                                                                setAgentToDelete(req);
+                                                            }}
+                                                            className="px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-semibold transition-colors flex items-center gap-1.5"
+                                                        >
+                                                            <Trash2 className="h-3.5 w-3.5" />
+                                                            <span>Delete Agent Record</span>
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             </td>
                                         </tr>
@@ -474,6 +525,65 @@ export default function AgentRequestsPanel() {
                         />
                     </div>
                 </div>
+            </Modal>
+
+            {/* Delete Confirmation Modal */}
+            <Modal
+                open={!!agentToDelete}
+                onClose={() => {
+                    setAgentToDelete(null);
+                    setDeleteError("");
+                }}
+                title="Delete Agent Request"
+                description="Are you sure you want to permanently delete this agent request? This action cannot be undone."
+                actions={[
+                    {
+                        label: "Cancel",
+                        onClick: () => {
+                            setAgentToDelete(null);
+                            setDeleteError("");
+                        },
+                        variant: "secondary"
+                    },
+                    {
+                        label: deleteLoading ? "Deleting..." : "Delete Permanently",
+                        onClick: confirmDeleteAgent,
+                        variant: "danger"
+                    }
+                ]}
+            >
+                {agentToDelete && (
+                    <div className="space-y-3 text-foreground">
+                        {deleteError && (
+                            <div className="text-xs text-red-500 bg-red-500/10 p-3 rounded-lg border border-red-500/20">
+                                {deleteError}
+                            </div>
+                        )}
+                        <div className="p-3.5 rounded-xl bg-foreground/[0.03] border border-foreground/10 space-y-2 text-xs">
+                            <div className="flex justify-between items-center">
+                                <span className="text-muted-foreground font-medium">Agent Name:</span>
+                                <span className="font-bold text-foreground">{agentToDelete.name || "N/A"}</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-muted-foreground font-medium">Wallet:</span>
+                                <span className="font-mono text-foreground text-[11px]"><TruncatedAddress address={agentToDelete.wallet} /></span>
+                            </div>
+                            {agentToDelete.email && (
+                                <div className="flex justify-between items-center">
+                                    <span className="text-muted-foreground font-medium">Email:</span>
+                                    <span className="text-foreground">{agentToDelete.email}</span>
+                                </div>
+                            )}
+                            <div className="flex justify-between items-center">
+                                <span className="text-muted-foreground font-medium">Current Status:</span>
+                                <span className="capitalize font-semibold text-foreground">{agentToDelete.status}</span>
+                            </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            Deleting this request will permanently remove the application record from the database and prevent duplicate entries from causing confusion.
+                        </p>
+                    </div>
+                )}
             </Modal>
         </div>
     );
