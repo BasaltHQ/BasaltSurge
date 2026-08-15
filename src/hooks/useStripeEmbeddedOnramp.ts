@@ -2525,10 +2525,27 @@ export function useStripeEmbeddedOnramp({
       updateStep("checking_kyc");
       const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
       if (!kycApproved) {
+        if (submittedTier === "l0") {
+          console.log("[EMBEDDED ONRAMP] L0 verification requires step up. Transitioning to L1...");
+          setKycTierRequired("l1");
+          setKycLevel("L0");
+          updateStep("collecting_kyc");
+          isRunningRef.current = false;
+          return;
+        }
         throw new Error(`KYC ${submittedTier.toUpperCase()} verification was not approved.`);
       }
 
       console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
+      setIsAllKycCompleted(true);
+      setKycLevel(submittedTier === "l1" ? "L1" : "L0");
+      setPaymentElement(null);
+      if (onrampRef.current) {
+        try { onrampRef.current.destroy(); } catch {}
+        onrampRef.current = null;
+      }
+      isCoordinatorAuthedRef.current = false;
+
       if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
         if (paymentTokenRef.current) {
           runCheckoutLoop(
@@ -2553,6 +2570,7 @@ export function useStripeEmbeddedOnramp({
                 try { onrampRef.current.destroy(); } catch {}
                 onrampRef.current = null;
               }
+              isCoordinatorAuthedRef.current = false;
               setDetectedCardFunding(null);
               setDetectedCardBrand(null);
               setDetectedCardLast4(null);
@@ -3634,9 +3652,7 @@ export function useStripeEmbeddedOnramp({
           }
         }
 
-        // Now clear element if we are proceeding to checkout
-        setPaymentElement(null);
-
+        // Keep paymentElement mounted in DOM so Stripe SDK performCheckout and 3DS modal can execute
         // Save state in refs for KYC/error recovery
         activeEmailRef.current = activeEmail;
         customerIdRef.current = customerId;
@@ -3663,6 +3679,7 @@ export function useStripeEmbeddedOnramp({
               try { onrampRef.current.destroy(); } catch {}
               onrampRef.current = null;
             }
+            isCoordinatorAuthedRef.current = false;
             setDetectedCardFunding(null);
             setDetectedCardBrand(null);
             setDetectedCardLast4(null);
