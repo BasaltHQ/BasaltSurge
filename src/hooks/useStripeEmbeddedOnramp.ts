@@ -2539,12 +2539,8 @@ export function useStripeEmbeddedOnramp({
       console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
       setIsAllKycCompleted(true);
       setKycLevel(submittedTier === "l1" ? "L1" : "L0");
-      setPaymentElement(null);
-      if (onrampRef.current) {
-        try { onrampRef.current.destroy(); } catch {}
-        onrampRef.current = null;
-      }
-      isCoordinatorAuthedRef.current = false;
+      setKycTierRequired(submittedTier);
+      kycOccurredRef.current = false;
 
       if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
         if (paymentTokenRef.current) {
@@ -2806,7 +2802,7 @@ export function useStripeEmbeddedOnramp({
       let customerId = customerIdRef.current;
       let buyerWallet = buyerWalletRef.current;
 
-      if (onramp && isCoordinatorAuthedRef.current && customerId && oauthTokenRef.current && buyerWallet && !kycOccurredRef.current) {
+      if (onramp && isCoordinatorAuthedRef.current && customerId && oauthTokenRef.current && buyerWallet) {
         console.log("[EMBEDDED ONRAMP] Reusing active authenticated onramp coordinator and customer session:", customerId);
       } else {
         if (onrampRef.current) {
@@ -3119,7 +3115,7 @@ export function useStripeEmbeddedOnramp({
         // If ACH payment is chosen, we strictly enforce verification through L2.
         const isCustomerVerified = isAchEnforcedRef.current 
           ? isL2Verified 
-          : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected"));
+          : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected") || isAllKycCompleted || computedLevel === "L1" || computedLevel === "L0");
 
         setIsAllKycCompleted(Boolean(isCustomerVerified));
 
