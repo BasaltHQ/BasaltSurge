@@ -569,8 +569,23 @@ export function PortalPayAccordionCheckoutV2({
   const [activeStep, setActiveStep] = useState<number>(1);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  // Active error (props or simulated)
-  const activeError = localError || propError;
+  // Format and translate raw errors into clear customer guidance
+  const formatErrorMessage = (err?: string | null): string | null => {
+    if (!err) return null;
+    const lower = err.toLowerCase();
+    if (
+      lower.includes("address provided isn't supported for headless mode") ||
+      lower.includes("unsupported for headless mode") ||
+      lower.includes("unsupported_region") ||
+      lower.includes("unsupported_country")
+    ) {
+      return "Instant card checkout is currently unavailable for this residential address or state (e.g., NY, HI, or US territories) due to regional crypto regulations. Please verify your address or use an alternative payment method.";
+    }
+    return err;
+  };
+
+  // Active error (props or simulated, formatted)
+  const activeError = formatErrorMessage(localError || propError);
 
   // Step 1: Contact State
   const [email, setEmail] = useState(initialEmail);
@@ -659,12 +674,21 @@ export function PortalPayAccordionCheckoutV2({
   const effectiveTier: string = simulatedTier || kycTierRequired || "l0";
   const effectiveStatus: string = simulatedStatus || (isAllKycCompleted ? "verified" : "normal");
 
+  // Strict separation of simulation demo mode vs live production checkout
+  const isSimulationMode = Boolean(simulatedTier || simulatedStatus || (simulatedPath && simulatedPath !== "normal"));
+  const isLiveMode = !isSimulationMode;
+
   // Step 3: Payment State (Simulation / Preview)
   const [selectedPaymentType, setSelectedPaymentType] = useState<"applePay" | "googlePay" | "card" | "bank">("card");
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
 
   // Step 4: Fulfillment Stage ("processing" | "confirming" | "complete")
   const [fulfillmentStage, setFulfillmentStage] = useState<"processing" | "confirming" | "complete">("processing");
+
+  // In live production mode, order confirmation strictly requires verifiable payment confirmation or completed onramp state
+  const isOrderConfirmed = isLiveMode
+    ? Boolean(paymentConfirmed || headlessStep === "completed")
+    : fulfillmentStage === "complete";
 
   // DOM Container Refs for Stripe Embedded Elements
   const authContainerRef = useRef<HTMLDivElement>(null);
@@ -724,9 +748,17 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [paymentElement]);
 
-  // Handle Step 4 Fulfillment Progression (Simulation preview only)
+  // Handle Step 4 Fulfillment Progression (Simulation preview only — strictly disabled in live production mode)
   useEffect(() => {
-    if (activeStep === 4 && (!headlessStep || headlessStep === "idle")) {
+    // ONLY run preview timer when explicitly in simulation mode (e.g. sample preview forms)
+    if (
+      isSimulationMode &&
+      activeStep === 4 &&
+      (!headlessStep || headlessStep === "idle") &&
+      !paymentElement &&
+      !propError &&
+      !localError
+    ) {
       setFulfillmentStage("processing");
       const t1 = setTimeout(() => setFulfillmentStage("confirming"), 1200);
       const t2 = setTimeout(() => setFulfillmentStage("complete"), 2500);
@@ -735,7 +767,7 @@ export function PortalPayAccordionCheckoutV2({
         clearTimeout(t2);
       };
     }
-  }, [activeStep, headlessStep]);
+  }, [isSimulationMode, activeStep, headlessStep, paymentElement, propError, localError]);
 
   // Address Autocomplete handler
   const handleFetchSuggestions = async (input: string) => {
@@ -791,6 +823,28 @@ export function PortalPayAccordionCheckoutV2({
 
   // Automatically advance accordion steps when live Stripe headlessStep transitions!
   useEffect(() => {
+    // 1. If an error occurs, halt Step 4 immediately and return to Step 2 (if address issue) or Step 3 (if payment issue)
+    if (headlessStep === "error" || propError) {
+      setIsSubmittingContact(false);
+      setIsSubmittingIdentity(false);
+      setIsSubmittingPayment(false);
+      setFulfillmentStage("processing");
+
+      const errStr = String(propError || localError || "").toLowerCase();
+      const isAddressIssue =
+        errStr.includes("address") ||
+        errStr.includes("headless mode") ||
+        errStr.includes("unsupported_region") ||
+        errStr.includes("unsupported_country");
+
+      if (isAddressIssue) {
+        setActiveStep(2);
+      } else {
+        setActiveStep(3);
+      }
+      return;
+    }
+
     if (paymentConfirmed) {
       setIsSubmittingContact(false);
       setIsSubmittingIdentity(false);
@@ -835,13 +889,15 @@ export function PortalPayAccordionCheckoutV2({
       setActiveStep(4);
       setFulfillmentStage("complete");
     }
-  }, [headlessStep, isAllKycCompleted, effectiveStatus, paymentConfirmed]);
+  }, [headlessStep, isAllKycCompleted, effectiveStatus, paymentConfirmed, propError, localError, detectedCardFunding]);
 
-  // If KYC is already completed or verified, automatically skip or advance to Step 3 (unless on payment execution/completion)
+  // If KYC is already completed or verified, automatically skip or advance to Step 3 (unless on payment execution/completion or error)
   useEffect(() => {
     if (
-      ["creating_session", "checking_out", "transferring", "awaiting_funds", "completed"].includes(headlessStep as string) ||
-      paymentConfirmed
+      ["creating_session", "checking_out", "transferring", "awaiting_funds", "completed", "error"].includes(headlessStep as string) ||
+      paymentConfirmed ||
+      propError ||
+      localError
     ) {
       return;
     }
@@ -850,7 +906,7 @@ export function PortalPayAccordionCheckoutV2({
       setIsSubmittingIdentity(false);
       setActiveStep((prev) => (prev <= 2 ? 3 : prev));
     }
-  }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed]);
+  }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed, propError, localError]);
 
   // Step 1 Submit (Account & Contact)
   const handleContactSubmit = async (e: React.FormEvent) => {
@@ -1912,8 +1968,8 @@ export function PortalPayAccordionCheckoutV2({
                   <span>Please confirm your payment method in the secure form above to complete checkout.</span>
                 </div>
               </div>
-            ) : (
-              /* Fallback Simulation UI for Sample Previews */
+            ) : isSimulationMode ? (
+              /* Fallback Simulation UI for Sample Previews ONLY */
               <div className="space-y-3 pt-2">
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -1985,6 +2041,14 @@ export function PortalPayAccordionCheckoutV2({
                   )}
                 </button>
               </div>
+            ) : (
+              /* Live Production Loading State */
+              <div className="p-8 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
+                <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
+                <p className={`text-xs font-medium ${isLightText ? "text-white/70" : "text-black/70"}`}>
+                  Loading secure Stripe payment form...
+                </p>
+              </div>
             )}
           </div>
         )}
@@ -2008,14 +2072,14 @@ export function PortalPayAccordionCheckoutV2({
           <div className="flex items-center gap-2.5">
             <div
               className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
-                fulfillmentStage === "complete"
+                isOrderConfirmed
                   ? "bg-emerald-500 text-black font-bold"
                   : activeStep === 4
                   ? "bg-emerald-500 text-black animate-pulse"
                   : "bg-white/10 text-white/40"
               }`}
             >
-              {fulfillmentStage === "complete" ? (
+              {isOrderConfirmed ? (
                 <Check className="w-3 h-3 text-black stroke-[3]" />
               ) : (
                 "4"
@@ -2031,18 +2095,15 @@ export function PortalPayAccordionCheckoutV2({
 
         {activeStep === 4 && (
           <div className="p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10">
-            {fulfillmentStage !== "complete" ? (
+            {!isOrderConfirmed ? (
               <div className="p-4 rounded-xl bg-black/30 border border-white/10 space-y-2.5 animate-in fade-in duration-300">
                 <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
-                  <Check className="w-4 h-4 shrink-0" />
-                  <span>Payment Authorized via Stripe</span>
+                  <Loader2 className="w-4 h-4 shrink-0 animate-spin text-emerald-400" />
+                  <span>Processing payment with Stripe...</span>
                 </div>
                 <div className="flex items-center gap-2.5 text-xs font-medium text-amber-400 animate-pulse">
-                  <Loader2 className="w-4 h-4 shrink-0 animate-spin text-amber-400" />
                   <span>
-                    {fulfillmentStage === "processing"
-                      ? "Authorizing payment and finalizing your order..."
-                      : "Generating order receipt..."}
+                    {headlessStatus || "Finalizing order and confirming transaction..."}
                   </span>
                 </div>
               </div>

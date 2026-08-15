@@ -367,6 +367,7 @@ const ONRAMP_ERROR_MAPPINGS: Record<string, string> = {
   crypto_onramp_destination_tags_not_supported: "The networks provided aren't valid tag-based networks.",
   crypto_onramp_disabled: "We temporarily disabled the onramp service. Please try again later.",
   crypto_onramp_headless_invalid_amount: "The amount provided isn't valid for headless mode. Input a positive amount up to 2 decimal places.",
+  crypto_onramp_headless_unsupported_address: "Instant card checkout is currently unavailable for this residential address or region (e.g., NY, HI, or US territories) due to regional crypto regulations. Please verify your address or use an alternative payment method.",
   crypto_onramp_headless_unsupported_currency_or_network: "The currency or network provided isn't supported for headless mode.",
   crypto_onramp_identity_verification_failed: "We couldn't verify your identity. Contact support for assistance.",
   crypto_onramp_incomplete_destination_currency_and_network_pair: "Both destination currency and destination network must be specified together.",
@@ -411,6 +412,15 @@ export function getFriendlyOnrampErrorMessage(code: string, fallbackMessage: str
   const normalizedCode = String(code || "").trim().toLowerCase();
   const matched = ONRAMP_ERROR_MAPPINGS[normalizedCode];
   if (matched) return matched;
+  const lowerFallback = String(fallbackMessage || "").toLowerCase();
+  if (
+    lowerFallback.includes("address provided isn't supported for headless mode") ||
+    lowerFallback.includes("unsupported for headless mode") ||
+    lowerFallback.includes("unsupported_region") ||
+    lowerFallback.includes("unsupported_country")
+  ) {
+    return "Instant card checkout is currently unavailable for this residential address or region (e.g., NY, HI, or US territories) due to regional crypto regulations. Please verify your address or use an alternative payment method.";
+  }
   return fallbackMessage;
 }
 
