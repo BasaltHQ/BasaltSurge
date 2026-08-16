@@ -970,6 +970,20 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [activeStep, paymentElement, headlessStep, email, phone, onHeadlessSubmitEmailPhone]);
 
+  // Step 3 DOM Synchronization: Ensure spent Stripe iframes are completely wiped from the DOM when paymentElement is null or updated
+  useEffect(() => {
+    if (paymentContainerRef.current) {
+      if (paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
+        if (!paymentContainerRef.current.contains(paymentElement as Node)) {
+          paymentContainerRef.current.innerHTML = "";
+          paymentContainerRef.current.appendChild(paymentElement as HTMLElement);
+        }
+      } else if (!paymentElement) {
+        paymentContainerRef.current.innerHTML = "";
+      }
+    }
+  }, [paymentElement]);
+
   // Step 1 Submit (Account & Contact)
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
