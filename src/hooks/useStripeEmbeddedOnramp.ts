@@ -1127,6 +1127,20 @@ export function useStripeEmbeddedOnramp({
       return;
     }
 
+    const isInvalidRequest = friendlyMessage.toLowerCase().includes("invalid request");
+    if (isInvalidRequest) {
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem("stripe_onramp_customer_id");
+        sessionStorage.removeItem("stripe_onramp_oauth_token");
+        sessionStorage.removeItem("stripe_onramp_buyer_wallet");
+        sessionStorage.removeItem(sessionKey);
+      }
+      customerIdRef.current = null;
+      oauthTokenRef.current = null;
+      buyerWalletRef.current = null;
+      sessionIdRef.current = null;
+    }
+
     const isCancellation = friendlyMessage.toLowerCase().includes("cancelled") || 
                            friendlyMessage.toLowerCase().includes("user_cancel") ||
                            friendlyMessage.toLowerCase().includes("abandoned");
@@ -2915,13 +2929,12 @@ export function useStripeEmbeddedOnramp({
           body: JSON.stringify({ email: activeEmail }),
         });
 
+        const retryData = await retryRes.json().catch(() => ({}));
         if (!retryRes.ok) {
-          const retryData = await retryRes.json().catch(() => ({}));
           handleError(retryData.error || "Failed to create auth intent after registration");
           return;
         }
 
-        const retryData = await retryRes.json().catch(() => ({}));
         authIntentId = retryData.authIntentId;
       } else if (linkRes.ok) {
         const linkData = await linkRes.json().catch(() => ({}));
@@ -2929,6 +2942,11 @@ export function useStripeEmbeddedOnramp({
       } else {
         const linkData = await linkRes.json().catch(() => ({}));
         handleError(linkData.error || "Link auth check failed");
+        return;
+      }
+
+      if (!authIntentId) {
+        handleError("Authentication intent ID was not generated");
         return;
       }
 
