@@ -2838,12 +2838,19 @@ export function useStripeEmbeddedOnramp({
     }
   }, [pollKycStatus, updateStep, handleError]);
 
-  const startOnramp = useCallback(async (overrideEmail?: string, overridePhone?: string, overrideName?: string) => {
-    if (isRunningRef.current) {
+  const startOnramp = useCallback(async (overrideEmail?: string, overridePhone?: string, overrideName?: string, isForceRetry?: boolean) => {
+    if (isRunningRef.current && !isForceRetry) {
       console.warn("[EMBEDDED ONRAMP] Onramp flow is already running. Ignoring duplicate trigger.");
       return;
     }
     isRunningRef.current = true;
+    setError(null);
+    if (isForceRetry && onrampRef.current) {
+      try { onrampRef.current.destroy(); } catch {}
+      onrampRef.current = null;
+      isCoordinatorAuthedRef.current = false;
+      setPaymentElement(null);
+    }
     console.log("[EMBEDDED ONRAMP] startOnramp triggered. isEcommerceMode prop:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
 
     const activeEmail = (overrideEmail || email || "").trim().toLowerCase();

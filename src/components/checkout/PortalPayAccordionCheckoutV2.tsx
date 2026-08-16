@@ -568,6 +568,7 @@ export function PortalPayAccordionCheckoutV2({
   // Active accordion step: 1 = Contact & Account, 2 = Identity (L0/L1/L2), 3 = Payment, 4 = Order Processing
   const [activeStep, setActiveStep] = useState<number>(1);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [isRetryingPayment, setIsRetryingPayment] = useState<boolean>(false);
   const [manualEditAddress, setManualEditAddress] = useState<boolean>(false);
 
   // Format and translate raw errors into clear customer guidance
@@ -2168,6 +2169,14 @@ export function PortalPayAccordionCheckoutV2({
 
         {/* Step 3 Expanded Body */}
         <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${activeStep === 3 ? "" : "hidden"}`}>
+            {/* Top Error Alert Banner (renders if error is present) */}
+            {activeError && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-2.5 text-xs text-amber-300 animate-in fade-in my-1">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="font-semibold leading-relaxed">{activeError}</span>
+              </div>
+            )}
+
             {/* Embedded Live Stripe Payment Element */}
             {paymentElement ? (
               <div className="space-y-2">
@@ -2268,26 +2277,40 @@ export function PortalPayAccordionCheckoutV2({
                   )}
                 </button>
               </div>
-            ) : activeError ? (
-              /* Live Error & Retry State */
-              <div className="p-6 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
-                <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                  <AlertCircle className="w-5 h-5" />
-                </div>
-                <p className={`text-xs font-semibold max-w-sm leading-relaxed ${isLightText ? "text-amber-300" : "text-amber-900"}`}>
-                  {activeError}
+            ) : isRetryingPayment ? (
+              /* Live Re-initializing Loading State */
+              <div className="p-8 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
+                <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
+                <p className={`text-xs font-medium ${isLightText ? "text-white/70" : "text-black/70"}`}>
+                  Re-initializing secure payment form...
                 </p>
+              </div>
+            ) : activeError ? (
+              /* Live Error & Actionable Retry State */
+              <div className="p-6 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
                 <button
                   type="button"
-                  onClick={() => {
+                  disabled={isRetryingPayment}
+                  onClick={async () => {
+                    setIsRetryingPayment(true);
                     setLocalError(null);
                     if (onHeadlessSubmitEmailPhone) {
-                      onHeadlessSubmitEmailPhone(email, phone);
+                      try {
+                        await (onHeadlessSubmitEmailPhone as any)(email, phone, undefined, true);
+                      } catch (e) {}
                     }
+                    setTimeout(() => setIsRetryingPayment(false), 3000);
                   }}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 active:scale-95 transition cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 active:scale-95 transition cursor-pointer flex items-center gap-2 shadow-lg"
                 >
-                  Retry Payment Selection
+                  {isRetryingPayment ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Loading Payment Form...</span>
+                    </>
+                  ) : (
+                    <span>Retry Payment Selection</span>
+                  )}
                 </button>
               </div>
             ) : (
