@@ -2685,14 +2685,17 @@ export function useStripeEmbeddedOnramp({
       const errMsg = String(err?.message || err || "").toLowerCase();
       const isAlreadyVerified = errMsg.includes("already been verified") || 
                                 errMsg.includes("already_verified") ||
-                                errMsg.includes("cannot be updated");
+                                errMsg.includes("cannot be updated") ||
+                                (errMsg.includes("invalid request") && isAllKycCompleted);
       
       if (isAlreadyVerified) {
         console.log("[EMBEDDED ONRAMP] Customer is already verified in Stripe Link. Marking KYC complete and proceeding directly to payment collection...");
+        setError(null);
         setIsAllKycCompleted(true);
         setKycLevel("L1");
         setKycTierRequired("l1");
         kycOccurredRef.current = false;
+        updateStep("collecting_payment");
 
         if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
           if (paymentTokenRef.current) {
