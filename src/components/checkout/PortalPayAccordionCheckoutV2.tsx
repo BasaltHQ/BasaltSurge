@@ -1015,6 +1015,9 @@ export function PortalPayAccordionCheckoutV2({
   };
 
   // Canonical Stripe Onramp KYC tier detection matching WizardView:
+  const l0Verified = (kycTiers || []).some(
+    (t: any) => t.tier === "l0" && t.verification_status === "verified",
+  );
   const l1Verified = (kycTiers || []).some(
     (t: any) => t.tier === "l1" && t.verification_status === "verified",
   );
@@ -1050,6 +1053,13 @@ export function PortalPayAccordionCheckoutV2({
     isAllKycCompleted ||
     docVerificationSuccess ||
     kycLevel === "L2" ||
+    effectiveStatus === "verified";
+
+  const isL0Approved =
+    l0Verified ||
+    l1Verified ||
+    isL2Approved ||
+    isAllKycCompleted ||
     effectiveStatus === "verified";
 
   // Step 2 Document Verification Trigger
@@ -1216,6 +1226,14 @@ export function PortalPayAccordionCheckoutV2({
         }
       }
 
+      // If customer is already verified in Stripe Link and no step-up is required, advance to Step 3 directly
+      if ((isAllKycCompleted || effectiveStatus === "verified") && !showStepUpForm && (!isL2Requirement || isL2Approved)) {
+        console.log("[ACCORDION] Customer is already verified. Advancing to Step 3 directly without re-submitting demographics.");
+        setIsSubmittingIdentity(false);
+        setActiveStep(3);
+        return;
+      }
+
       if (onSubmitKycInfo) {
         if (showStepUpForm && !manualEditAddress) {
           await onSubmitKycInfo({
@@ -1249,7 +1267,19 @@ export function PortalPayAccordionCheckoutV2({
       }
     } catch (err: any) {
       console.error("Identity submission error:", err);
-      setLocalError(err?.message || "Failed to submit identity details.");
+      const errMsg = String(err?.message || err || "").toLowerCase();
+      if (
+        errMsg.includes("already been verified") ||
+        errMsg.includes("cannot be updated") ||
+        errMsg.includes("already_verified") ||
+        errMsg.includes("invalid request")
+      ) {
+        console.log("[ACCORDION] Customer is already verified in Stripe. Bypassing KYC step and proceeding to Step 3.");
+        setLocalError(null);
+        setActiveStep(3);
+      } else {
+        setLocalError(err?.message || "Failed to submit identity details.");
+      }
     } finally {
       setIsSubmittingIdentity(false);
     }
@@ -1547,14 +1577,14 @@ export function PortalPayAccordionCheckoutV2({
                 <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
                   2. Identity & Residential Verification
                 </h4>
-                {(isL2Approved || isAllKycCompleted || effectiveStatus === "verified") && (
+                {(isL0Approved || isL2Approved || isAllKycCompleted || effectiveStatus === "verified") && (
                   <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
                     <Check className="w-2.5 h-2.5 stroke-[3]" /> Verified
                   </span>
                 )}
               </div>
 
-              {(activeStep > 2 || effectiveStatus === "verified" || isAllKycCompleted) && (
+              {(activeStep > 2 || effectiveStatus === "verified" || isAllKycCompleted || isL0Approved) && (
                 <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
                   <User className="w-2.5 h-2.5 opacity-60" />
                   <span>{firstName} {lastName}</span>
@@ -1565,30 +1595,75 @@ export function PortalPayAccordionCheckoutV2({
           </div>
 
           {activeStep > 2 && (
-            <button
-              type="button"
-              className="text-[11px] font-semibold text-amber-400 flex items-center gap-1 hover:underline"
-            >
-              <Edit2 className="w-3 h-3" /> Edit
-            </button>
+            (isL0Approved && !showStepUpForm && (!isL2Requirement || isL2Approved)) ? (
+              <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1 opacity-90 select-none">
+                <Lock className="w-3 h-3" /> Verified
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="text-[11px] font-semibold text-amber-400 flex items-center gap-1 hover:underline"
+              >
+                <Edit2 className="w-3 h-3" /> Edit
+              </button>
+            )
           )}
         </div>
 
         {/* Step 2 Expanded Body */}
-        <form onSubmit={handleIdentitySubmit} className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${activeStep === 2 ? "" : "hidden"}`}>
-            
-            {/* Step-Up Notice Banner (L1) */}
-            {showStepUpForm && !isL2Requirement && (
-              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
-                <Shield className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+        <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${activeStep === 2 ? "" : "hidden"}`}>
+          {(isL0Approved && !showStepUpForm && (!isL2Requirement || isL2Approved)) ? (
+            /* Already Verified Locked Summary Card */
+            <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-3 animate-in fade-in duration-200 mt-2">
+              <div className="flex items-start gap-2.5 text-emerald-400">
+                <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
                 <div className="space-y-1">
-                  <div className="font-bold text-amber-200">Identity Step-Up Required (Level 1):</div>
-                  <div className="text-[11px] leading-relaxed text-amber-300">
-                    Stripe requires your Date of Birth and Social Security Number to verify your identity and authorize this transaction.
-                  </div>
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                    Identity & Residential Verification Approved
+                  </h5>
+                  <p className="text-[11px] text-emerald-400/80 leading-relaxed">
+                    Your identity is verified and securely linked with Stripe. No additional verification or demographic changes are needed.
+                  </p>
                 </div>
               </div>
-            )}
+
+              <div className="p-3 rounded-lg bg-black/20 border border-white/5 space-y-1.5 text-xs">
+                <div className="flex justify-between">
+                  <span className="opacity-60">Verified Name:</span>
+                  <span className="font-semibold text-white">{firstName} {lastName}</span>
+                </div>
+                {line1 && (
+                  <div className="flex justify-between">
+                    <span className="opacity-60">Residential Address:</span>
+                    <span className="font-semibold text-white">{line1}, {city} {stateCode} {zipCode}</span>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setActiveStep(3)}
+                className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                style={{ backgroundColor: primaryColor, color: "#fff" }}
+              >
+                <span>Continue to Payment Method</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleIdentitySubmit} className="space-y-3">
+              {/* Step-Up Notice Banner (L1) */}
+              {showStepUpForm && !isL2Requirement && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+                  <Shield className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="font-bold text-amber-200">Identity Step-Up Required (Level 1):</div>
+                    <div className="text-[11px] leading-relaxed text-amber-300">
+                      Stripe requires your Date of Birth and Social Security Number to verify your identity and authorize this transaction.
+                    </div>
+                  </div>
+                </div>
+              )}
 
             {/* Address Summary Pill when in Step-Up Mode */}
             {showStepUpForm && !manualEditAddress && (firstName || line1) && (
@@ -1978,8 +2053,15 @@ export function PortalPayAccordionCheckoutV2({
               </div>
             )}
 
-            {/* Inline Verification Notice / Error Alert */}
+            {/* Inline Verification Notice / Error Alert (only for KYC/Identity issues) */}
             {activeError && (
+              !activeError.toLowerCase().includes("card") &&
+              !activeError.toLowerCase().includes("funds") &&
+              !activeError.toLowerCase().includes("cvc") &&
+              !activeError.toLowerCase().includes("payment") &&
+              !activeError.toLowerCase().includes("bank") &&
+              !activeError.toLowerCase().includes("expired")
+            ) && (
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
                 <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
                 <div className="space-y-1">
@@ -2107,7 +2189,9 @@ export function PortalPayAccordionCheckoutV2({
                 </>
               )}
             </button>
-        </form>
+          </form>
+          )}
+        </div>
       </div>
 
       {/* ==================================================================== */}
