@@ -1168,6 +1168,7 @@ export function useStripeEmbeddedOnramp({
       }
       onrampRef.current = null;
     }
+    isCoordinatorAuthedRef.current = false;
     updateStep(isCancellation ? "idle" : "error");
     onErrorRef.current?.(new Error(friendlyMessage));
   }, [detectedCardFunding, updateStep, receiptId, merchantWallet]);
@@ -3669,39 +3670,33 @@ export function useStripeEmbeddedOnramp({
         paymentTokenRef.current = pmToken;
         buyerWalletRef.current = buyerWallet;
 
-        // ─── Step 9-10: Run the headless checkout process ───
         try {
           await runCheckoutLoop(activeEmail, customerId || "", pmToken, finalBuyerWallet, collectedFunding);
           checkoutSucceeded = true;
         } catch (checkoutErr: any) {
-          const isCardDecline = checkIfCardDecline(checkoutErr);
-
-          if (isCardDecline) {
-            console.warn("[EMBEDDED ONRAMP] Card decline caught in startOnramp, returning to payment selection...");
-            setError(checkoutErr?.message || "Your card was declined. Please try another card.");
-            paymentTokenRef.current = null;
-            sessionIdRef.current = null;
-            setSessionId(null);
-            if (typeof window !== "undefined") {
-              sessionStorage.removeItem(sessionKey);
-            }
-            if (onrampRef.current) {
-              try { onrampRef.current.destroy(); } catch {}
-              onrampRef.current = null;
-            }
-            isCoordinatorAuthedRef.current = false;
-            setDetectedCardFunding(null);
-            setDetectedCardBrand(null);
-            setDetectedCardLast4(null);
-            onCardDetectedRef.current?.(null);
-            isRunningRef.current = false;
-            setTimeout(() => {
-              startOnrampRef.current?.(activeEmailRef.current || undefined);
-            }, 0);
-            return;
-          } else {
-            throw checkoutErr;
+          console.warn("[EMBEDDED ONRAMP] Checkout loop encountered an error, resetting spent payment element for fresh selection...", checkoutErr);
+          setError(checkoutErr?.message || "Payment could not be completed. Please select or re-enter your payment method.");
+          setPaymentElement(null); // Clear spent "Submitted" iframe so fresh one can mount
+          paymentTokenRef.current = null;
+          sessionIdRef.current = null;
+          setSessionId(null);
+          if (typeof window !== "undefined") {
+            sessionStorage.removeItem(sessionKey);
           }
+          if (onrampRef.current) {
+            try { onrampRef.current.destroy(); } catch {}
+            onrampRef.current = null;
+          }
+          isCoordinatorAuthedRef.current = false;
+          setDetectedCardFunding(null);
+          setDetectedCardBrand(null);
+          setDetectedCardLast4(null);
+          onCardDetectedRef.current?.(null);
+          isRunningRef.current = false;
+          setTimeout(() => {
+            startOnrampRef.current?.(activeEmailRef.current || undefined);
+          }, 50);
+          return;
         }
       }
 
