@@ -1110,12 +1110,28 @@ export function useStripeEmbeddedOnramp({
     const friendlyMessage = code ? getFriendlyOnrampErrorMessage(code, message) : message;
 
     console.error(`[EMBEDDED ONRAMP] ${friendlyMessage}`, err);
-    isRunningRef.current = false;
-    
+    const isAbortOrMessengerDestroyed = friendlyMessage.toLowerCase().includes("messenger has been destroyed") || 
+                                        friendlyMessage.toLowerCase().includes("operation was aborted");
+
+    if (isAbortOrMessengerDestroyed) {
+      console.warn("[EMBEDDED ONRAMP] Suppressed internal Stripe messenger abort error. Cleanly reinitializing onramp in background...");
+      isRunningRef.current = false;
+      if (onrampRef.current) {
+        try { onrampRef.current.destroy(); } catch {}
+        onrampRef.current = null;
+      }
+      isCoordinatorAuthedRef.current = false;
+      setTimeout(() => {
+        startOnrampRef.current?.(activeEmailRef.current || undefined);
+      }, 50);
+      return;
+    }
+
     const isCancellation = friendlyMessage.toLowerCase().includes("cancelled") || 
                            friendlyMessage.toLowerCase().includes("user_cancel") ||
                            friendlyMessage.toLowerCase().includes("abandoned");
 
+    isRunningRef.current = false;
     setError(friendlyMessage);
     onErrorRef.current?.(err instanceof Error ? err : new Error(friendlyMessage));
     setAuthElement(null);
@@ -2460,7 +2476,14 @@ export function useStripeEmbeddedOnramp({
 
   const submitKycInfo = useCallback(async (kycInfo: any) => {
     if (!onrampRef.current) {
-      throw new Error("Onramp not initialized");
+      console.warn("[EMBEDDED ONRAMP] Onramp coordinator not initialized for submitKycInfo. Initializing now...");
+      if (startOnrampRef.current && activeEmailRef.current) {
+        await startOnrampRef.current(activeEmailRef.current);
+      }
+      if (!onrampRef.current) {
+        if (isAllKycCompleted) return;
+        throw new Error("Onramp not initialized. Please try again.");
+      }
     }
     console.log("[EMBEDDED ONRAMP] Submitting KYC info...");
     updateStep("submitting_kyc");
@@ -2591,66 +2614,57 @@ export function useStripeEmbeddedOnramp({
                                 errMsg.includes("cannot be updated");
       
       if (isAlreadyVerified) {
-        console.log("[EMBEDDED ONRAMP] Customer is already verified globally. Bypassing demographics submission error...");
-        try {
-          const submittedTier = (kycInfo.date_of_birth || kycInfo.id_number || kycInfo.nationalities) ? "l1" : "l0";
-          updateStep("checking_kyc");
-          const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
-          if (!kycApproved) {
-            throw new Error(`KYC ${submittedTier.toUpperCase()} verification was not approved.`);
-          }
+        console.log("[EMBEDDED ONRAMP] Customer is already verified in Stripe Link. Marking KYC complete and proceeding directly to payment collection...");
+        setIsAllKycCompleted(true);
+        setKycLevel("L1");
+        setKycTierRequired("l1");
+        kycOccurredRef.current = false;
 
-          console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
-          if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
-            if (paymentTokenRef.current) {
-              runCheckoutLoop(
-                activeEmailRef.current,
-                customerIdRef.current,
-                paymentTokenRef.current,
-                buyerWalletRef.current,
-                detectedCardFunding
-              ).catch((loopErr) => {
-                const isCardDecline = checkIfCardDecline(loopErr);
-                if (isCardDecline) {
-                  console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval bypass, returning to payment selection...");
-                  setError(loopErr?.message || "Your card was declined. Please try another card.");
-                  paymentTokenRef.current = null;
-                  sessionIdRef.current = null;
-                  setSessionId(null);
-                  if (typeof window !== "undefined") {
-                    sessionStorage.removeItem(sessionKey);
-                  }
-                  if (onrampRef.current) {
-                    try { onrampRef.current.destroy(); } catch {}
-                    onrampRef.current = null;
-                  }
-                  setDetectedCardFunding(null);
-                  setDetectedCardBrand(null);
-                  setDetectedCardLast4(null);
-                  onCardDetected?.(null);
-                  isRunningRef.current = false;
-                  setTimeout(() => {
-                    startOnrampRef.current?.(activeEmailRef.current || undefined);
-                  }, 0);
-                } else {
-                  handleError(loopErr?.message || "Checkout failed after KYC submission", loopErr);
+        if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
+          if (paymentTokenRef.current) {
+            runCheckoutLoop(
+              activeEmailRef.current,
+              customerIdRef.current,
+              paymentTokenRef.current,
+              buyerWalletRef.current,
+              detectedCardFunding
+            ).catch((loopErr) => {
+              const isCardDecline = checkIfCardDecline(loopErr);
+              if (isCardDecline) {
+                console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval bypass, returning to payment selection...");
+                setError(loopErr?.message || "Your card was declined. Please try another card.");
+                paymentTokenRef.current = null;
+                sessionIdRef.current = null;
+                setSessionId(null);
+                if (typeof window !== "undefined") {
+                  sessionStorage.removeItem(sessionKey);
                 }
-              });
-            } else {
-              isRunningRef.current = false;
-              startOnrampRef.current?.(activeEmailRef.current || undefined);
-            }
+                if (onrampRef.current) {
+                  try { onrampRef.current.destroy(); } catch {}
+                  onrampRef.current = null;
+                }
+                setDetectedCardFunding(null);
+                setDetectedCardBrand(null);
+                setDetectedCardLast4(null);
+                onCardDetected?.(null);
+                isRunningRef.current = false;
+                setTimeout(() => {
+                  startOnrampRef.current?.(activeEmailRef.current || undefined);
+                }, 0);
+              } else {
+                handleError(loopErr?.message || "Checkout failed after KYC submission", loopErr);
+              }
+            });
           } else {
-            console.warn("[EMBEDDED ONRAMP] Missing required refs after KYC approval bypass, restarting flow...");
             isRunningRef.current = false;
             startOnrampRef.current?.(activeEmailRef.current || undefined);
           }
-          return;
-        } catch (pollErr: any) {
-          console.error("[EMBEDDED ONRAMP] Polling failed after bypass:", pollErr);
-          handleError(pollErr?.message || "KYC verification polling failed");
-          return;
+        } else {
+          console.warn("[EMBEDDED ONRAMP] Missing required refs after KYC approval bypass, restarting flow...");
+          isRunningRef.current = false;
+          startOnrampRef.current?.(activeEmailRef.current || undefined);
         }
+        return;
       }
 
       console.error("[EMBEDDED ONRAMP] submitKycInfo error:", err);

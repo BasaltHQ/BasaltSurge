@@ -963,6 +963,13 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed, propError, localError]);
 
+  // Step 3 idle recovery: if activeStep is 3, paymentElement is null, and headlessStep is idle, auto-trigger onHeadlessSubmitEmailPhone
+  useEffect(() => {
+    if (activeStep === 3 && !paymentElement && headlessStep === "idle" && email && onHeadlessSubmitEmailPhone) {
+      onHeadlessSubmitEmailPhone(email, phone);
+    }
+  }, [activeStep, paymentElement, headlessStep, email, phone, onHeadlessSubmitEmailPhone]);
+
   // Step 1 Submit (Account & Contact)
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

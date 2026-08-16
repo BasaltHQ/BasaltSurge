@@ -8498,6 +8498,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 onClick={() => {
                   setDisplayError(null);
                   resetHeadlessOnramp();
+                  const targetEmail = (shipEmail || headlessEmailInput || "").trim();
+                  if (targetEmail) {
+                    startHeadlessOnramp(targetEmail, headlessPhoneInput || undefined, shipName || undefined);
+                  }
                 }}
                 className={`flex-1 px-4 py-3 font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all shadow-md text-center text-sm ${isColorLight(theme.primaryColor || '#635BFF') ? 'text-neutral-900' : 'text-white'
                   }`}
