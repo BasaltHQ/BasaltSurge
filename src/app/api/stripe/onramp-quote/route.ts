@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
     params.append("destination_currencies[]", "usdc");
     params.append("destination_networks[]", "base");
 
-    const response = await fetch(
+    let response = await fetch(
       `https://api.stripe.com/v1/crypto/onramp/quotes?${params.toString()}`,
       {
         method: "GET",
@@ -33,7 +33,22 @@ export async function GET(req: NextRequest) {
       }
     );
 
-    const data = await response.json();
+    let data = await response.json().catch(() => ({}));
+
+    if (!response.ok && (data.error?.code === "crypto_onramp_invalid_parameter" || response.status === 404)) {
+      // Fallback to Beta v2 endpoint /v1/crypto/onramp_quotes
+      const v2Response = await fetch(
+        `https://api.stripe.com/v1/crypto/onramp_quotes?${params.toString()}`,
+        {
+          method: "GET",
+          headers: { "Authorization": `Bearer ${stripeKey}` },
+        }
+      );
+      if (v2Response.ok) {
+        response = v2Response;
+        data = await v2Response.json().catch(() => ({}));
+      }
+    }
 
     if (!response.ok) {
       console.error("[STRIPE QUOTE] Quote fetch failed:", data);

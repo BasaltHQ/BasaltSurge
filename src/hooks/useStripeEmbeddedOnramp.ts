@@ -366,6 +366,7 @@ const ONRAMP_ERROR_MAPPINGS: Record<string, string> = {
   crypto_onramp_conflicting_source_total_amount_parameters: "Only set one of source_total_amount, source_amount, or destination_amount parameters when creating a session.",
   crypto_onramp_consumer_wallet_doesnt_exist: "The wallet address doesn't exist for the current user.",
   crypto_onramp_currency_not_available_in_region: "The selected currency isn't available in your region.",
+  crypto_onramp_declaration_not_found: "No CRS or CARF tax declaration is available. Please contact support.",
   crypto_onramp_destination_tags_not_supported: "The networks provided aren't valid tag-based networks.",
   crypto_onramp_disabled: "We temporarily disabled the onramp service. Please try again later.",
   crypto_onramp_headless_invalid_amount: "The amount provided isn't valid for headless mode. Input a positive amount up to 2 decimal places.",
@@ -393,6 +394,7 @@ const ONRAMP_ERROR_MAPPINGS: Record<string, string> = {
   crypto_onramp_missing_minimum_identity_verification: "Minimum identity verification is required for this transaction.",
   crypto_onramp_missing_source_currency: "Set a source currency if you're setting a source exchange amount.",
   crypto_onramp_missing_source_total_amount_parameters: "Set all parameters if you're setting a source total amount.",
+  crypto_onramp_missing_tax_attestation: "Tax attestation is required before confirming the declaration.",
   crypto_onramp_no_wallet_address_to_lock: "lock_wallet_address is true but no wallet address was provided.",
   crypto_onramp_quote_expired: "The exchange rate has moved significantly since your quote was locked. Fetch a new quote.",
   crypto_onramp_quote_invalid_destination_currencies_and_networks: "None of the provided destination currency and network pairs are valid for the quote.",
@@ -407,7 +409,8 @@ const ONRAMP_ERROR_MAPPINGS: Record<string, string> = {
   crypto_onramp_unsupported_region: "The provided region is not a supported region.",
   crypto_onramp_verification_error: "The request could not be completed due to a verification issue.",
   crypto_onramp_wallet_address_invalid: "The wallet address provided isn't a valid address for the specified network.",
-  crypto_onramp_wallet_addresses_not_all_networks_supported: "Specify a wallet only for a supported destination network."
+  crypto_onramp_wallet_addresses_not_all_networks_supported: "Specify a wallet only for a supported destination network.",
+  zerohash_api_error: "We couldn't process the crypto onramp request. Please try again."
 };
 
 export function getFriendlyOnrampErrorMessage(code: string, fallbackMessage: string): string {
@@ -484,10 +487,11 @@ function checkIfCardDecline(err: any, lastError?: string): boolean {
   }
 
   // 2. If the thrown error is an active payment failure or decline, prioritize it immediately
-  const isThrownCardDecline = msg.includes("decline") || msg.includes("card") || 
+  const isThrownCardDecline = msg.includes("decline") || msg.includes("card") || msg.includes("bank") || msg.includes("institution") ||
                               msg.includes("payment_failed") || msg.includes("payment failed") || msg.includes("card_failed") ||
                               msg.includes("funds") || msg.includes("cvc") || msg.includes("zip") || msg.includes("expired") || msg.includes("invalid") ||
-                              code.includes("decline") || code.includes("card") || code.includes("payment_failed") || code.includes("payment failed") || code.includes("card_failed") || code.includes("funds") || code.includes("cvc") || code.includes("zip");
+                              code.includes("decline") || code.includes("card") || code.includes("payment_method") || code.includes("bank") ||
+                              code.includes("payment_failed") || code.includes("payment failed") || code.includes("card_failed") || code.includes("funds") || code.includes("cvc") || code.includes("zip");
 
   if (isThrownCardDecline) {
     return true;
@@ -1125,6 +1129,20 @@ export function useStripeEmbeddedOnramp({
         startOnrampRef.current?.(activeEmailRef.current || undefined);
       }, 50);
       return;
+    }
+
+    const isInvalidRequest = friendlyMessage.toLowerCase().includes("invalid request");
+    if (isInvalidRequest) {
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem("stripe_onramp_customer_id");
+        sessionStorage.removeItem("stripe_onramp_oauth_token");
+        sessionStorage.removeItem("stripe_onramp_buyer_wallet");
+        sessionStorage.removeItem(sessionKey);
+      }
+      customerIdRef.current = null;
+      oauthTokenRef.current = null;
+      buyerWalletRef.current = null;
+      sessionIdRef.current = null;
     }
 
     const isCancellation = friendlyMessage.toLowerCase().includes("cancelled") || 
@@ -1791,13 +1809,8 @@ export function useStripeEmbeddedOnramp({
           paymentMethod: successData.paymentMethod,
         };
       } catch (err: any) {
-        const isCardDecline = checkIfCardDecline(err);
-        if (isCardDecline) {
-          console.warn("[EMBEDDED ONRAMP] Card decline detected during session creation, propagating error.");
-          throw err;
-        }
-        handleError(err?.message || "Session creation failed", err);
-        return null;
+        console.warn("[EMBEDDED ONRAMP] Error in session creation helper, propagating to checkout loop:", err);
+        throw err;
       }
     };
 
@@ -1991,7 +2004,9 @@ export function useStripeEmbeddedOnramp({
       console.log(`[EMBEDDED ONRAMP] Creating/Re-creating session. Reason: !sessionId=${!currentSessionId}, fundingChanged=${sessionFunding} -> ${resolvedFunding}`);
       const initialAmount = getOnrampAmount(resolvedFunding || null);
       const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount, resolvedFunding);
-      if (!sessionResult) return;
+      if (!sessionResult) {
+        throw new Error("Failed to initialize onramp session");
+      }
       currentSessionId = sessionResult.sessionId;
       sessionIdRef.current = currentSessionId;
       setSessionId(currentSessionId);
@@ -2212,7 +2227,28 @@ export function useStripeEmbeddedOnramp({
                                       errMessage.includes("verification") ||
                                       errCode.includes("verification");
 
+            const isQuoteExpired = lastError === "charged_with_expired_quote" ||
+                                   lastError === "quote_rate_drifted" ||
+                                   errCode === "crypto_onramp_quote_expired" ||
+                                   errMessage.includes("quote_expired") ||
+                                   errMessage.includes("quote was locked");
+
+            const isWalletMissing = lastError === "missing_consumer_wallet" ||
+                                    errCode === "crypto_onramp_consumer_wallet_doesnt_exist" ||
+                                    errMessage.includes("consumer_wallet");
+
+            const isVerificationError = errCode === "crypto_onramp_verification_error" ||
+                                        errMessage.includes("verification_error");
+
+            const isTransientServiceError = errCode === "crypto_onramp_service_error" ||
+                                            errCode === "crypto_onramp_session_error" ||
+                                            errCode === "zerohash_api_error" ||
+                                            errMessage.includes("server error") ||
+                                            errMessage.includes("timed out") ||
+                                            errMessage.includes("try creating a new session");
+
             const isRecoverableError = isL0Error || isL1Error || isL2Error || isGenericKycError ||
+                                       isQuoteExpired || isWalletMissing || isVerificationError || isTransientServiceError ||
                                        lastError === "missing_consumer_wallet" ||
                                        lastError === "charged_with_expired_quote" ||
                                        lastError === "quote_rate_drifted";
@@ -2372,7 +2408,7 @@ export function useStripeEmbeddedOnramp({
               return;
             }
 
-            if (lastError === "missing_consumer_wallet") {
+            if (isWalletMissing) {
               console.log("[EMBEDDED ONRAMP] Wallet not registered. Attempting wallet registration...");
               updateStep("registering_wallet");
               if (!onrampRef.current) {
@@ -2391,8 +2427,8 @@ export function useStripeEmbeddedOnramp({
               }
             }
 
-            if (lastError === "charged_with_expired_quote") {
-              console.log("[EMBEDDED ONRAMP] Quote expired. Refreshing quote...");
+            if (isQuoteExpired) {
+              console.log("[EMBEDDED ONRAMP] Quote expired / rate drifted. Refreshing quote...");
               updateStep("creating_session");
               try {
                 const refreshRes = await fetch("/api/stripe/onramp-quote-refresh", {
@@ -2403,21 +2439,16 @@ export function useStripeEmbeddedOnramp({
                     oauthToken: oauthTokenRef.current,
                   }),
                 });
-                if (!refreshRes.ok) {
-                  const refreshErrData = await refreshRes.json().catch(() => ({}));
-                  throw new Error(refreshErrData.error || "Failed to refresh quote");
+                if (refreshRes.ok) {
+                  console.log("[EMBEDDED ONRAMP] Quote refreshed successfully, retrying checkout...");
+                  updateStep("checking_out");
+                  continue;
                 }
-                console.log("[EMBEDDED ONRAMP] Quote refreshed successfully, retrying checkout...");
-                updateStep("checking_out");
-                continue;
-              } catch (refreshErr: any) {
-                handleError(refreshErr?.message || "Quote refresh failed");
-                return;
+              } catch (refreshErr) {
+                console.warn("[EMBEDDED ONRAMP] Quote refresh endpoint failed, recreating fresh session helper...", refreshErr);
               }
-            }
 
-            if (lastError === "quote_rate_drifted") {
-              console.log("[EMBEDDED ONRAMP] Quote rate drifted. Recreating session with fresh quote...");
+              // Fallback to fresh session creation on quote drift
               sessionIdRef.current = null;
               setSessionId(null);
               const targetAmount = getOnrampAmount(detectedCardFunding);
@@ -2427,6 +2458,48 @@ export function useStripeEmbeddedOnramp({
               sessionIdRef.current = currentSessionId;
               setSessionId(currentSessionId);
               console.log("[EMBEDDED ONRAMP] New session created with fresh quote. Retrying checkout...");
+              updateStep("checking_out");
+              continue;
+            }
+
+            if (isVerificationError) {
+              const isDoc = errMessage.includes("document") || errMessage.includes("id");
+              const isL0 = errMessage.includes("address") || errMessage.includes("name");
+              if (isDoc) {
+                console.log("[EMBEDDED ONRAMP] Verification error requires document step-up. Launching verifyDocuments...");
+                updateStep("verifying_identity");
+                if (onrampRef.current) {
+                  try {
+                    isVerifyingRef.current = true;
+                    await onrampRef.current.verifyDocuments();
+                    isVerifyingRef.current = false;
+                    updateStep("checking_out");
+                    continue;
+                  } catch (vErr: any) {
+                    isVerifyingRef.current = false;
+                    handleError(vErr?.message || "Identity verification failed", vErr);
+                    return;
+                  }
+                }
+              } else if (isL0) {
+                console.log("[EMBEDDED ONRAMP] Verification error requires address details (L0).");
+                setKycTierRequired("l0");
+                updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
+              } else {
+                console.log("[EMBEDDED ONRAMP] Verification error requires demographic details (L1).");
+                setKycTierRequired("l1");
+                updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
+              }
+            }
+
+            if (isTransientServiceError && attempt < MAX_ATTEMPTS - 1) {
+              const backoff = Math.pow(2, attempt) * 1000;
+              console.warn(`[EMBEDDED ONRAMP] Transient service/session error detected (${errCode || errMessage}). Retrying in ${backoff}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})...`);
+              await new Promise(r => setTimeout(r, backoff));
               updateStep("checking_out");
               continue;
             }
@@ -2765,12 +2838,19 @@ export function useStripeEmbeddedOnramp({
     }
   }, [pollKycStatus, updateStep, handleError]);
 
-  const startOnramp = useCallback(async (overrideEmail?: string, overridePhone?: string, overrideName?: string) => {
-    if (isRunningRef.current) {
+  const startOnramp = useCallback(async (overrideEmail?: string, overridePhone?: string, overrideName?: string, isForceRetry?: boolean) => {
+    if (isRunningRef.current && !isForceRetry) {
       console.warn("[EMBEDDED ONRAMP] Onramp flow is already running. Ignoring duplicate trigger.");
       return;
     }
     isRunningRef.current = true;
+    setError(null);
+    if (isForceRetry && onrampRef.current) {
+      try { onrampRef.current.destroy(); } catch {}
+      onrampRef.current = null;
+      isCoordinatorAuthedRef.current = false;
+      setPaymentElement(null);
+    }
     console.log("[EMBEDDED ONRAMP] startOnramp triggered. isEcommerceMode prop:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
 
     const activeEmail = (overrideEmail || email || "").trim().toLowerCase();
@@ -2915,13 +2995,12 @@ export function useStripeEmbeddedOnramp({
           body: JSON.stringify({ email: activeEmail }),
         });
 
+        const retryData = await retryRes.json().catch(() => ({}));
         if (!retryRes.ok) {
-          const retryData = await retryRes.json().catch(() => ({}));
           handleError(retryData.error || "Failed to create auth intent after registration");
           return;
         }
 
-        const retryData = await retryRes.json().catch(() => ({}));
         authIntentId = retryData.authIntentId;
       } else if (linkRes.ok) {
         const linkData = await linkRes.json().catch(() => ({}));
@@ -2929,6 +3008,11 @@ export function useStripeEmbeddedOnramp({
       } else {
         const linkData = await linkRes.json().catch(() => ({}));
         handleError(linkData.error || "Link auth check failed");
+        return;
+      }
+
+      if (!authIntentId) {
+        handleError("Authentication intent ID was not generated");
         return;
       }
 
