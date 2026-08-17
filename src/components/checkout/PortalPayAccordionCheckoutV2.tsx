@@ -719,6 +719,66 @@ export function PortalPayAccordionCheckoutV2({
   const paymentContainerRef = useRef<HTMLDivElement>(null);
   const identityContainerRef = useRef<HTMLDivElement>(null);
 
+  // Canonical Stripe Onramp KYC tier detection matching WizardView:
+  const l0Verified = (kycTiers || []).some(
+    (t: any) => t.tier === "l0" && t.verification_status === "verified",
+  );
+  const l1Verified = (kycTiers || []).some(
+    (t: any) => t.tier === "l1" && t.verification_status === "verified",
+  );
+  const l1NotAvailable = (kycTiers || []).some(
+    (t: any) => t.tier === "l1" && t.verification_status === "not_available",
+  );
+  const l2Verified = (kycTiers || []).some(
+    (t: any) => t.tier === "l2" && t.verification_status === "verified",
+  );
+
+  // L1 step-up form (SSN + DOB required to advance from L0 → L1)
+  const showStepUpForm =
+    effectiveTier === "l1" ||
+    effectiveStatus === "step_up" ||
+    (kycTierRequired as string) === "l1" ||
+    (kycLevel === "L0" && !l1Verified);
+
+  // Document verification button: user is at L1, or REJECTED but L1 was already verified or not_available
+  const showVerifyDocs =
+    effectiveTier === "l2" ||
+    effectiveStatus === "doc_verify" ||
+    (kycTierRequired as string) === "l2" ||
+    headlessStep === "verifying_identity" ||
+    kycLevel === "L1" ||
+    (kycLevel === "REJECTED" && l1Verified) ||
+    (kycLevel === "REJECTED" && l1NotAvailable);
+
+  const isL2Requirement = showVerifyDocs || effectiveTier === "l2" || (kycTierRequired as string) === "l2" || headlessStep === "verifying_identity";
+  const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || (kycTierRequired as string) === "l1";
+
+  const isL2Approved =
+    l2Verified ||
+    docVerificationSuccess ||
+    kycLevel === "L2" ||
+    (effectiveStatus === "verified" && !isL2Requirement);
+
+  const isL1Approved =
+    l1Verified ||
+    l1NotAvailable ||
+    isL2Approved ||
+    (effectiveStatus === "verified" && !showStepUpForm);
+
+  const isL0Approved =
+    l0Verified ||
+    isL1Approved ||
+    isL2Approved ||
+    isAllKycCompleted ||
+    effectiveStatus === "verified";
+
+  // Full L0 form (name, address): initial users, or when manual address editing is active in step-up
+  const showFullForm =
+    !showStepUpForm ||
+    manualEditAddress ||
+    kycLevel === "REQUIRES_KYC" ||
+    (kycLevel === "REJECTED" && !l1Verified && !l1NotAvailable);
+
   // Sync props when initial values change
   useEffect(() => {
     if (initialEmail && !email) setEmail(initialEmail);
@@ -904,7 +964,13 @@ export function PortalPayAccordionCheckoutV2({
     ) {
       setIsSubmittingContact(false);
       setIsSubmittingIdentity(false);
-      setActiveStep((prev) => (prev > 3 ? prev : 3));
+      if (isL2Requirement && !isL2Approved) {
+        setActiveStep(2);
+      } else if (showStepUpForm && !isL1Approved) {
+        setActiveStep(2);
+      } else {
+        setActiveStep((prev) => (prev > 3 ? prev : 3));
+      }
     } else if (
       headlessStep === "creating_session" ||
       headlessStep === "confirming_fees" ||
@@ -927,7 +993,21 @@ export function PortalPayAccordionCheckoutV2({
       setActiveStep(4);
       setFulfillmentStage("complete");
     }
-  }, [headlessStep, authElement, isAllKycCompleted, effectiveStatus, paymentConfirmed, propError, localError, detectedCardFunding, activeStep]);
+  }, [headlessStep, authElement, isAllKycCompleted, effectiveStatus, paymentConfirmed, propError, localError, detectedCardFunding, activeStep, isL2Requirement, isL2Approved, showStepUpForm, isL1Approved]);
+
+  // Dedicated KYC Enforcement Guard: If L2 Document Verification or L1 SSN/DOB Step-Up is required and NOT approved, lock activeStep to Step 2
+  useEffect(() => {
+    if (paymentConfirmed || isOrderConfirmed) return;
+    if (
+      (isL2Requirement && !isL2Approved) ||
+      (showStepUpForm && !isL1Approved)
+    ) {
+      if (activeStep > 2) {
+        console.log("[ACCORDION] Action required on Step 2 (KYC pending). Routing to Step 2.");
+        setActiveStep(2);
+      }
+    }
+  }, [isL2Requirement, isL2Approved, showStepUpForm, isL1Approved, activeStep, paymentConfirmed, isOrderConfirmed]);
 
   // If KYC is already completed or verified, automatically skip or advance to Step 3 (unless on payment execution/completion or error)
   useEffect(() => {
@@ -947,7 +1027,9 @@ export function PortalPayAccordionCheckoutV2({
       ].includes(headlessStep as string) ||
       paymentConfirmed ||
       propError ||
-      localError
+      localError ||
+      (isL2Requirement && !isL2Approved) ||
+      (showStepUpForm && !isL1Approved)
     ) {
       return;
     }
@@ -956,7 +1038,7 @@ export function PortalPayAccordionCheckoutV2({
       setIsSubmittingIdentity(false);
       setActiveStep((prev) => (prev <= 2 ? 3 : prev));
     }
-  }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed, propError, localError]);
+  }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed, propError, localError, isL2Requirement, isL2Approved, showStepUpForm, isL1Approved]);
 
   // Step 3 idle recovery: if activeStep is 3, paymentElement is null, and headlessStep is idle, auto-trigger onHeadlessSubmitEmailPhone
   useEffect(() => {
@@ -1024,66 +1106,6 @@ export function PortalPayAccordionCheckoutV2({
       setIsSubmittingContact(false);
     }
   };
-
-  // Canonical Stripe Onramp KYC tier detection matching WizardView:
-  const l0Verified = (kycTiers || []).some(
-    (t: any) => t.tier === "l0" && t.verification_status === "verified",
-  );
-  const l1Verified = (kycTiers || []).some(
-    (t: any) => t.tier === "l1" && t.verification_status === "verified",
-  );
-  const l1NotAvailable = (kycTiers || []).some(
-    (t: any) => t.tier === "l1" && t.verification_status === "not_available",
-  );
-  const l2Verified = (kycTiers || []).some(
-    (t: any) => t.tier === "l2" && t.verification_status === "verified",
-  );
-
-  // L1 step-up form (SSN + DOB required to advance from L0 → L1)
-  const showStepUpForm =
-    effectiveTier === "l1" ||
-    effectiveStatus === "step_up" ||
-    (kycTierRequired as string) === "l1" ||
-    (kycLevel === "L0" && !l1Verified);
-
-  // Document verification button: user is at L1, or REJECTED but L1 was already verified or not_available
-  const showVerifyDocs =
-    effectiveTier === "l2" ||
-    effectiveStatus === "doc_verify" ||
-    (kycTierRequired as string) === "l2" ||
-    headlessStep === "verifying_identity" ||
-    kycLevel === "L1" ||
-    (kycLevel === "REJECTED" && l1Verified) ||
-    (kycLevel === "REJECTED" && l1NotAvailable);
-
-  const isL2Requirement = showVerifyDocs || effectiveTier === "l2" || (kycTierRequired as string) === "l2" || headlessStep === "verifying_identity";
-  const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || (kycTierRequired as string) === "l1";
-
-  const isL2Approved =
-    l2Verified ||
-    docVerificationSuccess ||
-    kycLevel === "L2" ||
-    (effectiveStatus === "verified" && !isL2Requirement);
-
-  const isL1Approved =
-    l1Verified ||
-    l1NotAvailable ||
-    isL2Approved ||
-    (effectiveStatus === "verified" && !showStepUpForm);
-
-  const isL0Approved =
-    l0Verified ||
-    isL1Approved ||
-    isL2Approved ||
-    isAllKycCompleted ||
-    effectiveStatus === "verified";
-
-  // Full L0 form (name, address): initial users, or when manual address editing is active in step-up
-  const showFullForm =
-    !showStepUpForm ||
-    manualEditAddress ||
-    kycLevel === "REQUIRES_KYC" ||
-    (kycLevel === "REJECTED" && !l1Verified && !l1NotAvailable);
 
   // Step 2 Document Verification Trigger
   const handleDocumentVerificationClick = async () => {
@@ -1281,8 +1303,13 @@ export function PortalPayAccordionCheckoutV2({
         }
       }
 
-      if (isL2Requirement && !isL2Approved && onVerifyDocuments) {
-        await onVerifyDocuments();
+      if (isL2Requirement && !isL2Approved) {
+        console.log("[ACCORDION] L2 Document verification required after L1 submission. Remaining on Step 2.");
+        if (onVerifyDocuments) {
+          await onVerifyDocuments();
+        }
+        setActiveStep(2);
+        return;
       }
 
       if (!propError && headlessStep !== "error") {
