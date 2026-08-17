@@ -565,11 +565,11 @@ export function PortalPayAccordionCheckoutV2({
 }: PortalPayAccordionCheckoutV2Props) {
   const primaryColor = theme?.primaryColor || "#635BFF";
 
-  // Active accordion step: 1 = Contact & Account, 2 = Identity (L0/L1/L2), 3 = Payment, 4 = Order Processing
   const [activeStep, setActiveStep] = useState<number>(1);
   const [localError, setLocalError] = useState<string | null>(null);
   const [isRetryingPayment, setIsRetryingPayment] = useState<boolean>(false);
   const [manualEditAddress, setManualEditAddress] = useState<boolean>(false);
+  const [showPaymentTimeoutButton, setShowPaymentTimeoutButton] = useState<boolean>(false);
 
   // Format and translate raw errors into clear customer guidance
   const formatErrorMessage = (err?: string | null): string | null => {
@@ -971,7 +971,7 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed, propError, localError]);
 
-  // Step 3 Payment Element Recovery: if activeStep is 3, paymentElement is null, and not actively processing payment, auto-trigger onHeadlessSubmitEmailPhone to mount Stripe Payment Element
+  // Step 3 Payment Element Recovery: if activeStep is 3, paymentElement is null, and not actively processing payment, auto-trigger onHeadlessSubmitEmailPhone with force retry to mount Stripe Payment Element
   useEffect(() => {
     if (
       activeStep === 3 &&
@@ -989,13 +989,25 @@ export function PortalPayAccordionCheckoutV2({
     ) {
       const timer = setTimeout(() => {
         if (activeStep === 3 && !paymentElement) {
-          console.log("[ACCORDION] Auto-triggering onHeadlessSubmitEmailPhone to mount Stripe Payment Element for Step 3 (headlessStep:", headlessStep, ")...");
-          onHeadlessSubmitEmailPhone(email, phone);
+          console.log("[ACCORDION] Auto-triggering onHeadlessSubmitEmailPhone with force retry to mount Stripe Payment Element for Step 3 (headlessStep:", headlessStep, ")...");
+          (onHeadlessSubmitEmailPhone as any)(email, phone, undefined, undefined, true);
         }
       }, 400);
       return () => clearTimeout(timer);
     }
   }, [activeStep, paymentElement, isSubmittingPayment, headlessStep, email, phone, onHeadlessSubmitEmailPhone]);
+
+  // Step 3 Loading Timeout Watcher: Show actionable retry button if payment element takes > 3.5s
+  useEffect(() => {
+    if (activeStep === 3 && !paymentElement) {
+      const timer = setTimeout(() => {
+        setShowPaymentTimeoutButton(true);
+      }, 3500);
+      return () => clearTimeout(timer);
+    } else {
+      setShowPaymentTimeoutButton(false);
+    }
+  }, [activeStep, paymentElement]);
 
   // Step 3 DOM Synchronization: Ensure spent Stripe iframes are completely wiped from the DOM when paymentElement is null or updated
   useEffect(() => {
@@ -2484,11 +2496,30 @@ export function PortalPayAccordionCheckoutV2({
               </div>
             ) : (
               /* Live Production Loading State */
-              <div className="p-8 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
+              <div className="p-8 flex flex-col items-center justify-center space-y-3.5 text-center animate-in fade-in">
                 <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
                 <p className={`text-xs font-medium ${isLightText ? "text-white/70" : "text-black/70"}`}>
                   Loading secure Stripe payment form...
                 </p>
+                {showPaymentTimeoutButton && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setIsRetryingPayment(true);
+                      setLocalError(null);
+                      if (onHeadlessSubmitEmailPhone) {
+                        try {
+                          await (onHeadlessSubmitEmailPhone as any)(email, phone, undefined, undefined, true);
+                        } catch (e) {}
+                      }
+                      setTimeout(() => setIsRetryingPayment(false), 3000);
+                    }}
+                    className="mt-2 px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 active:scale-95 transition cursor-pointer flex items-center gap-2 shadow-md animate-in fade-in"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Reload Payment Form</span>
+                  </button>
+                )}
               </div>
             )}
         </div>
