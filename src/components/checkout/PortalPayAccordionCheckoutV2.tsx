@@ -979,7 +979,6 @@ export function PortalPayAccordionCheckoutV2({
       !isSubmittingPayment &&
       email &&
       onHeadlessSubmitEmailPhone &&
-      headlessStep !== "collecting_payment" &&
       headlessStep !== "creating_session" &&
       headlessStep !== "confirming_fees" &&
       headlessStep !== "checking_out" &&
@@ -992,7 +991,7 @@ export function PortalPayAccordionCheckoutV2({
           console.log("[ACCORDION] Auto-triggering onHeadlessSubmitEmailPhone with force retry to mount Stripe Payment Element for Step 3 (headlessStep:", headlessStep, ")...");
           (onHeadlessSubmitEmailPhone as any)(email, phone, undefined, undefined, true);
         }
-      }, 400);
+      }, 600);
       return () => clearTimeout(timer);
     }
   }, [activeStep, paymentElement, isSubmittingPayment, headlessStep, email, phone, onHeadlessSubmitEmailPhone]);
