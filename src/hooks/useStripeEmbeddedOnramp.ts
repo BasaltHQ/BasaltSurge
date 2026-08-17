@@ -2639,46 +2639,47 @@ export function useStripeEmbeddedOnramp({
       setKycTierRequired(submittedTier);
       kycOccurredRef.current = false;
 
-      if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
-        if (paymentTokenRef.current) {
-          runCheckoutLoop(
-            activeEmailRef.current,
-            customerIdRef.current,
-            paymentTokenRef.current,
-            buyerWalletRef.current,
-            detectedCardFunding
-          ).catch((err) => {
-            const isCardDecline = checkIfCardDecline(err);
+      if (paymentTokenRef.current && activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
+        runCheckoutLoop(
+          activeEmailRef.current,
+          customerIdRef.current,
+          paymentTokenRef.current,
+          buyerWalletRef.current,
+          detectedCardFunding
+        ).catch((err) => {
+          const isCardDecline = checkIfCardDecline(err);
 
-            if (isCardDecline) {
-              console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval, returning to payment selection...");
-              setError(err?.message || "Your card was declined. Please try another card.");
-              paymentTokenRef.current = null;
-              sessionIdRef.current = null;
-              setSessionId(null);
-              if (typeof window !== "undefined") {
-                sessionStorage.removeItem(sessionKey);
-              }
-              if (onrampRef.current) {
-                try { onrampRef.current.destroy(); } catch {}
-                onrampRef.current = null;
-              }
-              isCoordinatorAuthedRef.current = false;
-              setDetectedCardFunding(null);
-              setDetectedCardBrand(null);
-              setDetectedCardLast4(null);
-              onCardDetected?.(null);
-              isRunningRef.current = false;
-              setTimeout(() => {
-                startOnrampRef.current?.(activeEmailRef.current || undefined);
-              }, 0);
-            } else {
-              handleError(err?.message || "Checkout failed after KYC submission", err);
+          if (isCardDecline) {
+            console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval, returning to payment selection...");
+            setError(err?.message || "Your card was declined. Please try another card.");
+            paymentTokenRef.current = null;
+            sessionIdRef.current = null;
+            setSessionId(null);
+            if (typeof window !== "undefined") {
+              sessionStorage.removeItem(sessionKey);
             }
-          });
-        } else {
-          isRunningRef.current = false;
-          startOnrampRef.current?.(activeEmailRef.current || undefined);
+            if (onrampRef.current) {
+              try { onrampRef.current.destroy(); } catch {}
+              onrampRef.current = null;
+            }
+            isCoordinatorAuthedRef.current = false;
+            setDetectedCardFunding(null);
+            setDetectedCardBrand(null);
+            setDetectedCardLast4(null);
+            onCardDetected?.(null);
+            isRunningRef.current = false;
+            setTimeout(() => {
+              startOnrampRef.current?.(activeEmailRef.current || undefined);
+            }, 0);
+          } else {
+            handleError(err?.message || "Checkout failed after KYC submission", err);
+          }
+        });
+      } else {
+        isRunningRef.current = false;
+        const emailToStart = activeEmailRef.current || (email || "").trim().toLowerCase();
+        if (emailToStart) {
+          startOnrampRef.current?.(emailToStart);
         }
       }
     } catch (err: any) {
@@ -2847,12 +2848,13 @@ export function useStripeEmbeddedOnramp({
       return;
     }
     isRunningRef.current = true;
-    setError(null);
-    if (isForceRetry && onrampRef.current) {
-      try { onrampRef.current.destroy(); } catch {}
-      onrampRef.current = null;
-      isCoordinatorAuthedRef.current = false;
-      setPaymentElement(null);
+    if (isForceRetry) {
+      isRunningRef.current = false;
+      if (!isCoordinatorAuthedRef.current && onrampRef.current) {
+        try { onrampRef.current.destroy(); } catch {}
+        onrampRef.current = null;
+        setPaymentElement(null);
+      }
     }
     console.log("[EMBEDDED ONRAMP] startOnramp triggered. isEcommerceMode prop:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
 
@@ -3574,9 +3576,11 @@ export function useStripeEmbeddedOnramp({
           ).then((element: HTMLElement) => {
             if (mountedRef.current) {
               setPaymentElement(element);
+              isRunningRef.current = false;
             }
           }).catch((err) => {
             paymentRejectRef.current = null;
+            isRunningRef.current = false;
             reject(err);
           });
         });
