@@ -62,6 +62,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   simulatedPath?: "normal" | "skip_kyc" | "step_up" | "doc_verify" | string;
   isAllKycCompleted?: boolean;
   onHeadlessSubmitEmailPhone?: (email: string, phone: string, country?: string, fullName?: string) => Promise<void>;
+  onSubmitPhone?: (phoneNumber: string) => void | Promise<void>;
   onSubmitKycInfo?: (info: any) => Promise<void>;
   onVerifyDocuments?: () => Promise<void | boolean>;
   onSelectPaymentMethod?: (type: string) => Promise<void>;
@@ -549,6 +550,7 @@ export function PortalPayAccordionCheckoutV2({
   simulatedPath = "normal",
   isAllKycCompleted = false,
   onHeadlessSubmitEmailPhone,
+  onSubmitPhone,
   onSubmitKycInfo,
   onVerifyDocuments,
   onSelectPaymentMethod,
@@ -756,26 +758,7 @@ export function PortalPayAccordionCheckoutV2({
     if (authElement) {
       setIsSubmittingContact(false);
     }
-    const container = authContainerRef.current;
-    if (!container) return;
-    if (authElement && typeof authElement === "object" && "nodeType" in authElement) {
-      if (!container.contains(authElement as Node)) {
-        container.innerHTML = "";
-        container.appendChild(authElement as HTMLElement);
-      }
-    }
-  }, [authElement, activeStep]);
-
-  // Clean mounting of paymentElement / identity verification element into container
-  useEffect(() => {
-    const isVerifying = headlessStep === "verifying_identity";
-    const container = isVerifying ? identityContainerRef.current : paymentContainerRef.current;
-    if (!container) return;
-    if (paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
-      container.innerHTML = "";
-      container.appendChild(paymentElement as HTMLElement);
-    }
-  }, [paymentElement, activeStep, headlessStep]);
+  }, [authElement]);
 
   // Handle Step 4 Fulfillment Progression (Simulation preview only — strictly disabled in live production mode)
   useEffect(() => {
@@ -901,10 +884,15 @@ export function PortalPayAccordionCheckoutV2({
       headlessStep === "verifying_identity"
     ) {
       setIsSubmittingContact(false);
-      if (headlessStep === "verifying_identity") {
-        setActiveStep((prev) => (prev > 2 ? prev : 2));
+      setIsSubmittingPayment(false);
+      if (headlessStep === "verifying_identity" || headlessStep === "collecting_kyc") {
+        setActiveStep(2);
       } else if (!isAllKycCompleted && effectiveStatus !== "verified") {
-        setActiveStep((prev) => (prev > 2 ? prev : 2));
+        setActiveStep(2);
+      } else if (isL2Requirement && !isL2Approved) {
+        setActiveStep(2);
+      } else if (showStepUpForm && !isL1Approved) {
+        setActiveStep(2);
       } else {
         setActiveStep((prev) => (prev > 3 ? prev : 3));
       }
@@ -977,30 +965,35 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [activeStep, paymentElement, headlessStep, email, phone, onHeadlessSubmitEmailPhone]);
 
-  // Step 3 DOM Synchronization: Ensure spent Stripe iframes are completely wiped from the DOM when paymentElement is null or updated
-  useEffect(() => {
-    if (paymentContainerRef.current) {
-      if (paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
-        if (!paymentContainerRef.current.contains(paymentElement as Node)) {
-          paymentContainerRef.current.innerHTML = "";
-          paymentContainerRef.current.appendChild(paymentElement as HTMLElement);
-        }
-      } else if (!paymentElement) {
-        paymentContainerRef.current.innerHTML = "";
-      }
-    }
-  }, [paymentElement]);
-
   // Step 1 Submit (Account & Contact)
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
+
+    if (headlessStep === "collecting_phone") {
+      setIsSubmittingContact(true);
+      setLocalError(null);
+      try {
+        if (onSubmitPhone) {
+          await onSubmitPhone(phone);
+        } else if (onHeadlessSubmitEmailPhone) {
+          await onHeadlessSubmitEmailPhone(email, phone, country, `${firstName} ${lastName}`.trim());
+        }
+      } catch (err: any) {
+        console.error("Phone submission error:", err);
+        setLocalError(err?.message || "Failed to submit phone number.");
+      } finally {
+        setIsSubmittingContact(false);
+      }
+      return;
+    }
+
     setIsSubmittingContact(true);
     setLocalError(null);
     try {
       if (onHeadlessSubmitEmailPhone) {
         // Trigger onramp session without blocking UI spinner indefinitely
-        const promise = onHeadlessSubmitEmailPhone(email, phone, country, `${firstName} ${lastName}`.trim());
+        const promise = onHeadlessSubmitEmailPhone(email, phone || "", country, `${firstName} ${lastName}`.trim());
         if (promise && typeof (promise as any).catch === "function") {
           (promise as any).catch((err: any) => {
             console.error("Contact submission error:", err);
@@ -1042,12 +1035,48 @@ export function PortalPayAccordionCheckoutV2({
   const l1NotAvailable = (kycTiers || []).some(
     (t: any) => t.tier === "l1" && t.verification_status === "not_available",
   );
+  const l2Verified = (kycTiers || []).some(
+    (t: any) => t.tier === "l2" && t.verification_status === "verified",
+  );
 
   // L1 step-up form (SSN + DOB required to advance from L0 → L1)
   const showStepUpForm =
     effectiveTier === "l1" ||
     effectiveStatus === "step_up" ||
-    kycLevel === "L0";
+    (kycTierRequired as string) === "l1" ||
+    (kycLevel === "L0" && !l1Verified);
+
+  // Document verification button: user is at L1, or REJECTED but L1 was already verified or not_available
+  const showVerifyDocs =
+    effectiveTier === "l2" ||
+    effectiveStatus === "doc_verify" ||
+    (kycTierRequired as string) === "l2" ||
+    headlessStep === "verifying_identity" ||
+    kycLevel === "L1" ||
+    (kycLevel === "REJECTED" && l1Verified) ||
+    (kycLevel === "REJECTED" && l1NotAvailable);
+
+  const isL2Requirement = showVerifyDocs || effectiveTier === "l2" || (kycTierRequired as string) === "l2" || headlessStep === "verifying_identity";
+  const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || (kycTierRequired as string) === "l1";
+
+  const isL2Approved =
+    l2Verified ||
+    docVerificationSuccess ||
+    kycLevel === "L2" ||
+    (effectiveStatus === "verified" && !isL2Requirement);
+
+  const isL1Approved =
+    l1Verified ||
+    l1NotAvailable ||
+    isL2Approved ||
+    (effectiveStatus === "verified" && !showStepUpForm);
+
+  const isL0Approved =
+    l0Verified ||
+    isL1Approved ||
+    isL2Approved ||
+    isAllKycCompleted ||
+    effectiveStatus === "verified";
 
   // Full L0 form (name, address): initial users, or when manual address editing is active in step-up
   const showFullForm =
@@ -1055,30 +1084,6 @@ export function PortalPayAccordionCheckoutV2({
     manualEditAddress ||
     kycLevel === "REQUIRES_KYC" ||
     (kycLevel === "REJECTED" && !l1Verified && !l1NotAvailable);
-
-  // Document verification button: user is at L1, or REJECTED but L1 was already verified or not_available
-  const showVerifyDocs =
-    effectiveTier === "l2" ||
-    effectiveStatus === "doc_verify" ||
-    kycLevel === "L1" ||
-    (kycLevel === "REJECTED" && l1Verified) ||
-    (kycLevel === "REJECTED" && l1NotAvailable);
-
-  const isL2Requirement = showVerifyDocs || effectiveTier === "l2" || (kycTierRequired as string) === "l2";
-  const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || (kycTierRequired as string) === "l1";
-
-  const isL2Approved =
-    isAllKycCompleted ||
-    docVerificationSuccess ||
-    kycLevel === "L2" ||
-    effectiveStatus === "verified";
-
-  const isL0Approved =
-    l0Verified ||
-    l1Verified ||
-    isL2Approved ||
-    isAllKycCompleted ||
-    effectiveStatus === "verified";
 
   // Step 2 Document Verification Trigger
   const handleDocumentVerificationClick = async () => {
@@ -1482,25 +1487,9 @@ export function PortalPayAccordionCheckoutV2({
               />
             </div>
 
-            <div className="grid grid-cols-12 gap-2">
-              <div className="col-span-5">
-                <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                  <Phone className="w-3 h-3" />
-                  <span>Mobile Phone</span>
-                </label>
-                <input
-                  type="tel"
-                  placeholder="+1 (555) 000-0000"
-                  value={phone}
-                  onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
-                  className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
-                    isLightText
-                      ? "bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-amber-400/50"
-                      : "bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-amber-400/50"
-                  }`}
-                />
-              </div>
-              <div className="col-span-7">
+            {/* Country Selector (default compact view) */}
+            {headlessStep !== "collecting_phone" && (
+              <div>
                 <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                   Country
                 </label>
@@ -1524,7 +1513,61 @@ export function PortalPayAccordionCheckoutV2({
                   <option value="AU">Australia (AU)</option>
                 </select>
               </div>
-            </div>
+            )}
+
+            {/* Dynamic Phone Registration Input — ONLY shown when Stripe Link explicitly requires a new account phone number (matching V1) */}
+            {headlessStep === "collecting_phone" && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="flex items-start gap-2 text-amber-300 text-xs font-bold">
+                  <Phone className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div>Stripe Verification Required</div>
+                    <p className="text-[11px] font-normal text-amber-300/80 leading-relaxed mt-0.5">
+                      Enter your mobile phone number to register your Link account securely.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 gap-2">
+                  <div className="col-span-7">
+                    <input
+                      type="tel"
+                      required
+                      placeholder="+1 (555) 000-0000"
+                      value={phone}
+                      onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
+                      autoFocus
+                      className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
+                        isLightText
+                          ? "bg-white/10 border border-amber-400/50 text-white placeholder-white/50 focus:ring-1 focus:ring-amber-400"
+                          : "bg-black/10 border border-amber-500/50 text-black placeholder-black/50 focus:ring-1 focus:ring-amber-500"
+                      }`}
+                    />
+                  </div>
+                  <div className="col-span-5">
+                    <select
+                      value={country}
+                      onChange={(e) => setCountry(e.target.value)}
+                      className={`w-full h-10 px-2 rounded-xl focus:outline-none transition-all text-xs font-medium ${
+                        isLightText
+                          ? "bg-neutral-900 border border-white/10 text-white focus:border-amber-400/50"
+                          : "bg-white border border-black/10 text-black focus:border-amber-400/50"
+                      }`}
+                    >
+                      <option value="US">US (+1)</option>
+                      <option value="GB">GB (+44)</option>
+                      <option value="DE">DE (+49)</option>
+                      <option value="FR">FR (+33)</option>
+                      <option value="ES">ES (+34)</option>
+                      <option value="IT">IT (+39)</option>
+                      <option value="NL">NL (+31)</option>
+                      <option value="IE">IE (+353)</option>
+                      <option value="AU">AU (+61)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Inline OTP Element if triggered by Stripe Link and in authentication phase */}
             {authElement && (
@@ -1571,9 +1614,10 @@ export function PortalPayAccordionCheckoutV2({
               disabled={
                 isSubmittingContact ||
                 !email ||
+                (headlessStep === "collecting_phone" && (!phone || phone.trim().length < 7)) ||
                 Boolean(
                   authElement &&
-                  (["authenticating", "collecting_phone"].includes(headlessStep as string) ||
+                  (["authenticating"].includes(headlessStep as string) ||
                    (activeStep === 1 && effectiveStatus !== "verified" && !isAllKycCompleted))
                 )
               }
@@ -1583,16 +1627,21 @@ export function PortalPayAccordionCheckoutV2({
               {isSubmittingContact ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Verifying Contact Information...</span>
+                  <span>{headlessStep === "collecting_phone" ? "Registering Phone Number..." : "Verifying Contact Information..."}</span>
                 </>
-              ) : authElement && (["authenticating", "collecting_phone"].includes(headlessStep as string) || (activeStep === 1 && effectiveStatus !== "verified" && !isAllKycCompleted)) ? (
+              ) : authElement && (["authenticating"].includes(headlessStep as string) || (activeStep === 1 && effectiveStatus !== "verified" && !isAllKycCompleted)) ? (
                 <>
                   <Lock className="w-3.5 h-3.5" />
                   <span>Enter 6-Digit Code Above</span>
                 </>
+              ) : headlessStep === "collecting_phone" ? (
+                <>
+                  <span>Confirm Phone & Continue</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </>
               ) : (
                 <>
-                  <span>Continue to Identity Verification</span>
+                  <span>Continue</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </>
               )}
@@ -1642,11 +1691,15 @@ export function PortalPayAccordionCheckoutV2({
                 <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
                   2. Identity & Residential Verification
                 </h4>
-                {(isL0Approved || isL2Approved || isAllKycCompleted || effectiveStatus === "verified") && (
+                {((isL0Approved && !showStepUpForm && (!isL2Requirement || isL2Approved)) || isL2Approved) ? (
                   <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
                     <Check className="w-2.5 h-2.5 stroke-[3]" /> Verified
                   </span>
-                )}
+                ) : (showStepUpForm || isL2Requirement) ? (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 inline-flex items-center gap-1">
+                    <Shield className="w-2.5 h-2.5" /> Action Required
+                  </span>
+                ) : null}
               </div>
 
               {(activeStep > 2 || effectiveStatus === "verified" || isAllKycCompleted || isL0Approved) && (
@@ -2326,151 +2379,45 @@ export function PortalPayAccordionCheckoutV2({
               </div>
             )}
 
-            {/* Embedded Live Stripe Payment Element */}
-            {paymentElement ? (
-              <div className="space-y-2">
-                <div className="p-3 rounded-xl bg-white/5 border border-white/10 my-2">
-                  <div
-                    ref={(el) => {
-                      (paymentContainerRef as any).current = el;
-                      if (el && paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
-                        if (!el.contains(paymentElement as Node)) {
-                          el.innerHTML = "";
-                          el.appendChild(paymentElement as HTMLElement);
-                        }
+            {/* Embedded Live Stripe Payment Element Container (Persistent DOM mounting matching V1) */}
+            <div className="space-y-2">
+              <div
+                className={`p-3 rounded-xl bg-white/5 border border-white/10 my-2 ${paymentElement ? "block" : "hidden"}`}
+              >
+                <div
+                  ref={(el) => {
+                    (paymentContainerRef as any).current = el;
+                    if (el && paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
+                      if (!el.contains(paymentElement as Node)) {
+                        el.innerHTML = "";
+                        el.appendChild(paymentElement as HTMLElement);
                       }
-                    }}
-                  >
-                    {typeof paymentElement !== "object" || !("nodeType" in (paymentElement || {}))
-                      ? (paymentElement as React.ReactNode)
-                      : null}
-                  </div>
+                    }
+                  }}
+                >
+                  {typeof paymentElement !== "object" || !("nodeType" in (paymentElement || {}))
+                    ? (paymentElement as React.ReactNode)
+                    : null}
                 </div>
+              </div>
 
-                {/* Subtitle explaining Stripe auto-progression on click */}
+              {paymentElement && (
                 <div className="flex items-center justify-center gap-1.5 py-1 text-[11px] font-semibold text-amber-400/90 text-center animate-in fade-in">
                   <Lock className="w-3 h-3 text-emerald-400 shrink-0" />
                   <span>Please confirm your payment method in the secure form above to complete checkout.</span>
                 </div>
-              </div>
-            ) : isSimulationMode ? (
-              /* Fallback Simulation UI for Sample Previews ONLY */
-              <div className="space-y-3 pt-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPaymentType("applePay")}
-                    className={`h-10 rounded-xl font-bold text-xs border transition-all flex items-center justify-center gap-1.5 ${
-                      selectedPaymentType === "applePay"
-                        ? "bg-amber-500/20 border-amber-400 text-amber-300"
-                        : "bg-white/5 border-white/10 text-white/70"
-                    }`}
-                  >
-                    <span>Apple Pay</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPaymentType("googlePay")}
-                    className={`h-10 rounded-xl font-bold text-xs border transition-all flex items-center justify-center gap-1.5 ${
-                      selectedPaymentType === "googlePay"
-                        ? "bg-amber-500/20 border-amber-400 text-amber-300"
-                        : "bg-white/5 border-white/10 text-white/70"
-                    }`}
-                  >
-                    <span>Google Pay</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPaymentType("card")}
-                    className={`h-10 rounded-xl font-bold text-xs border transition-all flex items-center justify-center gap-1.5 ${
-                      selectedPaymentType === "card"
-                        ? "bg-amber-500/20 border-amber-400 text-amber-300"
-                        : "bg-white/5 border-white/10 text-white/70"
-                    }`}
-                  >
-                    <CreditCard className="w-3.5 h-3.5" />
-                    <span>Credit / Debit Card</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPaymentType("bank")}
-                    className={`h-10 rounded-xl font-bold text-xs border transition-all flex items-center justify-center gap-1.5 ${
-                      selectedPaymentType === "bank"
-                        ? "bg-amber-500/20 border-amber-400 text-amber-300"
-                        : "bg-white/5 border-white/10 text-white/70"
-                    }`}
-                  >
-                    <Building2 className="w-3.5 h-3.5" />
-                    <span>US Bank Account (ACH)</span>
-                  </button>
-                </div>
+              )}
 
-                <button
-                  type="button"
-                  onClick={handleSimulatedPaymentSubmit}
-                  disabled={isSubmittingPayment}
-                  className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-xl mt-3"
-                  style={{ backgroundColor: primaryColor, color: "#fff" }}
-                >
-                  {isSubmittingPayment ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Authorizing Payment...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Lock className="w-3.5 h-3.5" />
-                      <span>Authorize Payment (${amountUsd.toFixed(2)} USD)</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </>
-                  )}
-                </button>
-              </div>
-            ) : isRetryingPayment ? (
-              /* Live Re-initializing Loading State */
-              <div className="p-8 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
-                <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
-                <p className={`text-xs font-medium ${isLightText ? "text-white/70" : "text-black/70"}`}>
-                  Re-initializing secure payment form...
-                </p>
-              </div>
-            ) : activeError ? (
-              /* Live Error & Actionable Retry State */
-              <div className="p-6 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
-                <button
-                  type="button"
-                  disabled={isRetryingPayment}
-                  onClick={async () => {
-                    setIsRetryingPayment(true);
-                    setLocalError(null);
-                    if (onHeadlessSubmitEmailPhone) {
-                      try {
-                        await (onHeadlessSubmitEmailPhone as any)(email, phone, undefined, true);
-                      } catch (e) {}
-                    }
-                    setTimeout(() => setIsRetryingPayment(false), 3000);
-                  }}
-                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 active:scale-95 transition cursor-pointer flex items-center gap-2 shadow-lg"
-                >
-                  {isRetryingPayment ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Loading Payment Form...</span>
-                    </>
-                  ) : (
-                    <span>Retry Payment Selection</span>
-                  )}
-                </button>
-              </div>
-            ) : (
-              /* Live Production Loading State */
-              <div className="p-8 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
-                <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
-                <p className={`text-xs font-medium ${isLightText ? "text-white/70" : "text-black/70"}`}>
-                  Loading secure Stripe payment form...
-                </p>
-              </div>
-            )}
+              {/* Live Production Loading State */}
+              {!paymentElement && !isSimulationMode && (
+                <div className="p-8 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
+                  <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
+                  <p className={`text-xs font-medium ${isLightText ? "text-white/70" : "text-black/70"}`}>
+                    Loading secure Stripe payment form...
+                  </p>
+                </div>
+              )}
+            </div>
         </div>
       </div>
 
