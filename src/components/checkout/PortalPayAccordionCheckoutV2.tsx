@@ -891,7 +891,8 @@ export function PortalPayAccordionCheckoutV2({
       headlessStep === "collecting_phone"
     ) {
       setIsSubmittingContact(false);
-      if (authElement || headlessStep === "collecting_phone" || headlessStep === "authenticating") {
+      // Only set activeStep to 1 if we are still at initial step (activeStep <= 1). Do NOT pull back from Step 2, 3, or 4!
+      if (activeStep <= 1 && (authElement || headlessStep === "collecting_phone" || headlessStep === "authenticating")) {
         setActiveStep(1);
       }
     } else if (
@@ -902,11 +903,11 @@ export function PortalPayAccordionCheckoutV2({
     ) {
       setIsSubmittingContact(false);
       if (headlessStep === "verifying_identity") {
-        setActiveStep(2);
+        setActiveStep((prev) => (prev > 2 ? prev : 2));
       } else if (!isAllKycCompleted && effectiveStatus !== "verified") {
-        setActiveStep(2);
+        setActiveStep((prev) => (prev > 2 ? prev : 2));
       } else {
-        setActiveStep(3);
+        setActiveStep((prev) => (prev > 3 ? prev : 3));
       }
     } else if (
       headlessStep === "creating_wallet" ||
@@ -916,7 +917,7 @@ export function PortalPayAccordionCheckoutV2({
     ) {
       setIsSubmittingContact(false);
       setIsSubmittingIdentity(false);
-      setActiveStep(3);
+      setActiveStep((prev) => (prev > 3 ? prev : 3));
     } else if (
       headlessStep === "creating_session" ||
       headlessStep === "confirming_fees" ||
@@ -939,7 +940,7 @@ export function PortalPayAccordionCheckoutV2({
       setActiveStep(4);
       setFulfillmentStage("complete");
     }
-  }, [headlessStep, authElement, isAllKycCompleted, effectiveStatus, paymentConfirmed, propError, localError, detectedCardFunding]);
+  }, [headlessStep, authElement, isAllKycCompleted, effectiveStatus, paymentConfirmed, propError, localError, detectedCardFunding, activeStep]);
 
   // If KYC is already completed or verified, automatically skip or advance to Step 3 (unless on payment execution/completion or error)
   useEffect(() => {
@@ -1526,8 +1527,11 @@ export function PortalPayAccordionCheckoutV2({
               </div>
             </div>
 
-            {/* Inline OTP Element if triggered by Stripe Link */}
+            {/* Inline OTP Element if triggered by Stripe Link and in authentication phase */}
             {authElement && (
+              ["authenticating", "collecting_phone", "checking_link"].includes(headlessStep as string) ||
+              (activeStep === 1 && effectiveStatus !== "verified" && !isAllKycCompleted)
+            ) && (
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 my-2">
                 <p className="text-[11px] font-bold text-amber-400 mb-2 flex items-center gap-1.5">
                   <Lock className="w-3.5 h-3.5" /> Enter 6-Digit Link Security Code
@@ -1565,7 +1569,15 @@ export function PortalPayAccordionCheckoutV2({
 
             <button
               type="submit"
-              disabled={isSubmittingContact || !email || Boolean(authElement)}
+              disabled={
+                isSubmittingContact ||
+                !email ||
+                Boolean(
+                  authElement &&
+                  (["authenticating", "collecting_phone"].includes(headlessStep as string) ||
+                   (activeStep === 1 && effectiveStatus !== "verified" && !isAllKycCompleted))
+                )
+              }
               className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg"
               style={{ backgroundColor: primaryColor, color: "#fff" }}
             >
@@ -1574,7 +1586,7 @@ export function PortalPayAccordionCheckoutV2({
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   <span>Verifying Contact Information...</span>
                 </>
-              ) : authElement ? (
+              ) : authElement && (["authenticating", "collecting_phone"].includes(headlessStep as string) || (activeStep === 1 && effectiveStatus !== "verified" && !isAllKycCompleted)) ? (
                 <>
                   <Lock className="w-3.5 h-3.5" />
                   <span>Enter 6-Digit Code Above</span>
