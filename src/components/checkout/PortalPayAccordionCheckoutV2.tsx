@@ -971,12 +971,31 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed, propError, localError]);
 
-  // Step 3 idle recovery: if activeStep is 3, paymentElement is null, and headlessStep is idle, auto-trigger onHeadlessSubmitEmailPhone
+  // Step 3 Payment Element Recovery: if activeStep is 3, paymentElement is null, and not actively processing payment, auto-trigger onHeadlessSubmitEmailPhone to mount Stripe Payment Element
   useEffect(() => {
-    if (activeStep === 3 && !paymentElement && headlessStep === "idle" && email && onHeadlessSubmitEmailPhone) {
-      onHeadlessSubmitEmailPhone(email, phone);
+    if (
+      activeStep === 3 &&
+      !paymentElement &&
+      !isSubmittingPayment &&
+      email &&
+      onHeadlessSubmitEmailPhone &&
+      headlessStep !== "collecting_payment" &&
+      headlessStep !== "creating_session" &&
+      headlessStep !== "confirming_fees" &&
+      headlessStep !== "checking_out" &&
+      headlessStep !== "transferring" &&
+      headlessStep !== "awaiting_funds" &&
+      headlessStep !== "completed"
+    ) {
+      const timer = setTimeout(() => {
+        if (activeStep === 3 && !paymentElement) {
+          console.log("[ACCORDION] Auto-triggering onHeadlessSubmitEmailPhone to mount Stripe Payment Element for Step 3 (headlessStep:", headlessStep, ")...");
+          onHeadlessSubmitEmailPhone(email, phone);
+        }
+      }, 400);
+      return () => clearTimeout(timer);
     }
-  }, [activeStep, paymentElement, headlessStep, email, phone, onHeadlessSubmitEmailPhone]);
+  }, [activeStep, paymentElement, isSubmittingPayment, headlessStep, email, phone, onHeadlessSubmitEmailPhone]);
 
   // Step 3 DOM Synchronization: Ensure spent Stripe iframes are completely wiped from the DOM when paymentElement is null or updated
   useEffect(() => {
