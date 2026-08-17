@@ -754,11 +754,16 @@ export function PortalPayAccordionCheckoutV2({
 
   // Clean mounting of authElement into container
   useEffect(() => {
+    if (authElement) {
+      setIsSubmittingContact(false);
+    }
     const container = authContainerRef.current;
     if (!container) return;
     if (authElement && typeof authElement === "object" && "nodeType" in authElement) {
-      container.innerHTML = "";
-      container.appendChild(authElement as HTMLElement);
+      if (!container.contains(authElement as Node)) {
+        container.innerHTML = "";
+        container.appendChild(authElement as HTMLElement);
+      }
     }
   }, [authElement, activeStep]);
 
@@ -885,6 +890,7 @@ export function PortalPayAccordionCheckoutV2({
       headlessStep === "authenticating" ||
       headlessStep === "collecting_phone"
     ) {
+      setIsSubmittingContact(false);
       if (authElement || headlessStep === "collecting_phone" || headlessStep === "authenticating") {
         setActiveStep(1);
       }
@@ -993,7 +999,19 @@ export function PortalPayAccordionCheckoutV2({
     setLocalError(null);
     try {
       if (onHeadlessSubmitEmailPhone) {
-        await onHeadlessSubmitEmailPhone(email, phone, country, `${firstName} ${lastName}`.trim());
+        // Trigger onramp session without blocking UI spinner indefinitely
+        const promise = onHeadlessSubmitEmailPhone(email, phone, country, `${firstName} ${lastName}`.trim());
+        if (promise && typeof (promise as any).catch === "function") {
+          (promise as any).catch((err: any) => {
+            console.error("Contact submission error:", err);
+            setLocalError(err?.message || "Failed to submit contact information.");
+            setIsSubmittingContact(false);
+          });
+        }
+        // Release the button spinner after a safety buffer if headlessStep hasn't transitioned yet
+        setTimeout(() => {
+          setIsSubmittingContact(false);
+        }, 1800);
       } else {
         // Pure simulation mode without backend
         if (
@@ -1005,11 +1023,11 @@ export function PortalPayAccordionCheckoutV2({
         } else {
           setActiveStep(2);
         }
+        setIsSubmittingContact(false);
       }
     } catch (err: any) {
       console.error("Contact submission error:", err);
       setLocalError(err?.message || "Failed to submit contact information.");
-    } finally {
       setIsSubmittingContact(false);
     }
   };
@@ -1329,6 +1347,42 @@ export function PortalPayAccordionCheckoutV2({
         </div>
       </div>
 
+      {/* Payment Methods Badges Bar - Guaranteed Single Row */}
+      <div className={`flex items-center justify-between px-3 py-2 rounded-xl border ${isLightText ? 'bg-white/[0.03] border-white/10' : 'bg-black/[0.03] border-black/10'}`}>
+        <span className={`text-[10px] font-bold uppercase tracking-wider shrink-0 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
+          Accepted
+        </span>
+        <div className="flex items-center gap-1.5 flex-nowrap shrink-0">
+          {/* VISA */}
+          <span className="h-5 px-1.5 rounded bg-[#1A1F71] border border-white/10 text-[9px] font-black tracking-widest text-white italic flex items-center select-none shadow-sm shrink-0">
+            VISA
+          </span>
+          {/* Mastercard */}
+          <span className="h-5 px-1.5 rounded bg-neutral-950 border border-white/10 flex items-center gap-0.5 select-none shadow-sm shrink-0">
+            <span className="w-2 h-2 rounded-full bg-[#EB001B] inline-block" />
+            <span className="w-2 h-2 rounded-full bg-[#F79E1B] -ml-1 inline-block mix-blend-screen" />
+          </span>
+          {/* Official Apple Pay Badge */}
+          <span className="h-5 px-1.5 rounded bg-black border border-white/20 flex items-center gap-0.5 select-none shadow-sm shrink-0" title="Apple Pay">
+            <svg className="w-2.5 h-2.5 fill-current text-white shrink-0 inline-block -mt-0.5" viewBox="0 0 24 24">
+              <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.32c.67-.82 1.12-1.96.99-3.1-.97.04-2.14.65-2.83 1.46-.62.72-1.16 1.88-1.01 3 .01 0 .03 0 .04 0 1.09 0 2.14-.54 2.81-1.36z" />
+            </svg>
+            <span className="text-[9.5px] font-bold tracking-tight text-white leading-none">Pay</span>
+          </span>
+          {/* Google Pay Badge */}
+          <span className="h-5 px-1.5 rounded bg-neutral-900 border border-white/10 text-[9px] font-bold text-white flex items-center select-none shadow-sm shrink-0">
+            <span className="text-blue-400">G</span><span className="text-red-400">P</span><span className="text-yellow-400">a</span><span className="text-green-400">y</span>
+          </span>
+          {/* ACH Bank Badge */}
+          <span className="h-5 px-1.5 rounded bg-emerald-950/80 border border-emerald-500/30 text-[8.5px] font-bold text-emerald-300 flex items-center gap-1 select-none shadow-sm shrink-0" title="ACH Bank Transfer">
+            <svg className="w-2.5 h-2.5 fill-current text-emerald-400 shrink-0" viewBox="0 0 24 24">
+              <path d="M2 10h20v2H2zm2-7h16l2 4H2zm3 9h2v7H7zm5 0h2v7h-2zm5 0h2v7h-2zm-13 8h16v2H4z" />
+            </svg>
+            <span>ACH</span>
+          </span>
+        </div>
+      </div>
+
       {/* Global Error Banner */}
       {activeError && (
         <div
@@ -1511,7 +1565,7 @@ export function PortalPayAccordionCheckoutV2({
 
             <button
               type="submit"
-              disabled={isSubmittingContact || !email}
+              disabled={isSubmittingContact || !email || Boolean(authElement)}
               className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg"
               style={{ backgroundColor: primaryColor, color: "#fff" }}
             >
