@@ -62,6 +62,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   simulatedPath?: "normal" | "skip_kyc" | "step_up" | "doc_verify" | string;
   isAllKycCompleted?: boolean;
   onHeadlessSubmitEmailPhone?: (email: string, phone: string, country?: string, fullName?: string) => Promise<void>;
+  onSubmitPhone?: (phoneNumber: string) => void | Promise<void>;
   onSubmitKycInfo?: (info: any) => Promise<void>;
   onVerifyDocuments?: () => Promise<void | boolean>;
   onSelectPaymentMethod?: (type: string) => Promise<void>;
@@ -549,6 +550,7 @@ export function PortalPayAccordionCheckoutV2({
   simulatedPath = "normal",
   isAllKycCompleted = false,
   onHeadlessSubmitEmailPhone,
+  onSubmitPhone,
   onSubmitKycInfo,
   onVerifyDocuments,
   onSelectPaymentMethod,
@@ -967,12 +969,31 @@ export function PortalPayAccordionCheckoutV2({
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
+
+    if (headlessStep === "collecting_phone") {
+      setIsSubmittingContact(true);
+      setLocalError(null);
+      try {
+        if (onSubmitPhone) {
+          await onSubmitPhone(phone);
+        } else if (onHeadlessSubmitEmailPhone) {
+          await onHeadlessSubmitEmailPhone(email, phone, country, `${firstName} ${lastName}`.trim());
+        }
+      } catch (err: any) {
+        console.error("Phone submission error:", err);
+        setLocalError(err?.message || "Failed to submit phone number.");
+      } finally {
+        setIsSubmittingContact(false);
+      }
+      return;
+    }
+
     setIsSubmittingContact(true);
     setLocalError(null);
     try {
       if (onHeadlessSubmitEmailPhone) {
         // Trigger onramp session without blocking UI spinner indefinitely
-        const promise = onHeadlessSubmitEmailPhone(email, phone, country, `${firstName} ${lastName}`.trim());
+        const promise = onHeadlessSubmitEmailPhone(email, phone || "", country, `${firstName} ${lastName}`.trim());
         if (promise && typeof (promise as any).catch === "function") {
           (promise as any).catch((err: any) => {
             console.error("Contact submission error:", err);
@@ -1466,25 +1487,9 @@ export function PortalPayAccordionCheckoutV2({
               />
             </div>
 
-            <div className="grid grid-cols-12 gap-2">
-              <div className="col-span-5">
-                <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                  <Phone className="w-3 h-3" />
-                  <span>Mobile Phone</span>
-                </label>
-                <input
-                  type="tel"
-                  placeholder="+1 (555) 000-0000"
-                  value={phone}
-                  onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
-                  className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
-                    isLightText
-                      ? "bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-amber-400/50"
-                      : "bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-amber-400/50"
-                  }`}
-                />
-              </div>
-              <div className="col-span-7">
+            {/* Country Selector (default compact view) */}
+            {headlessStep !== "collecting_phone" && (
+              <div>
                 <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                   Country
                 </label>
@@ -1508,7 +1513,61 @@ export function PortalPayAccordionCheckoutV2({
                   <option value="AU">Australia (AU)</option>
                 </select>
               </div>
-            </div>
+            )}
+
+            {/* Dynamic Phone Registration Input — ONLY shown when Stripe Link explicitly requires a new account phone number (matching V1) */}
+            {headlessStep === "collecting_phone" && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="flex items-start gap-2 text-amber-300 text-xs font-bold">
+                  <Phone className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <div>Stripe Verification Required</div>
+                    <p className="text-[11px] font-normal text-amber-300/80 leading-relaxed mt-0.5">
+                      Enter your mobile phone number to register your Link account securely.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-12 gap-2">
+                  <div className="col-span-7">
+                    <input
+                      type="tel"
+                      required
+                      placeholder="+1 (555) 000-0000"
+                      value={phone}
+                      onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
+                      autoFocus
+                      className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
+                        isLightText
+                          ? "bg-white/10 border border-amber-400/50 text-white placeholder-white/50 focus:ring-1 focus:ring-amber-400"
+                          : "bg-black/10 border border-amber-500/50 text-black placeholder-black/50 focus:ring-1 focus:ring-amber-500"
+                      }`}
+                    />
+                  </div>
+                  <div className="col-span-5">
+                    <select
+                      value={country}
+                      onChange={(e) => setCountry(e.target.value)}
+                      className={`w-full h-10 px-2 rounded-xl focus:outline-none transition-all text-xs font-medium ${
+                        isLightText
+                          ? "bg-neutral-900 border border-white/10 text-white focus:border-amber-400/50"
+                          : "bg-white border border-black/10 text-black focus:border-amber-400/50"
+                      }`}
+                    >
+                      <option value="US">US (+1)</option>
+                      <option value="GB">GB (+44)</option>
+                      <option value="DE">DE (+49)</option>
+                      <option value="FR">FR (+33)</option>
+                      <option value="ES">ES (+34)</option>
+                      <option value="IT">IT (+39)</option>
+                      <option value="NL">NL (+31)</option>
+                      <option value="IE">IE (+353)</option>
+                      <option value="AU">AU (+61)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Inline OTP Element if triggered by Stripe Link and in authentication phase */}
             {authElement && (
@@ -1555,9 +1614,10 @@ export function PortalPayAccordionCheckoutV2({
               disabled={
                 isSubmittingContact ||
                 !email ||
+                (headlessStep === "collecting_phone" && (!phone || phone.trim().length < 7)) ||
                 Boolean(
                   authElement &&
-                  (["authenticating", "collecting_phone"].includes(headlessStep as string) ||
+                  (["authenticating"].includes(headlessStep as string) ||
                    (activeStep === 1 && effectiveStatus !== "verified" && !isAllKycCompleted))
                 )
               }
@@ -1567,16 +1627,21 @@ export function PortalPayAccordionCheckoutV2({
               {isSubmittingContact ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Verifying Contact Information...</span>
+                  <span>{headlessStep === "collecting_phone" ? "Registering Phone Number..." : "Verifying Contact Information..."}</span>
                 </>
-              ) : authElement && (["authenticating", "collecting_phone"].includes(headlessStep as string) || (activeStep === 1 && effectiveStatus !== "verified" && !isAllKycCompleted)) ? (
+              ) : authElement && (["authenticating"].includes(headlessStep as string) || (activeStep === 1 && effectiveStatus !== "verified" && !isAllKycCompleted)) ? (
                 <>
                   <Lock className="w-3.5 h-3.5" />
                   <span>Enter 6-Digit Code Above</span>
                 </>
+              ) : headlessStep === "collecting_phone" ? (
+                <>
+                  <span>Confirm Phone & Continue</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </>
               ) : (
                 <>
-                  <span>Continue to Identity Verification</span>
+                  <span>Continue</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </>
               )}

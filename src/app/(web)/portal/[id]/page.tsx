@@ -4836,6 +4836,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           kycTiers={headlessKycTiers}
           isAllKycCompleted={isAllKycCompleted}
           onHeadlessSubmitEmailPhone={startHeadlessOnramp}
+          onSubmitPhone={headlessSubmitPhone}
           onSubmitKycInfo={submitKycInfo}
           onVerifyDocuments={headlessVerifyDocuments}
           paymentElement={headlessPaymentElement}
