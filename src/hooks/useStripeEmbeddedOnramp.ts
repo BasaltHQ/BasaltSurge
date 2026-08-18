@@ -1274,8 +1274,8 @@ export function useStripeEmbeddedOnramp({
                                     kycData.idDocStatus === "verified" ||
                                     kycData.idDocStatus === "completed";
 
-          const isL0Verified = l0Tier ? l0Tier.verification_status === "verified" : isOverallVerified;
-          const isL1Verified = l1Tier ? l1Tier.verification_status === "verified" : isOverallVerified;
+          const isL0Verified = l0Tier ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available") : isOverallVerified;
+          const isL1Verified = l1Tier ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") : isOverallVerified;
           const isL2Verified = l2Tier ? l2Tier.verification_status === "verified" : isOverallVerified;
 
           const isL0Rejected = l0Tier?.verification_status === "rejected";
@@ -2583,9 +2583,12 @@ export function useStripeEmbeddedOnramp({
     updateStep("submitting_kyc");
     isRunningRef.current = true;
     try {
-      kycOccurredRef.current = true;
-      // Normalize id_number string if passed directly as string, stripping non-digits for SSN
       const payload = { ...kycInfo };
+      if (payload.address?.country) {
+        activeCountryRef.current = String(payload.address.country).toUpperCase();
+      } else if (payload.country) {
+        activeCountryRef.current = String(payload.country).toUpperCase();
+      }
       if (payload.id_number) {
         if (typeof payload.id_number === "string") {
           payload.id_number = {
@@ -2649,10 +2652,8 @@ export function useStripeEmbeddedOnramp({
         }
       }
       await submitKycInfoWithTimeout(onrampRef.current, payload);
-      console.log("[EMBEDDED ONRAMP] KYC demographics submitted successfully! Checking verification status...");
-
-      // Determine which tier was just submitted based on the payload fields
-      const submittedTier = (payload.date_of_birth || payload.id_number || payload.nationalities) ? "l1" : "l0";
+      // Determine which tier was just submitted based on the payload fields (DOB/SSN defines L1)
+      const submittedTier = (payload.date_of_birth || payload.id_number) ? "l1" : "l0";
 
       updateStep("checking_kyc");
       const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);

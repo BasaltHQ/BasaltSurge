@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { getBrandKey } from "@/config/brands";
 
 export const dynamic = "force-dynamic";
 
@@ -7,11 +8,7 @@ export const dynamic = "force-dynamic";
  * List Approved Agents API
  *
  * GET — Returns all approved/registered agents for this brand.
- * Used by ClientRequestsPanel dropdown to select agents when configuring splits.
- *
- * Sources:
- *   1. agent_request docs with status=approved
- *   2. agent_profile docs (informal agents who completed profile)
+ * Used by ClientRequestsPanel and PartnerManagementPanel dropdowns to select agents when configuring splits.
  */
 
 const hex = (s: any) => typeof s === "string" && /^0x[a-f0-9]{40}$/i.test(s);
@@ -23,55 +20,62 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const brandKey = String(
-            process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
-        ).toLowerCase();
+        const explicitBrand = req.headers.get("x-brand-key") || req.nextUrl.searchParams.get("brandKey");
+        const brandKey = (explicitBrand || getBrandKey(req) || "").toLowerCase().trim();
 
         const container = await getContainer();
 
-        // Fetch approved agent_requests
-        const { resources: approved } = await container.items.query({
-            query: `SELECT c.wallet, c.name, c.email, c.phone, c.createdAt FROM c
+        // 1. Fetch all agent_requests for this brand to check approvals and rejections
+        const { resources: allRequests } = await container.items.query({
+            query: `SELECT c.wallet, c.name, c.email, c.phone, c.status, c.createdAt FROM c
                     WHERE c.type = 'agent_request'
-                      AND c.brandKey = @brandKey
-                      AND c.status = 'approved'`,
+                      AND c.brandKey = @brandKey`,
             parameters: [{ name: "@brandKey", value: brandKey }],
         }).fetchAll();
 
-        // Fetch agent_profiles (informal agents)
+        // 2. Fetch agent_profiles for this brand
         const { resources: profiles } = await container.items.query({
-            query: `SELECT c.wallet, c.name, c.email, c.phone, c.createdAt FROM c
+            query: `SELECT c.wallet, c.name, c.email, c.phone, c.status, c.createdAt FROM c
                     WHERE c.type = 'agent_profile'
                       AND c.brandKey = @brandKey`,
             parameters: [{ name: "@brandKey", value: brandKey }],
         }).fetchAll();
 
-        // Merge: approved agents take priority, dedupe by wallet
-        const agentMap = new Map<string, { wallet: string; name: string; email: string; phone: string }>();
+        // Build set of wallets that are explicitly rejected or pending in formal requests
+        const unapprovedWallets = new Set<string>();
+        const approvedMap = new Map<string, { wallet: string; name: string; email: string; phone: string }>();
 
+        for (const reqDoc of allRequests || []) {
+            const w = String(reqDoc.wallet || "").toLowerCase();
+            if (!hex(w)) continue;
+            if (reqDoc.status === "approved") {
+                approvedMap.set(w, {
+                    wallet: w,
+                    name: reqDoc.name || "",
+                    email: reqDoc.email || "",
+                    phone: reqDoc.phone || "",
+                });
+            } else {
+                unapprovedWallets.add(w);
+            }
+        }
+
+        // Include profiles only if explicitly approved and not marked as rejected/pending
         for (const p of profiles || []) {
             const w = String(p.wallet || "").toLowerCase();
             if (!hex(w)) continue;
-            agentMap.set(w, {
-                wallet: w,
-                name: p.name || "",
-                email: p.email || "",
-                phone: p.phone || "",
-            });
+            if (unapprovedWallets.has(w)) continue; // Excluded by formal request rejection
+            if (p.status === "approved" && !approvedMap.has(w)) {
+                approvedMap.set(w, {
+                    wallet: w,
+                    name: p.name || "",
+                    email: p.email || "",
+                    phone: p.phone || "",
+                });
+            }
         }
 
-        for (const a of approved || []) {
-            const w = String(a.wallet || "").toLowerCase();
-            if (!hex(w)) continue;
-            agentMap.set(w, {
-                wallet: w,
-                name: a.name || "",
-                email: a.email || "",
-                phone: a.phone || "",
-            });
-        }
-
-        const agents = Array.from(agentMap.values()).sort((a, b) =>
+        const agents = Array.from(approvedMap.values()).sort((a, b) =>
             (a.name || a.wallet).localeCompare(b.name || b.wallet)
         );
 
@@ -81,3 +85,4 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: err?.message || "Internal server error" }, { status: 500 });
     }
 }
+

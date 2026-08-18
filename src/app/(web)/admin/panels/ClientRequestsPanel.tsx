@@ -952,7 +952,13 @@ export default function ClientRequestsPanel() {
         // Fetch approved agents for dropdown
         (async () => {
             try {
-                const res = await fetch("/api/agents/list", { headers: { "x-wallet": account?.address || "" } });
+                const targetBrandKey = req?.brandKey || brandKey || (brand as any)?.key || "";
+                const res = await fetch(`/api/agents/list${targetBrandKey ? `?brandKey=${encodeURIComponent(targetBrandKey)}` : ""}`, { 
+                    headers: { 
+                        "x-wallet": account?.address || "",
+                        ...(targetBrandKey ? { "x-brand-key": targetBrandKey } : {})
+                    } 
+                });
                 const data = await res.json();
                 setApprovedAgents(data.agents || []);
             } catch { setApprovedAgents([]); }

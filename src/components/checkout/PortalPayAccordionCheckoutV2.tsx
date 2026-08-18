@@ -28,7 +28,8 @@ import {
   ChevronDown,
   X,
   ArrowRight,
-  Search
+  Search,
+  Globe,
 } from "lucide-react";
 
 export interface PortalPayAccordionCheckoutV2Props {
@@ -96,10 +97,12 @@ const MONTH_NAMES = [
 ];
 
 export const SUPPORTED_COUNTRIES = [
-  // Primary & North America
+  // Primary (United States & United Kingdom)
   { code: "US", name: "United States", dial: "+1", flag: "🇺🇸" },
-  { code: "DE", name: "Germany", dial: "+49", flag: "🇩🇪" },
   { code: "GB", name: "United Kingdom", dial: "+44", flag: "🇬🇧" },
+
+  // European Union & EEA Countries
+  { code: "DE", name: "Germany", dial: "+49", flag: "🇩🇪" },
   { code: "FR", name: "France", dial: "+33", flag: "🇫🇷" },
   { code: "IT", name: "Italy", dial: "+39", flag: "🇮🇹" },
   { code: "ES", name: "Spain", dial: "+34", flag: "🇪🇸" },
@@ -108,37 +111,28 @@ export const SUPPORTED_COUNTRIES = [
   { code: "AT", name: "Austria", dial: "+43", flag: "🇦🇹" },
   { code: "BE", name: "Belgium", dial: "+32", flag: "🇧🇪" },
   { code: "BG", name: "Bulgaria", dial: "+359", flag: "🇧🇬" },
-  { code: "HR", name: "Croatia", dial: "+385", flag: "🇭🇷" },
+  { code: "CH", name: "Switzerland", dial: "+41", flag: "🇨🇭" },
   { code: "CY", name: "Cyprus", dial: "+357", flag: "🇨🇾" },
   { code: "CZ", name: "Czech Republic", dial: "+420", flag: "🇨🇿" },
   { code: "DK", name: "Denmark", dial: "+45", flag: "🇩🇰" },
   { code: "EE", name: "Estonia", dial: "+372", flag: "🇪🇪" },
   { code: "FI", name: "Finland", dial: "+358", flag: "🇫🇮" },
   { code: "GR", name: "Greece", dial: "+30", flag: "🇬🇷" },
+  { code: "HR", name: "Croatia", dial: "+385", flag: "🇭🇷" },
   { code: "HU", name: "Hungary", dial: "+36", flag: "🇭🇺" },
-  { code: "LV", name: "Latvia", dial: "+371", flag: "🇱🇻" },
+  { code: "IS", name: "Iceland", dial: "+354", flag: "🇮🇸" },
+  { code: "LI", name: "Liechtenstein", dial: "+423", flag: "🇱🇮" },
   { code: "LT", name: "Lithuania", dial: "+370", flag: "🇱🇹" },
   { code: "LU", name: "Luxembourg", dial: "+352", flag: "🇱🇺" },
+  { code: "LV", name: "Latvia", dial: "+371", flag: "🇱🇻" },
   { code: "MT", name: "Malta", dial: "+356", flag: "🇲🇹" },
+  { code: "NO", name: "Norway", dial: "+47", flag: "🇳🇴" },
   { code: "PL", name: "Poland", dial: "+48", flag: "🇵🇱" },
   { code: "PT", name: "Portugal", dial: "+351", flag: "🇵🇹" },
   { code: "RO", name: "Romania", dial: "+40", flag: "🇷🇴" },
-  { code: "SK", name: "Slovakia", dial: "+421", flag: "🇸🇰" },
-  { code: "SI", name: "Slovenia", dial: "+386", flag: "🇸🇮" },
   { code: "SE", name: "Sweden", dial: "+46", flag: "🇸🇪" },
-  // Non-EU EEA & Global
-  { code: "CA", name: "Canada", dial: "+1", flag: "🇨🇦" },
-  { code: "CH", name: "Switzerland", dial: "+41", flag: "🇨🇭" },
-  { code: "NO", name: "Norway", dial: "+47", flag: "🇳🇴" },
-  { code: "AU", name: "Australia", dial: "+61", flag: "🇦🇺" },
-  { code: "NZ", name: "New Zealand", dial: "+64", flag: "🇳🇿" },
-  { code: "JP", name: "Japan", dial: "+81", flag: "🇯🇵" },
-  { code: "SG", name: "Singapore", dial: "+65", flag: "🇸🇬" },
-  { code: "HK", name: "Hong Kong", dial: "+852", flag: "🇭🇰" },
-  { code: "BR", name: "Brazil", dial: "+55", flag: "🇧🇷" },
-  { code: "MX", name: "Mexico", dial: "+52", flag: "🇲🇽" },
-  { code: "IN", name: "India", dial: "+91", flag: "🇮🇳" },
-  { code: "ZA", name: "South Africa", dial: "+27", flag: "🇿🇦" },
+  { code: "SI", name: "Slovenia", dial: "+386", flag: "🇸🇮" },
+  { code: "SK", name: "Slovakia", dial: "+421", flag: "🇸🇰" },
 ];
 
 interface DobPickerProps {
@@ -1521,7 +1515,11 @@ export function PortalPayAccordionCheckoutV2({
                   <Mail className="w-2.5 h-2.5 opacity-60" />
                   <span>{email}</span>
                   {phone && <span>• {phone}</span>}
-                  {country && <span>({country})</span>}
+                  {country && (
+                    <span className="inline-flex items-center gap-1 opacity-90">
+                      • {SUPPORTED_COUNTRIES.find((c) => c.code === country)?.flag || ""} {country}
+                    </span>
+                  )}
                 </p>
               )}
             </div>
@@ -1538,6 +1536,7 @@ export function PortalPayAccordionCheckoutV2({
 
         {/* Step 1 Expanded Body */}
         <form onSubmit={handleContactSubmit} className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${activeStep === 1 ? "" : "hidden"}`}>
+            {/* Email Address */}
             <div>
               <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                 <Mail className="w-3 h-3" />
@@ -1557,6 +1556,29 @@ export function PortalPayAccordionCheckoutV2({
               />
             </div>
 
+            {/* Country of Residence */}
+            <div>
+              <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                <Globe className="w-3 h-3" />
+                <span>Country of Residence</span>
+              </label>
+              <select
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium cursor-pointer ${
+                  isLightText
+                    ? "bg-neutral-900 border border-white/10 text-white focus:border-amber-400/50"
+                    : "bg-white border border-black/10 text-black focus:border-amber-400/50"
+                }`}
+              >
+                {SUPPORTED_COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.flag} {c.name} ({c.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Dynamic Phone Registration Input — ONLY shown when Stripe Link explicitly requires a new account phone number (matching V1) */}
             {headlessStep === "collecting_phone" && (
               <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -1570,43 +1592,24 @@ export function PortalPayAccordionCheckoutV2({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-12 gap-2">
-                  <div className="col-span-7">
-                    <input
-                      type="tel"
-                      required
-                      placeholder={
-                        SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial
-                          ? `${SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial} 000 0000`
-                          : "+1 (555) 000-0000"
-                      }
-                      value={phone}
-                      onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
-                      autoFocus
-                      className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
-                        isLightText
-                          ? "bg-white/10 border border-amber-400/50 text-white placeholder-white/50 focus:ring-1 focus:ring-amber-400"
-                          : "bg-black/10 border border-amber-500/50 text-black placeholder-black/50 focus:ring-1 focus:ring-amber-500"
-                      }`}
-                    />
-                  </div>
-                  <div className="col-span-5">
-                    <select
-                      value={country}
-                      onChange={(e) => setCountry(e.target.value)}
-                      className={`w-full h-10 px-2 rounded-xl focus:outline-none transition-all text-xs font-medium ${
-                        isLightText
-                          ? "bg-neutral-900 border border-white/10 text-white focus:border-amber-400/50"
-                          : "bg-white border border-black/10 text-black focus:border-amber-400/50"
-                      }`}
-                    >
-                      {SUPPORTED_COUNTRIES.map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {c.code} ({c.dial})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div>
+                  <input
+                    type="tel"
+                    required
+                    placeholder={
+                      SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial
+                        ? `${SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial} 000 0000`
+                        : "+1 (555) 000-0000"
+                    }
+                    value={phone}
+                    onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
+                    autoFocus
+                    className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
+                      isLightText
+                        ? "bg-white/10 border border-amber-400/50 text-white placeholder-white/50 focus:ring-1 focus:ring-amber-400"
+                        : "bg-black/10 border border-amber-500/50 text-black placeholder-black/50 focus:ring-1 focus:ring-amber-500"
+                    }`}
+                  />
                 </div>
               </div>
             )}

@@ -93,6 +93,7 @@ const RANGES = [
     { id: "month", label: "30 Days" },
     { id: "quarter", label: "90 Days" },
     { id: "all", label: "All Time" },
+    { id: "custom", label: "Custom" },
 ] as const;
 
 function getDateRange(rangeId: string, customStart?: string, customEnd?: string) {
@@ -132,7 +133,10 @@ function getDateRange(rangeId: string, customStart?: string, customEnd?: string)
     };
 }
 
-function getRangeLabel(id: string) {
+function getRangeLabel(id: string, customStart?: string, customEnd?: string) {
+    if (id === "custom" && customStart && customEnd) {
+        return `${customStart} to ${customEnd}`;
+    }
     return RANGES.find((r) => r.id === id)?.label || id;
 }
 
@@ -748,7 +752,7 @@ export default function AgentDashboard() {
         const rows: string[][] = [];
         rows.push(["Agent Commission Report"]);
         rows.push([`Agent Wallet: ${agentWallet}`]);
-        rows.push([`Date Range: ${getRangeLabel(range)}`]);
+        rows.push([`Date Range: ${getRangeLabel(range, customStart, customEnd)}`]);
         rows.push([`Generated: ${new Date().toLocaleString()}`]);
         rows.push([]);
 
@@ -835,7 +839,7 @@ export default function AgentDashboard() {
             <div>
                 <h1>Agent Commission Report</h1>
                 <div style="font-size:12px;color:#666">Agent: ${agentWallet}</div>
-                <div style="font-size:12px;color:#666">Period: ${getRangeLabel(range)}</div>
+                <div style="font-size:12px;color:#666">Period: ${getRangeLabel(range, customStart, customEnd)}</div>
             </div>
             <div class="meta">
                 <div>${brandName}</div>
@@ -1173,19 +1177,38 @@ export default function AgentDashboard() {
                                 </button>
                             </div>
                             {/* Time Range Selector */}
-                            <div className="flex bg-muted/20 p-1 rounded-lg border">
-                                {RANGES.map((r) => (
-                                    <button
-                                        key={r.id}
-                                        onClick={() => setRange(r.id)}
-                                        className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wide transition-all ${range === r.id
-                                            ? "bg-background text-foreground shadow-sm ring-1 ring-border/50"
-                                            : "text-muted-foreground hover:text-foreground"
-                                            }`}
-                                    >
-                                        {r.label}
-                                    </button>
-                                ))}
+                            <div className="flex flex-wrap items-center gap-2">
+                                <div className="flex bg-muted/20 p-1 rounded-lg border">
+                                    {RANGES.map((r) => (
+                                        <button
+                                            key={r.id}
+                                            onClick={() => setRange(r.id)}
+                                            className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wide transition-all ${range === r.id
+                                                ? "bg-background text-foreground shadow-sm ring-1 ring-border/50"
+                                                : "text-muted-foreground hover:text-foreground"
+                                                }`}
+                                        >
+                                            {r.label}
+                                        </button>
+                                    ))}
+                                </div>
+                                {range === "custom" && (
+                                    <div className="flex items-center gap-1.5 bg-muted/20 p-1 rounded-lg border animate-in fade-in slide-in-from-left-2">
+                                        <input
+                                            type="date"
+                                            value={customStart}
+                                            onChange={(e) => setCustomStart(e.target.value)}
+                                            className="h-7 px-2 rounded-md border border-border/50 bg-background text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors font-mono"
+                                        />
+                                        <span className="text-muted-foreground text-[10px] font-semibold uppercase px-0.5">to</span>
+                                        <input
+                                            type="date"
+                                            value={customEnd}
+                                            onChange={(e) => setCustomEnd(e.target.value)}
+                                            className="h-7 px-2 rounded-md border border-border/50 bg-background text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors font-mono"
+                                        />
+                                    </div>
+                                )}
                             </div>
                             <button
                                 onClick={fetchReport}
@@ -1571,7 +1594,7 @@ export default function AgentDashboard() {
                                 icon={DollarSign}
                                 label="Estimated Earnings"
                                 value={formatCurrency(agg.estimatedEarnings, "USD")}
-                                sub={getRangeLabel(range)}
+                                sub={getRangeLabel(range, customStart, customEnd)}
                                 accent="text-green-500"
                             />
                             <EnhancedStatCard
