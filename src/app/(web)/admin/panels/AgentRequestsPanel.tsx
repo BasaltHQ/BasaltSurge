@@ -17,6 +17,9 @@ import {
     RefreshCcw,
     Plus,
     Trash2,
+    FileText,
+    Sparkles,
+    UserPlus,
 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 
@@ -31,6 +34,7 @@ type AgentRequest = {
     createdAt: number;
     reviewedBy?: string;
     reviewedAt?: number;
+    source?: "application" | "profile" | "direct";
 };
 
 export default function AgentRequestsPanel() {
@@ -68,7 +72,10 @@ export default function AgentRequestsPanel() {
         setError("");
         try {
             const res = await fetch("/api/admin/agent-requests", {
-                headers: { "x-wallet": adminWallet },
+                headers: { 
+                    "x-wallet": adminWallet,
+                    ...(brand?.key ? { "x-brand-key": brand.key } : {})
+                },
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Failed");
@@ -78,7 +85,7 @@ export default function AgentRequestsPanel() {
         } finally {
             setLoading(false);
         }
-    }, [adminWallet]);
+    }, [adminWallet, brand?.key]);
 
     useEffect(() => { load(); }, [load]);
 
@@ -87,10 +94,15 @@ export default function AgentRequestsPanel() {
         setError("");
         setInfo("");
         try {
+            const targetReq = requests.find(r => r.id === id);
             const res = await fetch("/api/admin/agent-requests", {
                 method: "PUT",
-                headers: { "Content-Type": "application/json", "x-wallet": adminWallet },
-                body: JSON.stringify({ id, status }),
+                headers: { 
+                    "Content-Type": "application/json", 
+                    "x-wallet": adminWallet,
+                    ...(brand?.key ? { "x-brand-key": brand.key } : {})
+                },
+                body: JSON.stringify({ id, status, wallet: targetReq?.wallet }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Failed");
@@ -118,7 +130,11 @@ export default function AgentRequestsPanel() {
         try {
             const res = await fetch("/api/admin/agent-requests", {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "x-wallet": adminWallet },
+                headers: { 
+                    "Content-Type": "application/json", 
+                    "x-wallet": adminWallet,
+                    ...(brand?.key ? { "x-brand-key": brand.key } : {})
+                },
                 body: JSON.stringify({
                     name: newName,
                     wallet: newWallet,
@@ -151,14 +167,17 @@ export default function AgentRequestsPanel() {
         setDeleteLoading(true);
         setDeleteError("");
         try {
-            const res = await fetch(`/api/admin/agent-requests?id=${encodeURIComponent(agentToDelete.id)}`, {
+            const res = await fetch(`/api/admin/agent-requests?id=${encodeURIComponent(agentToDelete.id)}&wallet=${encodeURIComponent(agentToDelete.wallet)}`, {
                 method: "DELETE",
-                headers: { "x-wallet": adminWallet },
+                headers: { 
+                    "x-wallet": adminWallet,
+                    ...(brand?.key ? { "x-brand-key": brand.key } : {})
+                },
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || "Failed to delete agent");
             
-            setInfo(`Agent ${agentToDelete.name || agentToDelete.wallet} deleted permanently.`);
+            setInfo(`Agent ${agentToDelete.name || agentToDelete.wallet} deleted permanently (application & profile purged).`);
             setAgentToDelete(null);
             load();
         } catch (e: any) {
@@ -205,6 +224,31 @@ export default function AgentRequestsPanel() {
             status === "rejected" ? <XCircle className="h-3.5 w-3.5" /> :
                 <Clock className="h-3.5 w-3.5" />;
 
+    const SourceBadge = ({ source }: { source?: string }) => {
+        if (source === "profile") {
+            return (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-mono tracking-tight font-medium bg-purple-500/10 text-purple-400 border-purple-500/20">
+                    <Sparkles className="h-3 w-3" />
+                    /agents Profile
+                </span>
+            );
+        }
+        if (source === "direct") {
+            return (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-mono tracking-tight font-medium bg-amber-500/10 text-amber-400 border-amber-500/20">
+                    <UserPlus className="h-3 w-3" />
+                    Direct Add
+                </span>
+            );
+        }
+        return (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-mono tracking-tight font-medium bg-blue-500/10 text-blue-400 border-blue-500/20">
+                <FileText className="h-3 w-3" />
+                Application
+            </span>
+        );
+    };
+
     return (
         <div className="w-full space-y-6 pb-24 admin-panel-enter">
             <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6">
@@ -212,7 +256,7 @@ export default function AgentRequestsPanel() {
                     <div>
                         <h1 className="text-2xl font-semibold tracking-tight">Agent Requests</h1>
                         <p className="text-sm text-muted-foreground mt-1">
-                            Manage agent applications for <span className="font-mono text-emerald-400">{brand?.key || "this brand"}</span>.
+                            Manage agent applications and profiles for <span className="font-mono text-emerald-400">{brand?.key || "this brand"}</span>.
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -279,6 +323,7 @@ export default function AgentRequestsPanel() {
                         <tr className="border-b border-foreground/5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                             <th className="text-left px-4 py-3 font-medium">Agent</th>
                             <th className="text-left px-4 py-3 font-medium">Contact</th>
+                            <th className="text-left px-4 py-3 font-medium">Source</th>
                             <th className="text-left px-4 py-3 font-medium">Status</th>
                             <th className="text-left px-4 py-3 font-medium">Date</th>
                             <th className="text-right px-4 py-3 font-medium">Actions</th>
@@ -287,9 +332,9 @@ export default function AgentRequestsPanel() {
                     <tbody className="divide-y divide-foreground/5">
                         {filtered.length === 0 ? (
                             <tr>
-                                <td colSpan={5} className="px-4 py-16 text-center text-muted-foreground">
+                                <td colSpan={6} className="px-4 py-16 text-center text-muted-foreground">
                                     <Users className="h-10 w-10 mx-auto mb-3 opacity-20" />
-                                    <p className="font-medium">No agent requests found</p>
+                                    <p className="font-medium">No agent requests or profiles found</p>
                                     <p className="text-xs mt-1">Share your application link: <code className="bg-muted/50 px-1 rounded">/agents/apply</code></p>
                                 </td>
                             </tr>
@@ -322,6 +367,9 @@ export default function AgentRequestsPanel() {
                                                     {req.phone}
                                                 </div>
                                             )}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <SourceBadge source={req.source} />
                                         </td>
                                         <td className="px-4 py-3">
                                             <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-medium ${badgeClass(req.status)}`}>
@@ -378,7 +426,7 @@ export default function AgentRequestsPanel() {
                                                     }}
                                                     disabled={updating === req.id}
                                                     className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-semibold transition-colors disabled:opacity-50 inline-flex items-center justify-center"
-                                                    title="Delete Agent Request Permanently"
+                                                    title="Delete Agent Permanently (Purges Application & Profile)"
                                                 >
                                                     <Trash2 className="h-3.5 w-3.5" />
                                                 </button>
@@ -387,7 +435,7 @@ export default function AgentRequestsPanel() {
                                     </tr>
                                     {expandedId === req.id && (
                                         <tr className="bg-foreground/[0.02]">
-                                            <td colSpan={5} className="px-4 py-4 border-t border-foreground/5">
+                                            <td colSpan={6} className="px-4 py-4 border-t border-foreground/5">
                                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                                                     <div>
                                                         <div className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-1">Full Name</div>
@@ -398,11 +446,15 @@ export default function AgentRequestsPanel() {
                                                         <div>{req.email || "—"}</div>
                                                     </div>
                                                     <div>
+                                                        <div className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-1">Registration Source</div>
+                                                        <div><SourceBadge source={req.source} /></div>
+                                                    </div>
+                                                    <div>
                                                         <div className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-1">Phone</div>
                                                         <div>{req.phone || "—"}</div>
                                                     </div>
                                                     <div className="md:col-span-2">
-                                                        <div className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-1">Notes / Pitch</div>
+                                                        <div className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground mb-1">Notes / Description</div>
                                                         <div className="text-xs bg-foreground/[0.03] p-3 rounded-lg border border-foreground/5 max-h-[100px] overflow-y-auto italic">
                                                             {req.notes || "No notes provided."}
                                                         </div>
@@ -534,8 +586,8 @@ export default function AgentRequestsPanel() {
                     setAgentToDelete(null);
                     setDeleteError("");
                 }}
-                title="Delete Agent Request"
-                description="Are you sure you want to permanently delete this agent request? This action cannot be undone."
+                title="Delete Agent Record"
+                description="Are you sure you want to permanently delete this agent? This will permanently purge both their application and profile records from the database."
                 actions={[
                     {
                         label: "Cancel",
@@ -578,9 +630,15 @@ export default function AgentRequestsPanel() {
                                 <span className="text-muted-foreground font-medium">Current Status:</span>
                                 <span className="capitalize font-semibold text-foreground">{agentToDelete.status}</span>
                             </div>
+                            <div className="flex justify-between items-center">
+                                <span className="text-muted-foreground font-medium">Source:</span>
+                                <span className="capitalize font-semibold text-foreground">
+                                    {agentToDelete.source === "profile" ? "/agents Profile" : agentToDelete.source === "direct" ? "Direct Add" : "Formal Application"}
+                                </span>
+                            </div>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                            Deleting this request will permanently remove the application record from the database and prevent duplicate entries from causing confusion.
+                            Deleting this agent will permanently wipe both their <code className="text-[11px] bg-foreground/10 px-1 py-0.5 rounded">agent_request</code> and <code className="text-[11px] bg-foreground/10 px-1 py-0.5 rounded">agent_profile</code> documents from the database.
                         </p>
                     </div>
                 )}

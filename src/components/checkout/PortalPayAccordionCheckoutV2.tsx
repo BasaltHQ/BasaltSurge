@@ -28,7 +28,8 @@ import {
   ChevronDown,
   X,
   ArrowRight,
-  Search
+  Search,
+  Globe,
 } from "lucide-react";
 
 export interface PortalPayAccordionCheckoutV2Props {
@@ -62,7 +63,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   simulatedPath?: "normal" | "skip_kyc" | "step_up" | "doc_verify" | string;
   isAllKycCompleted?: boolean;
   onHeadlessSubmitEmailPhone?: (email: string, phone: string, country?: string, fullName?: string) => Promise<void>;
-  onSubmitPhone?: (phoneNumber: string) => void | Promise<void>;
+  onSubmitPhone?: (phoneNumber: string, email?: string, country?: string) => void | Promise<void>;
   onSubmitKycInfo?: (info: any) => Promise<void>;
   onVerifyDocuments?: () => Promise<void | boolean>;
   onSelectPaymentMethod?: (type: string) => Promise<void>;
@@ -93,6 +94,45 @@ const formatPhoneInput = (raw: string): string => {
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December"
+];
+
+export const SUPPORTED_COUNTRIES = [
+  // Primary (United States & United Kingdom)
+  { code: "US", name: "United States", dial: "+1", flag: "🇺🇸" },
+  { code: "GB", name: "United Kingdom", dial: "+44", flag: "🇬🇧" },
+
+  // European Union & EEA Countries
+  { code: "DE", name: "Germany", dial: "+49", flag: "🇩🇪" },
+  { code: "FR", name: "France", dial: "+33", flag: "🇫🇷" },
+  { code: "IT", name: "Italy", dial: "+39", flag: "🇮🇹" },
+  { code: "ES", name: "Spain", dial: "+34", flag: "🇪🇸" },
+  { code: "NL", name: "Netherlands", dial: "+31", flag: "🇳🇱" },
+  { code: "IE", name: "Ireland", dial: "+353", flag: "🇮🇪" },
+  { code: "AT", name: "Austria", dial: "+43", flag: "🇦🇹" },
+  { code: "BE", name: "Belgium", dial: "+32", flag: "🇧🇪" },
+  { code: "BG", name: "Bulgaria", dial: "+359", flag: "🇧🇬" },
+  { code: "CH", name: "Switzerland", dial: "+41", flag: "🇨🇭" },
+  { code: "CY", name: "Cyprus", dial: "+357", flag: "🇨🇾" },
+  { code: "CZ", name: "Czech Republic", dial: "+420", flag: "🇨🇿" },
+  { code: "DK", name: "Denmark", dial: "+45", flag: "🇩🇰" },
+  { code: "EE", name: "Estonia", dial: "+372", flag: "🇪🇪" },
+  { code: "FI", name: "Finland", dial: "+358", flag: "🇫🇮" },
+  { code: "GR", name: "Greece", dial: "+30", flag: "🇬🇷" },
+  { code: "HR", name: "Croatia", dial: "+385", flag: "🇭🇷" },
+  { code: "HU", name: "Hungary", dial: "+36", flag: "🇭🇺" },
+  { code: "IS", name: "Iceland", dial: "+354", flag: "🇮🇸" },
+  { code: "LI", name: "Liechtenstein", dial: "+423", flag: "🇱🇮" },
+  { code: "LT", name: "Lithuania", dial: "+370", flag: "🇱🇹" },
+  { code: "LU", name: "Luxembourg", dial: "+352", flag: "🇱🇺" },
+  { code: "LV", name: "Latvia", dial: "+371", flag: "🇱🇻" },
+  { code: "MT", name: "Malta", dial: "+356", flag: "🇲🇹" },
+  { code: "NO", name: "Norway", dial: "+47", flag: "🇳🇴" },
+  { code: "PL", name: "Poland", dial: "+48", flag: "🇵🇱" },
+  { code: "PT", name: "Portugal", dial: "+351", flag: "🇵🇹" },
+  { code: "RO", name: "Romania", dial: "+40", flag: "🇷🇴" },
+  { code: "SE", name: "Sweden", dial: "+46", flag: "🇸🇪" },
+  { code: "SI", name: "Slovenia", dial: "+386", flag: "🇸🇮" },
+  { code: "SK", name: "Slovakia", dial: "+421", flag: "🇸🇰" },
 ];
 
 interface DobPickerProps {
@@ -682,16 +722,17 @@ export function PortalPayAccordionCheckoutV2({
   };
 
   const dobStatus = validateDob(dob);
+  const isUS = (country || "US").toUpperCase() === "US";
 
   const fieldValidation = {
     firstName: (firstName || "").trim().length >= 1,
     lastName: (lastName || "").trim().length >= 1,
     line1: (line1 || "").trim().length >= 3,
     city: (city || "").trim().length >= 2,
-    stateCode: (stateCode || "").trim().length >= 2,
-    zipCode: (zipCode || "").trim().length >= 5,
+    stateCode: isUS ? (stateCode || "").trim().length >= 2 : true,
+    zipCode: (zipCode || "").trim().length >= 3,
     dob: dobStatus.valid,
-    ssn: ssnDigits.length === 9,
+    ssn: isUS ? ssnDigits.length === 9 : true,
   };
 
   // Effective tier and status determination
@@ -720,6 +761,7 @@ export function PortalPayAccordionCheckoutV2({
   const identityContainerRef = useRef<HTMLDivElement>(null);
 
   // Canonical Stripe Onramp KYC tier detection matching WizardView:
+  // Canonical Stripe Onramp KYC tier detection:
   const l0Verified = (kycTiers || []).some(
     (t: any) => t.tier === "l0" && t.verification_status === "verified",
   );
@@ -733,51 +775,51 @@ export function PortalPayAccordionCheckoutV2({
     (t: any) => t.tier === "l2" && t.verification_status === "verified",
   );
 
-  // L1 step-up form (SSN + DOB required to advance from L0 → L1)
-  const showStepUpForm =
-    effectiveTier === "l1" ||
-    effectiveStatus === "step_up" ||
-    (kycTierRequired as string) === "l1" ||
-    (kycLevel === "L0" && !l1Verified);
+  const isL0Approved =
+    l0Verified ||
+    l1Verified ||
+    l2Verified ||
+    isAllKycCompleted ||
+    effectiveStatus === "verified";
 
-  // Document verification button: user is at L1, or REJECTED but L1 was already verified or not_available
-  const showVerifyDocs =
-    effectiveTier === "l2" ||
-    effectiveStatus === "doc_verify" ||
-    (kycTierRequired as string) === "l2" ||
-    headlessStep === "verifying_identity" ||
-    kycLevel === "L1" ||
-    (kycLevel === "REJECTED" && l1Verified) ||
-    (kycLevel === "REJECTED" && l1NotAvailable);
-
-  const isL2Requirement = showVerifyDocs || effectiveTier === "l2" || (kycTierRequired as string) === "l2" || headlessStep === "verifying_identity";
-  const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || (kycTierRequired as string) === "l1";
+  const isL1Approved =
+    l1Verified ||
+    l1NotAvailable ||
+    l2Verified ||
+    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l1");
 
   const isL2Approved =
     l2Verified ||
     docVerificationSuccess ||
     kycLevel === "L2" ||
-    (effectiveStatus === "verified" && !isL2Requirement);
+    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l2");
 
-  const isL1Approved =
-    l1Verified ||
-    l1NotAvailable ||
-    isL2Approved ||
-    (effectiveStatus === "verified" && !showStepUpForm);
+  // Step-up (DOB + SSN) is strictly ONLY shown when NOT already verified AND Stripe explicitly requires L1 tier
+  const showStepUpForm =
+    !isL1Approved &&
+    (effectiveTier === "l1" ||
+     effectiveStatus === "step_up" ||
+     (kycTierRequired as string) === "l1");
 
-  const isL0Approved =
-    l0Verified ||
-    isL1Approved ||
-    isL2Approved ||
-    isAllKycCompleted ||
-    effectiveStatus === "verified";
+  // Document verification requirement: only when L2 tier is explicitly demanded
+  const showVerifyDocs =
+    !isL2Approved &&
+    (effectiveTier === "l2" ||
+     effectiveStatus === "doc_verify" ||
+     (kycTierRequired as string) === "l2" ||
+     headlessStep === "verifying_identity");
 
-  // Full L0 form (name, address): initial users, or when manual address editing is active in step-up
+  const isL2Requirement =
+    effectiveTier === "l2" ||
+    (kycTierRequired as string) === "l2" ||
+    headlessStep === "verifying_identity";
+  const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || (kycTierRequired as string) === "l1";
+
+  // Full L0 form (name, address): default for all unverified users starting at L0, or when manual address editing is active
   const showFullForm =
     !showStepUpForm ||
     manualEditAddress ||
-    kycLevel === "REQUIRES_KYC" ||
-    (kycLevel === "REJECTED" && !l1Verified && !l1NotAvailable);
+    kycLevel === "REQUIRES_KYC";
 
   // Sync props when initial values change
   useEffect(() => {
@@ -849,7 +891,7 @@ export function PortalPayAccordionCheckoutV2({
       return;
     }
     try {
-      const res = await fetch(`/api/address/autocomplete?input=${encodeURIComponent(input)}`);
+      const res = await fetch(`/api/address/autocomplete?input=${encodeURIComponent(input)}${country ? `&country=${encodeURIComponent(country)}` : ""}`);
       if (res.ok) {
         const data = await res.json();
         setAddressSuggestions(data.predictions || []);
@@ -940,23 +982,19 @@ export function PortalPayAccordionCheckoutV2({
     } else if (
       headlessStep === "checking_kyc" ||
       headlessStep === "collecting_kyc" ||
-      headlessStep === "submitting_kyc" ||
-      headlessStep === "verifying_identity"
+      headlessStep === "submitting_kyc"
     ) {
       setIsSubmittingContact(false);
       setIsSubmittingPayment(false);
-      if (headlessStep === "verifying_identity" || headlessStep === "collecting_kyc") {
+      if (showStepUpForm && !isL1Approved) {
         setActiveStep(2);
-      } else if (!isAllKycCompleted && effectiveStatus !== "verified") {
-        setActiveStep(2);
-      } else if (isL2Requirement && !isL2Approved) {
-        setActiveStep(2);
-      } else if (showStepUpForm && !isL1Approved) {
+      } else if (!isL0Approved) {
         setActiveStep(2);
       } else {
         setActiveStep((prev) => (prev > 3 ? prev : 3));
       }
     } else if (
+      headlessStep === "verifying_identity" ||
       headlessStep === "creating_wallet" ||
       headlessStep === "registering_wallet" ||
       headlessStep === "collecting_payment" ||
@@ -964,9 +1002,7 @@ export function PortalPayAccordionCheckoutV2({
     ) {
       setIsSubmittingContact(false);
       setIsSubmittingIdentity(false);
-      if (isL2Requirement && !isL2Approved) {
-        setActiveStep(2);
-      } else if (showStepUpForm && !isL1Approved) {
+      if (showStepUpForm && !isL1Approved) {
         setActiveStep(2);
       } else {
         setActiveStep((prev) => (prev > 3 ? prev : 3));
@@ -995,19 +1031,16 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [headlessStep, authElement, isAllKycCompleted, effectiveStatus, paymentConfirmed, propError, localError, detectedCardFunding, activeStep, isL2Requirement, isL2Approved, showStepUpForm, isL1Approved]);
 
-  // Dedicated KYC Enforcement Guard: If L2 Document Verification or L1 SSN/DOB Step-Up is required and NOT approved, lock activeStep to Step 2
+  // Dedicated KYC Enforcement Guard: If L1 SSN/DOB Step-Up is required and NOT approved, lock activeStep to Step 2
   useEffect(() => {
     if (paymentConfirmed || isOrderConfirmed) return;
-    if (
-      (isL2Requirement && !isL2Approved) ||
-      (showStepUpForm && !isL1Approved)
-    ) {
+    if (showStepUpForm && !isL1Approved) {
       if (activeStep > 2) {
         console.log("[ACCORDION] Action required on Step 2 (KYC pending). Routing to Step 2.");
         setActiveStep(2);
       }
     }
-  }, [isL2Requirement, isL2Approved, showStepUpForm, isL1Approved, activeStep, paymentConfirmed, isOrderConfirmed]);
+  }, [showStepUpForm, isL1Approved, activeStep, paymentConfirmed, isOrderConfirmed]);
 
   // If KYC is already completed or verified, automatically skip or advance to Step 3 (unless on payment execution/completion or error)
   useEffect(() => {
@@ -1057,7 +1090,7 @@ export function PortalPayAccordionCheckoutV2({
       setLocalError(null);
       try {
         if (onSubmitPhone) {
-          await onSubmitPhone(phone);
+          await onSubmitPhone(phone, email, country);
         } else if (onHeadlessSubmitEmailPhone) {
           await onHeadlessSubmitEmailPhone(email, phone, country, `${firstName} ${lastName}`.trim());
         }
@@ -1132,22 +1165,22 @@ export function PortalPayAccordionCheckoutV2({
   const missingIdentityFields: { key: string; label: string }[] = [];
   if (showStepUpForm) {
     if (!fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
-    if (!fieldValidation.ssn) missingIdentityFields.push({ key: "ssn", label: ssnDigits.length > 0 ? `SSN (${9 - ssnDigits.length} digits left)` : "9-Digit SSN" });
+    if (isUS && !fieldValidation.ssn) missingIdentityFields.push({ key: "ssn", label: ssnDigits.length > 0 ? `SSN (${9 - ssnDigits.length} digits left)` : "9-Digit SSN" });
     if (manualEditAddress) {
       if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
       if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
       if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
       if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: "City" });
-      if (!fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: "State" });
-      if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: "Zip Code" });
+      if (isUS && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: "State" });
+      if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: isUS ? "Zip Code" : "Postal Code" });
     }
   } else if (showFullForm) {
     if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
     if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
     if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
     if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: "City" });
-    if (!fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: "State" });
-    if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: "Zip Code" });
+    if (isUS && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: "State" });
+    if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: isUS ? "Zip Code" : "Postal Code" });
   }
 
   const isIdentityComplete = missingIdentityFields.length === 0;
@@ -1279,11 +1312,19 @@ export function PortalPayAccordionCheckoutV2({
         return;
       }
 
+      const targetCountry = (country || "US").toUpperCase();
+      const isEU = targetCountry !== "US" && targetCountry !== "CA";
+
       if (onSubmitKycInfo) {
         if (showStepUpForm && !manualEditAddress) {
           await onSubmitKycInfo({
             ...(parsedDob ? { date_of_birth: parsedDob } : {}),
-            ...(ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
+            ...(isUS && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
+            ...(isEU ? {
+              nationalities: [targetCountry],
+              birth_country: targetCountry,
+              nationality: targetCountry,
+            } : {}),
           });
         } else {
           await onSubmitKycInfo({
@@ -1293,23 +1334,19 @@ export function PortalPayAccordionCheckoutV2({
               line1: line1.trim(),
               ...(line2 ? { line2: line2.trim() } : {}),
               city: city.trim(),
-              state: stateCode.trim(),
+              ...(stateCode ? { state: stateCode.trim() } : {}),
               postal_code: zipCode.trim(),
-              country: country || "US",
+              country: targetCountry,
             },
-            ...(showStepUpForm && parsedDob ? { date_of_birth: parsedDob } : {}),
-            ...(showStepUpForm && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
+            ...(parsedDob ? { date_of_birth: parsedDob } : {}),
+            ...(isUS && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
+            ...(isEU ? {
+              nationalities: [targetCountry],
+              birth_country: targetCountry,
+              nationality: targetCountry,
+            } : {}),
           });
         }
-      }
-
-      if (isL2Requirement && !isL2Approved) {
-        console.log("[ACCORDION] L2 Document verification required after L1 submission. Remaining on Step 2.");
-        if (onVerifyDocuments) {
-          await onVerifyDocuments();
-        }
-        setActiveStep(2);
-        return;
       }
 
       if (!propError && headlessStep !== "error") {
@@ -1478,7 +1515,11 @@ export function PortalPayAccordionCheckoutV2({
                   <Mail className="w-2.5 h-2.5 opacity-60" />
                   <span>{email}</span>
                   {phone && <span>• {phone}</span>}
-                  {country && <span>({country})</span>}
+                  {country && (
+                    <span className="inline-flex items-center gap-1 opacity-90">
+                      • {SUPPORTED_COUNTRIES.find((c) => c.code === country)?.flag || ""} {country}
+                    </span>
+                  )}
                 </p>
               )}
             </div>
@@ -1495,6 +1536,7 @@ export function PortalPayAccordionCheckoutV2({
 
         {/* Step 1 Expanded Body */}
         <form onSubmit={handleContactSubmit} className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${activeStep === 1 ? "" : "hidden"}`}>
+            {/* Email Address */}
             <div>
               <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                 <Mail className="w-3 h-3" />
@@ -1514,33 +1556,28 @@ export function PortalPayAccordionCheckoutV2({
               />
             </div>
 
-            {/* Country Selector (default compact view) */}
-            {headlessStep !== "collecting_phone" && (
-              <div>
-                <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                  Country
-                </label>
-                <select
-                  value={country}
-                  onChange={(e) => setCountry(e.target.value)}
-                  className={`w-full h-10 px-2 rounded-xl focus:outline-none transition-all text-xs font-medium ${
-                    isLightText
-                      ? "bg-neutral-900 border border-white/10 text-white focus:border-amber-400/50"
-                      : "bg-white border border-black/10 text-black focus:border-amber-400/50"
-                  }`}
-                >
-                  <option value="US">United States (US)</option>
-                  <option value="GB">United Kingdom (GB)</option>
-                  <option value="DE">Germany (DE)</option>
-                  <option value="FR">France (FR)</option>
-                  <option value="ES">Spain (ES)</option>
-                  <option value="IT">Italy (IT)</option>
-                  <option value="NL">Netherlands (NL)</option>
-                  <option value="IE">Ireland (IE)</option>
-                  <option value="AU">Australia (AU)</option>
-                </select>
-              </div>
-            )}
+            {/* Country of Residence */}
+            <div>
+              <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                <Globe className="w-3 h-3" />
+                <span>Country of Residence</span>
+              </label>
+              <select
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium cursor-pointer ${
+                  isLightText
+                    ? "bg-neutral-900 border border-white/10 text-white focus:border-amber-400/50"
+                    : "bg-white border border-black/10 text-black focus:border-amber-400/50"
+                }`}
+              >
+                {SUPPORTED_COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.flag} {c.name} ({c.code})
+                  </option>
+                ))}
+              </select>
+            </div>
 
             {/* Dynamic Phone Registration Input — ONLY shown when Stripe Link explicitly requires a new account phone number (matching V1) */}
             {headlessStep === "collecting_phone" && (
@@ -1555,43 +1592,24 @@ export function PortalPayAccordionCheckoutV2({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-12 gap-2">
-                  <div className="col-span-7">
-                    <input
-                      type="tel"
-                      required
-                      placeholder="+1 (555) 000-0000"
-                      value={phone}
-                      onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
-                      autoFocus
-                      className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
-                        isLightText
-                          ? "bg-white/10 border border-amber-400/50 text-white placeholder-white/50 focus:ring-1 focus:ring-amber-400"
-                          : "bg-black/10 border border-amber-500/50 text-black placeholder-black/50 focus:ring-1 focus:ring-amber-500"
-                      }`}
-                    />
-                  </div>
-                  <div className="col-span-5">
-                    <select
-                      value={country}
-                      onChange={(e) => setCountry(e.target.value)}
-                      className={`w-full h-10 px-2 rounded-xl focus:outline-none transition-all text-xs font-medium ${
-                        isLightText
-                          ? "bg-neutral-900 border border-white/10 text-white focus:border-amber-400/50"
-                          : "bg-white border border-black/10 text-black focus:border-amber-400/50"
-                      }`}
-                    >
-                      <option value="US">US (+1)</option>
-                      <option value="GB">GB (+44)</option>
-                      <option value="DE">DE (+49)</option>
-                      <option value="FR">FR (+33)</option>
-                      <option value="ES">ES (+34)</option>
-                      <option value="IT">IT (+39)</option>
-                      <option value="NL">NL (+31)</option>
-                      <option value="IE">IE (+353)</option>
-                      <option value="AU">AU (+61)</option>
-                    </select>
-                  </div>
+                <div>
+                  <input
+                    type="tel"
+                    required
+                    placeholder={
+                      SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial
+                        ? `${SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial} 000 0000`
+                        : "+1 (555) 000-0000"
+                    }
+                    value={phone}
+                    onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
+                    autoFocus
+                    className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
+                      isLightText
+                        ? "bg-white/10 border border-amber-400/50 text-white placeholder-white/50 focus:ring-1 focus:ring-amber-400"
+                        : "bg-black/10 border border-amber-500/50 text-black placeholder-black/50 focus:ring-1 focus:ring-amber-500"
+                    }`}
+                  />
                 </div>
               </div>
             )}
@@ -1911,6 +1929,28 @@ export function PortalPayAccordionCheckoutV2({
                   </div>
                 </div>
 
+                {/* Country of Residence Selector */}
+                <div>
+                  <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                    Country of Residence
+                  </label>
+                  <select
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                    className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
+                      isLightText
+                        ? "bg-neutral-900 border border-white/10 text-white focus:border-amber-400/50"
+                        : "bg-white border border-black/10 text-black focus:border-amber-400/50"
+                    }`}
+                  >
+                    {SUPPORTED_COUNTRIES.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.flag} {c.name} ({c.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 {/* Full Residential Address Autocomplete Single Input */}
                 {!isAddressParsed ? (
                   <div className="space-y-1.5">
@@ -2019,6 +2059,27 @@ export function PortalPayAccordionCheckoutV2({
                     </div>
 
                     <div>
+                      <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                        Country
+                      </label>
+                      <select
+                        value={country}
+                        onChange={(e) => setCountry(e.target.value)}
+                        className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
+                          isLightText
+                            ? "bg-neutral-900 border border-white/10 text-white focus:border-amber-400/50"
+                            : "bg-white border border-black/10 text-black focus:border-amber-400/50"
+                        }`}
+                      >
+                        {SUPPORTED_COUNTRIES.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.flag} {c.name} ({c.code})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
                       <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                         <span className="flex items-center gap-1">
                           <MapPin className="w-3 h-3" />
@@ -2043,14 +2104,14 @@ export function PortalPayAccordionCheckoutV2({
                     </div>
 
                     <div className="grid grid-cols-12 gap-2">
-                      <div className="col-span-5">
+                      <div className={isUS ? "col-span-5" : "col-span-5"}>
                         <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                           <span>City <span className="text-red-400">*</span></span>
                           {isFieldValid("city") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                         </label>
                         <input
                           type="text"
-                          placeholder="Los Angeles"
+                          placeholder={isUS ? "Los Angeles" : country === "DE" ? "Berlin" : country === "FR" ? "Paris" : country === "GB" ? "London" : "City"}
                           value={city}
                           onChange={(e) => setCity(e.target.value)}
                           onBlur={() => markFieldTouched("city")}
@@ -2062,19 +2123,19 @@ export function PortalPayAccordionCheckoutV2({
                           </span>
                         )}
                       </div>
-                      <div className="col-span-3">
+                      <div className={isUS ? "col-span-3" : "col-span-3"}>
                         <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                          <span>State <span className="text-red-400">*</span></span>
+                          <span>{isUS ? "State *" : "Region"}</span>
                           {isFieldValid("stateCode") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                         </label>
                         <input
                           type="text"
-                          placeholder="CA"
-                          maxLength={2}
+                          placeholder={isUS ? "CA" : "State/Region"}
+                          maxLength={isUS ? 2 : 50}
                           value={stateCode}
-                          onChange={(e) => setStateCode(e.target.value.toUpperCase())}
+                          onChange={(e) => setStateCode(isUS ? e.target.value.toUpperCase() : e.target.value)}
                           onBlur={() => markFieldTouched("stateCode")}
-                          className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium uppercase text-center transition-all ${getFieldInputClass("stateCode")}`}
+                          className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium ${isUS ? "uppercase text-center" : ""} transition-all ${getFieldInputClass("stateCode")}`}
                         />
                         {isFieldInvalid("stateCode") && (
                           <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
@@ -2082,15 +2143,15 @@ export function PortalPayAccordionCheckoutV2({
                           </span>
                         )}
                       </div>
-                      <div className="col-span-4">
+                      <div className={isUS ? "col-span-4" : "col-span-4"}>
                         <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                          <span>Zip Code <span className="text-red-400">*</span></span>
+                          <span>{isUS ? "Zip Code *" : "Postal Code *"}</span>
                           {isFieldValid("zipCode") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
                         </label>
                         <input
                           type="text"
-                          placeholder="90210"
-                          maxLength={10}
+                          placeholder={isUS ? "90210" : country === "DE" ? "10115" : country === "FR" ? "75001" : country === "GB" ? "SW1A 1AA" : "Postal Code"}
+                          maxLength={12}
                           value={zipCode}
                           onChange={(e) => setZipCode(e.target.value)}
                           onBlur={() => markFieldTouched("zipCode")}
@@ -2098,7 +2159,7 @@ export function PortalPayAccordionCheckoutV2({
                         />
                         {isFieldInvalid("zipCode") && (
                           <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
-                            <AlertCircle className="w-3 h-3" /> 5-digit zip
+                            <AlertCircle className="w-3 h-3" /> Postal Code
                           </span>
                         )}
                       </div>
@@ -2108,9 +2169,9 @@ export function PortalPayAccordionCheckoutV2({
               </>
             )}
 
-            {/* L1 Demographic Demands: Date of Birth & SSN (Rendered strictly when Step-Up is required) */}
+            {/* L1 Demographic Demands: Date of Birth & SSN (SSN only for US; DOB for all) */}
             {showStepUpForm && (
-              <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-white/10 animate-in fade-in duration-200">
+              <div className={`grid ${isUS ? "grid-cols-2" : "grid-cols-1"} gap-2.5 pt-2 border-t border-white/10 animate-in fade-in duration-200`}>
                 <div>
                   <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                     <span className="flex items-center gap-1">
@@ -2145,39 +2206,41 @@ export function PortalPayAccordionCheckoutV2({
                     <span className="text-[10px] text-muted-foreground mt-1 block">MM / DD / YYYY</span>
                   )}
                 </div>
-                <div>
-                  <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                    <span className="flex items-center gap-1">
-                      <Shield className="w-3 h-3" />
-                      <span>SSN (9 Digits)</span>
-                      <span className="text-red-400">*</span>
-                    </span>
-                    {isFieldValid("ssn") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="000-00-0000"
-                    maxLength={11}
-                    value={formatSSN(ssn)}
-                    onChange={(e) => setSsn(e.target.value)}
-                    onBlur={() => markFieldTouched("ssn")}
-                    className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium font-mono transition-all ${getFieldInputClass("ssn")}`}
-                  />
-                  {isFieldInvalid("ssn") ? (
-                    <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
-                      <AlertCircle className="w-3 h-3" /> Full 9-digit SSN required ({ssnDigits.length}/9)
-                    </span>
-                  ) : ssnDigits.length === 9 ? (
-                    <span className="text-[10px] text-emerald-400 font-medium mt-1 flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" /> 9 Digits Encrypted
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-muted-foreground mt-1 block">
-                      {ssnDigits.length > 0 ? `${ssnDigits.length} of 9 digits entered` : "Encrypted directly to Stripe"}
-                    </span>
-                  )}
-                </div>
+                {isUS && (
+                  <div>
+                    <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                      <span className="flex items-center gap-1">
+                        <Shield className="w-3 h-3" />
+                        <span>SSN (9 Digits)</span>
+                        <span className="text-red-400">*</span>
+                      </span>
+                      {isFieldValid("ssn") && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="000-00-0000"
+                      maxLength={11}
+                      value={formatSSN(ssn)}
+                      onChange={(e) => setSsn(e.target.value)}
+                      onBlur={() => markFieldTouched("ssn")}
+                      className={`w-full h-10 px-3 rounded-xl focus:outline-none text-xs font-medium font-mono transition-all ${getFieldInputClass("ssn")}`}
+                    />
+                    {isFieldInvalid("ssn") ? (
+                      <span className="text-[10px] text-red-400 font-semibold mt-1 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> Full 9-digit SSN required ({ssnDigits.length}/9)
+                      </span>
+                    ) : ssnDigits.length === 9 ? (
+                      <span className="text-[10px] text-emerald-400 font-medium mt-1 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> 9 Digits Encrypted
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground mt-1 block">
+                        {ssnDigits.length > 0 ? `${ssnDigits.length} of 9 digits entered` : "Encrypted directly to Stripe"}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2218,78 +2281,10 @@ export function PortalPayAccordionCheckoutV2({
               </div>
             )}
 
-            {/* L2 Document Verification Container & Action */}
-            {isL2Requirement && (
-              <div className="pt-2 space-y-2">
-                {headlessStep === "verifying_identity" && (
-                  <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/30 space-y-2 animate-in fade-in duration-200">
-                    <div className="flex items-center gap-1.5 text-purple-300 text-xs font-bold">
-                      <Shield className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                      <span>Stripe Identity Verification: Complete ID verification below</span>
-                    </div>
-                    <div
-                      className="p-2 rounded-xl bg-black/20 border border-white/10 min-h-[300px]"
-                      ref={(el) => {
-                        (identityContainerRef as any).current = el;
-                        if (el && paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
-                          if (!el.contains(paymentElement as Node)) {
-                            el.innerHTML = "";
-                            el.appendChild(paymentElement as HTMLElement);
-                          }
-                        }
-                      }}
-                    >
-                      {typeof paymentElement !== "object" || !("nodeType" in (paymentElement || {}))
-                        ? (paymentElement as React.ReactNode)
-                        : null}
-                    </div>
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleDocumentVerificationClick}
-                  disabled={isVerifyingDocs || isL2Approved || headlessStep === "verifying_identity"}
-                  className={`w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg ${
-                    isL2Approved
-                      ? "bg-emerald-600 text-white cursor-default"
-                      : headlessStep === "verifying_identity"
-                      ? "bg-purple-900/60 text-purple-200 border border-purple-500/40 cursor-wait"
-                      : "bg-purple-600 hover:bg-purple-500 text-white animate-pulse"
-                  }`}
-                >
-                  {isVerifyingDocs || headlessStep === "verifying_identity" ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Verifying identification with Stripe...</span>
-                    </>
-                  ) : isL2Approved ? (
-                    <>
-                      <CheckCircle2 className="w-4 h-4 text-white" />
-                      <span>Government ID Verified</span>
-                    </>
-                  ) : (
-                    <>
-                      <FileText className="w-4 h-4" />
-                      <span>Verify Government-Issued ID</span>
-                    </>
-                  )}
-                </button>
-                {!isL2Approved && (
-                  <p className="text-[10px] text-purple-300 text-center opacity-80">
-                    A valid government-issued ID or passport is required for Level 2 verification.
-                  </p>
-                )}
-              </div>
-            )}
-
             {/* Save & Continue Button */}
             <button
               type="submit"
-              disabled={
-                isSubmittingIdentity ||
-                (isL2Requirement && !isL2Approved)
-              }
+              disabled={isSubmittingIdentity || !isIdentityComplete}
               className={`w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg mt-2 ${
                 isSubmittingIdentity
                   ? "bg-emerald-600 text-white cursor-wait"
@@ -2297,12 +2292,10 @@ export function PortalPayAccordionCheckoutV2({
                   ? isLightText
                     ? "bg-white/10 hover:bg-white/15 text-white/50 border border-white/10 cursor-pointer"
                     : "bg-black/10 hover:bg-black/15 text-black/50 border border-black/10 cursor-pointer"
-                  : isL2Requirement && !isL2Approved
-                  ? "bg-white/10 text-white/40 cursor-not-allowed border border-white/10"
                   : "hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
               }`}
               style={
-                isIdentityComplete && !isSubmittingIdentity && !(isL2Requirement && !isL2Approved)
+                isIdentityComplete && !isSubmittingIdentity
                   ? { backgroundColor: primaryColor, color: "#fff" }
                   : {}
               }
@@ -2311,11 +2304,6 @@ export function PortalPayAccordionCheckoutV2({
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   <span>Verifying Identity Details...</span>
-                </>
-              ) : isL2Requirement && !isL2Approved ? (
-                <>
-                  <Lock className="w-4 h-4" />
-                  <span>Complete ID Verification Above to Proceed</span>
                 </>
               ) : !isIdentityComplete ? (
                 <>
@@ -2376,7 +2364,7 @@ export function PortalPayAccordionCheckoutV2({
             )}
             <div>
               <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
-                3. Payment Method
+                {headlessStep === "verifying_identity" ? "3. Identity Verification & Payment" : "3. Payment Method"}
               </h4>
               {activeStep > 3 && (
                 <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
@@ -2406,7 +2394,20 @@ export function PortalPayAccordionCheckoutV2({
               </div>
             )}
 
-            {/* Embedded Live Stripe Payment Element Container (Persistent DOM mounting matching V1) */}
+            {/* Level 2 Document & Selfie Verification Notice (When Stripe Demands L2 Verification) */}
+            {headlessStep === "verifying_identity" && (
+              <div className="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/30 space-y-1.5 animate-in fade-in duration-300 my-1">
+                <div className="flex items-center gap-2 text-purple-300 text-xs font-bold">
+                  <Shield className="w-4 h-4 text-purple-400 shrink-0" />
+                  <span>Stripe Identity Verification Required</span>
+                </div>
+                <p className="text-[11px] text-purple-300/80 leading-relaxed">
+                  Please follow the secure on-screen instructions below to scan your government-issued ID (or passport) and take a quick selfie to verify your identity.
+                </p>
+              </div>
+            )}
+
+            {/* Embedded Live Stripe Payment / Identity Element Container (Persistent DOM mounting matching V1) */}
             <div className="space-y-2">
               <div
                 className={`p-3 rounded-xl bg-white/5 border border-white/10 my-2 ${paymentElement ? "block" : "hidden"}`}
@@ -2431,7 +2432,11 @@ export function PortalPayAccordionCheckoutV2({
               {paymentElement && (
                 <div className="flex items-center justify-center gap-1.5 py-1 text-[11px] font-semibold text-amber-400/90 text-center animate-in fade-in">
                   <Lock className="w-3 h-3 text-emerald-400 shrink-0" />
-                  <span>Please confirm your payment method in the secure form above to complete checkout.</span>
+                  <span>
+                    {headlessStep === "verifying_identity"
+                      ? "Complete the secure photo verification above to proceed."
+                      : "Please confirm your payment method in the secure form above to complete checkout."}
+                  </span>
                 </div>
               )}
 
@@ -2440,7 +2445,9 @@ export function PortalPayAccordionCheckoutV2({
                 <div className="p-8 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
                   <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
                   <p className={`text-xs font-medium ${isLightText ? "text-white/70" : "text-black/70"}`}>
-                    Loading secure Stripe payment form...
+                    {headlessStep === "verifying_identity"
+                      ? "Loading secure Stripe identity verification..."
+                      : "Loading secure Stripe payment form..."}
                   </p>
                 </div>
               )}

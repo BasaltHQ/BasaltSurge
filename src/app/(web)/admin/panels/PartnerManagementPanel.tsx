@@ -471,12 +471,18 @@ export default function PartnerManagementPanel() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/agents/list", { headers: { "x-wallet": account?.address || "" } });
+        const targetKey = String(brandKey || "").toLowerCase();
+        const res = await fetch(`/api/agents/list${targetKey ? `?brandKey=${encodeURIComponent(targetKey)}` : ""}`, { 
+          headers: { 
+            "x-wallet": account?.address || "",
+            ...(targetKey ? { "x-brand-key": targetKey } : {})
+          } 
+        });
         const data = await res.json();
         setApprovedAgents(data.agents || []);
       } catch { setApprovedAgents([]); }
     })();
-  }, [account?.address]);
+  }, [account?.address, brandKey]);
 
   // Autopopulate deployment fields and Azure params when brand changes (sane defaults + brand-based name)
   useEffect(() => {

@@ -291,7 +291,13 @@ export type UseStripeEmbeddedOnrampReturn = {
   /** The payment method element to render */
   paymentElement: HTMLElement | null;
   /** Start the full onramp flow */
-  startOnramp: (overrideEmail?: string, overridePhone?: string, overrideName?: string) => Promise<void>;
+  startOnramp: (
+    overrideEmail?: string,
+    overridePhone?: string,
+    overrideNameOrCountry?: string,
+    isForceRetryOrName?: boolean | string,
+    overrideCountry?: string
+  ) => Promise<void>;
   /** Reset state */
   reset: () => void;
   /** Submit phone number to resume registration */
@@ -430,15 +436,31 @@ export function getFriendlyOnrampErrorMessage(code: string, fallbackMessage: str
 }
 
 
+export const COUNTRY_CALLING_CODES: Record<string, string> = {
+  US: "1", CA: "1", GB: "44", DE: "49", FR: "33", ES: "34", IT: "39",
+  NL: "31", IE: "353", AT: "43", BE: "32", BG: "359", HR: "385", CY: "357",
+  CZ: "420", DK: "45", EE: "372", FI: "358", GR: "30", HU: "36", LV: "371",
+  LT: "370", LU: "352", MT: "356", PL: "48", PT: "351", RO: "40", SK: "421",
+  SI: "386", SE: "46", CH: "41", NO: "47", AU: "61", NZ: "64", JP: "81",
+  SG: "65", HK: "852", BR: "55", MX: "52", IN: "91", ZA: "27"
+};
+
+export function getCallingCode(countryOrCode: string = "US"): string {
+  const upper = (countryOrCode || "").toUpperCase().trim();
+  if (COUNTRY_CALLING_CODES[upper]) {
+    return COUNTRY_CALLING_CODES[upper];
+  }
+  const digitsOnly = upper.replace(/\D/g, "");
+  return digitsOnly || "1";
+}
+
 /**
- * Formats a phone number string to E.164 standard format.
+ * Robust E.164 phone formatter supporting all international and EU countries.
  * E.164 format is: +[country_code][national_number] with no symbols, spaces, or dashes.
- * Defaults to "+1" (US/CA) if no country code prefix is present and length is 10 digits.
  */
-export function formatToE164(phone: string, defaultCountryCode = "1"): string {
+export function formatToE164(phone: string, countryOrCallingCode = "US"): string {
   if (!phone) return "";
-  // Strip all non-digit characters except "+"
-  let cleaned = phone.replace(/[^\d+]/g, "");
+  let cleaned = phone.trim().replace(/[^\d+]/g, "");
 
   // If already starts with "+", keep it
   if (cleaned.startsWith("+")) {
@@ -450,18 +472,20 @@ export function formatToE164(phone: string, defaultCountryCode = "1"): string {
     return "+" + cleaned.slice(2);
   }
 
-  // Handle standard 10-digit North American number
-  if (cleaned.length === 10) {
-    return `+${defaultCountryCode}${cleaned}`;
+  const callingCode = getCallingCode(countryOrCallingCode);
+
+  // If starts with European trunk prefix '0' (e.g. 0170... in Germany, UK, etc.), strip it
+  if (callingCode !== "1" && cleaned.startsWith("0")) {
+    cleaned = cleaned.replace(/^0+/, "");
   }
 
-  // Handle 11-digit starting with the default country code
-  if (cleaned.length === 11 && cleaned.startsWith(defaultCountryCode)) {
+  // If already starts with the calling code and has sufficient length
+  if (cleaned.startsWith(callingCode) && cleaned.length > callingCode.length + 5) {
     return `+${cleaned}`;
   }
 
-  // Fallback: prepend "+"
-  return `+${cleaned}`;
+  // Prepend calling code
+  return `+${callingCode}${cleaned}`;
 }
 
 function checkIfCardDecline(err: any, lastError?: string): boolean {
@@ -586,6 +610,7 @@ export function useStripeEmbeddedOnramp({
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
   const isCoordinatorAuthedRef = useRef(false);
   const kycOccurredRef = useRef(false);
+  const activeCountryRef = useRef<string>("US");
 
   // ─── CALLBACK REFS TO PREVENT STALE CLOSURES ───
   const onSuccessRef = useRef(onSuccess);
@@ -666,7 +691,7 @@ export function useStripeEmbeddedOnramp({
   const buyerAccountRef = useRef<any>(null);
   const isRunningRef = useRef(false);
   const sessionIdRef = useRef<string | null>(null);
-  const activeEmailRef = useRef<string | null>(null);
+  const activeEmailRef = useRef<string | null>(email ? email.trim().toLowerCase() : null);
   const customerIdRef = useRef<string | null>(null);
   const buyerWalletRef = useRef<string | null>(null);
   const isVerifyingRef = useRef(false);
@@ -684,15 +709,16 @@ export function useStripeEmbeddedOnramp({
     onStepChangeRef.current?.(newStep);
   }, []);
 
-  // Synchronize email in session storage when it changes dynamically (without clearing session data on keystrokes)
+  // Synchronize email in session storage and activeEmailRef when it changes dynamically
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const currentEmail = (email || "").trim().toLowerCase();
-      if (!currentEmail) return;
-
-      const storedEmail = sessionStorage.getItem("stripe_onramp_email");
-      if (!storedEmail && stepRef.current === "idle") {
-        sessionStorage.setItem("stripe_onramp_email", currentEmail);
+    const currentEmail = (email || "").trim().toLowerCase();
+    if (currentEmail) {
+      activeEmailRef.current = currentEmail;
+      if (typeof window !== "undefined") {
+        const storedEmail = sessionStorage.getItem("stripe_onramp_email");
+        if (!storedEmail && stepRef.current === "idle") {
+          sessionStorage.setItem("stripe_onramp_email", currentEmail);
+        }
       }
     }
   }, [email]);
@@ -1254,8 +1280,8 @@ export function useStripeEmbeddedOnramp({
                                     kycData.idDocStatus === "verified" ||
                                     kycData.idDocStatus === "completed";
 
-          const isL0Verified = l0Tier ? l0Tier.verification_status === "verified" : isOverallVerified;
-          const isL1Verified = l1Tier ? l1Tier.verification_status === "verified" : isOverallVerified;
+          const isL0Verified = l0Tier ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available") : isOverallVerified;
+          const isL1Verified = l1Tier ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") : isOverallVerified;
           const isL2Verified = l2Tier ? l2Tier.verification_status === "verified" : isOverallVerified;
 
           const isL0Rejected = l0Tier?.verification_status === "rejected";
@@ -2563,9 +2589,12 @@ export function useStripeEmbeddedOnramp({
     updateStep("submitting_kyc");
     isRunningRef.current = true;
     try {
-      kycOccurredRef.current = true;
-      // Normalize id_number string if passed directly as string, stripping non-digits for SSN
       const payload = { ...kycInfo };
+      if (payload.address?.country) {
+        activeCountryRef.current = String(payload.address.country).toUpperCase();
+      } else if (payload.country) {
+        activeCountryRef.current = String(payload.country).toUpperCase();
+      }
       if (payload.id_number) {
         if (typeof payload.id_number === "string") {
           payload.id_number = {
@@ -2595,7 +2624,8 @@ export function useStripeEmbeddedOnramp({
             cleanAddr[k] = String(v).trim();
           }
         }
-        if (cleanAddr.state) {
+        const isNorthAmerica = cleanAddr.country === "US" || cleanAddr.country === "CA";
+        if (cleanAddr.state && isNorthAmerica) {
           const lower = cleanAddr.state.toLowerCase();
           const STATE_MAP: Record<string, string> = {
             "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA", "colorado": "CO", "connecticut": "CT",
@@ -2612,12 +2642,24 @@ export function useStripeEmbeddedOnramp({
           cleanAddr.state = STATE_MAP[lower] || cleanAddr.state.toUpperCase();
         }
         payload.address = cleanAddr;
+
+        // Auto-inject required EU KYC fields (nationalities, birth_country) if not already provided
+        const countryCode = (cleanAddr.country || activeCountryRef.current || "US").toUpperCase();
+        if (countryCode !== "US" && countryCode !== "CA") {
+          if (!payload.nationalities) {
+            payload.nationalities = [countryCode];
+          }
+          if (!payload.birth_country) {
+            payload.birth_country = countryCode;
+          }
+          if (!payload.nationality) {
+            payload.nationality = countryCode;
+          }
+        }
       }
       await submitKycInfoWithTimeout(onrampRef.current, payload);
-      console.log("[EMBEDDED ONRAMP] KYC demographics submitted successfully! Checking verification status...");
-
-      // Determine which tier was just submitted based on the payload fields
-      const submittedTier = (payload.date_of_birth || payload.id_number || payload.nationalities) ? "l1" : "l0";
+      // Determine which tier was just submitted based on the payload fields (DOB/SSN defines L1)
+      const submittedTier = (payload.date_of_birth || payload.id_number) ? "l1" : "l0";
 
       updateStep("checking_kyc");
       const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
@@ -2836,12 +2878,49 @@ export function useStripeEmbeddedOnramp({
     } catch (err: any) {
       console.error("[EMBEDDED ONRAMP] verifyDocuments failed:", err);
       isVerifyingRef.current = false;
+      const errMsg = String(err?.message || err || "").toLowerCase();
+      if (errMsg.includes("invalid request") || errMsg.includes("already_verified") || errMsg.includes("cannot be updated")) {
+        console.log("[EMBEDDED ONRAMP] Document verification not pending or already approved in Stripe. Advancing to payment collection...");
+        setIsAllKycCompleted(true);
+        updateStep("collecting_payment");
+        if (startOnrampRef.current) {
+          setTimeout(() => {
+            startOnrampRef.current?.(activeEmailRef.current || undefined);
+          }, 50);
+        }
+        return true;
+      }
       handleError(err?.message || "Identity verification failed", err);
       return false;
     }
   }, [pollKycStatus, updateStep, handleError]);
 
-  const startOnramp = useCallback(async (overrideEmail?: string, overridePhone?: string, overrideName?: string, isForceRetry?: boolean) => {
+  const startOnramp = useCallback(async (
+    overrideEmail?: string,
+    overridePhone?: string,
+    overrideNameOrCountry?: string,
+    isForceRetryOrName?: boolean | string,
+    overrideCountry?: string
+  ) => {
+    // Detect if Argument 3 was passed as a 2-letter country code (e.g. "DE", "FR", "US")
+    let resolvedCountry = overrideCountry;
+    let resolvedName = fullName;
+    let isForceRetry = false;
+
+    if (typeof overrideNameOrCountry === "string" && overrideNameOrCountry.length === 2 && overrideNameOrCountry === overrideNameOrCountry.toUpperCase()) {
+      resolvedCountry = overrideNameOrCountry;
+      if (typeof isForceRetryOrName === "string") {
+        resolvedName = isForceRetryOrName;
+      }
+    } else {
+      if (typeof overrideNameOrCountry === "string") {
+        resolvedName = overrideNameOrCountry;
+      }
+      if (typeof isForceRetryOrName === "boolean") {
+        isForceRetry = isForceRetryOrName;
+      }
+    }
+
     if (isRunningRef.current && !isForceRetry) {
       console.warn("[EMBEDDED ONRAMP] Onramp flow is already running. Ignoring duplicate trigger.");
       return;
@@ -2856,34 +2935,49 @@ export function useStripeEmbeddedOnramp({
     }
     console.log("[EMBEDDED ONRAMP] startOnramp triggered. isEcommerceMode prop:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
 
-    const activeEmail = (overrideEmail || email || "").trim().toLowerCase();
-    if (activeEmail && typeof window !== "undefined") {
-      const storedEmail = sessionStorage.getItem("stripe_onramp_email");
-      if (storedEmail && storedEmail !== activeEmail) {
-        console.warn("[EMBEDDED ONRAMP] Email mismatch on startOnramp. Clearing session storage for new user:", storedEmail, "->", activeEmail);
-        sessionStorage.removeItem("stripe_onramp_customer_id");
-        sessionStorage.removeItem("stripe_onramp_oauth_token");
-        sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-        sessionStorage.removeItem(sessionKey);
-        sessionStorage.removeItem("stripe_onramp_email");
+    const rawEmail = overrideEmail || activeEmailRef.current || email || (typeof window !== "undefined" ? sessionStorage.getItem("stripe_onramp_email") || "" : "");
+    const activeEmail = rawEmail.trim().toLowerCase();
+    if (activeEmail) {
+      activeEmailRef.current = activeEmail;
+      if (typeof window !== "undefined") {
+        const storedEmail = sessionStorage.getItem("stripe_onramp_email");
+        if (storedEmail && storedEmail !== activeEmail) {
+          console.warn("[EMBEDDED ONRAMP] Email mismatch on startOnramp. Clearing session storage for new user:", storedEmail, "->", activeEmail);
+          sessionStorage.removeItem("stripe_onramp_customer_id");
+          sessionStorage.removeItem("stripe_onramp_oauth_token");
+          sessionStorage.removeItem("stripe_onramp_buyer_wallet");
+          sessionStorage.removeItem(sessionKey);
+          sessionStorage.removeItem("stripe_onramp_email");
 
-        customerIdRef.current = null;
-        oauthTokenRef.current = null;
-        buyerWalletRef.current = null;
-        sessionIdRef.current = null;
+          customerIdRef.current = null;
+          oauthTokenRef.current = null;
+          buyerWalletRef.current = null;
+          sessionIdRef.current = null;
 
-        setCryptoCustomerId(null);
-        setBuyerWalletAddress(null);
-        setSessionId(null);
+          setCryptoCustomerId(null);
+          setBuyerWalletAddress(null);
+          setSessionId(null);
+
+          if (onrampRef.current) {
+            try { onrampRef.current.destroy(); } catch {}
+            onrampRef.current = null;
+          }
+          isCoordinatorAuthedRef.current = false;
+          setAuthElement(null);
+          setPaymentElement(null);
+        }
+        sessionStorage.setItem("stripe_onramp_email", activeEmail);
       }
-      sessionStorage.setItem("stripe_onramp_email", activeEmail);
+    }
+    if (resolvedCountry) {
+      activeCountryRef.current = resolvedCountry;
     }
     let activePhone = overridePhone || phone || localPhone;
     if (activePhone && activePhone.includes("*")) {
       activePhone = "";
     }
-    const activeName = overrideName || fullName;
-    const formattedPhone = activePhone ? formatToE164(activePhone) : "";
+    const activeName = resolvedName;
+    const formattedPhone = activePhone ? formatToE164(activePhone, activeCountryRef.current || "US") : "";
 
     if (!enabled || !activeEmail || !splitAddress || !publishableKey) {
       handleError("Missing required fields (email, split address, or API key)");
@@ -2965,11 +3059,11 @@ export function useStripeEmbeddedOnramp({
         updateStep("registering_link");
 
         try {
-          console.log("[EMBEDDED ONRAMP] Registering Link user with formatted phone:", formattedPhone);
+          console.log("[EMBEDDED ONRAMP] Registering Link user with formatted phone:", formattedPhone, "country:", activeCountryRef.current);
           const registerResult = await onramp.registerLinkUser(
             activeEmail,
             formattedPhone,
-            "US",
+            activeCountryRef.current || "US",
             activeName ? activeName.trim() : undefined
           );
 
@@ -3963,15 +4057,22 @@ export function useStripeEmbeddedOnramp({
     startOnrampRef.current = startOnramp;
   }, [startOnramp]);
 
-  const submitPhone = useCallback((phoneNumber: string) => {
+  const submitPhone = useCallback((phoneNumber: string, emailOverride?: string, countryOverride?: string) => {
     if (!phoneNumber || phoneNumber.includes("*")) {
       console.warn("[EMBEDDED ONRAMP] Rejected invalid/masked phone input:", phoneNumber);
       return;
     }
-    const formatted = formatToE164(phoneNumber);
+    if (emailOverride) {
+      activeEmailRef.current = emailOverride.trim().toLowerCase();
+    }
+    if (countryOverride) {
+      activeCountryRef.current = countryOverride;
+    }
+    const formatted = formatToE164(phoneNumber, activeCountryRef.current || "US");
     setLocalPhone(formatted);
     console.log("[EMBEDDED ONRAMP] Phone number submitted, resuming flow (original/formatted):", phoneNumber, "->", formatted);
-    startOnramp(undefined, formatted);
+    isRunningRef.current = false;
+    startOnramp(emailOverride || activeEmailRef.current || undefined, formatted, undefined, true, countryOverride || activeCountryRef.current);
   }, [startOnramp]);
 
   const statusMessage = useMemo(() => STEP_MESSAGES[step], [step]);

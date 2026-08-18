@@ -81,10 +81,15 @@ export async function GET(req: Request) {
     return NextResponse.json({ predictions: [] });
   }
 
+  const countryParam = searchParams.get("country");
+
   try {
-    const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
+    let url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
       input.trim()
     )}&types=address&key=${apiKey}`;
+    if (countryParam && countryParam.length === 2) {
+      url += `&components=country:${encodeURIComponent(countryParam.toLowerCase())}`;
+    }
 
     const res = await fetch(url);
     const data = await res.json();
