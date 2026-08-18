@@ -2160,11 +2160,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             // Prepopulate stripeEmail if returned from receipt API (making it device-specific)
             const emailVal = rec.stripeEmail || (rec as any).customerEmail || (rec as any).buyerEmail || rec.shippingAddress?.email || "";
             if (emailVal) {
-              const storedEmail = typeof window !== "undefined" ? (localStorage.getItem("stripe_onramp_email") || sessionStorage.getItem("stripe_onramp_email")) : null;
               const isFresh = rec.status === "generated" || rec.status === "link_opened";
-              const isSameDevice = storedEmail && storedEmail.toLowerCase() === emailVal.toLowerCase();
-
-              if (isFresh || isSameDevice) {
+              if (isFresh) {
                 setShipEmail((prev) => prev || emailVal);
                 setHeadlessEmailInput((prev) => prev || emailVal);
               }
@@ -2438,7 +2435,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [shipEmail, setShipEmail] = useState(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
-      return sp.get("stripeEmail") || sp.get("email") || window.localStorage.getItem("stripe_onramp_email") || window.sessionStorage.getItem("stripe_onramp_email") || "";
+      return sp.get("stripeEmail") || sp.get("email") || "";
     }
     return "";
   });
@@ -2451,7 +2448,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [headlessEmailInput, setHeadlessEmailInput] = useState(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
-      return sp.get("stripeEmail") || sp.get("email") || window.localStorage.getItem("stripe_onramp_email") || window.sessionStorage.getItem("stripe_onramp_email") || "";
+      return sp.get("stripeEmail") || sp.get("email") || "";
     }
     return "";
   });

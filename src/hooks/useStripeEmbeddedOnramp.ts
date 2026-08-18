@@ -291,7 +291,13 @@ export type UseStripeEmbeddedOnrampReturn = {
   /** The payment method element to render */
   paymentElement: HTMLElement | null;
   /** Start the full onramp flow */
-  startOnramp: (overrideEmail?: string, overridePhone?: string, overrideName?: string) => Promise<void>;
+  startOnramp: (
+    overrideEmail?: string,
+    overridePhone?: string,
+    overrideNameOrCountry?: string,
+    isForceRetryOrName?: boolean | string,
+    overrideCountry?: string
+  ) => Promise<void>;
   /** Reset state */
   reset: () => void;
   /** Submit phone number to resume registration */
@@ -2951,6 +2957,14 @@ export function useStripeEmbeddedOnramp({
           setCryptoCustomerId(null);
           setBuyerWalletAddress(null);
           setSessionId(null);
+
+          if (onrampRef.current) {
+            try { onrampRef.current.destroy(); } catch {}
+            onrampRef.current = null;
+          }
+          isCoordinatorAuthedRef.current = false;
+          setAuthElement(null);
+          setPaymentElement(null);
         }
         sessionStorage.setItem("stripe_onramp_email", activeEmail);
       }
