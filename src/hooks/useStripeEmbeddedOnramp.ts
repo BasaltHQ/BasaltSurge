@@ -342,7 +342,7 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
   checking_link: "Checking account...",
   registering_link: "Creating account...",
   collecting_phone: "Enter phone number for Link...",
-  authenticating: "Verifying identity...",
+  authenticating: "Authenticating with Link...",
   exchanging_tokens: "Securing session...",
   checking_kyc: "Checking verification...",
   collecting_kyc: "Collecting identity info...",
@@ -4030,6 +4030,9 @@ export function useStripeEmbeddedOnramp({
         if (isL0Error) {
           console.log("[EMBEDDED ONRAMP] L0 KYC error caught during payment collection/checkout. Redirecting to L0 input...");
           setKycTierRequired("l0");
+          kycTierRequiredRef.current = "l0";
+          setIsAllKycCompleted(false);
+          isAllKycCompletedRef.current = false;
           updateStep("collecting_kyc");
           isRunningRef.current = false;
           return;
@@ -4037,6 +4040,9 @@ export function useStripeEmbeddedOnramp({
         if (isL1Error) {
           console.log("[EMBEDDED ONRAMP] L1 KYC error caught during payment collection/checkout. Redirecting to L1 input...");
           setKycTierRequired("l1");
+          kycTierRequiredRef.current = "l1";
+          setIsAllKycCompleted(false);
+          isAllKycCompletedRef.current = false;
           updateStep("collecting_kyc");
           isRunningRef.current = false;
           return;
@@ -4071,6 +4077,9 @@ export function useStripeEmbeddedOnramp({
               const l1Approved = await pollKycStatus(customerId, "l1");
               if (!l1Approved) {
                 setKycTierRequired("l1");
+                kycTierRequiredRef.current = "l1";
+                setIsAllKycCompleted(false);
+                isAllKycCompletedRef.current = false;
                 updateStep("collecting_kyc");
                 isRunningRef.current = false;
                 return;
@@ -4078,6 +4087,9 @@ export function useStripeEmbeddedOnramp({
             } else if (!isL1Verified) {
               console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Redirecting to L1 input...");
               setKycTierRequired("l1");
+              kycTierRequiredRef.current = "l1";
+              setIsAllKycCompleted(false);
+              isAllKycCompletedRef.current = false;
               updateStep("collecting_kyc");
               isRunningRef.current = false;
               return;

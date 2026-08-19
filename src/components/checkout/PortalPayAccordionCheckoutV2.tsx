@@ -853,16 +853,13 @@ export function PortalPayAccordionCheckoutV2({
   // Identity / KYC active check to prevent processing backdrop from blocking verification UI
   const isIdentityActive = Boolean(
     showStepUpForm ||
+    showVerifyDocs ||
     kycTierRequired === "l1" ||
+    kycTierRequired === "l2" ||
     headlessStep === "verifying_identity" ||
     headlessStep === "collecting_kyc" ||
-    headlessStep === "checking_kyc" ||
-    (headlessStatus && (
-      headlessStatus.toLowerCase().includes("identity") ||
-      headlessStatus.toLowerCase().includes("verifying identity") ||
-      headlessStatus.toLowerCase().includes("document") ||
-      headlessStatus.toLowerCase().includes("kyc")
-    ))
+    headlessStep === "submitting_kyc" ||
+    headlessStep === "checking_kyc"
   );
 
   // Payment Processing Modal Overlay Guard:
@@ -875,14 +872,14 @@ export function PortalPayAccordionCheckoutV2({
     !isIdentityActive &&
     (
       simulatedStatus === "processing" ||
-      (isSubmittingPayment && !isIdentityActive) ||
+      isSubmittingPayment ||
+      headlessStep === "confirming_fees" ||
+      headlessStep === "checking_out" ||
+      headlessStep === "transferring" ||
+      headlessStep === "creating_session" ||
       (activeStep === 4 && (
         fulfillmentStage === "processing" ||
         fulfillmentStage === "confirming" ||
-        headlessStep === "confirming_fees" ||
-        headlessStep === "checking_out" ||
-        headlessStep === "transferring" ||
-        headlessStep === "creating_session" ||
         (headlessStatus && (
           headlessStatus.toLowerCase().includes("processing") ||
           headlessStatus.toLowerCase().includes("fee") ||
@@ -2619,9 +2616,7 @@ export function PortalPayAccordionCheckoutV2({
                 <div className="flex items-center justify-center gap-1.5 py-1 text-[11px] font-semibold text-amber-400/90 text-center animate-in fade-in">
                   <Lock className="w-3 h-3 text-emerald-400 shrink-0" />
                   <span>
-                    {headlessStep === "verifying_identity"
-                      ? "Complete the secure photo verification above to proceed."
-                      : "Please confirm your payment method in the secure form above to complete checkout."}
+                    Please confirm your payment method in the secure form above to complete checkout.
                   </span>
                 </div>
               )}
@@ -2631,9 +2626,7 @@ export function PortalPayAccordionCheckoutV2({
                 <div className="p-8 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
                   <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
                   <p className={`text-xs font-medium ${isLightText ? "text-white/70" : "text-black/70"}`}>
-                    {headlessStep === "verifying_identity"
-                      ? "Loading secure Stripe identity verification..."
-                      : "Loading secure Stripe payment form..."}
+                    Loading secure Stripe payment form...
                   </p>
                 </div>
               )}
@@ -2698,8 +2691,8 @@ export function PortalPayAccordionCheckoutV2({
                   </span>
                 </div>
 
-                {/* Identity / Document Verification Notice */}
-                {(headlessStep === "verifying_identity" || headlessStep === "checking_kyc" || (headlessStatus || "").toLowerCase().includes("verif") || (headlessStatus || "").toLowerCase().includes("identity") || (headlessStatus || "").toLowerCase().includes("document") || kycLevel === "L2") && (
+                {/* Identity / Document Verification Notice (strictly when checking/verifying identity) */}
+                {headlessStep === "verifying_identity" && (
                   <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 animate-in fade-in duration-300 mt-2 text-left">
                     <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
                       <Clock className="w-4 h-4 shrink-0 text-amber-400" />
