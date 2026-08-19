@@ -789,6 +789,19 @@ export function PortalPayAccordionCheckoutV2({
     ? Boolean(isReceiptPaid || paymentConfirmed || headlessStep === "completed")
     : Boolean(isReceiptPaid || fulfillmentStage === "complete");
 
+  // Identity / KYC active check to prevent processing backdrop from blocking verification UI
+  const isIdentityActive = Boolean(
+    headlessStep === "verifying_identity" ||
+    headlessStep === "collecting_kyc" ||
+    headlessStep === "checking_kyc" ||
+    (headlessStatus && (
+      headlessStatus.toLowerCase().includes("identity") ||
+      headlessStatus.toLowerCase().includes("verifying identity") ||
+      headlessStatus.toLowerCase().includes("document") ||
+      headlessStatus.toLowerCase().includes("kyc")
+    ))
+  );
+
   // Payment Processing Modal Overlay Guard:
   // Specifically active during fee review, payment processing, or fund transfer
   // Automatically stays open and locks interactions until payment completes or fails with an error
@@ -796,12 +809,10 @@ export function PortalPayAccordionCheckoutV2({
     !isOrderConfirmed &&
     !isReceiptPaid &&
     !activeError &&
-    headlessStep !== "verifying_identity" &&
-    headlessStep !== "collecting_kyc" &&
-    headlessStep !== "checking_kyc" &&
+    !isIdentityActive &&
     (
       simulatedStatus === "processing" ||
-      isSubmittingPayment ||
+      (isSubmittingPayment && !isIdentityActive) ||
       (activeStep === 4 && (
         fulfillmentStage === "processing" ||
         fulfillmentStage === "confirming" ||
@@ -959,6 +970,13 @@ export function PortalPayAccordionCheckoutV2({
       }
     }
   }, [initialEmail, initialPhone, initialFullName, initialFirstName, initialLastName, initialLine1, initialLine2, initialCity, initialStateCode, initialZipCode, initialCountry, initialDob]);
+
+  // Automatically clear isSubmittingPayment if identity verification becomes active
+  useEffect(() => {
+    if (isIdentityActive) {
+      setIsSubmittingPayment(false);
+    }
+  }, [isIdentityActive]);
 
   // Clean mounting of authElement into container
   useEffect(() => {
