@@ -56,12 +56,12 @@ PortalPay leverages Stripe's Embedded Components Crypto Onramp SDK (`@stripe/cry
   setIsAllKycCompleted(isCompleted);
   ```
 
-### Rule 2: Pure L0 Immediate Advance (No Polling Fail-to-L1)
-- Stripe's customer REST API does **not** mark `l0.verification_status` as `"verified"` until the checkout transaction is authorized.
+### Rule 2: Poll and Confirm L0 on Stripe Backend Before Payment Transition
 - When a customer submits Step 2 (Name & Address for L0):
-  1. Submit the payload to `onramp.submitKycInfo(payload)`.
-  2. If the coordinator accepts without error, **immediately mark L0 complete (`isAllKycCompleted = true`) and advance to Step 3 (`collecting_payment`)**.
-  3. **Do not poll Stripe's API and fail into L1**.
+  1. Submit the demographic payload via `onramp.submitKycInfo(payload)`.
+  2. Poll `GET /v1/crypto/customers/:id` via `pollKycStatus(customerId, "l0")` until Stripe confirms `isL0Verified === true`.
+  3. Once approved, set `isAllKycCompleted = true`, `kycLevel = "L0"`, `kycTierRequired = "l0"`, and transition cleanly to Step 3 (`collecting_payment`).
+  4. If L0 verification is unverified or rejected, **keep the customer strictly at L0 (`kycTierRequired = "l0"`)**, display the address correction error message on Step 2, and allow retry. **Never escalate to L1 on L0 failure.**
 
 ### Rule 3: Step-Up is Strictly Reactive
 - Step-Up to L1 (DOB + SSN) and L2 (Photo ID + Selfie) must **ONLY** be triggered when Stripe's payment execution endpoint actively returns:
@@ -99,7 +99,25 @@ PortalPay leverages Stripe's Embedded Components Crypto Onramp SDK (`@stripe/cry
 
 ### Rule 6: Immutable / Verified Link Account Bypass
 - When customers with existing verified Stripe Link accounts checkout, Stripe returns: `Invalid request: Customer identity already verified`.
-- The hook catch block must treat `invalid request` as an **approved KYC state (`isAllKycCompleted = true`)** and proceed directly to payment collection rather than popping an error modal.
+- The hook catch block must treat `invalid request` as an **approved KYC state (`isAllKycCompleted = true`, `isAllKycCompletedRef.current = true`)** and proceed directly to payment collection rather than popping an error modal.
+
+### Rule 7: Synchronous KYC Completion Ref & Accordion Step Routing
+- When `submitKycInfo` completes L0 polling and calls `startOnramp` to mount the payment element, React state updates (`isAllKycCompleted`) may not have re-rendered yet.
+- A synchronous ref `isAllKycCompletedRef.current = true` **must be set immediately** and checked in `startOnramp`'s `isCustomerVerified` calculation:
+  ```typescript
+  const isCustomerVerified = isAchEnforcedRef.current 
+    ? isL2Verified 
+    : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected") || computedLevel === "L1" || computedLevel === "L0" || isAllKycCompletedRef.current);
+  ```
+- In `PortalPayAccordionCheckoutV2.tsx`, the Step 2 routing condition must strictly check `isL0Approved` and `showStepUpForm`:
+  ```typescript
+  // Approved: Never pull back to Step 2 if L0 is approved or completed
+  if ((!isL0Approved && !isAllKycCompleted) || showStepUpForm) {
+    setActiveStep(2);
+  } else {
+    setActiveStep((prev) => (prev > 3 ? prev : 3));
+  }
+  ```
 
 ---
 
