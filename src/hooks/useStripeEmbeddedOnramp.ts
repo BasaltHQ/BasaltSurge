@@ -1204,6 +1204,9 @@ export function useStripeEmbeddedOnramp({
           } catch (err: any) {
             console.warn("[EMBEDDED ONRAMP] Global KYC check failed, defaulting to L1 demographics:", err);
             setKycTierRequired("l1");
+            kycTierRequiredRef.current = "l1";
+            setIsAllKycCompleted(false);
+            isAllKycCompletedRef.current = false;
             updateStep("collecting_kyc");
             isVerifyingRef.current = false;
             isRunningRef.current = false;
@@ -2211,6 +2214,7 @@ export function useStripeEmbeddedOnramp({
     }
 
     if (!checkoutSucceeded) {
+      updateStep("checking_out");
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
         if (!onrampRef.current) {
@@ -2837,6 +2841,7 @@ export function useStripeEmbeddedOnramp({
             });
           } else {
             isRunningRef.current = false;
+            updateStep("collecting_payment");
             startOnrampRef.current?.(activeEmailRef.current || undefined);
           }
         }
@@ -3522,18 +3527,25 @@ export function useStripeEmbeddedOnramp({
               if (isAchEnforcedRef.current) {
                 if (isFreshL1Verified) {
                   setKycTierRequired("l2");
+                  kycTierRequiredRef.current = "l2";
                 } else if (isFreshL0Verified) {
                   setKycTierRequired("l1");
+                  kycTierRequiredRef.current = "l1";
                 } else {
                   setKycTierRequired("l0");
+                  kycTierRequiredRef.current = "l0";
                 }
               } else {
                 if (freshL0?.verification_status === "rejected") {
                   setKycTierRequired("l1");
+                  kycTierRequiredRef.current = "l1";
                 } else {
                   setKycTierRequired("l0");
+                  kycTierRequiredRef.current = "l0";
                 }
               }
+              setIsAllKycCompleted(false);
+              isAllKycCompletedRef.current = false;
               updateStep("collecting_kyc");
               isRunningRef.current = false;
               return;
@@ -3547,6 +3559,9 @@ export function useStripeEmbeddedOnramp({
             } else if (isL1Verified) {
               console.log("[EMBEDDED ONRAMP] ACH KYC check: L1 is verified, stepping up to L2...");
               setKycTierRequired("l2");
+              kycTierRequiredRef.current = "l2";
+              setIsAllKycCompleted(false);
+              isAllKycCompletedRef.current = false;
               updateStep("verifying_identity");
               
               try {
@@ -3568,7 +3583,9 @@ export function useStripeEmbeddedOnramp({
                 }
                 
                 setIsAllKycCompleted(true);
+                isAllKycCompletedRef.current = true;
                 setKycLevel("L2");
+                kycLevelRef.current = "L2";
                 setPaymentElement(null);
                 if (onrampRef.current) {
                   try { onrampRef.current.destroy(); } catch {}
@@ -3586,10 +3603,16 @@ export function useStripeEmbeddedOnramp({
             } else if (isL0Verified) {
               console.log("[EMBEDDED ONRAMP] ACH KYC check: L0 is verified, prompting L1...");
               setKycTierRequired("l1");
+              kycTierRequiredRef.current = "l1";
+              setIsAllKycCompleted(false);
+              isAllKycCompletedRef.current = false;
               updateStep("collecting_kyc");
             } else {
               console.log("[EMBEDDED ONRAMP] ACH KYC check: L0 is unverified, prompting L0...");
               setKycTierRequired("l0");
+              kycTierRequiredRef.current = "l0";
+              setIsAllKycCompleted(false);
+              isAllKycCompletedRef.current = false;
               updateStep("collecting_kyc");
             }
           } else {
@@ -3597,10 +3620,14 @@ export function useStripeEmbeddedOnramp({
             if (l0Tier?.verification_status === "rejected") {
               console.log("[EMBEDDED ONRAMP] L0 KYC was rejected. Customer must complete L1 verification to proceed.");
               setKycTierRequired("l1");
+              kycTierRequiredRef.current = "l1";
             } else {
               console.log("[EMBEDDED ONRAMP] No active KYC verification found. Transitioning to collecting L0 KYC.");
               setKycTierRequired("l0");
+              kycTierRequiredRef.current = "l0";
             }
+            setIsAllKycCompleted(false);
+            isAllKycCompletedRef.current = false;
             updateStep("collecting_kyc");
           }
           isRunningRef.current = false;
@@ -3929,17 +3956,29 @@ export function useStripeEmbeddedOnramp({
                   throw verifyErr;
                 }
               } else if (isL0Verified) {
-                setPaymentElement(null); // Clear element to show demographics forms
+                setPaymentElement(null);
                 setKycTierRequired("l1");
+                kycTierRequiredRef.current = "l1";
+                setIsAllKycCompleted(false);
+                isAllKycCompletedRef.current = false;
                 updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
               } else {
-                setPaymentElement(null); // Clear element to show demographics forms
+                setPaymentElement(null);
                 setKycTierRequired("l0");
+                kycTierRequiredRef.current = "l0";
+                setIsAllKycCompleted(false);
+                isAllKycCompletedRef.current = false;
                 updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
               }
 
               setIsAllKycCompleted(true);
+              isAllKycCompletedRef.current = true;
               setKycLevel("L2");
+              kycLevelRef.current = "L2";
               setPaymentElement(null); // Clear element after successful KYC checks
               if (onrampRef.current) {
                 try { onrampRef.current.destroy(); } catch {}
