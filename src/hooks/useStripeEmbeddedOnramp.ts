@@ -3070,8 +3070,8 @@ export function useStripeEmbeddedOnramp({
       }
     }
 
-    if (isRunningRef.current && !isForceRetry) {
-      console.warn("[EMBEDDED ONRAMP] Onramp flow is already running. Ignoring duplicate trigger.");
+    if (isRunningRef.current && !isForceRetry && paymentElement) {
+      console.warn("[EMBEDDED ONRAMP] Onramp flow is already running with active payment element. Ignoring duplicate trigger.");
       return;
     }
     isRunningRef.current = true;

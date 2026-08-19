@@ -1229,13 +1229,17 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed, isReceiptPaid, propError, localError, isL2Requirement, isL2Approved, showStepUpForm, isL1Approved]);
 
-  // Step 3 idle recovery: if activeStep is 3, paymentElement is null, and headlessStep is idle, auto-trigger onHeadlessSubmitEmailPhone
+  // Step 3 recovery: if activeStep is 3, paymentElement is null, and not processing payment, auto-trigger onHeadlessSubmitEmailPhone
   useEffect(() => {
-    if (isReceiptPaid) return;
-    if (activeStep === 3 && !paymentElement && headlessStep === "idle" && email && onHeadlessSubmitEmailPhone) {
-      onHeadlessSubmitEmailPhone(email, phone);
+    if (isReceiptPaid || isPaymentProcessing || activeError) return;
+    const fullContactName = (firstName?.trim() && lastName?.trim())
+      ? `${firstName.trim()} ${lastName.trim()}`
+      : (initialFullName?.trim() || undefined);
+    if (activeStep === 3 && !paymentElement && email && onHeadlessSubmitEmailPhone) {
+      console.log("[ACCORDION] ActiveStep is 3 but paymentElement is null. Auto-triggering onHeadlessSubmitEmailPhone to initialize Stripe payment form...");
+      onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName);
     }
-  }, [activeStep, paymentElement, headlessStep, email, phone, isReceiptPaid, onHeadlessSubmitEmailPhone]);
+  }, [activeStep, paymentElement, email, phone, country, firstName, lastName, initialFullName, isReceiptPaid, isPaymentProcessing, activeError, onHeadlessSubmitEmailPhone]);
 
   // Step 1 Submit (Account & Contact)
   const handleContactSubmit = async (e: React.FormEvent) => {
@@ -1450,6 +1454,13 @@ export function PortalPayAccordionCheckoutV2({
         console.log("[ACCORDION] Customer is already verified. Advancing to Step 3 directly without re-submitting demographics.");
         setIsSubmittingIdentity(false);
         setActiveStep(3);
+        if (!paymentElement && onHeadlessSubmitEmailPhone && email) {
+          console.log("[ACCORDION] paymentElement is not mounted for verified customer. Triggering onHeadlessSubmitEmailPhone to mount Step 3...");
+          const fullContactName = (firstName?.trim() && lastName?.trim())
+            ? `${firstName.trim()} ${lastName.trim()}`
+            : (initialFullName?.trim() || undefined);
+          onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName);
+        }
         return;
       }
 
