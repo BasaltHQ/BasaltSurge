@@ -2842,7 +2842,7 @@ export function useStripeEmbeddedOnramp({
           } else {
             isRunningRef.current = false;
             updateStep("collecting_payment");
-            startOnrampRef.current?.(activeEmailRef.current || undefined);
+            startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, activeCountryRef.current || undefined, true);
           }
         }
       } else {
@@ -2915,12 +2915,12 @@ export function useStripeEmbeddedOnramp({
             });
           } else {
             isRunningRef.current = false;
-            startOnrampRef.current?.(activeEmailRef.current || undefined);
+            startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, activeCountryRef.current || undefined, true);
           }
         } else {
           console.warn("[EMBEDDED ONRAMP] Missing required refs after KYC approval bypass, restarting flow...");
           isRunningRef.current = false;
-          startOnrampRef.current?.(activeEmailRef.current || undefined);
+          startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, activeCountryRef.current || undefined, true);
         }
         return;
       }
@@ -3851,9 +3851,18 @@ export function useStripeEmbeddedOnramp({
           collectedLast4 = result.last4;
         } catch (paymentErr: any) {
           const isCardDecline = checkIfCardDecline(paymentErr);
-          if (isCardDecline) {
-            console.warn("[EMBEDDED ONRAMP] Card decline/collection error caught in paymentPromise, returning to payment selection...");
-            setError(paymentErr?.message || "Payment method collection failed.");
+          const paymentErrMsg = String(paymentErr?.message || paymentErr || "").toLowerCase();
+          const isStaleCoordinatorOrMessenger = paymentErrMsg.includes("messenger") || 
+                                                paymentErrMsg.includes("aborted") || 
+                                                paymentErrMsg.includes("already") || 
+                                                paymentErrMsg.includes("destroyed") ||
+                                                paymentErrMsg.includes("collection failed");
+
+          if (isCardDecline || isStaleCoordinatorOrMessenger) {
+            console.warn("[EMBEDDED ONRAMP] Card decline or stale coordinator caught in paymentPromise, cleanly reinitializing onramp...", paymentErr);
+            if (isCardDecline) {
+              setError(paymentErr?.message || "Payment method collection failed.");
+            }
             paymentTokenRef.current = null;
             sessionIdRef.current = null;
             setSessionId(null);
@@ -3864,14 +3873,15 @@ export function useStripeEmbeddedOnramp({
               try { onrampRef.current.destroy(); } catch {}
               onrampRef.current = null;
             }
+            isCoordinatorAuthedRef.current = false;
             setDetectedCardFunding(null);
             setDetectedCardBrand(null);
             setDetectedCardLast4(null);
             onCardDetectedRef.current?.(null);
             isRunningRef.current = false;
             setTimeout(() => {
-              startOnrampRef.current?.(activeEmailRef.current || undefined);
-            }, 0);
+              startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, activeCountryRef.current || undefined, true);
+            }, 50);
             return;
           } else {
             throw paymentErr;
