@@ -4200,38 +4200,29 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
   }, [headlessSessionId]);
 
-  // Clean up Stripe headless elements on unmount or when they are cleared/replaced
+  // Clean up Stripe headless elements only on component unmount
   useEffect(() => {
-    const authEl = headlessAuthElement;
     return () => {
-      if (authEl) {
+      if (headlessAuthElement) {
         try {
-          (authEl as any).unmount?.();
-          (authEl as any).destroy?.();
-          authEl.remove();
-          console.log("[PORTAL] Cleaned up headless auth element successfully");
+          (headlessAuthElement as any).unmount?.();
+          (headlessAuthElement as any).destroy?.();
+          headlessAuthElement.remove();
         } catch (e) {
-          console.warn("[PORTAL] Failed to clean up auth element:", e);
+          console.warn("[PORTAL] Failed to clean up auth element on unmount:", e);
+        }
+      }
+      if (headlessPaymentElement) {
+        try {
+          (headlessPaymentElement as any).unmount?.();
+          (headlessPaymentElement as any).destroy?.();
+          headlessPaymentElement.remove();
+        } catch (e) {
+          console.warn("[PORTAL] Failed to clean up payment element on unmount:", e);
         }
       }
     };
-  }, [headlessAuthElement]);
-
-  useEffect(() => {
-    const payEl = headlessPaymentElement;
-    return () => {
-      if (payEl) {
-        try {
-          (payEl as any).unmount?.();
-          (payEl as any).destroy?.();
-          payEl.remove();
-          console.log("[PORTAL] Cleaned up headless payment element successfully");
-        } catch (e) {
-          console.warn("[PORTAL] Failed to clean up payment element:", e);
-        }
-      }
-    };
-  }, [headlessPaymentElement]);
+  }, []);
 
   // Manually find and remove/hide any leftover iframe components or global Stripe overlays
   // Only clean up external overlays/iframes if we are in a terminal state (idle, error, completed)

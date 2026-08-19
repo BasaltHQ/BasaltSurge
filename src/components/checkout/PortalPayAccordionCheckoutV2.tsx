@@ -991,8 +991,24 @@ export function PortalPayAccordionCheckoutV2({
   useEffect(() => {
     if (authElement) {
       setIsSubmittingContact(false);
+      if (authContainerRef.current && typeof authElement === "object" && "nodeType" in authElement) {
+        if (!authContainerRef.current.contains(authElement as Node)) {
+          authContainerRef.current.innerHTML = "";
+          authContainerRef.current.appendChild(authElement as HTMLElement);
+        }
+      }
     }
-  }, [authElement]);
+  }, [authElement, activeStep, headlessStep]);
+
+  // Clean mounting of paymentElement into container
+  useEffect(() => {
+    if (paymentElement && paymentContainerRef.current && typeof paymentElement === "object" && "nodeType" in paymentElement) {
+      if (!paymentContainerRef.current.contains(paymentElement as Node)) {
+        paymentContainerRef.current.innerHTML = "";
+        paymentContainerRef.current.appendChild(paymentElement as HTMLElement);
+      }
+    }
+  }, [paymentElement, activeStep]);
 
   // Handle Step 4 Fulfillment Progression (Simulation preview only — strictly disabled in live production mode)
   useEffect(() => {
@@ -1521,6 +1537,12 @@ export function PortalPayAccordionCheckoutV2({
         console.log("[ACCORDION] Customer is already verified in Stripe. Bypassing KYC step and proceeding to Step 3.");
         setLocalError(null);
         setActiveStep(3);
+        if (!paymentElement && onHeadlessSubmitEmailPhone && email) {
+          const fullContactName = (firstName?.trim() && lastName?.trim())
+            ? `${firstName.trim()} ${lastName.trim()}`
+            : (initialFullName?.trim() || undefined);
+          onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName);
+        }
       } else {
         setLocalError(err?.message || "Failed to submit identity details.");
       }
@@ -1981,7 +2003,15 @@ export function PortalPayAccordionCheckoutV2({
 
               <button
                 type="button"
-                onClick={() => setActiveStep(3)}
+                onClick={() => {
+                  setActiveStep(3);
+                  if (!paymentElement && onHeadlessSubmitEmailPhone && email) {
+                    const fullContactName = (firstName?.trim() && lastName?.trim())
+                      ? `${firstName.trim()} ${lastName.trim()}`
+                      : (initialFullName?.trim() || undefined);
+                    onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName);
+                  }
+                }}
                 className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
                 style={{ backgroundColor: primaryColor, color: "#fff" }}
               >
