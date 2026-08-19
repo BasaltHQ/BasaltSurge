@@ -98,7 +98,7 @@ export async function GET(req: NextRequest) {
     if ((container as any).getCollection) {
       const collection = (container as any).getCollection();
       
-      // Query 1: Fetch lightweight projected records for ALL receipts for total metrics/aggregation
+      // Query 1: Fetch lightweight projected records for ALL receipts for total metrics/aggregation (routed to secondaries)
       allReceiptsLight = await collection.find(
         { type: "receipt" },
         {
@@ -127,11 +127,12 @@ export async function GET(req: NextRequest) {
             ipAddress: 1,
             buyerWallet: 1,
             stripeSessionId: 1
-          }
+          },
+          readPreference: "secondaryPreferred"
         }
       ).sort({ createdAt: -1 }).toArray();
 
-      // Query 2: Fetch detailed records for receipts (filtered by date range if provided)
+      // Query 2: Fetch detailed records for receipts (filtered by date range if provided, routed to secondaries)
       const receiptsQueryFilter: any = { type: "receipt" };
       if (brandKey && brandKey !== "all") {
         receiptsQueryFilter.brandKey = brandKey;
@@ -207,7 +208,8 @@ export async function GET(req: NextRequest) {
             partnerBps: 1,
             platformBps: 1,
             feeMinusEnabled: 1
-          }
+          },
+          readPreference: "secondaryPreferred"
         }
       ).sort({ createdAt: -1 });
 
@@ -216,7 +218,7 @@ export async function GET(req: NextRequest) {
       }
       receipts = await query.toArray();
 
-      // Query portal logs to find failure reasons
+      // Query portal logs to find failure reasons (routed to secondaries)
       const db = collection.db;
       logs = await db.collection("portal_logs").find(
         { receiptId: { $ne: null } },
@@ -227,7 +229,8 @@ export async function GET(req: NextRequest) {
             message: 1,
             createdAt: 1,
             userAgent: 1
-          }
+          },
+          readPreference: "secondaryPreferred"
         }
       ).sort({ createdAt: -1 }).limit(300).toArray();
     } else {
@@ -294,35 +297,62 @@ export async function GET(req: NextRequest) {
 
     // Helper to compute KYC Level
     const getKycLevel = (receipt: any, rLogs: any[]) => {
-      if (receipt.kycLevel && receipt.kycLevel !== "N/A" && receipt.kycLevel !== "N/AKYC") return receipt.kycLevel;
-      if (rLogs.length === 0) {
-        return "L0";
+      const rawKyc = String(receipt.kycLevel || receipt.kyc || "").toUpperCase().trim();
+      if (rawKyc === "L2" || rawKyc === "LEVEL 2" || rawKyc === "LEVEL2") return "L2";
+
+      // Check customerSessions for L2
+      if (Array.isArray(receipt.customerSessions) && receipt.customerSessions.length > 0) {
+        for (const s of receipt.customerSessions) {
+          const sKyc = String(s?.kycLevel || s?.kyc_level || "").toUpperCase().trim();
+          if (sKyc === "L2") return "L2";
+        }
       }
 
-      const hasL2Log = rLogs.some(l => {
-        const msg = String(l.message).toLowerCase();
-        return (
-          msg.includes("identity verification") ||
-          msg.includes("iddocstatus") ||
-          msg.includes("document") ||
-          msg.includes("doc_status") ||
-          msg.includes("passport") ||
-          msg.includes("needsiddocsubmit")
-        );
-      });
-      if (hasL2Log) return "L2";
+      // Check transaction logs for L2 verification indicators
+      if (rLogs && rLogs.length > 0) {
+        const hasL2Log = rLogs.some(l => {
+          const msg = String(l.message || "").toLowerCase();
+          return (
+            msg.includes("identity verification") ||
+            msg.includes("iddocstatus") ||
+            msg.includes("document") ||
+            msg.includes("doc_status") ||
+            msg.includes("passport") ||
+            msg.includes("needsiddocsubmit") ||
+            msg.includes("verifydocuments") ||
+            msg.includes("l2 kyc approved")
+          );
+        });
+        if (hasL2Log) return "L2";
+      }
 
-      const hasL1Log = rLogs.some(l => {
-        const msg = String(l.message).toLowerCase();
-        return (
-          msg.includes("kycstatus") ||
-          msg.includes("demographics") ||
-          msg.includes("needskycsubmit") ||
-          msg.includes("kyc submission") ||
-          msg.includes("state you provided")
-        );
-      });
-      if (hasL1Log) return "L1";
+      if (rawKyc === "L1" || rawKyc === "LEVEL 1" || rawKyc === "LEVEL1") return "L1";
+
+      // Check customerSessions for L1
+      if (Array.isArray(receipt.customerSessions) && receipt.customerSessions.length > 0) {
+        for (const s of receipt.customerSessions) {
+          const sKyc = String(s?.kycLevel || s?.kyc_level || "").toUpperCase().trim();
+          if (sKyc === "L1") return "L1";
+        }
+      }
+
+      // Check transaction logs for L1 demographics submission
+      if (rLogs && rLogs.length > 0) {
+        const hasL1Log = rLogs.some(l => {
+          const msg = String(l.message || "").toLowerCase();
+          return (
+            msg.includes("kycstatus") ||
+            msg.includes("demographics") ||
+            msg.includes("needskycsubmit") ||
+            msg.includes("kyc submission") ||
+            msg.includes("state you provided") ||
+            msg.includes("l1 kyc approved")
+          );
+        });
+        if (hasL1Log) return "L1";
+      }
+
+      if (rawKyc === "L0") return "L0";
 
       if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(receipt.status)) {
         if (receipt.totalUsd >= 100) return "L2";

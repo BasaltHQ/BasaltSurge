@@ -4115,7 +4115,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         customerEmail: shipEmail || headlessEmailInput || undefined,
         detectedCardFunding: isAch ? "us_bank_account" : (result.detectedCardFunding || stripeDetectedFunding || undefined),
         isCreditCard: typeof result.isCreditCard === "boolean" ? result.isCreditCard : (stripeDetectedFunding === "credit" ? true : (stripeDetectedFunding === "debit" ? false : undefined)),
-        kycLevel: result.kycLevel,
+        kycLevel: result.kycLevel || (headlessKycLevel === "REQUIRES_KYC" ? "L0" : headlessKycLevel) || "L0",
+        kycOccurred: true,
       });
     },
     onError: (error) => {

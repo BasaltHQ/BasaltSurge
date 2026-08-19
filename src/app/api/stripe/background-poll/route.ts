@@ -384,7 +384,8 @@ async function runBackgroundPoll(params: {
   if (resolvedStatus === "success") {
     console.log(`[BACKGROUND POLL] Stripe onramp fulfilled. Executing EIP-7702 transfer...`);
 
-    let kycLevel = "L0";
+    const incomingKycLevel = body.kycLevel ? String(body.kycLevel).trim() : undefined;
+    let kycLevel = (incomingKycLevel === "L2" || incomingKycLevel === "L1") ? incomingKycLevel : "L0";
     const resolvedFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
     const isAch = resolvedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account";
     
@@ -430,8 +431,8 @@ async function runBackgroundPoll(params: {
             ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
             : isOverallIdVerified;
             
-          if (isL2Verified) kycLevel = "L2";
-          else if (isL1Verified) kycLevel = "L1";
+          if (isL2Verified || incomingKycLevel === "L2") kycLevel = "L2";
+          else if (isL1Verified || incomingKycLevel === "L1") kycLevel = "L1";
           else kycLevel = "L0";
           console.log(`[BACKGROUND POLL] Customer KYC level resolved from Stripe: ${kycLevel}`);
         }
