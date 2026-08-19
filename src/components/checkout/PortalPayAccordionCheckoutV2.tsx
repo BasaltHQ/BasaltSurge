@@ -892,12 +892,17 @@ export function PortalPayAccordionCheckoutV2({
   );
 
   const processingStatusSubtitle = (
-    headlessStatus ||
-    (headlessStep === "confirming_fees"
+    headlessStep === "confirming_fees"
       ? "Reviewing payment fee & live conversion rates..."
       : headlessStep === "checking_out"
       ? "Processing transaction securely with Stripe..."
-      : "Finalizing your transaction. Please keep this window open.")
+      : headlessStep === "creating_session"
+      ? "Preparing secure transaction..."
+      : headlessStep === "transferring"
+      ? "Finalizing order and completing transfer..."
+      : (headlessStatus && !headlessStatus.toLowerCase().includes("link") && !headlessStatus.toLowerCase().includes("identity") && !headlessStatus.toLowerCase().includes("authenticating"))
+      ? headlessStatus
+      : "Processing transaction securely with Stripe. Please keep this window open."
   );
 
   // DOM Container Refs for Stripe Embedded Elements
@@ -2687,7 +2692,7 @@ export function PortalPayAccordionCheckoutV2({
                 </div>
                 <div className="flex items-center gap-2.5 text-xs font-medium text-amber-400 animate-pulse">
                   <span>
-                    {headlessStatus || "Finalizing order and confirming transaction..."}
+                    {processingStatusSubtitle}
                   </span>
                 </div>
 

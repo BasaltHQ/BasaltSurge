@@ -138,10 +138,18 @@ PortalPay leverages Stripe's Embedded Components Crypto Onramp SDK (`@stripe/cry
   - Automatically resumes `runCheckoutLoop(...)` to finalize payment.
   - `handleIdentitySubmit` checks `headlessStep`: if checking out or creating a session, `activeStep` moves directly to **Step 4 (Fulfillment / Processing)**, eliminating the glitch where Step 3 opens with a blank/loading spinner during payment processing.
 
-### Rule 10: Strict Enum-Based Step Checks & Payment Processing Overlay Isolation
-- **No Loose String Matching**: `isIdentityActive` and Step 4 KYC notice cards must evaluate strictly against typed step enums (`headlessStep === "verifying_identity" || headlessStep === "collecting_kyc" || showStepUpForm`). Never use broad substring matching like `statusMessage.includes("identity")` or `.includes("verif")`, which falsely flags Link OTP login as a document verification check.
-- **Accurate Step Messages**: `STEP_MESSAGES.authenticating` must be defined as `"Authenticating with Link..."` to distinguish Link user authentication from identity document checks.
-- **Immediate Payment Processing Modal Activation**: `isPaymentProcessing` must trigger directly upon entering any active payment execution state (`checking_out`, `confirming_fees`, `creating_session`, `transferring`), opening the full-screen glassmorphic modal overlay with the *"Do Not Refresh"* warning and interaction lockdown.
+### Rule 11: Elimination of Stale Link Status Bleed & Deterministic Processing Copy
+- **Attempt 0 Step Dispatch**: `runCheckoutLoop` must explicitly call `updateStep("checking_out")` before calling `onramp.performCheckout(...)` on attempt 0. Without this, attempt 0 retains the prior status string emitted during Step 1 Link OTP initialization (`"Authenticating with Link..."`).
+- **Deterministic Status Subtitles**: `processingStatusSubtitle` must derive directly from the active step:
+  - `confirming_fees` $\rightarrow$ *"Reviewing payment fee & live conversion rates..."*
+  - `checking_out` $\rightarrow$ *"Processing transaction securely with Stripe..."*
+  - `creating_session` $\rightarrow$ *"Preparing secure transaction..."*
+  - `transferring` $\rightarrow$ *"Finalizing order and completing transfer..."*
+  - It must explicitly filter out any string containing `"link"`, `"identity"`, or `"authenticating"`.
+
+### Rule 12: Comprehensive KYC Branch Ref Synchronization & ACH Fall-Through Guard
+- **No Async React State Lag**: All 18 KYC branches across `startOnramp`, `checkKycAndVerify`, `submitKycInfo`, and `runCheckoutLoop` must write to synchronous refs (`kycTierRequiredRef.current`, `isAllKycCompletedRef.current`) immediately when calling state setters.
+- **Strict ACH Fall-Through Prevention**: When checking ACH payment methods in `collectPaymentMethod`, if L1/L0 verification is incomplete, the hook must dispatch `updateStep("collecting_kyc")` and **explicitly `return` early**. Under no circumstances may execution fall through to `setIsAllKycCompleted(true)`.
 
 ---
 
