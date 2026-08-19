@@ -2582,8 +2582,8 @@ export function useStripeEmbeddedOnramp({
             }
 
             if (isVerificationError) {
-              const isDoc = errMessage.includes("document") || errMessage.includes("id");
-              const isL0 = errMessage.includes("address") || errMessage.includes("name");
+              const isDoc = errMessage.includes("document") || errMessage.includes("photo_id") || errMessage.includes("document_verification");
+              const isL0 = errMessage.includes("address") || errMessage.includes("minimum_identity");
               if (isDoc) {
                 console.log("[EMBEDDED ONRAMP] Verification error requires document step-up. Launching verifyDocuments...");
                 updateStep("verifying_identity");
@@ -2603,12 +2603,18 @@ export function useStripeEmbeddedOnramp({
               } else if (isL0) {
                 console.log("[EMBEDDED ONRAMP] Verification error requires address details (L0).");
                 setKycTierRequired("l0");
+                kycTierRequiredRef.current = "l0";
+                setIsAllKycCompleted(false);
+                isAllKycCompletedRef.current = false;
                 updateStep("collecting_kyc");
                 isRunningRef.current = false;
                 return;
               } else {
                 console.log("[EMBEDDED ONRAMP] Verification error requires demographic details (L1).");
                 setKycTierRequired("l1");
+                kycTierRequiredRef.current = "l1";
+                setIsAllKycCompleted(false);
+                isAllKycCompletedRef.current = false;
                 updateStep("collecting_kyc");
                 isRunningRef.current = false;
                 return;

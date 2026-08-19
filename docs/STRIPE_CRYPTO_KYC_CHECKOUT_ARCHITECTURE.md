@@ -119,6 +119,14 @@ PortalPay leverages Stripe's Embedded Components Crypto Onramp SDK (`@stripe/cry
   }
   ```
 
+### Rule 8: No Artificial L2 Modal Wrapping & Payment Element Isolation
+- **`paymentElement` strictly belongs in Step 3 (Payment Method)**: Never create a full-screen modal overlay that intercepts and unmounts `paymentElement` into a fake identity modal.
+- **Native Stripe Identity Modal**: When `onramp.verifyDocuments()` is invoked, Stripe's SDK injects its own native, highly-secure fullscreen iframe modal. No local UI wrapper should attempt to host it.
+- **Precise Error Categorization**:
+  - Never use `errMessage.includes("id")` to detect document requirements (which matches `identity`, `valid`, `customer_id`, `payment_method_id`).
+  - Document errors must strictly match `crypto_onramp_missing_document_verification`, `missing_document_verification`, or `document_verification`.
+  - All other identity errors must step up to **L1 (DOB + SSN) on Step 2**.
+
 ---
 
 ## 3. UI State Matrix in `PortalPayAccordionCheckoutV2`

@@ -2832,71 +2832,7 @@ export function PortalPayAccordionCheckoutV2({
         </div>
       </div>
 
-      {/* ==================================================================== */}
-      {/* STRIPE L2 DOCUMENT & IDENTITY VERIFICATION MODAL OVERLAY */}
-      {/* Mounts directly over the entire portal when Stripe demands document/selfie scan */}
-      {/* ==================================================================== */}
-      {headlessStep === "verifying_identity" && !isReceiptPaid && !isOrderConfirmed && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-300">
-          <div
-            className={`w-full max-w-lg p-5 sm:p-7 rounded-3xl border shadow-2xl relative overflow-hidden space-y-4 animate-in zoom-in-95 duration-300 ${
-              isLightText
-                ? "bg-neutral-900 border-purple-500/30 text-white shadow-[0_0_50px_-10px_rgba(168,85,247,0.25)]"
-                : "bg-white border-purple-500/30 text-black shadow-[0_0_50px_-10px_rgba(168,85,247,0.25)]"
-            }`}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center border border-purple-500/30">
-                  <Shield className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className={`text-sm sm:text-base font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
-                    Identity Verification
-                  </h3>
-                  <p className="text-[11px] opacity-60">Complete photo verification via Stripe</p>
-                </div>
-              </div>
-              <div className="px-2.5 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-[10px] font-bold text-purple-300 uppercase tracking-wider">
-                Required
-              </div>
-            </div>
 
-            {/* Instruction Notice */}
-            <p className="text-xs leading-relaxed opacity-80">
-              Please follow the on-screen instructions below to scan your government-issued ID and take a selfie.
-            </p>
-
-            {/* Embedded Live Stripe Element Container */}
-            <div className="p-3 rounded-2xl bg-black/40 border border-white/10 min-h-[280px] flex items-center justify-center">
-              <div
-                className="w-full flex flex-col items-stretch"
-                ref={(el) => {
-                  if (el && paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
-                    if (!el.contains(paymentElement as Node)) {
-                      el.innerHTML = "";
-                      el.appendChild(paymentElement as HTMLElement);
-                    }
-                  }
-                }}
-              >
-                {typeof paymentElement !== "object" || !("nodeType" in (paymentElement || {}))
-                  ? (paymentElement as React.ReactNode)
-                  : null}
-              </div>
-            </div>
-
-            {/* Security Footer */}
-            <div className="flex items-center justify-between text-[11px] opacity-60 pt-1 border-t border-white/5">
-              <span className="flex items-center gap-1">
-                <Lock className="w-3 h-3 text-emerald-400" /> 256-Bit Encrypted
-              </span>
-              <span>Powered by Stripe Identity</span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ==================================================================== */}
       {/* PROMINENT PAYMENT PROCESSING MODAL / OVERLAY */}
