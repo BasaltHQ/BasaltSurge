@@ -2665,6 +2665,21 @@ export function useStripeEmbeddedOnramp({
     isRunningRef.current = true;
     try {
       const payload = { ...kycInfo };
+      // Normalize parameter names for Stripe SDK: given_name and surname
+      if (payload.first_name && !payload.given_name) {
+        payload.given_name = payload.first_name;
+        delete payload.first_name;
+      }
+      if (payload.last_name && !payload.surname) {
+        payload.surname = payload.last_name;
+        delete payload.last_name;
+      }
+      if (payload.given_name) {
+        payload.given_name = String(payload.given_name).trim();
+      }
+      if (payload.surname) {
+        payload.surname = String(payload.surname).trim();
+      }
       if (payload.address?.country) {
         activeCountryRef.current = String(payload.address.country).toUpperCase();
       } else if (payload.country) {
@@ -3147,11 +3162,12 @@ export function useStripeEmbeddedOnramp({
 
         try {
           console.log("[EMBEDDED ONRAMP] Registering Link user with formatted phone:", formattedPhone, "country:", activeCountryRef.current);
+          const sanitizedFullName = activeName && activeName.trim().includes(" ") ? activeName.trim() : undefined;
           const registerResult = await onramp.registerLinkUser(
             activeEmail,
             formattedPhone,
             activeCountryRef.current || "US",
-            activeName ? activeName.trim() : undefined
+            sanitizedFullName
           );
 
           if (!registerResult.created) {
@@ -3165,6 +3181,29 @@ export function useStripeEmbeddedOnramp({
 
           if (isAlreadyExists) {
             console.log("[EMBEDDED ONRAMP] Link account already exists globally. Bypassing registration...");
+          } else if (errMsg.includes("first_name") || errMsg.includes("name") || errMsg.includes("parameter")) {
+            console.warn("[EMBEDDED ONRAMP] Link registration failed due to name format. Retrying without name parameter...");
+            try {
+              const retryResult = await onramp.registerLinkUser(
+                activeEmail,
+                formattedPhone,
+                activeCountryRef.current || "US",
+                undefined
+              );
+              if (!retryResult.created) {
+                throw new Error("Registration returned created: false on retry");
+              }
+            } catch (nameRetryErr: any) {
+              const retryMsg = String(nameRetryErr?.message || nameRetryErr || "").toLowerCase();
+              if (retryMsg.includes("already a user") || retryMsg.includes("already exists") || retryMsg.includes("conflict")) {
+                console.log("[EMBEDDED ONRAMP] Link account already exists globally on retry. Bypassing...");
+              } else {
+                console.warn("[EMBEDDED ONRAMP] Name-stripped Link registration retry failed:", nameRetryErr);
+                isRunningRef.current = false;
+                updateStep("collecting_phone");
+                return;
+              }
+            }
           } else {
             console.warn("[EMBEDDED ONRAMP] Link registration failed, asking for phone number:", regErr);
             isRunningRef.current = false;

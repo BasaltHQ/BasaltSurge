@@ -6089,7 +6089,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             if ((kycTierRequired as string) === "l0") {
                               const l0Payload: any = {
                                 given_name: kycFirstName.trim(),
+                                first_name: kycFirstName.trim(),
                                 surname: kycLastName.trim(),
+                                last_name: kycLastName.trim(),
                                 address: addressObj
                               };
 
@@ -6110,7 +6112,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             } else {
                               const l1Payload: any = {
                                 given_name: kycFirstName.trim(),
+                                first_name: kycFirstName.trim(),
                                 surname: kycLastName.trim(),
+                                last_name: kycLastName.trim(),
                                 address: addressObj
                               };
 

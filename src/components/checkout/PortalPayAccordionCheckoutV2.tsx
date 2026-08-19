@@ -1184,6 +1184,10 @@ export function PortalPayAccordionCheckoutV2({
     e.preventDefault();
     if (!email) return;
 
+    const fullContactName = (firstName?.trim() && lastName?.trim())
+      ? `${firstName.trim()} ${lastName.trim()}`
+      : undefined;
+
     if (headlessStep === "collecting_phone") {
       setIsSubmittingContact(true);
       setLocalError(null);
@@ -1191,7 +1195,7 @@ export function PortalPayAccordionCheckoutV2({
         if (onSubmitPhone) {
           await onSubmitPhone(phone, email, country);
         } else if (onHeadlessSubmitEmailPhone) {
-          await onHeadlessSubmitEmailPhone(email, phone, country, `${firstName} ${lastName}`.trim());
+          await onHeadlessSubmitEmailPhone(email, phone, country, fullContactName);
         }
       } catch (err: any) {
         console.error("Phone submission error:", err);
@@ -1207,7 +1211,7 @@ export function PortalPayAccordionCheckoutV2({
     try {
       if (onHeadlessSubmitEmailPhone) {
         // Trigger onramp session without blocking UI spinner indefinitely
-        const promise = onHeadlessSubmitEmailPhone(email, phone || "", country, `${firstName} ${lastName}`.trim());
+        const promise = onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName);
         if (promise && typeof (promise as any).catch === "function") {
           (promise as any).catch((err: any) => {
             console.error("Contact submission error:", err);
@@ -1415,37 +1419,29 @@ export function PortalPayAccordionCheckoutV2({
       const isEU = targetCountry !== "US" && targetCountry !== "CA";
 
       if (onSubmitKycInfo) {
-        if (showStepUpForm && !manualEditAddress) {
-          await onSubmitKycInfo({
-            ...(parsedDob ? { date_of_birth: parsedDob } : {}),
-            ...(isUS && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
-            ...(isEU ? {
-              nationalities: [targetCountry],
-              birth_country: targetCountry,
-              nationality: targetCountry,
-            } : {}),
-          });
-        } else {
-          await onSubmitKycInfo({
-            given_name: firstName.trim(),
-            surname: lastName.trim(),
-            address: {
-              line1: line1.trim(),
-              ...(line2 ? { line2: line2.trim() } : {}),
-              city: city.trim(),
-              ...(stateCode ? { state: stateCode.trim() } : {}),
-              postal_code: zipCode.trim(),
-              country: targetCountry,
-            },
-            ...(parsedDob ? { date_of_birth: parsedDob } : {}),
-            ...(isUS && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
-            ...(isEU ? {
-              nationalities: [targetCountry],
-              birth_country: targetCountry,
-              nationality: targetCountry,
-            } : {}),
-          });
-        }
+        const fullKycPayload: any = {
+          given_name: (firstName || "").trim(),
+          first_name: (firstName || "").trim(),
+          surname: (lastName || "").trim(),
+          last_name: (lastName || "").trim(),
+          address: {
+            line1: (line1 || "").trim(),
+            ...(line2 ? { line2: line2.trim() } : {}),
+            city: (city || "").trim(),
+            ...(stateCode ? { state: stateCode.trim() } : {}),
+            postal_code: (zipCode || "").trim(),
+            country: targetCountry,
+          },
+          ...(parsedDob ? { date_of_birth: parsedDob } : {}),
+          ...(isUS && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
+          ...(isEU ? {
+            nationalities: [targetCountry],
+            birth_country: targetCountry,
+            nationality: targetCountry,
+          } : {}),
+        };
+
+        await onSubmitKycInfo(fullKycPayload);
       }
 
       if (!propError && headlessStep !== "error") {
