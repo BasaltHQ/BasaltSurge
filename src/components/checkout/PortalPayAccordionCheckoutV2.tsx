@@ -763,88 +763,6 @@ export function PortalPayAccordionCheckoutV2({
   const effectiveTier: string = simulatedTier || kycTierRequired || "l0";
   const effectiveStatus: string = simulatedStatus || (isAllKycCompleted ? "verified" : "normal");
 
-  // Strict separation of simulation demo mode vs live production checkout
-  const isSimulationMode = Boolean(simulatedTier || simulatedStatus || (simulatedPath && simulatedPath !== "normal"));
-  const isLiveMode = !isSimulationMode;
-
-  // Step 3: Payment State (Simulation / Preview)
-  const [selectedPaymentType, setSelectedPaymentType] = useState<"applePay" | "googlePay" | "card" | "bank">("card");
-  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
-
-  // Step 4: Fulfillment Stage ("processing" | "confirming" | "complete")
-  const [fulfillmentStage, setFulfillmentStage] = useState<"processing" | "confirming" | "complete">("processing");
-
-  // Canonical receipt settlement resolution
-  const isReceiptPaid = Boolean(
-    isPaid ||
-    paymentConfirmed ||
-    isSettled(receiptStatus) ||
-    isSettled(receipt?.status) ||
-    headlessStep === "completed" ||
-    simulatedStatus === "paid"
-  );
-
-  // In live production mode, order confirmation strictly requires verifiable payment confirmation, completed onramp state, or paid receipt
-  const isOrderConfirmed = isLiveMode
-    ? Boolean(isReceiptPaid || paymentConfirmed || headlessStep === "completed")
-    : Boolean(isReceiptPaid || fulfillmentStage === "complete");
-
-  // Identity / KYC active check to prevent processing backdrop from blocking verification UI
-  const isIdentityActive = Boolean(
-    headlessStep === "verifying_identity" ||
-    headlessStep === "collecting_kyc" ||
-    headlessStep === "checking_kyc" ||
-    (headlessStatus && (
-      headlessStatus.toLowerCase().includes("identity") ||
-      headlessStatus.toLowerCase().includes("verifying identity") ||
-      headlessStatus.toLowerCase().includes("document") ||
-      headlessStatus.toLowerCase().includes("kyc")
-    ))
-  );
-
-  // Payment Processing Modal Overlay Guard:
-  // Specifically active during fee review, payment processing, or fund transfer
-  // Automatically stays open and locks interactions until payment completes or fails with an error
-  const isPaymentProcessing = Boolean(
-    !isOrderConfirmed &&
-    !isReceiptPaid &&
-    !activeError &&
-    !isIdentityActive &&
-    (
-      simulatedStatus === "processing" ||
-      (isSubmittingPayment && !isIdentityActive) ||
-      (activeStep === 4 && (
-        fulfillmentStage === "processing" ||
-        fulfillmentStage === "confirming" ||
-        headlessStep === "confirming_fees" ||
-        headlessStep === "checking_out" ||
-        headlessStep === "transferring" ||
-        headlessStep === "creating_session" ||
-        (headlessStatus && (
-          headlessStatus.toLowerCase().includes("processing") ||
-          headlessStatus.toLowerCase().includes("fee") ||
-          headlessStatus.toLowerCase().includes("finalizing") ||
-          headlessStatus.toLowerCase().includes("transfer") ||
-          headlessStatus.toLowerCase().includes("confirming")
-        ))
-      ))
-    )
-  );
-
-  const processingStatusSubtitle = (
-    headlessStatus ||
-    (headlessStep === "confirming_fees"
-      ? "Reviewing payment fee & live conversion rates..."
-      : headlessStep === "checking_out"
-      ? "Processing transaction securely with Stripe..."
-      : "Finalizing your transaction. Please keep this window open.")
-  );
-
-  // DOM Container Refs for Stripe Embedded Elements
-  const authContainerRef = useRef<HTMLDivElement>(null);
-  const paymentContainerRef = useRef<HTMLDivElement>(null);
-  const identityContainerRef = useRef<HTMLDivElement>(null);
-
   // Canonical Stripe Onramp KYC tier detection from GET /v1/crypto/customers/:id kyc_tiers:
   const rawKycTiers = kycTiers || [];
   const l0Verified = rawKycTiers.some(
@@ -905,6 +823,90 @@ export function PortalPayAccordionCheckoutV2({
     (kycTierRequired as string) === "L2" ||
     headlessStep === "verifying_identity";
   const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || effectiveTier === "L1" || (kycTierRequired as string) === "l1" || (kycTierRequired as string) === "L1";
+
+  // Strict separation of simulation demo mode vs live production checkout
+  const isSimulationMode = Boolean(simulatedTier || simulatedStatus || (simulatedPath && simulatedPath !== "normal"));
+  const isLiveMode = !isSimulationMode;
+
+  // Step 3: Payment State (Simulation / Preview)
+  const [selectedPaymentType, setSelectedPaymentType] = useState<"applePay" | "googlePay" | "card" | "bank">("card");
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+
+  // Step 4: Fulfillment Stage ("processing" | "confirming" | "complete")
+  const [fulfillmentStage, setFulfillmentStage] = useState<"processing" | "confirming" | "complete">("processing");
+
+  // Canonical receipt settlement resolution
+  const isReceiptPaid = Boolean(
+    isPaid ||
+    paymentConfirmed ||
+    isSettled(receiptStatus) ||
+    isSettled(receipt?.status) ||
+    headlessStep === "completed" ||
+    simulatedStatus === "paid"
+  );
+
+  // In live production mode, order confirmation strictly requires verifiable payment confirmation, completed onramp state, or paid receipt
+  const isOrderConfirmed = isLiveMode
+    ? Boolean(isReceiptPaid || paymentConfirmed || headlessStep === "completed")
+    : Boolean(isReceiptPaid || fulfillmentStage === "complete");
+
+  // Identity / KYC active check to prevent processing backdrop from blocking verification UI
+  const isIdentityActive = Boolean(
+    showStepUpForm ||
+    kycTierRequired === "l1" ||
+    headlessStep === "verifying_identity" ||
+    headlessStep === "collecting_kyc" ||
+    headlessStep === "checking_kyc" ||
+    (headlessStatus && (
+      headlessStatus.toLowerCase().includes("identity") ||
+      headlessStatus.toLowerCase().includes("verifying identity") ||
+      headlessStatus.toLowerCase().includes("document") ||
+      headlessStatus.toLowerCase().includes("kyc")
+    ))
+  );
+
+  // Payment Processing Modal Overlay Guard:
+  // Specifically active during fee review, payment processing, or fund transfer
+  // Automatically stays open and locks interactions until payment completes or fails with an error
+  const isPaymentProcessing = Boolean(
+    !isOrderConfirmed &&
+    !isReceiptPaid &&
+    !activeError &&
+    !isIdentityActive &&
+    (
+      simulatedStatus === "processing" ||
+      (isSubmittingPayment && !isIdentityActive) ||
+      (activeStep === 4 && (
+        fulfillmentStage === "processing" ||
+        fulfillmentStage === "confirming" ||
+        headlessStep === "confirming_fees" ||
+        headlessStep === "checking_out" ||
+        headlessStep === "transferring" ||
+        headlessStep === "creating_session" ||
+        (headlessStatus && (
+          headlessStatus.toLowerCase().includes("processing") ||
+          headlessStatus.toLowerCase().includes("fee") ||
+          headlessStatus.toLowerCase().includes("finalizing") ||
+          headlessStatus.toLowerCase().includes("transfer") ||
+          headlessStatus.toLowerCase().includes("confirming")
+        ))
+      ))
+    )
+  );
+
+  const processingStatusSubtitle = (
+    headlessStatus ||
+    (headlessStep === "confirming_fees"
+      ? "Reviewing payment fee & live conversion rates..."
+      : headlessStep === "checking_out"
+      ? "Processing transaction securely with Stripe..."
+      : "Finalizing your transaction. Please keep this window open.")
+  );
+
+  // DOM Container Refs for Stripe Embedded Elements
+  const authContainerRef = useRef<HTMLDivElement>(null);
+  const paymentContainerRef = useRef<HTMLDivElement>(null);
+  const identityContainerRef = useRef<HTMLDivElement>(null);
 
   // Dynamic error detection
   const rawErr = String(localError || propError || "").toLowerCase();
@@ -1135,7 +1137,7 @@ export function PortalPayAccordionCheckoutV2({
     ) {
       setIsSubmittingContact(false);
       setIsSubmittingPayment(false);
-      if (!isL1Approved || showStepUpForm || !isL0Approved) {
+      if ((!isL0Approved && !isAllKycCompleted) || showStepUpForm) {
         setActiveStep(2);
       } else {
         setActiveStep((prev) => (prev > 3 ? prev : 3));
@@ -1181,16 +1183,17 @@ export function PortalPayAccordionCheckoutV2({
     }
   }, [headlessStep, authElement, isAllKycCompleted, effectiveStatus, paymentConfirmed, isReceiptPaid, propError, localError, detectedCardFunding, activeStep, isL2Requirement, isL2Approved, showStepUpForm, isL1Approved, isL0Approved]);
 
-  // Dedicated KYC Enforcement Guard: If L1 SSN/DOB Step-Up is required and NOT approved, lock activeStep to Step 2
+  // Dedicated KYC Enforcement Guard: If L1 SSN/DOB Step-Up is required and NOT approved, route back to Step 2
   useEffect(() => {
     if (paymentConfirmed || isOrderConfirmed || isReceiptPaid) return;
-    if ((showStepUpForm || kycTierRequired === "l1" || headlessStep === "collecting_kyc") && !isL1Approved) {
+    if ((showStepUpForm || kycTierRequired === "l1") && !isL1Approved) {
       if (activeStep !== 2) {
         console.log("[ACCORDION] Action required on Step 2 (L1 KYC / Step-Up pending). Routing to Step 2.");
+        setIsSubmittingPayment(false);
         setActiveStep(2);
       }
     }
-  }, [showStepUpForm, isL1Approved, activeStep, paymentConfirmed, isOrderConfirmed, isReceiptPaid, kycTierRequired, headlessStep]);
+  }, [showStepUpForm, isL1Approved, activeStep, paymentConfirmed, isOrderConfirmed, isReceiptPaid, kycTierRequired]);
 
   // If KYC is already completed or verified, automatically skip or advance to Step 3 (unless on payment execution/completion or error)
   useEffect(() => {

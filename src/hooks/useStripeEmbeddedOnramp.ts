@@ -616,6 +616,12 @@ export function useStripeEmbeddedOnramp({
 
   const [kycTiers, setKycTiers] = useState<Array<{ tier: string; verification_status: string }>>([]);
   const [isAllKycCompleted, setIsAllKycCompleted] = useState<boolean>(false);
+  const isAllKycCompletedRef = useRef(false);
+
+  useEffect(() => {
+    isAllKycCompletedRef.current = isAllKycCompleted;
+  }, [isAllKycCompleted]);
+
   const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
@@ -1064,6 +1070,9 @@ export function useStripeEmbeddedOnramp({
                   const l0Approved = await pollKycStatus(customerId, "l0");
                   if (!l0Approved) {
                     setKycTierRequired("l1");
+                    kycTierRequiredRef.current = "l1";
+                    setIsAllKycCompleted(false);
+                    isAllKycCompletedRef.current = false;
                     updateStep("collecting_kyc");
                     isVerifyingRef.current = false;
                     isRunningRef.current = false;
@@ -1072,15 +1081,31 @@ export function useStripeEmbeddedOnramp({
                 } else {
                   console.log("[EMBEDDED ONRAMP] Global KYC check: L0 unverified/rejected. Directing to full L0 input...");
                   setKycTierRequired("l0");
+                  kycTierRequiredRef.current = "l0";
+                  setIsAllKycCompleted(false);
+                  isAllKycCompletedRef.current = false;
                   updateStep("collecting_kyc");
                   isVerifyingRef.current = false;
                   isRunningRef.current = false;
                   return;
                 }
+              } else if (!isL1Verified) {
+                console.log("[EMBEDDED ONRAMP] Global KYC check: L1 required for step-up. Directing to L1 input (DOB + SSN)...");
+                setKycTierRequired("l1");
+                kycTierRequiredRef.current = "l1";
+                setIsAllKycCompleted(false);
+                isAllKycCompletedRef.current = false;
+                updateStep("collecting_kyc");
+                isVerifyingRef.current = false;
+                isRunningRef.current = false;
+                return;
               }
             } else {
               console.log("[EMBEDDED ONRAMP] Global KYC check: Defaulting to L0 due to check failure.");
               setKycTierRequired("l0");
+              kycTierRequiredRef.current = "l0";
+              setIsAllKycCompleted(false);
+              isAllKycCompletedRef.current = false;
               updateStep("collecting_kyc");
               isVerifyingRef.current = false;
               isRunningRef.current = false;
@@ -2289,16 +2314,17 @@ export function useStripeEmbeddedOnramp({
             const isL1Error = errCode === "crypto_onramp_missing_identity_verification" ||
                               lastError === "missing_kyc" ||
                               lastError === "crypto_onramp_missing_identity_verification" ||
+                              lastError === "identity_verification" ||
+                              errMessage.includes("missing_kyc") ||
+                              errMessage.includes("missing identity") ||
                               errMessage.includes("identity_verification");
 
             const isL2Error = errCode === "crypto_onramp_missing_document_verification" ||
                               lastError === "missing_document_verification" ||
                               lastError === "crypto_onramp_missing_document_verification" ||
                               lastError === "verification_required" ||
-                              lastError === "identity_verification" ||
                               errMessage.includes("document_verification") ||
-                              errMessage.includes("verification_required") ||
-                              errMessage.includes("identity_verification");
+                              errMessage.includes("missing_document");
 
             const isGenericKycError = errMessage.includes("kyc") || 
                                       errCode.includes("kyc") ||
@@ -2340,14 +2366,20 @@ export function useStripeEmbeddedOnramp({
             if (isL0Error) {
               console.log("[EMBEDDED ONRAMP] L0 KYC required during checkout.");
               setKycTierRequired("l0");
+              kycTierRequiredRef.current = "l0";
+              setIsAllKycCompleted(false);
+              isAllKycCompletedRef.current = false;
               updateStep("collecting_kyc");
               isRunningRef.current = false;
               return;
             }
 
             if (isL1Error) {
-              console.log("[EMBEDDED ONRAMP] L1 KYC required during checkout.");
+              console.log("[EMBEDDED ONRAMP] L1 KYC required during checkout. Stepping up to L1 (DOB + SSN)...");
               setKycTierRequired("l1");
+              kycTierRequiredRef.current = "l1";
+              setIsAllKycCompleted(false);
+              isAllKycCompletedRef.current = false;
               updateStep("collecting_kyc");
               isRunningRef.current = false;
               return;
@@ -2402,6 +2434,9 @@ export function useStripeEmbeddedOnramp({
                     if (!isL1Verified && l1Tier?.verification_status !== "pending") {
                       console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Directing to L1 input first.");
                       setKycTierRequired("l1");
+                      kycTierRequiredRef.current = "l1";
+                      setIsAllKycCompleted(false);
+                      isAllKycCompletedRef.current = false;
                       updateStep("collecting_kyc");
                       isRunningRef.current = false;
                       return;
@@ -2430,6 +2465,9 @@ export function useStripeEmbeddedOnramp({
                     } else {
                       console.log("[EMBEDDED ONRAMP] Defaulting to L1 verification checklist due to fetch failure.");
                       setKycTierRequired("l1");
+                      kycTierRequiredRef.current = "l1";
+                      setIsAllKycCompleted(false);
+                      isAllKycCompletedRef.current = false;
                       updateStep("collecting_kyc");
                       isRunningRef.current = false;
                       return;
@@ -2439,6 +2477,9 @@ export function useStripeEmbeddedOnramp({
                   console.warn("[EMBEDDED ONRAMP] Failed to pre-check status inside checkout loop:", checkErr);
                   console.log("[EMBEDDED ONRAMP] Defaulting to L1 verification checklist due to pre-check exception.");
                   setKycTierRequired("l1");
+                  kycTierRequiredRef.current = "l1";
+                  setIsAllKycCompleted(false);
+                  isAllKycCompletedRef.current = false;
                   updateStep("collecting_kyc");
                   isRunningRef.current = false;
                   return;
@@ -2640,6 +2681,7 @@ export function useStripeEmbeddedOnramp({
     console.log("[EMBEDDED ONRAMP] Submitting KYC info...");
     updateStep("submitting_kyc");
     isRunningRef.current = true;
+    const submittedTier: "l0" | "l1" = (kycInfo?.date_of_birth || kycInfo?.id_number) ? "l1" : "l0";
     try {
       const payload: any = {};
       const rawGivenName = kycInfo.given_name || kycInfo.first_name || "";
@@ -2725,63 +2767,6 @@ export function useStripeEmbeddedOnramp({
       if (kycInfo.birth_city) payload.birth_city = kycInfo.birth_city;
 
       await submitKycInfoWithTimeout(onrampRef.current, payload);
-      // Determine which tier was just submitted based on the payload fields (DOB/SSN defines L1)
-      const submittedTier = (payload.date_of_birth || payload.id_number) ? "l1" : "l0";
-
-      if (submittedTier === "l0") {
-        console.log("[EMBEDDED ONRAMP] L0 demographics submitted successfully! Proceeding directly to payment collection...");
-        setError(null);
-        setIsAllKycCompleted(true);
-        setKycLevel("L0");
-        kycLevelRef.current = "L0";
-        setKycTierRequired("l0");
-        kycTierRequiredRef.current = "l0";
-        kycOccurredRef.current = true;
-        updateStep("collecting_payment");
-
-        if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
-          if (paymentTokenRef.current) {
-            runCheckoutLoop(
-              activeEmailRef.current,
-              customerIdRef.current,
-              paymentTokenRef.current,
-              buyerWalletRef.current,
-              detectedCardFunding
-            ).catch((err) => {
-              const isCardDecline = checkIfCardDecline(err);
-              if (isCardDecline) {
-                console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval, returning to payment selection...");
-                setError(err?.message || "Your card was declined. Please try another card.");
-                paymentTokenRef.current = null;
-                sessionIdRef.current = null;
-                setSessionId(null);
-                if (typeof window !== "undefined") {
-                  sessionStorage.removeItem(sessionKey);
-                }
-                if (onrampRef.current) {
-                  try { onrampRef.current.destroy(); } catch {}
-                  onrampRef.current = null;
-                }
-                isCoordinatorAuthedRef.current = false;
-                setDetectedCardFunding(null);
-                setDetectedCardBrand(null);
-                setDetectedCardLast4(null);
-                onCardDetected?.(null);
-                isRunningRef.current = false;
-                setTimeout(() => {
-                  startOnrampRef.current?.(activeEmailRef.current || undefined);
-                }, 0);
-              } else {
-                handleError(err?.message || "Checkout failed after KYC submission", err);
-              }
-            });
-          } else {
-            isRunningRef.current = false;
-            startOnrampRef.current?.(activeEmailRef.current || undefined);
-          }
-        }
-        return;
-      }
 
       updateStep("checking_kyc");
       const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
@@ -2790,6 +2775,7 @@ export function useStripeEmbeddedOnramp({
         console.log("[EMBEDDED ONRAMP] KYC successfully approved after polling! Setting level to:", submittedTier.toUpperCase());
         setError(null);
         setIsAllKycCompleted(true);
+        isAllKycCompletedRef.current = true;
         const levelCode: "L0" | "L1" = submittedTier === "l1" ? "L1" : "L0";
         setKycLevel(levelCode);
         kycLevelRef.current = levelCode;
@@ -2840,7 +2826,17 @@ export function useStripeEmbeddedOnramp({
           }
         }
       } else {
-        throw new Error(`KYC ${submittedTier.toUpperCase()} verification was not approved.`);
+        if (submittedTier === "l0") {
+          console.warn("[EMBEDDED ONRAMP] L0 verification was not approved. Keeping customer at L0 for address correction.");
+          setError("We couldn't verify your home address. Please check your street address, city, and postal code and try again.");
+          setKycTierRequired("l0");
+          kycTierRequiredRef.current = "l0";
+          updateStep("collecting_kyc");
+          isRunningRef.current = false;
+          return;
+        } else {
+          throw new Error(`KYC ${submittedTier.toUpperCase()} verification was not approved.`);
+        }
       }
 
       console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
@@ -2906,10 +2902,11 @@ export function useStripeEmbeddedOnramp({
         console.log("[EMBEDDED ONRAMP] Customer identity is already verified / immutable in Stripe Link. Marking KYC complete and proceeding directly to payment collection...");
         setError(null);
         setIsAllKycCompleted(true);
-        setKycLevel("L1");
-        kycLevelRef.current = "L1";
-        setKycTierRequired("l1");
-        kycTierRequiredRef.current = "l1";
+        isAllKycCompletedRef.current = true;
+        setKycLevel("L0");
+        kycLevelRef.current = "L0";
+        setKycTierRequired("l0");
+        kycTierRequiredRef.current = "l0";
         kycOccurredRef.current = true;
         updateStep("collecting_payment");
 
@@ -2964,11 +2961,14 @@ export function useStripeEmbeddedOnramp({
       const rawMsg = String(err?.message || err || "").toLowerCase();
       const isAddressError = rawMsg.includes("address") || rawMsg.includes("postal") || rawMsg.includes("zip") || rawMsg.includes("subdivision") || rawMsg.includes("street") || rawMsg.includes("city");
 
-      if (isAddressError) {
-        console.warn("[EMBEDDED ONRAMP] Address verification failed on L0 submission. Displaying explicit error and allowing L0 address retry.");
-        const friendlyAddrErr = "We couldn't verify your home address. Please check your street address, city, and postal code and try again.";
+      if (submittedTier === "l0" || isAddressError) {
+        console.warn("[EMBEDDED ONRAMP] L0 demographic verification error. Keeping customer strictly at L0 for retry.");
+        const friendlyAddrErr = isAddressError
+          ? "We couldn't verify your home address. Please check your street address, city, and postal code and try again."
+          : (err?.message || "We couldn't verify your name or address. Please check your details and try again.");
         setError(friendlyAddrErr);
         setKycTierRequired("l0");
+        kycTierRequiredRef.current = "l0";
         updateStep("collecting_kyc");
         isRunningRef.current = false;
 
@@ -3481,9 +3481,10 @@ export function useStripeEmbeddedOnramp({
         // If ACH payment is chosen, we strictly enforce verification through L2.
         const isCustomerVerified = isAchEnforcedRef.current 
           ? isL2Verified 
-          : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected") || computedLevel === "L1" || computedLevel === "L0");
+          : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected") || computedLevel === "L1" || computedLevel === "L0" || isAllKycCompletedRef.current);
 
         setIsAllKycCompleted(Boolean(isCustomerVerified));
+        isAllKycCompletedRef.current = Boolean(isCustomerVerified);
 
         // 1. First, check if there is any pending verification.
         // Stripe returns a 400 error if we try to create a session while verification is pending.
@@ -3503,12 +3504,14 @@ export function useStripeEmbeddedOnramp({
           if (!kycApproved) {
             // If polling failed or was rejected, determine next steps based on the tier
             if (pendingTier === "l0" || l0Tier?.verification_status === "rejected") {
-              // L0 failed. Customer must step up to L1 to proceed.
-              console.log("[EMBEDDED ONRAMP] L0 verification failed/rejected. Stepping up to L1 KYC.");
-              setKycTierRequired("l1");
+              // L0 unverified or rejected. Keep at L0 so customer can correct their name and address.
+              console.log("[EMBEDDED ONRAMP] L0 verification unverified/rejected. Directing to L0 demographic collection.");
+              setKycTierRequired("l0");
+              kycTierRequiredRef.current = "l0";
             } else {
               // L1 or L2 failed. Show L1 or L2 collection screen again.
               setKycTierRequired(pendingTier);
+              kycTierRequiredRef.current = pendingTier;
             }
             updateStep("collecting_kyc");
             isRunningRef.current = false;
