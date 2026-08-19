@@ -138,6 +138,11 @@ PortalPay leverages Stripe's Embedded Components Crypto Onramp SDK (`@stripe/cry
   - Automatically resumes `runCheckoutLoop(...)` to finalize payment.
   - `handleIdentitySubmit` checks `headlessStep`: if checking out or creating a session, `activeStep` moves directly to **Step 4 (Fulfillment / Processing)**, eliminating the glitch where Step 3 opens with a blank/loading spinner during payment processing.
 
+### Rule 10: Strict Enum-Based Step Checks & Payment Processing Overlay Isolation
+- **No Loose String Matching**: `isIdentityActive` and Step 4 KYC notice cards must evaluate strictly against typed step enums (`headlessStep === "verifying_identity" || headlessStep === "collecting_kyc" || showStepUpForm`). Never use broad substring matching like `statusMessage.includes("identity")` or `.includes("verif")`, which falsely flags Link OTP login as a document verification check.
+- **Accurate Step Messages**: `STEP_MESSAGES.authenticating` must be defined as `"Authenticating with Link..."` to distinguish Link user authentication from identity document checks.
+- **Immediate Payment Processing Modal Activation**: `isPaymentProcessing` must trigger directly upon entering any active payment execution state (`checking_out`, `confirming_fees`, `creating_session`, `transferring`), opening the full-screen glassmorphic modal overlay with the *"Do Not Refresh"* warning and interaction lockdown.
+
 ---
 
 ## 3. UI State Matrix in `PortalPayAccordionCheckoutV2`
