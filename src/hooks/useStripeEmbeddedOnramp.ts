@@ -1802,6 +1802,9 @@ export function useStripeEmbeddedOnramp({
                 if (!isL1Verified && l1Tier?.verification_status !== "pending") {
                   console.log("[EMBEDDED ONRAMP] L2 required but L1 demographics not verified. Directing to L1 input first.");
                   setKycTierRequired("l1");
+                  kycTierRequiredRef.current = "l1";
+                  setIsAllKycCompleted(false);
+                  isAllKycCompletedRef.current = false;
                   updateStep("collecting_kyc");
                   isRunningRef.current = false;
                   return null;
@@ -1846,6 +1849,9 @@ export function useStripeEmbeddedOnramp({
                 } else {
                   console.log("[EMBEDDED ONRAMP] Defaulting to L1 verification checklist due to fetch failure.");
                   setKycTierRequired("l1");
+                  kycTierRequiredRef.current = "l1";
+                  setIsAllKycCompleted(false);
+                  isAllKycCompletedRef.current = false;
                   updateStep("collecting_kyc");
                   isRunningRef.current = false;
                   return null;
@@ -2522,6 +2528,9 @@ export function useStripeEmbeddedOnramp({
             if (isGenericKycError) {
               console.log("[EMBEDDED ONRAMP] Generic KYC error caught, treating as L1.");
               setKycTierRequired("l1");
+              kycTierRequiredRef.current = "l1";
+              setIsAllKycCompleted(false);
+              isAllKycCompletedRef.current = false;
               updateStep("collecting_kyc");
               isRunningRef.current = false;
               return;
@@ -2788,10 +2797,10 @@ export function useStripeEmbeddedOnramp({
         setKycTierRequired(submittedTier);
         kycTierRequiredRef.current = submittedTier;
         kycOccurredRef.current = true;
-        updateStep("collecting_payment");
 
         if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
           if (paymentTokenRef.current) {
+            updateStep("checking_out");
             runCheckoutLoop(
               activeEmailRef.current,
               customerIdRef.current,
@@ -2842,58 +2851,6 @@ export function useStripeEmbeddedOnramp({
           return;
         } else {
           throw new Error(`KYC ${submittedTier.toUpperCase()} verification was not approved.`);
-        }
-      }
-
-      console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
-      setIsAllKycCompleted(true);
-      const resolvedLvl: "L0" | "L1" = submittedTier === "l1" ? "L1" : "L0";
-      setKycLevel(resolvedLvl);
-      kycLevelRef.current = resolvedLvl;
-      setKycTierRequired(submittedTier);
-      kycTierRequiredRef.current = submittedTier;
-      kycOccurredRef.current = true;
-
-      if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
-        if (paymentTokenRef.current) {
-          runCheckoutLoop(
-            activeEmailRef.current,
-            customerIdRef.current,
-            paymentTokenRef.current,
-            buyerWalletRef.current,
-            detectedCardFunding
-          ).catch((err) => {
-            const isCardDecline = checkIfCardDecline(err);
-
-            if (isCardDecline) {
-              console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval, returning to payment selection...");
-              setError(err?.message || "Your card was declined. Please try another card.");
-              paymentTokenRef.current = null;
-              sessionIdRef.current = null;
-              setSessionId(null);
-              if (typeof window !== "undefined") {
-                sessionStorage.removeItem(sessionKey);
-              }
-              if (onrampRef.current) {
-                try { onrampRef.current.destroy(); } catch {}
-                onrampRef.current = null;
-              }
-              isCoordinatorAuthedRef.current = false;
-              setDetectedCardFunding(null);
-              setDetectedCardBrand(null);
-              setDetectedCardLast4(null);
-              onCardDetected?.(null);
-              isRunningRef.current = false;
-              setTimeout(() => {
-                startOnrampRef.current?.(activeEmailRef.current || undefined);
-              }, 0);
-            } else {
-              handleError(err?.message || "Checkout failed after KYC submission", err);
-            }
-          });
-        } else {
-          isRunningRef.current = false;
-          startOnrampRef.current?.(activeEmailRef.current || undefined);
         }
       }
     } catch (err: any) {
@@ -4189,7 +4146,9 @@ export function useStripeEmbeddedOnramp({
           }
 
           setIsAllKycCompleted(true);
+          isAllKycCompletedRef.current = true;
           setKycLevel("L2");
+          kycLevelRef.current = "L2";
           setPaymentElement(null);
           if (onrampRef.current) {
             try { onrampRef.current.destroy(); } catch {}
