@@ -242,6 +242,18 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true, ignored: true, reason: "already_settled" }, { headers: { "x-correlation-id": correlationId } });
       }
 
+      const incomingKyc = body.kycLevel ? String(body.kycLevel).trim() : undefined;
+      const existingKyc = resource?.kycLevel;
+      const resolveKycTier = (incoming?: string, existing?: string) => {
+        const inc = (incoming || "").toUpperCase();
+        const ext = (existing || "").toUpperCase();
+        if (inc === "L2" || ext === "L2") return "L2";
+        if (inc === "L1" || ext === "L1") return "L1";
+        if (inc === "L0" || ext === "L0") return "L0";
+        return incoming || existing || undefined;
+      };
+      const mergedKycLevel = resolveKycTier(incomingKyc, existingKyc);
+
       const ts = Date.now();
       let next = resource
         ? {
@@ -286,8 +298,8 @@ export async function POST(req: NextRequest) {
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
           ...(failureReason ? { failureReason } : {}),
-          ...(body.kycLevel ? { kycLevel: String(body.kycLevel).trim() } : {}),
-          ...(typeof body.kycOccurred === "boolean" ? { kycOccurred: body.kycOccurred } : {}),
+          ...(mergedKycLevel ? { kycLevel: mergedKycLevel } : {}),
+          ...(typeof body.kycOccurred === "boolean" ? { kycOccurred: body.kycOccurred } : resource?.kycOccurred ? { kycOccurred: true } : {}),
           // Persist smart contract split addresses and configs
           ...(resource?.splitAddress ? { splitAddress: resource.splitAddress } : {}),
           ...(resource?.splitAddressCredit ? { splitAddressCredit: resource.splitAddressCredit } : {}),
@@ -329,7 +341,8 @@ export async function POST(req: NextRequest) {
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
           ...(failureReason ? { failureReason } : {}),
-          ...(body.kycLevel ? { kycLevel: String(body.kycLevel).trim() } : {}),
+          ...(mergedKycLevel ? { kycLevel: mergedKycLevel } : {}),
+          ...(typeof body.kycOccurred === "boolean" ? { kycOccurred: body.kycOccurred } : {}),
         };
 
       // Track customerSessions if stripeSessionId or customerEmail or buyerWallet is available
@@ -364,6 +377,7 @@ export async function POST(req: NextRequest) {
           walletAddress: walletToUse || null,
           stripeSessionId: stripeSessionId || null,
           paymentMethodDetails: paymentMethodDetails || null,
+          kycLevel: mergedKycLevel || incomingKyc || (existingIndex > -1 ? sessions[existingIndex].kycLevel : null) || null,
           createdAt: Date.now()
         };
         
@@ -374,6 +388,7 @@ export async function POST(req: NextRequest) {
             walletAddress: walletToUse || sessions[existingIndex].walletAddress,
             stripeSessionId: stripeSessionId || sessions[existingIndex].stripeSessionId,
             paymentMethodDetails: paymentMethodDetails || sessions[existingIndex].paymentMethodDetails,
+            kycLevel: resolveKycTier(incomingKyc, sessions[existingIndex].kycLevel) || sessions[existingIndex].kycLevel || null,
             updatedAt: Date.now()
           };
         } else {

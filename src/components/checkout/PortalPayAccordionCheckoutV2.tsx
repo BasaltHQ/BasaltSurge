@@ -30,6 +30,7 @@ import {
   ArrowRight,
   Search,
   Globe,
+  Clock,
 } from "lucide-react";
 
 export interface PortalPayAccordionCheckoutV2Props {
@@ -2322,6 +2323,19 @@ export function PortalPayAccordionCheckoutV2({
                 </>
               )}
             </button>
+
+            {/* Submitting Identity 2 to 3 minute notice */}
+            {isSubmittingIdentity && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 animate-in fade-in duration-300 text-left mt-2">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
+                  <Clock className="w-4 h-4 shrink-0 text-amber-400" />
+                  <span>Verification in Progress</span>
+                </div>
+                <p className="text-[11.5px] leading-relaxed text-amber-200/90 font-normal">
+                  Identity and address checks can take <strong>2 to 3 minutes</strong> to process. Please keep this window open while Stripe verifies your details.
+                </p>
+              </div>
+            )}
           </form>
           )}
         </div>
@@ -2506,6 +2520,19 @@ export function PortalPayAccordionCheckoutV2({
                     {headlessStatus || "Finalizing order and confirming transaction..."}
                   </span>
                 </div>
+
+                {/* Identity / Document Verification Notice */}
+                {(headlessStep === "verifying_identity" || headlessStep === "checking_kyc" || (headlessStatus || "").toLowerCase().includes("verif") || (headlessStatus || "").toLowerCase().includes("identity") || (headlessStatus || "").toLowerCase().includes("document") || kycLevel === "L2") && (
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 animate-in fade-in duration-300 mt-2 text-left">
+                    <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
+                      <Clock className="w-4 h-4 shrink-0 text-amber-400" />
+                      <span>Identity Verification in Progress</span>
+                    </div>
+                    <p className="text-[11.5px] leading-relaxed text-amber-200/90 font-normal">
+                      Document and identity checks can take <strong>2 to 3 minutes</strong> to process. Please keep this page open while Stripe completes your verification.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               /* Order Success Summary Receipt Card */

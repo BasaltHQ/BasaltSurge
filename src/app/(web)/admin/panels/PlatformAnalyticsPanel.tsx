@@ -201,12 +201,30 @@ interface ReceiptInfo {
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
   const kyc = String(r.kycLevel || r.kyc || "").toUpperCase().trim();
   if (kyc === "L2" || kyc === "LEVEL 2" || kyc === "LEVEL2") return "L2";
-  if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1") return "L1";
   if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
-    const sKyc = String(r.customerSessions[0]?.kycLevel || r.customerSessions[0]?.kyc_level || "").toUpperCase().trim();
-    if (sKyc === "L2") return "L2";
-    if (sKyc === "L1") return "L1";
+    for (const s of r.customerSessions) {
+      const sKyc = String(s?.kycLevel || s?.kyc_level || "").toUpperCase().trim();
+      if (sKyc === "L2") return "L2";
+    }
   }
+
+  if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1" || r.kycOccurred === true || (r as any).kyc_occurred === true) return "L1";
+  if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
+    for (const s of r.customerSessions) {
+      const sKyc = String(s?.kycLevel || s?.kyc_level || "").toUpperCase().trim();
+      if (sKyc === "L1" || (s as any)?.kycOccurred === true) return "L1";
+    }
+  }
+
+  if (kyc === "L0") return "L0";
+
+  const amt = Number(r.totalUsd || r.amountUsd || r.onChainAmountUsd || 0);
+  const status = String(r.status || "").toLowerCase();
+  if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
+    if (amt >= 100) return "L2";
+    if (amt >= 15) return "L1";
+  }
+
   return "L0";
 };
 
@@ -1556,16 +1574,11 @@ export default function PlatformAnalyticsPanel() {
       else if (funding === "debit") cardTypes.debit++;
       else cardTypes.unknown++;
 
-      let kyc = String(r.kycLevel || r.kyc || "").toUpperCase().trim();
-      if (kyc === "L2" || kyc === "LEVEL 2" || kyc === "LEVEL2") {
+      const kyc = getKycLevel(r);
+      if (kyc === "L2") {
         kycLevels.l2++;
-      } else if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1" || r.kycOccurred === true || r.kyc_occurred === true) {
+      } else if (kyc === "L1") {
         kycLevels.l1++;
-      } else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
-        const sKyc = String(r.customerSessions[0]?.kycLevel || r.customerSessions[0]?.kyc_level || "").toUpperCase().trim();
-        if (sKyc === "L2") kycLevels.l2++;
-        else if (sKyc === "L1" || r.customerSessions[0]?.kycOccurred === true) kycLevels.l1++;
-        else kycLevels.none++;
       } else {
         kycLevels.none++;
       }
@@ -2306,16 +2319,11 @@ export default function PlatformAnalyticsPanel() {
                 else if (funding === "debit") cardTypes.debit++;
                 else cardTypes.unknown++;
 
-                let kyc = String(r.kycLevel || r.kyc || "").toUpperCase().trim();
-                if (kyc === "L2" || kyc === "LEVEL 2" || kyc === "LEVEL2") {
+                const kyc = getKycLevel(r);
+                if (kyc === "L2") {
                   kycLevels.l2++;
-                } else if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1" || r.kycOccurred === true || r.kyc_occurred === true) {
+                } else if (kyc === "L1") {
                   kycLevels.l1++;
-                } else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
-                  const sKyc = String(r.customerSessions[0]?.kycLevel || r.customerSessions[0]?.kyc_level || "").toUpperCase().trim();
-                  if (sKyc === "L2") kycLevels.l2++;
-                  else if (sKyc === "L1" || r.customerSessions[0]?.kycOccurred === true) kycLevels.l1++;
-                  else kycLevels.none++;
                 } else {
                   kycLevels.none++;
                 }

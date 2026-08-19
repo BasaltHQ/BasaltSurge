@@ -603,6 +603,17 @@ export function useStripeEmbeddedOnramp({
   }, [sessionKey]);
   const [kycTierRequired, setKycTierRequired] = useState<"l0" | "l1" | "l2">("l0");
   const [kycLevel, setKycLevel] = useState<"L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING">("REQUIRES_KYC");
+  const kycLevelRef = useRef<"L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING">("REQUIRES_KYC");
+  const kycTierRequiredRef = useRef<"l0" | "l1" | "l2">("l0");
+
+  useEffect(() => {
+    kycLevelRef.current = kycLevel;
+  }, [kycLevel]);
+
+  useEffect(() => {
+    kycTierRequiredRef.current = kycTierRequired;
+  }, [kycTierRequired]);
+
   const [kycTiers, setKycTiers] = useState<Array<{ tier: string; verification_status: string }>>([]);
   const [isAllKycCompleted, setIsAllKycCompleted] = useState<boolean>(false);
   const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
@@ -1859,7 +1870,13 @@ export function useStripeEmbeddedOnramp({
     overrideFunding?: "credit" | "debit" | "us_bank_account" | null
   ) => {
     const fundingTypeToUse = overrideFunding !== undefined ? overrideFunding : (detectedCardFunding || sessionFundingRef.current);
-    console.log("[EMBEDDED ONRAMP] Checking eCommerce mode before Step 11. isEcommerceMode:", isEcommerceMode, "fundingTypeToUse:", fundingTypeToUse);
+    const resolvedKycLevel = (kycLevelRef.current === "L2" || (kycTierRequiredRef.current as string) === "l2")
+      ? "L2"
+      : (kycLevelRef.current === "L1" || (kycTierRequiredRef.current as string) === "l1")
+      ? "L1"
+      : (fundingTypeToUse === "us_bank_account" ? "L2" : "L0");
+
+    console.log("[EMBEDDED ONRAMP] Checking eCommerce mode before Step 11. isEcommerceMode:", isEcommerceMode, "fundingTypeToUse:", fundingTypeToUse, "resolvedKycLevel:", resolvedKycLevel);
     if (isEcommerceMode) {
       console.log("[EMBEDDED ONRAMP] eCommerce mode active. Launching background task and completing client flow.");
       fetch("/api/stripe/background-poll", {
@@ -1875,10 +1892,8 @@ export function useStripeEmbeddedOnramp({
           splitAddressCredit,
           brandKey,
           detectedCardFunding: fundingTypeToUse,
-          kycOccurred: kycOccurredRef.current,
-          kycLevel: kycOccurredRef.current
-            ? ((kycTierRequired as string) === "l2" ? "L2" : ((kycTierRequired as string) === "l1" ? "L1" : "L0"))
-            : "N/AKYC",
+          kycOccurred: true,
+          kycLevel: resolvedKycLevel,
         }),
       }).catch((err) => {
         console.error("[EMBEDDED ONRAMP] Failed to kick off background poll:", err);
@@ -1888,10 +1903,10 @@ export function useStripeEmbeddedOnramp({
       const isAch = fundingTypeToUse === "us_bank_account";
       if (isAch) {
         updateStep("awaiting_funds");
-        onSuccessRef.current?.({ sessionId, txHash: "ach_pending" });
+        onSuccessRef.current?.({ sessionId, txHash: "ach_pending", kycLevel: resolvedKycLevel });
       } else {
         updateStep("completed");
-        onSuccessRef.current?.({ sessionId, txHash: "ecommerce_pending" });
+        onSuccessRef.current?.({ sessionId, txHash: "ecommerce_pending", kycLevel: resolvedKycLevel });
       }
       return;
     }
@@ -1901,7 +1916,7 @@ export function useStripeEmbeddedOnramp({
       console.log("[EMBEDDED ONRAMP] ACH/Bank payment chosen in standard mode. Redirecting to awaiting_funds and completing client flow.");
       isRunningRef.current = false;
       updateStep("awaiting_funds");
-      onSuccessRef.current?.({ sessionId, txHash: "ach_pending" });
+      onSuccessRef.current?.({ sessionId, txHash: "ach_pending", kycLevel: resolvedKycLevel });
       return;
     }
 
@@ -1986,9 +2001,7 @@ export function useStripeEmbeddedOnramp({
     onSuccessRef.current?.({
       sessionId,
       txHash,
-      kycLevel: kycOccurredRef.current
-        ? ((kycTierRequired as string) === "l2" ? "L2" : ((kycTierRequired as string) === "l1" ? "L1" : "L0"))
-        : "N/AKYC",
+      kycLevel: resolvedKycLevel,
       detectedCardFunding: fundingTypeToUse || (isCreditCard ? "credit" : "debit"),
       isCreditCard: isCreditCard,
       targetSplitAddress: targetSplitAddress,
@@ -2677,9 +2690,12 @@ export function useStripeEmbeddedOnramp({
 
       console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
       setIsAllKycCompleted(true);
-      setKycLevel(submittedTier === "l1" ? "L1" : "L0");
+      const resolvedLvl = submittedTier === "l1" ? "L1" : "L0";
+      setKycLevel(resolvedLvl);
+      kycLevelRef.current = resolvedLvl;
       setKycTierRequired(submittedTier);
-      kycOccurredRef.current = false;
+      kycTierRequiredRef.current = submittedTier;
+      kycOccurredRef.current = true;
 
       if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
         if (paymentTokenRef.current) {
@@ -2735,8 +2751,10 @@ export function useStripeEmbeddedOnramp({
         setError(null);
         setIsAllKycCompleted(true);
         setKycLevel("L1");
+        kycLevelRef.current = "L1";
         setKycTierRequired("l1");
-        kycOccurredRef.current = false;
+        kycTierRequiredRef.current = "l1";
+        kycOccurredRef.current = true;
         updateStep("collecting_payment");
 
         if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
@@ -2829,6 +2847,9 @@ export function useStripeEmbeddedOnramp({
     kycOccurredRef.current = true;
     updateStep("verifying_identity");
     setKycTierRequired("l2");
+    kycTierRequiredRef.current = "l2";
+    setKycLevel("L2");
+    kycLevelRef.current = "L2";
 
     try {
       const res = await onrampRef.current.verifyDocuments();
@@ -2855,6 +2876,10 @@ export function useStripeEmbeddedOnramp({
       console.log("[EMBEDDED ONRAMP] L2 KYC approved! Resetting coordinator for fresh payment collection...");
       setIsAllKycCompleted(true);
       setKycLevel("L2");
+      kycLevelRef.current = "L2";
+      setKycTierRequired("l2");
+      kycTierRequiredRef.current = "l2";
+      kycOccurredRef.current = true;
       setPaymentElement(null);
 
       // Clean up spent onramp coordinator so startOnramp initializes a fresh one for collectPaymentMethod
@@ -3307,6 +3332,16 @@ export function useStripeEmbeddedOnramp({
           computedLevel = "REQUIRES_KYC";
         }
         setKycLevel(computedLevel);
+        kycLevelRef.current = computedLevel;
+        if (computedLevel === "L2") {
+          setKycTierRequired("l2");
+          kycTierRequiredRef.current = "l2";
+          kycOccurredRef.current = true;
+        } else if (computedLevel === "L1") {
+          setKycTierRequired("l1");
+          kycTierRequiredRef.current = "l1";
+          kycOccurredRef.current = true;
+        }
 
         // If ACH payment is chosen, we strictly enforce verification through L2.
         const isCustomerVerified = isAchEnforcedRef.current 

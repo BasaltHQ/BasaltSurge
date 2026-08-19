@@ -34,7 +34,8 @@ export async function GET(req: NextRequest) {
             message: 1,
             createdAt: 1,
             userAgent: 1
-          }
+          },
+          readPreference: "secondaryPreferred"
         }
       ).sort({ createdAt: 1 }).toArray();
     } else {

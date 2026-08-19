@@ -160,15 +160,12 @@ export async function POST(req: NextRequest) {
 
         if (receipt) {
           receipt.stripeSessionId = data.id;
-          if (!receipt.kycLevel || receipt.kycLevel === "N/A") {
-            receipt.kycLevel = "L0";
-          }
           if (amount && Number(amount) > 0) {
             receipt.totalUsd = Number(amount);
           }
           receipt.lastUpdatedAt = Date.now();
           await container.items.upsert(receipt);
-          console.log(`[STRIPE ONRAMP] Successfully linked Stripe session ${data.id} and set kycLevel=L0 for receipt ${receiptId}`);
+          console.log(`[STRIPE ONRAMP] Successfully linked Stripe session ${data.id} for receipt ${receiptId}`);
         } else {
           console.warn(`[STRIPE ONRAMP] Receipt ${receiptId} not found in DB`);
         }
