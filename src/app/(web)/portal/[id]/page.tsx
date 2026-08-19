@@ -4828,6 +4828,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           country={kycCountry || clientCountry || "US"}
           amountUsd={totalUsd}
           receiptId={receiptId}
+          receiptStatus={receipt?.status}
+          isPaid={isSettled(receipt?.status) || Boolean(paymentConfirmed)}
+          receipt={receipt}
           headlessError={headlessError}
           kycTierRequired={kycTierRequired}
           kycLevel={headlessKycLevel}
@@ -6827,44 +6830,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             >
               ✕
             </button>
-          )}
-          {!isEmbedded && wallets.length > 0 && (
-            <div className="ml-2 mr-[-11px] sm:mr-[-20px] my-auto flex items-center">
-              <ConnectButton
-                client={client}
-                chain={chain}
-                wallets={wallets}
-                connectButton={{
-                  label: <span className="microtext drop-shadow-[0_1.2px_1.2px_rgba(0,0,0,0.8)]">Login</span>,
-                  className: connectButtonClass,
-                  style: getConnectButtonStyle(),
-                }}
-                signInButton={{
-                  label: "Authenticate",
-                  className: connectButtonClass,
-                  style: getConnectButtonStyle(),
-                }}
-                detailsButton={{
-                  displayBalanceToken: { [((chain as any)?.id ?? 8453)]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" },
-                  style: {
-                    background: "transparent",
-                    backgroundColor: "transparent",
-                  }
-                }}
-                connectModal={{
-                  showThirdwebBranding: false,
-                  title: "Login",
-                  titleIcon: (() => {
-                    const c = (theme.brandLogoUrl || "").trim();
-                    const a = (theme.symbolLogoUrl || "").trim();
-                    const b = (theme.brandFaviconUrl || "").trim();
-                    return resolveBrandSymbol(c || a || b, (theme as any)?.brandKey || (theme as any)?.key) || undefined;
-                  })(),
-                  size: "compact",
-                }}
-                theme={twTheme}
-              />
-            </div>
           )}
         </div>
 

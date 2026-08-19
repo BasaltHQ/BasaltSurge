@@ -33,6 +33,23 @@ import {
   Clock,
 } from "lucide-react";
 
+export function isSettled(status?: string): boolean {
+  if (!status) return false;
+  const s = String(status).toLowerCase().trim();
+  return (
+    s === "paid" ||
+    s === "paid - ach pending" ||
+    s === "ach_pending" ||
+    s === "checkout_success" ||
+    s === "confirmed" ||
+    s === "reconciled" ||
+    s === "tx_mined" ||
+    s === "recipient_validated" ||
+    s === "receipt_claimed" ||
+    s.includes("refund")
+  );
+}
+
 export interface PortalPayAccordionCheckoutV2Props {
   theme?: {
     primaryColor?: string;
@@ -54,12 +71,15 @@ export interface PortalPayAccordionCheckoutV2Props {
   dob?: string;
   amountUsd?: number;
   receiptId?: string;
+  receiptStatus?: string;
+  isPaid?: boolean;
+  receipt?: any;
   headlessError?: string | null;
   kycTierRequired?: "l0" | "l1" | "l2" | string;
   kycLevel?: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING" | string;
   kycTiers?: Array<{ tier: string; verification_status: string }>;
   simulatedTier?: "l0" | "l1" | "l2" | string;
-  simulatedStatus?: "normal" | "step_up" | "doc_verify" | "verified" | string;
+  simulatedStatus?: "normal" | "step_up" | "doc_verify" | "verified" | "paid" | "processing" | string;
   simulatedError?: "none" | "address_error" | "payment_decline" | "kyc_rejection" | string;
   simulatedPath?: "normal" | "skip_kyc" | "step_up" | "doc_verify" | string;
   isAllKycCompleted?: boolean;
@@ -351,15 +371,15 @@ function DobPicker({
     : "bg-black/5 border border-black/10 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500/30";
 
   return (
-    <div ref={containerRef} className="relative w-full">
+    <div ref={containerRef} className="relative w-full min-w-0">
       {/* 3-Segment Input Container */}
       <div
-        className={`w-full h-10 px-2.5 rounded-xl flex items-center justify-between transition-all select-none ${containerClass}`}
+        className={`w-full h-10 px-2 sm:px-2.5 rounded-xl flex items-center justify-between transition-all select-none min-w-0 overflow-hidden ${containerClass}`}
         onClick={() => {
           if (!month) monthRef.current?.focus();
         }}
       >
-        <div className="flex items-center gap-1 font-mono text-xs font-medium" onPaste={handlePaste}>
+        <div className="flex items-center gap-0.5 sm:gap-1 font-mono text-xs font-medium min-w-0 shrink" onPaste={handlePaste}>
           <input
             ref={monthRef}
             type="text"
@@ -371,11 +391,11 @@ function DobPicker({
             onChange={handleMonthChange}
             onKeyDown={(e) => handleKeyDown("m", e)}
             onBlur={onBlur}
-            className={`w-7 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs ${
+            className={`w-6 sm:w-7 shrink-0 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs ${
               isLightText ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
             }`}
           />
-          <span className="opacity-30 text-xs">/</span>
+          <span className="opacity-30 text-xs shrink-0">/</span>
           <input
             ref={dayRef}
             type="text"
@@ -387,11 +407,11 @@ function DobPicker({
             onChange={handleDayChange}
             onKeyDown={(e) => handleKeyDown("d", e)}
             onBlur={onBlur}
-            className={`w-7 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs ${
+            className={`w-6 sm:w-7 shrink-0 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs ${
               isLightText ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
             }`}
           />
-          <span className="opacity-30 text-xs">/</span>
+          <span className="opacity-30 text-xs shrink-0">/</span>
           <input
             ref={yearRef}
             type="text"
@@ -403,7 +423,7 @@ function DobPicker({
             onChange={handleYearChange}
             onKeyDown={(e) => handleKeyDown("y", e)}
             onBlur={onBlur}
-            className={`w-12 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs ${
+            className={`w-10 sm:w-12 shrink-0 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs ${
               isLightText ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
             }`}
           />
@@ -414,7 +434,7 @@ function DobPicker({
           type="button"
           onClick={handleToggleOpen}
           aria-label="Toggle calendar picker"
-          className={`p-1.5 rounded-lg transition flex items-center justify-center cursor-pointer ${
+          className={`p-1 sm:p-1.5 rounded-lg transition flex items-center justify-center cursor-pointer shrink-0 ml-0.5 sm:ml-1 ${
             isOpen
               ? "bg-amber-400/20 text-amber-400"
               : isLightText
@@ -429,7 +449,7 @@ function DobPicker({
       {/* Interactive Calendar Popover */}
       {isOpen && (
         <div
-          className={`pp-calendar-popover absolute z-50 mt-1.5 left-0 right-0 sm:left-auto sm:right-0 sm:w-72 p-3 rounded-2xl shadow-2xl border backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-150 ${
+          className={`pp-calendar-popover absolute z-50 mt-1.5 left-0 right-0 sm:left-auto sm:right-0 sm:w-72 max-w-[calc(100vw-32px)] p-3 rounded-2xl shadow-2xl border backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-150 ${
             isLightText
               ? "bg-[#141624] border-white/20 text-white shadow-black/80"
               : "bg-white border-black/15 text-black shadow-xl"
@@ -581,6 +601,9 @@ export function PortalPayAccordionCheckoutV2({
   dob: initialDob = "",
   amountUsd = 25.0,
   receiptId = "REC-88492-V2",
+  receiptStatus,
+  isPaid = false,
+  receipt,
   headlessError: propError,
   kycTierRequired = "l0",
   kycLevel = "L0",
@@ -751,28 +774,78 @@ export function PortalPayAccordionCheckoutV2({
   // Step 4: Fulfillment Stage ("processing" | "confirming" | "complete")
   const [fulfillmentStage, setFulfillmentStage] = useState<"processing" | "confirming" | "complete">("processing");
 
-  // In live production mode, order confirmation strictly requires verifiable payment confirmation or completed onramp state
+  // Canonical receipt settlement resolution
+  const isReceiptPaid = Boolean(
+    isPaid ||
+    paymentConfirmed ||
+    isSettled(receiptStatus) ||
+    isSettled(receipt?.status) ||
+    headlessStep === "completed" ||
+    simulatedStatus === "paid"
+  );
+
+  // In live production mode, order confirmation strictly requires verifiable payment confirmation, completed onramp state, or paid receipt
   const isOrderConfirmed = isLiveMode
-    ? Boolean(paymentConfirmed || headlessStep === "completed")
-    : fulfillmentStage === "complete";
+    ? Boolean(isReceiptPaid || paymentConfirmed || headlessStep === "completed")
+    : Boolean(isReceiptPaid || fulfillmentStage === "complete");
+
+  // Payment Processing Modal Overlay Guard:
+  // Specifically active during fee review, payment processing, or fund transfer
+  // Automatically stays open and locks interactions until payment completes or fails with an error
+  const isPaymentProcessing = Boolean(
+    !isOrderConfirmed &&
+    !isReceiptPaid &&
+    !activeError &&
+    headlessStep !== "verifying_identity" &&
+    headlessStep !== "collecting_kyc" &&
+    headlessStep !== "checking_kyc" &&
+    (
+      simulatedStatus === "processing" ||
+      isSubmittingPayment ||
+      (activeStep === 4 && (
+        fulfillmentStage === "processing" ||
+        fulfillmentStage === "confirming" ||
+        headlessStep === "confirming_fees" ||
+        headlessStep === "checking_out" ||
+        headlessStep === "transferring" ||
+        headlessStep === "creating_session" ||
+        (headlessStatus && (
+          headlessStatus.toLowerCase().includes("processing") ||
+          headlessStatus.toLowerCase().includes("fee") ||
+          headlessStatus.toLowerCase().includes("finalizing") ||
+          headlessStatus.toLowerCase().includes("transfer") ||
+          headlessStatus.toLowerCase().includes("confirming")
+        ))
+      ))
+    )
+  );
+
+  const processingStatusSubtitle = (
+    headlessStatus ||
+    (headlessStep === "confirming_fees"
+      ? "Reviewing payment fee & live conversion rates..."
+      : headlessStep === "checking_out"
+      ? "Processing transaction securely with Stripe..."
+      : "Finalizing your transaction. Please keep this window open.")
+  );
 
   // DOM Container Refs for Stripe Embedded Elements
   const authContainerRef = useRef<HTMLDivElement>(null);
   const paymentContainerRef = useRef<HTMLDivElement>(null);
   const identityContainerRef = useRef<HTMLDivElement>(null);
 
-  // Canonical Stripe Onramp KYC tier detection matching WizardView:
-  // Canonical Stripe Onramp KYC tier detection:
-  const l0Verified = (kycTiers || []).some(
-    (t: any) => t.tier === "l0" && t.verification_status === "verified",
+  // Canonical Stripe Onramp KYC tier detection from GET /v1/crypto/customers/:id kyc_tiers:
+  const rawKycTiers = kycTiers || [];
+  const l0Verified = rawKycTiers.some(
+    (t: any) => t.tier === "l0" && (t.verification_status === "verified" || t.verification_status === "not_available"),
   );
-  const l1Verified = (kycTiers || []).some(
+  const l1Verified = rawKycTiers.some(
     (t: any) => t.tier === "l1" && t.verification_status === "verified",
   );
-  const l1NotAvailable = (kycTiers || []).some(
+  const l1NotAvailable = rawKycTiers.some(
     (t: any) => t.tier === "l1" && t.verification_status === "not_available",
   );
-  const l2Verified = (kycTiers || []).some(
+  const l2Verified = rawKycTiers.some(
     (t: any) => t.tier === "l2" && t.verification_status === "verified",
   );
 
@@ -787,20 +860,21 @@ export function PortalPayAccordionCheckoutV2({
     l1Verified ||
     l1NotAvailable ||
     l2Verified ||
-    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l1");
+    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l1" && headlessStep !== "collecting_kyc");
 
   const isL2Approved =
     l2Verified ||
     docVerificationSuccess ||
     kycLevel === "L2" ||
-    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l2");
+    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l2" && headlessStep !== "verifying_identity");
 
   // Step-up (DOB + SSN) is strictly ONLY shown when NOT already verified AND Stripe explicitly requires L1 tier
   const showStepUpForm =
     !isL1Approved &&
     (effectiveTier === "l1" ||
      effectiveStatus === "step_up" ||
-     (kycTierRequired as string) === "l1");
+     (kycTierRequired as string) === "l1" ||
+     headlessStep === "collecting_kyc");
 
   // Document verification requirement: only when L2 tier is explicitly demanded
   const showVerifyDocs =
@@ -936,8 +1010,29 @@ export function PortalPayAccordionCheckoutV2({
     setDocVerificationSuccess(false);
   };
 
+  // Dedicated Receipt Settlement & Lockdown Guard: When paid, lock activeStep strictly to Step 4
+  useEffect(() => {
+    if (isReceiptPaid) {
+      setIsSubmittingContact(false);
+      setIsSubmittingIdentity(false);
+      setIsSubmittingPayment(false);
+      setActiveStep(4);
+      setFulfillmentStage("complete");
+      setLocalError(null);
+    }
+  }, [isReceiptPaid]);
+
   // Automatically advance accordion steps when live Stripe headlessStep transitions!
   useEffect(() => {
+    if (isReceiptPaid) {
+      setIsSubmittingContact(false);
+      setIsSubmittingIdentity(false);
+      setIsSubmittingPayment(false);
+      setActiveStep(4);
+      setFulfillmentStage("complete");
+      return;
+    }
+
     // 1. If an error occurs, halt Step 4 immediately and return to Step 2 (if address issue) or Step 3 (if payment issue)
     if (headlessStep === "error" || propError) {
       setIsSubmittingContact(false);
@@ -987,9 +1082,7 @@ export function PortalPayAccordionCheckoutV2({
     ) {
       setIsSubmittingContact(false);
       setIsSubmittingPayment(false);
-      if (showStepUpForm && !isL1Approved) {
-        setActiveStep(2);
-      } else if (!isL0Approved) {
+      if (!isL1Approved || showStepUpForm || !isL0Approved) {
         setActiveStep(2);
       } else {
         setActiveStep((prev) => (prev > 3 ? prev : 3));
@@ -1005,6 +1098,9 @@ export function PortalPayAccordionCheckoutV2({
       setIsSubmittingIdentity(false);
       if (showStepUpForm && !isL1Approved) {
         setActiveStep(2);
+      } else if (headlessStep === "collecting_payment" || headlessStep === "payment_method_required") {
+        // Open Step 3 so Stripe payment element is mounted and interactive
+        setActiveStep(3);
       } else {
         setActiveStep((prev) => (prev > 3 ? prev : 3));
       }
@@ -1030,18 +1126,18 @@ export function PortalPayAccordionCheckoutV2({
       setActiveStep(4);
       setFulfillmentStage("complete");
     }
-  }, [headlessStep, authElement, isAllKycCompleted, effectiveStatus, paymentConfirmed, propError, localError, detectedCardFunding, activeStep, isL2Requirement, isL2Approved, showStepUpForm, isL1Approved]);
+  }, [headlessStep, authElement, isAllKycCompleted, effectiveStatus, paymentConfirmed, isReceiptPaid, propError, localError, detectedCardFunding, activeStep, isL2Requirement, isL2Approved, showStepUpForm, isL1Approved, isL0Approved]);
 
   // Dedicated KYC Enforcement Guard: If L1 SSN/DOB Step-Up is required and NOT approved, lock activeStep to Step 2
   useEffect(() => {
-    if (paymentConfirmed || isOrderConfirmed) return;
-    if (showStepUpForm && !isL1Approved) {
-      if (activeStep > 2) {
-        console.log("[ACCORDION] Action required on Step 2 (KYC pending). Routing to Step 2.");
+    if (paymentConfirmed || isOrderConfirmed || isReceiptPaid) return;
+    if ((showStepUpForm || kycTierRequired === "l1" || headlessStep === "collecting_kyc") && !isL1Approved) {
+      if (activeStep !== 2) {
+        console.log("[ACCORDION] Action required on Step 2 (L1 KYC / Step-Up pending). Routing to Step 2.");
         setActiveStep(2);
       }
     }
-  }, [showStepUpForm, isL1Approved, activeStep, paymentConfirmed, isOrderConfirmed]);
+  }, [showStepUpForm, isL1Approved, activeStep, paymentConfirmed, isOrderConfirmed, isReceiptPaid, kycTierRequired, headlessStep]);
 
   // If KYC is already completed or verified, automatically skip or advance to Step 3 (unless on payment execution/completion or error)
   useEffect(() => {
@@ -1060,6 +1156,7 @@ export function PortalPayAccordionCheckoutV2({
         "error",
       ].includes(headlessStep as string) ||
       paymentConfirmed ||
+      isReceiptPaid ||
       propError ||
       localError ||
       (isL2Requirement && !isL2Approved) ||
@@ -1072,14 +1169,15 @@ export function PortalPayAccordionCheckoutV2({
       setIsSubmittingIdentity(false);
       setActiveStep((prev) => (prev <= 2 ? 3 : prev));
     }
-  }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed, propError, localError, isL2Requirement, isL2Approved, showStepUpForm, isL1Approved]);
+  }, [isAllKycCompleted, effectiveStatus, headlessStep, paymentConfirmed, isReceiptPaid, propError, localError, isL2Requirement, isL2Approved, showStepUpForm, isL1Approved]);
 
   // Step 3 idle recovery: if activeStep is 3, paymentElement is null, and headlessStep is idle, auto-trigger onHeadlessSubmitEmailPhone
   useEffect(() => {
+    if (isReceiptPaid) return;
     if (activeStep === 3 && !paymentElement && headlessStep === "idle" && email && onHeadlessSubmitEmailPhone) {
       onHeadlessSubmitEmailPhone(email, phone);
     }
-  }, [activeStep, paymentElement, headlessStep, email, phone, onHeadlessSubmitEmailPhone]);
+  }, [activeStep, paymentElement, headlessStep, email, phone, isReceiptPaid, onHeadlessSubmitEmailPhone]);
 
   // Step 1 Submit (Account & Contact)
   const handleContactSubmit = async (e: React.FormEvent) => {
@@ -1405,22 +1503,28 @@ export function PortalPayAccordionCheckoutV2({
       
       {/* Top Global Trust Header */}
       <div className="flex items-center justify-between px-1 pb-1">
-        <div className="flex items-center gap-1.5 text-amber-400">
+        <div className={`flex items-center gap-1.5 ${isReceiptPaid ? "text-emerald-400 font-bold" : "text-amber-400"}`}>
           <ShieldCheck className="w-4 h-4 text-emerald-400" />
           <span className="text-xs font-bold uppercase tracking-wider">
-            {theme?.brandName ? `${theme.brandName} Secure Checkout` : "Secure Checkout"}
+            {isReceiptPaid
+              ? (theme?.brandName ? `${theme.brandName} • Paid & Settled` : "Receipt Paid & Settled")
+              : (theme?.brandName ? `${theme.brandName} Secure Checkout` : "Secure Checkout")}
           </span>
         </div>
-        <div className={`text-[10px] font-semibold flex items-center gap-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+        <div className={`text-[10px] font-semibold flex items-center gap-1.5 ${isReceiptPaid ? "text-emerald-400 font-bold" : (isLightText ? "text-white/60" : "text-black/60")}`}>
           <Lock className="w-3 h-3 text-emerald-400" />
-          <span>256-Bit Encrypted</span>
+          <span>{isReceiptPaid ? "Paid & Locked" : "256-Bit Encrypted"}</span>
         </div>
       </div>
 
-      {/* Payment Methods Badges Bar - Guaranteed Single Row */}
-      <div className={`flex items-center justify-between px-3 py-2 rounded-xl border ${isLightText ? 'bg-white/[0.03] border-white/10' : 'bg-black/[0.03] border-black/10'}`}>
-        <span className={`text-[10px] font-bold uppercase tracking-wider shrink-0 ${isLightText ? 'text-white/40' : 'text-black/40'}`}>
-          Accepted
+      {/* Payment Methods Badges Bar - Guaranteed Single Row (Dimmed/Locked when Paid) */}
+      <div className={`flex items-center justify-between px-3 py-2 rounded-xl border transition-opacity ${
+        isReceiptPaid
+          ? isLightText ? 'bg-white/[0.02] border-emerald-500/20 opacity-60' : 'bg-black/[0.02] border-emerald-500/20 opacity-60'
+          : isLightText ? 'bg-white/[0.03] border-white/10' : 'bg-black/[0.03] border-black/10'
+      }`}>
+        <span className={`text-[10px] font-bold uppercase tracking-wider shrink-0 ${isReceiptPaid ? 'text-emerald-400' : (isLightText ? 'text-white/40' : 'text-black/40')}`}>
+          {isReceiptPaid ? "Settled" : "Accepted"}
         </span>
         <div className="flex items-center gap-1.5 flex-nowrap shrink-0">
           {/* VISA */}
@@ -1454,7 +1558,7 @@ export function PortalPayAccordionCheckoutV2({
       </div>
 
       {/* Global Error Banner */}
-      {activeError && (
+      {activeError && !isReceiptPaid && (
         <div
           className={`p-3.5 rounded-2xl border text-xs font-medium flex items-start justify-between gap-2 animate-in slide-in-from-top-2 ${
             isLightText
@@ -1492,13 +1596,13 @@ export function PortalPayAccordionCheckoutV2({
       >
         {/* Step 1 Header / Summary Pill */}
         <div
-          onClick={() => activeStep > 1 && setActiveStep(1)}
+          onClick={() => !isReceiptPaid && activeStep > 1 && setActiveStep(1)}
           className={`p-3.5 flex items-center justify-between select-none ${
-            activeStep > 1 ? "cursor-pointer hover:bg-white/[0.04]" : ""
+            !isReceiptPaid && activeStep > 1 ? "cursor-pointer hover:bg-white/[0.04]" : "cursor-default"
           }`}
         >
           <div className="flex items-center gap-2.5">
-            {activeStep > 1 ? (
+            {activeStep > 1 || isReceiptPaid ? (
               <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40">
                 <Check className="w-3 h-3 text-emerald-400 stroke-[3]" />
               </div>
@@ -1511,7 +1615,7 @@ export function PortalPayAccordionCheckoutV2({
               <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
                 1. Contact & Account Information
               </h4>
-              {activeStep > 1 && (
+              {(activeStep > 1 || isReceiptPaid) && (
                 <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
                   <Mail className="w-2.5 h-2.5 opacity-60" />
                   <span>{email}</span>
@@ -1525,14 +1629,18 @@ export function PortalPayAccordionCheckoutV2({
               )}
             </div>
           </div>
-          {activeStep > 1 && (
+          {isReceiptPaid ? (
+            <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1 opacity-90 select-none">
+              <Lock className="w-3 h-3 text-emerald-400" /> Verified
+            </span>
+          ) : activeStep > 1 ? (
             <button
               type="button"
               className="text-[11px] font-semibold text-amber-400 flex items-center gap-1 hover:underline"
             >
               <Edit2 className="w-3 h-3" /> Edit
             </button>
-          )}
+          ) : null}
         </div>
 
         {/* Step 1 Expanded Body */}
@@ -1658,6 +1766,7 @@ export function PortalPayAccordionCheckoutV2({
             <button
               type="submit"
               disabled={
+                isReceiptPaid ||
                 isSubmittingContact ||
                 !email ||
                 (headlessStep === "collecting_phone" && (!phone || phone.trim().length < 7)) ||
@@ -1713,13 +1822,13 @@ export function PortalPayAccordionCheckoutV2({
       >
         {/* Step 2 Header / Summary Pill */}
         <div
-          onClick={() => activeStep > 2 && setActiveStep(2)}
+          onClick={() => !isReceiptPaid && activeStep > 2 && setActiveStep(2)}
           className={`p-3.5 flex items-center justify-between select-none ${
-            activeStep > 2 ? "cursor-pointer hover:bg-white/[0.04]" : ""
+            !isReceiptPaid && activeStep > 2 ? "cursor-pointer hover:bg-white/[0.04]" : "cursor-default"
           }`}
         >
           <div className="flex items-center gap-2.5">
-            {activeStep > 2 || effectiveStatus === "verified" || isAllKycCompleted ? (
+            {activeStep > 2 || isReceiptPaid || effectiveStatus === "verified" || isAllKycCompleted ? (
               <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40">
                 <Check className="w-3 h-3 text-emerald-400 stroke-[3]" />
               </div>
@@ -1737,7 +1846,11 @@ export function PortalPayAccordionCheckoutV2({
                 <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
                   2. Identity & Residential Verification
                 </h4>
-                {((isL0Approved && !showStepUpForm && (!isL2Requirement || isL2Approved)) || isL2Approved) ? (
+                {isReceiptPaid ? (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" /> Verified
+                  </span>
+                ) : ((isL0Approved && !showStepUpForm && (!isL2Requirement || isL2Approved)) || isL2Approved) ? (
                   <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
                     <Check className="w-2.5 h-2.5 stroke-[3]" /> Verified
                   </span>
@@ -1748,7 +1861,7 @@ export function PortalPayAccordionCheckoutV2({
                 ) : null}
               </div>
 
-              {(activeStep > 2 || effectiveStatus === "verified" || isAllKycCompleted || isL0Approved) && (
+              {(activeStep > 2 || isReceiptPaid || effectiveStatus === "verified" || isAllKycCompleted || isL0Approved) && (
                 <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
                   <User className="w-2.5 h-2.5 opacity-60" />
                   <span>{firstName} {lastName}</span>
@@ -1758,10 +1871,14 @@ export function PortalPayAccordionCheckoutV2({
             </div>
           </div>
 
-          {activeStep > 2 && (
+          {isReceiptPaid ? (
+            <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1 opacity-90 select-none">
+              <Lock className="w-3 h-3 text-emerald-400" /> Verified
+            </span>
+          ) : activeStep > 2 ? (
             (isL0Approved && !showStepUpForm && (!isL2Requirement || isL2Approved)) ? (
               <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1 opacity-90 select-none">
-                <Lock className="w-3 h-3" /> Verified
+                <Lock className="w-3 h-3 text-emerald-400" /> Verified
               </span>
             ) : (
               <button
@@ -1771,7 +1888,7 @@ export function PortalPayAccordionCheckoutV2({
                 <Edit2 className="w-3 h-3" /> Edit
               </button>
             )
-          )}
+          ) : null}
         </div>
 
         {/* Step 2 Expanded Body */}
@@ -2172,8 +2289,8 @@ export function PortalPayAccordionCheckoutV2({
 
             {/* L1 Demographic Demands: Date of Birth & SSN (SSN only for US; DOB for all) */}
             {showStepUpForm && (
-              <div className={`grid ${isUS ? "grid-cols-2" : "grid-cols-1"} gap-2.5 pt-2 border-t border-white/10 animate-in fade-in duration-200`}>
-                <div>
+              <div className={`grid ${isUS ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"} gap-2.5 pt-2 border-t border-white/10 animate-in fade-in duration-200`}>
+                <div className="min-w-0">
                   <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3 h-3" />
@@ -2208,7 +2325,7 @@ export function PortalPayAccordionCheckoutV2({
                   )}
                 </div>
                 {isUS && (
-                  <div>
+                  <div className="min-w-0">
                     <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
                       <span className="flex items-center gap-1">
                         <Shield className="w-3 h-3" />
@@ -2285,7 +2402,7 @@ export function PortalPayAccordionCheckoutV2({
             {/* Save & Continue Button */}
             <button
               type="submit"
-              disabled={isSubmittingIdentity || !isIdentityComplete}
+              disabled={isReceiptPaid || isSubmittingIdentity || !isIdentityComplete}
               className={`w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg mt-2 ${
                 isSubmittingIdentity
                   ? "bg-emerald-600 text-white cursor-wait"
@@ -2357,13 +2474,13 @@ export function PortalPayAccordionCheckoutV2({
       >
         {/* Step 3 Header / Summary Pill */}
         <div
-          onClick={() => activeStep > 3 && setActiveStep(3)}
+          onClick={() => !isReceiptPaid && activeStep > 3 && setActiveStep(3)}
           className={`p-3.5 flex items-center justify-between select-none ${
-            activeStep > 3 ? "cursor-pointer hover:bg-white/[0.04]" : ""
+            !isReceiptPaid && activeStep > 3 ? "cursor-pointer hover:bg-white/[0.04]" : "cursor-default"
           }`}
         >
           <div className="flex items-center gap-2.5">
-            {activeStep > 3 ? (
+            {activeStep > 3 || isReceiptPaid ? (
               <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40">
                 <Check className="w-3 h-3 text-emerald-400 stroke-[3]" />
               </div>
@@ -2380,22 +2497,32 @@ export function PortalPayAccordionCheckoutV2({
               <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
                 {headlessStep === "verifying_identity" ? "3. Identity Verification & Payment" : "3. Payment Method"}
               </h4>
-              {activeStep > 3 && (
+              {(activeStep > 3 || isReceiptPaid) && (
                 <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
                   <CreditCard className="w-2.5 h-2.5 opacity-60" />
-                  <span>Authorized via Stripe Secure Payment</span>
+                  <span>
+                    {detectedCardBrand && detectedCardLast4
+                      ? `${detectedCardBrand} •••• ${detectedCardLast4}`
+                      : detectedCardFunding === "us_bank_account" || paymentConfirmed?.funding === "us_bank_account"
+                      ? "US Bank Account (ACH)"
+                      : "Authorized via Stripe Secure Payment"}
+                  </span>
                 </p>
               )}
             </div>
           </div>
-          {activeStep > 3 && (
+          {isReceiptPaid ? (
+            <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1 opacity-90 select-none">
+              <Lock className="w-3 h-3 text-emerald-400" /> Authorized
+            </span>
+          ) : activeStep > 3 ? (
             <button
               type="button"
               className="text-[11px] font-semibold text-amber-400 flex items-center gap-1 hover:underline"
             >
               <Edit2 className="w-3 h-3" /> Edit
             </button>
-          )}
+          ) : null}
         </div>
 
         {/* Step 3 Expanded Body */}
@@ -2506,9 +2633,14 @@ export function PortalPayAccordionCheckoutV2({
               </h4>
             </div>
           </div>
+          {isReceiptPaid && (
+            <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1 opacity-90 select-none">
+              <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Settled
+            </span>
+          )}
         </div>
 
-        <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${activeStep === 4 ? "" : "hidden"}`}>
+        <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${activeStep === 4 ? "" : "hidden"}`}>
             {!isOrderConfirmed ? (
               <div className="p-4 rounded-xl bg-black/30 border border-white/10 space-y-2.5 animate-in fade-in duration-300">
                 <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400">
@@ -2535,23 +2667,67 @@ export function PortalPayAccordionCheckoutV2({
                 )}
               </div>
             ) : (
-              /* Order Success Summary Receipt Card */
-              <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-3.5 animate-in zoom-in-95 duration-300">
-                <div className="flex items-center gap-2 text-emerald-400">
-                  <CheckCircle2 className="w-5 h-5" />
-                  <span className="text-xs font-bold uppercase tracking-wider">
-                    Order #{receiptId} Confirmed
+              /* Order Success Summary Receipt Card - Prominent Confirmation Hero Matching V1 */
+              <div className="p-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-4 animate-in zoom-in-95 duration-300">
+                
+                {/* Prominent Hero Header */}
+                <div className="flex flex-col items-center justify-center text-center space-y-2.5 pt-1 pb-1">
+                  <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500/40 text-emerald-400 flex items-center justify-center shadow-[0_0_35px_-5px_rgba(16,185,129,0.4)] animate-in zoom-in duration-300">
+                    <Check className="w-8 h-8 text-emerald-400 stroke-[3]" />
+                  </div>
+                  <h3 className={`text-xl sm:text-2xl font-black tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
+                    Payment Complete!
+                  </h3>
+                  <div className="flex flex-col items-center justify-center gap-1.5 w-full">
+                    {/* Row 1: Prominent Amount Paid */}
+                    <div className="text-2xl sm:text-3xl font-mono font-extrabold text-emerald-400 tracking-tight">
+                      ${amountUsd.toFixed(2)} <span className="text-xs sm:text-sm font-sans font-bold opacity-80">USD</span>
+                    </div>
+                    {/* Row 2: Neatly Wrapped Receipt ID */}
+                    {receiptId && (
+                      <div className={`text-[11px] font-mono font-medium max-w-full px-3 py-1 rounded-lg border break-all select-all tracking-tight leading-relaxed ${
+                        isLightText ? 'bg-white/5 border-white/10 text-white/70' : 'bg-black/5 border-black/10 text-black/70'
+                      }`}>
+                        Receipt #{receiptId.replace(/^receipt:/i, "")}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Form Lockdown Security Banner */}
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center gap-2.5 text-xs text-emerald-300 text-left">
+                  <Lock className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span className="leading-relaxed font-medium">
+                    This receipt is finalized and marked paid. Checkout is locked to prevent duplicate charges.
                   </span>
                 </div>
 
-                <div className="space-y-2 text-xs">
+                {/* Proof of Payment Box Matching V1 */}
+                <div className={`p-3.5 rounded-xl border text-center ${isLightText ? 'bg-white/5 border-white/10' : 'bg-black/5 border-black/10'}`}>
+                  <div className={`text-[10px] uppercase tracking-wider font-bold mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>
+                    Proof of Payment
+                  </div>
+                  <div className={`text-sm font-mono font-bold ${isLightText ? 'text-white' : 'text-black'}`}>
+                    {(() => {
+                      const tx = paymentConfirmed?.txHash || (receipt as any)?.transactionHash || (receipt as any)?.txHash;
+                      if (tx) return <span className="text-xs break-all">{tx.slice(0, 10)}...{tx.slice(-8)}</span>;
+                      return <span className="text-emerald-400">Confirmed • Paid & Settled</span>;
+                    })()}
+                  </div>
+                  <div className="text-[11px] text-emerald-400 font-medium mt-1">
+                    Show this confirmation to merchant
+                  </div>
+                </div>
+
+                {/* Detailed Breakdown */}
+                <div className="p-3.5 rounded-xl bg-black/20 border border-white/5 space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="opacity-60">Total Paid:</span>
-                    <span className="font-bold">${amountUsd.toFixed(2)} USD</span>
+                    <span className="font-bold font-mono">${amountUsd.toFixed(2)} USD</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="opacity-60">Contact Email:</span>
-                    <span className="font-semibold">{email}</span>
+                    <span className="font-semibold">{email || (receipt as any)?.customerEmail || (receipt as any)?.buyerEmail || "—"}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="opacity-60">Payment Method:</span>
@@ -2562,7 +2738,7 @@ export function PortalPayAccordionCheckoutV2({
                         ? "Apple Pay"
                         : selectedPaymentType === "googlePay"
                         ? "Google Pay"
-                        : selectedPaymentType === "bank" || detectedCardFunding === "us_bank_account"
+                        : selectedPaymentType === "bank" || detectedCardFunding === "us_bank_account" || paymentConfirmed?.funding === "us_bank_account" || headlessStep === "awaiting_funds"
                         ? "US Bank Account (ACH)"
                         : "Credit / Debit Card (Stripe)"}
                     </span>
@@ -2572,7 +2748,7 @@ export function PortalPayAccordionCheckoutV2({
                     <span className="text-emerald-400 font-bold inline-flex items-center gap-1">
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       <span>
-                        {detectedCardFunding === "us_bank_account" || paymentConfirmed?.funding === "us_bank_account" || headlessStep === "awaiting_funds"
+                        {detectedCardFunding === "us_bank_account" || paymentConfirmed?.funding === "us_bank_account" || headlessStep === "awaiting_funds" || (receipt as any)?.status === "paid - ach pending" || (receipt as any)?.status === "ach_pending"
                           ? "Payment Authorized (ACH Pending)"
                           : "Payment Confirmed"}
                       </span>
@@ -2580,9 +2756,9 @@ export function PortalPayAccordionCheckoutV2({
                   </div>
                 </div>
 
-                {(detectedCardFunding === "us_bank_account" || paymentConfirmed?.funding === "us_bank_account" || headlessStep === "awaiting_funds") && (
-                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 leading-relaxed">
-                    Funds will be deducted from your bank account within 2–3 business days. Your order is confirmed.
+                {(detectedCardFunding === "us_bank_account" || paymentConfirmed?.funding === "us_bank_account" || headlessStep === "awaiting_funds" || (receipt as any)?.status === "paid - ach pending" || (receipt as any)?.status === "ach_pending") && (
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 leading-relaxed text-left">
+                    Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance.
                   </div>
                 )}
 
@@ -2614,6 +2790,7 @@ export function PortalPayAccordionCheckoutV2({
                       className="flex-1 py-2.5 rounded-xl text-xs font-bold shadow-lg transition active:scale-95 text-white flex items-center justify-center gap-1.5 cursor-pointer"
                       style={{ backgroundColor: primaryColor }}
                     >
+                      <Mail className="w-3.5 h-3.5" />
                       <span>Email Receipt</span>
                     </button>
                   )}
@@ -2622,6 +2799,147 @@ export function PortalPayAccordionCheckoutV2({
             )}
         </div>
       </div>
+
+      {/* ==================================================================== */}
+      {/* STRIPE L2 DOCUMENT & IDENTITY VERIFICATION MODAL OVERLAY */}
+      {/* Mounts directly over the entire portal when Stripe demands document/selfie scan */}
+      {/* ==================================================================== */}
+      {headlessStep === "verifying_identity" && !isReceiptPaid && !isOrderConfirmed && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-300">
+          <div
+            className={`w-full max-w-lg p-5 sm:p-7 rounded-3xl border shadow-2xl relative overflow-hidden space-y-4 animate-in zoom-in-95 duration-300 ${
+              isLightText
+                ? "bg-neutral-900 border-purple-500/30 text-white shadow-[0_0_50px_-10px_rgba(168,85,247,0.25)]"
+                : "bg-white border-purple-500/30 text-black shadow-[0_0_50px_-10px_rgba(168,85,247,0.25)]"
+            }`}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center border border-purple-500/30">
+                  <Shield className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className={`text-sm sm:text-base font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
+                    Identity Verification
+                  </h3>
+                  <p className="text-[11px] opacity-60">Complete photo verification via Stripe</p>
+                </div>
+              </div>
+              <div className="px-2.5 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-[10px] font-bold text-purple-300 uppercase tracking-wider">
+                Required
+              </div>
+            </div>
+
+            {/* Instruction Notice */}
+            <p className="text-xs leading-relaxed opacity-80">
+              Please follow the on-screen instructions below to scan your government-issued ID and take a selfie.
+            </p>
+
+            {/* Embedded Live Stripe Element Container */}
+            <div className="p-3 rounded-2xl bg-black/40 border border-white/10 min-h-[280px] flex items-center justify-center">
+              <div
+                className="w-full flex flex-col items-stretch"
+                ref={(el) => {
+                  if (el && paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
+                    if (!el.contains(paymentElement as Node)) {
+                      el.innerHTML = "";
+                      el.appendChild(paymentElement as HTMLElement);
+                    }
+                  }
+                }}
+              >
+                {typeof paymentElement !== "object" || !("nodeType" in (paymentElement || {}))
+                  ? (paymentElement as React.ReactNode)
+                  : null}
+              </div>
+            </div>
+
+            {/* Security Footer */}
+            <div className="flex items-center justify-between text-[11px] opacity-60 pt-1 border-t border-white/5">
+              <span className="flex items-center gap-1">
+                <Lock className="w-3 h-3 text-emerald-400" /> 256-Bit Encrypted
+              </span>
+              <span>Powered by Stripe Identity</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* PROMINENT PAYMENT PROCESSING MODAL / OVERLAY */}
+      {/* Specifically active during "Processing payment" & "Reviewing service fee" */}
+      {/* Blocks all interactions until complete or failed */}
+      {/* ==================================================================== */}
+      {isPaymentProcessing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300 select-none">
+          <div
+            className={`w-full max-w-md p-6 sm:p-8 rounded-3xl border shadow-2xl relative overflow-hidden text-center space-y-5 animate-in zoom-in-95 duration-300 ${
+              isLightText
+                ? "bg-neutral-900/95 border-emerald-500/30 text-white shadow-[0_0_50px_-10px_rgba(16,185,129,0.25)]"
+                : "bg-white border-emerald-500/30 text-black shadow-[0_0_50px_-10px_rgba(16,185,129,0.25)]"
+            }`}
+          >
+            {/* Ambient Background Glow */}
+            <div className="absolute -top-24 -left-24 w-48 h-48 bg-emerald-500/20 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
+
+            {/* Glowing Spinner Hero Badge */}
+            <div className="relative flex items-center justify-center pt-2">
+              <div className="relative w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 flex items-center justify-center shadow-[0_0_40px_-5px_rgba(16,185,129,0.3)]">
+                <Loader2 className="w-10 h-10 text-emerald-400 animate-spin stroke-[2.5]" />
+                <div className="absolute inset-0 rounded-full border-2 border-dashed border-emerald-400/40 animate-[spin_8s_linear_infinite]" />
+              </div>
+            </div>
+
+            {/* Title & Subtitle */}
+            <div className="space-y-1.5 relative z-10">
+              <h3 className={`text-xl sm:text-2xl font-black tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
+                Payment Processing
+              </h3>
+              <div className="flex items-center justify-center gap-1.5 text-xs font-medium text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                <span>Thank you for your patience</span>
+              </div>
+            </div>
+
+            {/* Do Not Refresh Warning Banner */}
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 text-left relative z-10">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                <span>Do Not Refresh or Close</span>
+              </div>
+              <p className="text-[11.5px] leading-relaxed text-amber-200/90 font-normal">
+                Please do not refresh, navigate back, or close this window while Stripe finalizes your transaction.
+              </p>
+            </div>
+
+            {/* Live Progress / Status Details */}
+            <div className={`p-3 rounded-xl border text-xs text-left space-y-2 relative z-10 ${
+              isLightText ? "bg-black/40 border-white/10" : "bg-black/5 border-black/10"
+            }`}>
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="opacity-60">Status:</span>
+                <span className="font-semibold text-emerald-400">{processingStatusSubtitle}</span>
+              </div>
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="opacity-60">Amount:</span>
+                <span className="font-mono font-bold">${amountUsd.toFixed(2)} USD</span>
+              </div>
+              {/* Indeterminate Animated Progress Bar */}
+              <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden mt-2">
+                <div className="h-full bg-gradient-to-r from-emerald-500 via-amber-400 to-emerald-500 rounded-full animate-pulse w-full" />
+              </div>
+            </div>
+
+            {/* Security Trust Footnote */}
+            <div className="flex items-center justify-center gap-1.5 text-[10.5px] font-semibold opacity-60 relative z-10">
+              <Lock className="w-3 h-3 text-emerald-400 shrink-0" />
+              <span>256-Bit Encrypted Secure Stripe Transaction</span>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -623,6 +623,97 @@ export function useStripeEmbeddedOnramp({
   const kycOccurredRef = useRef(false);
   const activeCountryRef = useRef<string>("US");
 
+  // ─── CENTRAL KYC DATA HANDLER ───
+  // Evaluates raw kyc_tiers from GET /v1/crypto/customers/:id and synchronizes hook state
+  const applyKycData = useCallback((kycData: any) => {
+    if (!kycData) return { isL0Verified: false, isL1Verified: false, isL2Verified: false, computedLevel: "REQUIRES_KYC", isCompleted: false, tiers: [] };
+    const tiers: Array<{ tier: string; verification_status: string; verification_errors?: any[] }> =
+      kycData.kycTiers || kycData.kyc_tiers || [];
+    
+    console.log("[EMBEDDED ONRAMP] Applying customer KYC tiers from Stripe:", JSON.stringify(tiers));
+    setKycTiers(tiers);
+
+    const l0Tier = tiers.find((t: any) => t.tier === "l0");
+    const l1Tier = tiers.find((t: any) => t.tier === "l1");
+    const l2Tier = tiers.find((t: any) => t.tier === "l2");
+
+    const isOverallKycVerified =
+      kycData.kycStatus === "approved" ||
+      kycData.kycStatus === "verified" ||
+      kycData.kycStatus === "completed";
+
+    const isOverallIdVerified =
+      kycData.idDocStatus === "approved" ||
+      kycData.idDocStatus === "verified" ||
+      kycData.idDocStatus === "completed";
+
+    const isL0Verified = l0Tier
+      ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
+      : isOverallKycVerified;
+
+    const isL1Verified = l1Tier
+      ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
+      : isOverallKycVerified;
+
+    const isL2Verified = l2Tier
+      ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
+      : isOverallIdVerified;
+
+    let computedLevel: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING" = "REQUIRES_KYC";
+    if (isL2Verified) {
+      computedLevel = "L2";
+    } else if (isL1Verified) {
+      computedLevel = "L1";
+    } else if (isL0Verified && l0Tier?.verification_status !== "rejected") {
+      computedLevel = "L0";
+    } else if (
+      l0Tier?.verification_status === "pending" ||
+      l1Tier?.verification_status === "pending" ||
+      l2Tier?.verification_status === "pending" ||
+      kycData.kycStatus === "pending"
+    ) {
+      computedLevel = "PENDING";
+    } else if (
+      l0Tier?.verification_status === "rejected" ||
+      l1Tier?.verification_status === "rejected" ||
+      l2Tier?.verification_status === "rejected" ||
+      kycData.kycStatus === "rejected"
+    ) {
+      computedLevel = "REJECTED";
+    } else {
+      computedLevel = "REQUIRES_KYC";
+    }
+
+    setKycLevel(computedLevel);
+    kycLevelRef.current = computedLevel;
+
+    // Determine what next tier is required if any
+    if (!isL0Verified) {
+      setKycTierRequired("l0");
+      kycTierRequiredRef.current = "l0";
+    } else if (!isL1Verified) {
+      setKycTierRequired("l1");
+      kycTierRequiredRef.current = "l1";
+    } else if (!isL2Verified) {
+      setKycTierRequired("l2");
+      kycTierRequiredRef.current = "l2";
+    }
+
+    // All standard KYC completed if at least L0/L1 are verified (or L2 if demanded)
+    const isCompleted = isL1Verified || isL2Verified || (isL0Verified && (!l1Tier || l1Tier.verification_status === "not_available"));
+    setIsAllKycCompleted(isCompleted);
+
+    if (kycData.customerId) {
+      setCryptoCustomerId(kycData.customerId);
+      customerIdRef.current = kycData.customerId;
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("stripe_onramp_customer_id", kycData.customerId);
+      }
+    }
+
+    return { isL0Verified, isL1Verified, isL2Verified, computedLevel, isCompleted, tiers };
+  }, []);
+
   // ─── CALLBACK REFS TO PREVENT STALE CLOSURES ───
   const onSuccessRef = useRef(onSuccess);
   const onErrorRef = useRef(onError);
@@ -964,21 +1055,9 @@ export function useStripeEmbeddedOnramp({
                   sessionStorage.setItem("stripe_onramp_oauth_token", kycData.refreshedToken);
                 }
               }
-              const kycTiers = kycData.kycTiers || [];
-              const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
-              const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-
-              const isOverallKycVerified = kycData.kycStatus === "approved" ||
-                                           kycData.kycStatus === "verified" ||
-                                           kycData.kycStatus === "completed";
-
-              const isL0Verified = l0Tier 
-                ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
-                : isOverallKycVerified;
-              
-              const isL1Verified = l1Tier 
-                ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
-                : isOverallKycVerified;
+              const { isL0Verified, isL1Verified, tiers } = applyKycData(kycData);
+              const l0Tier = tiers.find((t: any) => t.tier === "l0");
+              const l1Tier = tiers.find((t: any) => t.tier === "l1");
               
               if (!isL0Verified) {
                 if (l0Tier?.verification_status === "pending") {
@@ -1279,21 +1358,10 @@ export function useStripeEmbeddedOnramp({
           const logMsg = `[KYC POLL STATUS] Attempt ${i + 1}/90: kycStatus=${kycData.kycStatus}, idDocStatus=${kycData.idDocStatus}`;
           console.log(logMsg);
 
-          const kycTiers = kycData.kycTiers || [];
-          const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
-          const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-          const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
-
-          const isOverallVerified = kycData.kycStatus === "approved" ||
-                                    kycData.kycStatus === "verified" ||
-                                    kycData.kycStatus === "completed" ||
-                                    kycData.idDocStatus === "approved" ||
-                                    kycData.idDocStatus === "verified" ||
-                                    kycData.idDocStatus === "completed";
-
-          const isL0Verified = l0Tier ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available") : isOverallVerified;
-          const isL1Verified = l1Tier ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") : isOverallVerified;
-          const isL2Verified = l2Tier ? l2Tier.verification_status === "verified" : isOverallVerified;
+          const { isL0Verified, isL1Verified, isL2Verified, tiers } = applyKycData(kycData);
+          const l0Tier = tiers.find((t: any) => t.tier === "l0");
+          const l1Tier = tiers.find((t: any) => t.tier === "l1");
+          const l2Tier = tiers.find((t: any) => t.tier === "l2");
 
           const isL0Rejected = l0Tier?.verification_status === "rejected";
           const isL1Rejected = l1Tier?.verification_status === "rejected";
@@ -1698,11 +1766,9 @@ export function useStripeEmbeddedOnramp({
                 }
                 console.log("[EMBEDDED ONRAMP] Pre-verification customer status:", kycData);
                 
-                const kycTiers = kycData.kycTiers || [];
-                const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-                let isL1Verified = l1Tier 
-                  ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
-                  : false;
+                const { isL1Verified: appliedL1, tiers } = applyKycData(kycData);
+                const l1Tier = tiers.find((t: any) => t.tier === "l1");
+                let isL1Verified = appliedL1;
                 
                 // If L1 demographics are pending, poll and wait for L1 approval before L2
                 if (!isL1Verified && l1Tier?.verification_status === "pending") {
@@ -1721,12 +1787,8 @@ export function useStripeEmbeddedOnramp({
                   });
                   if (checkRes.ok) {
                     const freshKycData = await checkRes.json();
-                    const freshKycTiers = freshKycData.kycTiers || [];
-                    const freshL1Tier = freshKycTiers.find((t: any) => t.tier === "l1");
-                    isL1Verified = freshL1Tier 
-                      ? (freshL1Tier.verification_status === "verified" || freshL1Tier.verification_status === "not_available")
-                      : (freshKycData.kycStatus === "approved" || freshKycData.kycStatus === "verified" || freshKycData.kycStatus === "completed");
-                    
+                    const { isL1Verified: freshL1 } = applyKycData(freshKycData);
+                    isL1Verified = freshL1;
                     kycData.idDocStatus = freshKycData.idDocStatus;
                     kycData.kycStatus = freshKycData.kycStatus;
                   } else {
@@ -3292,61 +3354,16 @@ export function useStripeEmbeddedOnramp({
             sessionStorage.setItem("stripe_onramp_oauth_token", kycData.refreshedToken);
           }
         }
-        const kycTiers = kycData.kycTiers || [];
-        setKycTiers(kycTiers);
+        const { isL0Verified, isL1Verified, isL2Verified, computedLevel, tiers } = applyKycData(kycData);
 
-        const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
-        const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-        const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
-
-        const isOverallKycVerified = kycData.kycStatus === "approved" ||
-                                     kycData.kycStatus === "verified" ||
-                                     kycData.kycStatus === "completed";
-
-        const isOverallIdVerified = kycData.idDocStatus === "approved" ||
-                                    kycData.idDocStatus === "verified" ||
-                                    kycData.idDocStatus === "completed";
-
-        const isL0Verified = l0Tier 
-          ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available") 
-          : isOverallKycVerified;
-        const isL1Verified = l1Tier 
-          ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") 
-          : isOverallKycVerified;
-        const isL2Verified = l2Tier 
-          ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available") 
-          : isOverallIdVerified;
-
-        let computedLevel: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING" = "REQUIRES_KYC";
-        if (isL2Verified) {
-          computedLevel = "L2";
-        } else if (isL1Verified) {
-          computedLevel = "L1";
-        } else if (isL0Verified && l0Tier?.verification_status !== "rejected") {
-          computedLevel = "L0";
-        } else if (l0Tier?.verification_status === "pending" || l1Tier?.verification_status === "pending" || l2Tier?.verification_status === "pending" || kycData.kycStatus === "pending") {
-          computedLevel = "PENDING";
-        } else if (l0Tier?.verification_status === "rejected" || l1Tier?.verification_status === "rejected" || l2Tier?.verification_status === "rejected" || kycData.kycStatus === "rejected") {
-          computedLevel = "REJECTED";
-        } else {
-          computedLevel = "REQUIRES_KYC";
-        }
-        setKycLevel(computedLevel);
-        kycLevelRef.current = computedLevel;
-        if (computedLevel === "L2") {
-          setKycTierRequired("l2");
-          kycTierRequiredRef.current = "l2";
-          kycOccurredRef.current = true;
-        } else if (computedLevel === "L1") {
-          setKycTierRequired("l1");
-          kycTierRequiredRef.current = "l1";
-          kycOccurredRef.current = true;
-        }
+        const l0Tier = tiers.find((t: any) => t.tier === "l0");
+        const l1Tier = tiers.find((t: any) => t.tier === "l1");
+        const l2Tier = tiers.find((t: any) => t.tier === "l2");
 
         // If ACH payment is chosen, we strictly enforce verification through L2.
         const isCustomerVerified = isAchEnforcedRef.current 
           ? isL2Verified 
-          : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected") || isAllKycCompleted || computedLevel === "L1" || computedLevel === "L0");
+          : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected") || computedLevel === "L1" || computedLevel === "L0");
 
         setIsAllKycCompleted(Boolean(isCustomerVerified));
 
@@ -3791,26 +3808,10 @@ export function useStripeEmbeddedOnramp({
 
             const kycData = await checkRes.json();
             console.log("[EMBEDDED ONRAMP] Customer KYC Payload:", kycData);
-            const kycTiers = kycData.kycTiers || [];
-            const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
-            const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-            const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
-
-            const isL0Verified = l0Tier 
-              ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
-              : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
-
-            const isL1Verified = l1Tier 
-              ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
-              : false;
-
-            const isOverallIdVerified = kycData.idDocStatus === "approved" ||
-                                        kycData.idDocStatus === "verified" ||
-                                        kycData.idDocStatus === "completed";
-
-            const isL2Verified = l2Tier
-              ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
-              : isOverallIdVerified;
+            const { isL0Verified, isL1Verified, isL2Verified, tiers } = applyKycData(kycData);
+            const l0Tier = tiers.find((t: any) => t.tier === "l0");
+            const l1Tier = tiers.find((t: any) => t.tier === "l1");
+            const l2Tier = tiers.find((t: any) => t.tier === "l2");
 
             console.log("[EMBEDDED ONRAMP] Audited tiers:", { isL0Verified, isL1Verified, isL2Verified });
 
