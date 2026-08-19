@@ -6,7 +6,7 @@ import { PortalPayAccordionCheckoutV2 } from "@/components/checkout/PortalPayAcc
 export default function SampleFormsPage() {
   const [checkoutVersion, setCheckoutVersion] = useState<"v1" | "v2">("v2");
   const [simulatedTier, setSimulatedTier] = useState<"l0" | "l1" | "l2">("l0");
-  const [simulatedStatus, setSimulatedStatus] = useState<"normal" | "step_up" | "doc_verify" | "verified">("normal");
+  const [simulatedStatus, setSimulatedStatus] = useState<"normal" | "step_up" | "doc_verify" | "verified" | "paid">("normal");
   const [simulatedError, setSimulatedError] = useState<"none" | "address_error" | "payment_decline" | "kyc_rejection">("none");
   const [simulatedPath, setSimulatedPath] = useState<"normal" | "skip_kyc" | "step_up" | "doc_verify">("normal");
   const [activeTier, setActiveTier] = useState<"l0" | "l1">("l1");
@@ -195,6 +195,7 @@ export default function SampleFormsPage() {
                 <option value="step_up">Step-Up Required</option>
                 <option value="doc_verify">Doc Upload Required</option>
                 <option value="verified">Fully Verified (Auto-Advance)</option>
+                <option value="paid">✓ Paid & Settled (Full Lockdown Hero)</option>
               </select>
             </div>
 
@@ -259,13 +260,16 @@ export default function SampleFormsPage() {
             phone={headlessPhoneInput}
             fullName={`${kycFirstName} ${kycLastName}`}
             amountUsd={25.00}
-            receiptId="REC-SAMPLE-99"
+            receiptId="rec_01J6G78K9A_9481b67f3c2a_live"
+            receiptStatus={simulatedStatus === "paid" ? "paid" : undefined}
+            isPaid={simulatedStatus === "paid"}
+            receipt={{ status: simulatedStatus === "paid" ? "paid" : "pending" }}
             kycTierRequired={simulatedTier}
             simulatedTier={simulatedTier}
             simulatedStatus={simulatedStatus}
             simulatedError={simulatedError}
             simulatedPath={simulatedPath}
-            isAllKycCompleted={simulatedStatus === "verified"}
+            isAllKycCompleted={simulatedStatus === "verified" || simulatedStatus === "paid"}
           />
         ) : (
         

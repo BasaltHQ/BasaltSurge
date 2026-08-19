@@ -4828,6 +4828,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           country={kycCountry || clientCountry || "US"}
           amountUsd={totalUsd}
           receiptId={receiptId}
+          receiptStatus={receipt?.status}
+          isPaid={isSettled(receipt?.status) || Boolean(paymentConfirmed)}
+          receipt={receipt}
           headlessError={headlessError}
           kycTierRequired={kycTierRequired}
           kycLevel={headlessKycLevel}
