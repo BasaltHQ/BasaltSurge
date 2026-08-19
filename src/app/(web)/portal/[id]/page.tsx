@@ -4130,6 +4130,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         errMsg.includes("unsupported link account")
       ) {
         setShowUnsupportedLinkModal(true);
+      } else if (
+        errMsg.includes("already been verified") ||
+        errMsg.includes("already_verified") ||
+        errMsg.includes("cannot be updated")
+      ) {
+        console.warn("[PORTAL PAGE] Benign KYC already-verified notification suppressed from error modal:", error);
       } else {
         postStatus("failed", {
           error: String((error as any)?.message || error),

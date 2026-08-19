@@ -2664,55 +2664,21 @@ export function useStripeEmbeddedOnramp({
     updateStep("submitting_kyc");
     isRunningRef.current = true;
     try {
-      const payload = { ...kycInfo };
-      // Normalize parameter names for Stripe SDK: given_name and surname
-      if (payload.first_name && !payload.given_name) {
-        payload.given_name = payload.first_name;
-        delete payload.first_name;
-      }
-      if (payload.last_name && !payload.surname) {
-        payload.surname = payload.last_name;
-        delete payload.last_name;
-      }
-      if (payload.given_name) {
-        payload.given_name = String(payload.given_name).trim();
-      }
-      if (payload.surname) {
-        payload.surname = String(payload.surname).trim();
-      }
-      if (payload.address?.country) {
-        activeCountryRef.current = String(payload.address.country).toUpperCase();
-      } else if (payload.country) {
-        activeCountryRef.current = String(payload.country).toUpperCase();
-      }
-      if (payload.id_number) {
-        if (typeof payload.id_number === "string") {
-          payload.id_number = {
-            value: payload.id_number.replace(/\D/g, ""),
-            type: "us_ssn"
-          };
-        } else if (payload.id_number.value && typeof payload.id_number.value === "string") {
-          payload.id_number.value = payload.id_number.value.replace(/\D/g, "");
-        }
-      }
-      if (payload.date_of_birth) {
-        if (typeof payload.date_of_birth === "string") {
-          const parts = payload.date_of_birth.split("-").map(Number);
-          if (parts.length === 3 && parts[0] && parts[1] && parts[2]) {
-            payload.date_of_birth = {
-              year: parts[0],
-              month: parts[1],
-              day: parts[2]
-            };
-          }
-        }
-      }
-      if (payload.address && typeof payload.address === "object") {
+      const payload: any = {};
+      const rawGivenName = kycInfo.given_name || kycInfo.first_name || "";
+      const rawSurname = kycInfo.surname || kycInfo.last_name || "";
+      if (rawGivenName) payload.given_name = String(rawGivenName).trim();
+      if (rawSurname) payload.surname = String(rawSurname).trim();
+
+      if (kycInfo.address && typeof kycInfo.address === "object") {
         const cleanAddr: Record<string, string> = {};
-        for (const [k, v] of Object.entries(payload.address)) {
+        for (const [k, v] of Object.entries(kycInfo.address)) {
           if (v !== undefined && v !== null && String(v).trim() !== "") {
             cleanAddr[k] = String(v).trim();
           }
+        }
+        if (cleanAddr.country) {
+          activeCountryRef.current = String(cleanAddr.country).toUpperCase();
         }
         const isNorthAmerica = cleanAddr.country === "US" || cleanAddr.country === "CA";
         if (cleanAddr.state && isNorthAmerica) {
@@ -2747,13 +2713,101 @@ export function useStripeEmbeddedOnramp({
           }
         }
       }
+
+      if (kycInfo.id_number) {
+        if (typeof kycInfo.id_number === "string") {
+          payload.id_number = {
+            value: kycInfo.id_number.replace(/\D/g, ""),
+            type: "us_ssn"
+          };
+        } else if (kycInfo.id_number.value && typeof kycInfo.id_number.value === "string") {
+          payload.id_number = {
+            value: kycInfo.id_number.value.replace(/\D/g, ""),
+            type: kycInfo.id_number.type || "us_ssn"
+          };
+        }
+      }
+
+      if (kycInfo.date_of_birth) {
+        if (typeof kycInfo.date_of_birth === "string") {
+          const parts = kycInfo.date_of_birth.split("-").map(Number);
+          if (parts.length === 3 && parts[0] && parts[1] && parts[2]) {
+            payload.date_of_birth = {
+              year: parts[0],
+              month: parts[1],
+              day: parts[2]
+            };
+          }
+        } else if (typeof kycInfo.date_of_birth === "object") {
+          payload.date_of_birth = kycInfo.date_of_birth;
+        }
+      }
+
+      if (kycInfo.nationalities) payload.nationalities = kycInfo.nationalities;
+      if (kycInfo.birth_country) payload.birth_country = kycInfo.birth_country;
+      if (kycInfo.birth_city) payload.birth_city = kycInfo.birth_city;
+
       await submitKycInfoWithTimeout(onrampRef.current, payload);
       // Determine which tier was just submitted based on the payload fields (DOB/SSN defines L1)
       const submittedTier = (payload.date_of_birth || payload.id_number) ? "l1" : "l0";
 
       updateStep("checking_kyc");
       const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
-      if (!kycApproved) {
+
+      if (kycApproved) {
+        console.log("[EMBEDDED ONRAMP] KYC successfully approved after polling! Setting level to:", submittedTier.toUpperCase());
+        setError(null);
+        setIsAllKycCompleted(true);
+        const levelCode: "L0" | "L1" = submittedTier === "l1" ? "L1" : "L0";
+        setKycLevel(levelCode);
+        kycLevelRef.current = levelCode;
+        setKycTierRequired(submittedTier);
+        kycTierRequiredRef.current = submittedTier;
+        kycOccurredRef.current = true;
+        updateStep("collecting_payment");
+
+        if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
+          if (paymentTokenRef.current) {
+            runCheckoutLoop(
+              activeEmailRef.current,
+              customerIdRef.current,
+              paymentTokenRef.current,
+              buyerWalletRef.current,
+              detectedCardFunding
+            ).catch((err) => {
+              const isCardDecline = checkIfCardDecline(err);
+              if (isCardDecline) {
+                console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval, returning to payment selection...");
+                setError(err?.message || "Your card was declined. Please try another card.");
+                paymentTokenRef.current = null;
+                sessionIdRef.current = null;
+                setSessionId(null);
+                if (typeof window !== "undefined") {
+                  sessionStorage.removeItem(sessionKey);
+                }
+                if (onrampRef.current) {
+                  try { onrampRef.current.destroy(); } catch {}
+                  onrampRef.current = null;
+                }
+                isCoordinatorAuthedRef.current = false;
+                setDetectedCardFunding(null);
+                setDetectedCardBrand(null);
+                setDetectedCardLast4(null);
+                onCardDetected?.(null);
+                isRunningRef.current = false;
+                setTimeout(() => {
+                  startOnrampRef.current?.(activeEmailRef.current || undefined);
+                }, 0);
+              } else {
+                handleError(err?.message || "Checkout failed after KYC submission", err);
+              }
+            });
+          } else {
+            isRunningRef.current = false;
+            startOnrampRef.current?.(activeEmailRef.current || undefined);
+          }
+        }
+      } else {
         if (submittedTier === "l0") {
           console.log("[EMBEDDED ONRAMP] L0 verification requires step up. Transitioning to L1...");
           setKycTierRequired("l1");
@@ -2767,7 +2821,7 @@ export function useStripeEmbeddedOnramp({
 
       console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
       setIsAllKycCompleted(true);
-      const resolvedLvl = submittedTier === "l1" ? "L1" : "L0";
+      const resolvedLvl: "L0" | "L1" = submittedTier === "l1" ? "L1" : "L0";
       setKycLevel(resolvedLvl);
       kycLevelRef.current = resolvedLvl;
       setKycTierRequired(submittedTier);
@@ -2821,10 +2875,11 @@ export function useStripeEmbeddedOnramp({
       const isAlreadyVerified = errMsg.includes("already been verified") || 
                                 errMsg.includes("already_verified") ||
                                 errMsg.includes("cannot be updated") ||
-                                (errMsg.includes("invalid request") && isAllKycCompleted);
+                                errMsg.includes("invalid request") ||
+                                errMsg.includes("invalid_request");
       
       if (isAlreadyVerified) {
-        console.log("[EMBEDDED ONRAMP] Customer is already verified in Stripe Link. Marking KYC complete and proceeding directly to payment collection...");
+        console.log("[EMBEDDED ONRAMP] Customer identity is already verified / immutable in Stripe Link. Marking KYC complete and proceeding directly to payment collection...");
         setError(null);
         setIsAllKycCompleted(true);
         setKycLevel("L1");

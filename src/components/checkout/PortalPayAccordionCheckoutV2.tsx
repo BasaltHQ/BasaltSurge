@@ -890,10 +890,40 @@ export function PortalPayAccordionCheckoutV2({
     headlessStep === "verifying_identity";
   const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || (kycTierRequired as string) === "l1";
 
-  // Full L0 form (name, address): default for all unverified users starting at L0, or when manual address editing is active
+  // Dynamic error detection
+  const rawErr = String(localError || propError || "").toLowerCase();
+  const hasAddressError = Boolean(
+    rawErr &&
+    (rawErr.includes("address") ||
+     rawErr.includes("postal") ||
+     rawErr.includes("zip") ||
+     rawErr.includes("street") ||
+     rawErr.includes("city") ||
+     rawErr.includes("subdivision") ||
+     rawErr.includes("home address") ||
+     rawErr.includes("unsupported_region") ||
+     rawErr.includes("unsupported_country"))
+  );
+
+  const hasNameError = Boolean(
+    rawErr &&
+    (rawErr.includes("given_name") ||
+     rawErr.includes("surname") ||
+     rawErr.includes("first_name") ||
+     rawErr.includes("last_name") ||
+     (rawErr.includes("name") && !rawErr.includes("bank_name")) ||
+     rawErr.includes("legal details") ||
+     rawErr.includes("identity verification details were rejected"))
+  );
+
+  // Full L0 form (name, address): default for all unverified users starting at L0, when address error occurs, when fields are empty, or when manual address editing is active
   const showFullForm =
     !showStepUpForm ||
     manualEditAddress ||
+    hasAddressError ||
+    hasNameError ||
+    !line1 ||
+    !firstName ||
     kycLevel === "REQUIRES_KYC";
 
   // Sync props when initial values change
@@ -1269,7 +1299,7 @@ export function PortalPayAccordionCheckoutV2({
   if (showStepUpForm) {
     if (!fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
     if (isUS && !fieldValidation.ssn) missingIdentityFields.push({ key: "ssn", label: ssnDigits.length > 0 ? `SSN (${9 - ssnDigits.length} digits left)` : "9-Digit SSN" });
-    if (manualEditAddress) {
+    if (showFullForm) {
       if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
       if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
       if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
@@ -1288,28 +1318,8 @@ export function PortalPayAccordionCheckoutV2({
 
   const isIdentityComplete = missingIdentityFields.length === 0;
 
-  const errText = String(activeError || "").toLowerCase();
-  const hasAddressError = Boolean(
-    errText &&
-    (errText.includes("address") ||
-     errText.includes("postal") ||
-     errText.includes("zip") ||
-     errText.includes("street") ||
-     errText.includes("city") ||
-     errText.includes("headless mode") ||
-     errText.includes("unsupported_region") ||
-     errText.includes("unsupported_country"))
-  );
-  const hasDobError = Boolean(errText && (errText.includes("date_of_birth") || errText.includes("birth") || errText.includes("dob") || errText.includes("18 years")));
-  const hasSsnError = Boolean(errText && (errText.includes("ssn") || errText.includes("id_number") || errText.includes("social security")));
-  const hasNameError = Boolean(
-    errText &&
-    (errText.includes("given_name") ||
-     errText.includes("surname") ||
-     (errText.includes("name") && !errText.includes("bank_name")) ||
-     errText.includes("legal details") ||
-     errText.includes("identity verification details were rejected"))
-  );
+  const hasDobError = Boolean(rawErr && (rawErr.includes("date_of_birth") || rawErr.includes("birth") || rawErr.includes("dob") || rawErr.includes("18 years")));
+  const hasSsnError = Boolean(rawErr && (rawErr.includes("ssn") || rawErr.includes("id_number") || rawErr.includes("social security")));
 
   const isFieldInvalid = (field: keyof typeof fieldValidation) => {
     if (hasNameError && (field === "firstName" || field === "lastName")) {
