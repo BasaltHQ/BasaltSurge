@@ -871,35 +871,40 @@ export function PortalPayAccordionCheckoutV2({
     l1Verified ||
     l1NotAvailable ||
     l2Verified ||
-    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l1" && headlessStep !== "collecting_kyc");
+    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l1" && (kycTierRequired as string) !== "L1");
 
   const isL2Approved =
     l2Verified ||
     docVerificationSuccess ||
     kycLevel === "L2" ||
-    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l2" && headlessStep !== "verifying_identity");
+    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l2" && (kycTierRequired as string) !== "L2" && headlessStep !== "verifying_identity");
 
   // Step-up (DOB + SSN) is strictly ONLY shown when NOT already verified AND Stripe explicitly requires L1 tier
   const showStepUpForm =
     !isL1Approved &&
     (effectiveTier === "l1" ||
+     effectiveTier === "L1" ||
      effectiveStatus === "step_up" ||
      (kycTierRequired as string) === "l1" ||
-     headlessStep === "collecting_kyc");
+     (kycTierRequired as string) === "L1");
 
   // Document verification requirement: only when L2 tier is explicitly demanded
   const showVerifyDocs =
     !isL2Approved &&
     (effectiveTier === "l2" ||
+     effectiveTier === "L2" ||
      effectiveStatus === "doc_verify" ||
      (kycTierRequired as string) === "l2" ||
+     (kycTierRequired as string) === "L2" ||
      headlessStep === "verifying_identity");
 
   const isL2Requirement =
     effectiveTier === "l2" ||
+    effectiveTier === "L2" ||
     (kycTierRequired as string) === "l2" ||
+    (kycTierRequired as string) === "L2" ||
     headlessStep === "verifying_identity";
-  const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || (kycTierRequired as string) === "l1";
+  const isL1Requirement = showStepUpForm || showVerifyDocs || effectiveTier === "l1" || effectiveTier === "L1" || (kycTierRequired as string) === "l1" || (kycTierRequired as string) === "L1";
 
   // Dynamic error detection
   const rawErr = String(localError || propError || "").toLowerCase();
