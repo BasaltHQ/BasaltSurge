@@ -1,0 +1,178 @@
+# Stripe Crypto Onramp & KYC Tier Architecture Reference
+
+This document serves as the authoritative technical reference for the **PortalPay Checkout V2** (`PortalPayAccordionCheckoutV2.tsx`) and **Embedded Onramp Coordinator** (`useStripeEmbeddedOnramp.ts`). 
+
+Follow these strict rules, lifecycle invariants, and error handling patterns in all future changes to ensure smooth, unblocked checkout execution.
+
+---
+
+## 1. Executive Summary & Tier Hierarchy
+
+PortalPay leverages Stripe's Embedded Components Crypto Onramp SDK (`@stripe/crypto`) with a multi-tiered KYC model:
+
+```text
+[Step 1: Contact Auth] ──> [Step 2: Pure L0 KYC] ──> [Step 3: Payment Method] ──> [Step 4: Paid & Settled]
+  (Email + Phone OTP)       (First Name, Last Name,     (Card / Apple Pay / ACH)       (Fulfillment Hero)
+                             Residential Address)
+                                      │
+                         (Only on Stripe reactive error)
+                                      ▼
+                             [Step-Up to L1 / L2]
+                             (L1: DOB + 9-digit SSN)
+                             (L2: Photo ID + Selfie)
+```
+
+| Tier | Required Demographic Data | Client SDK Invocation | Eligible Transactions |
+| :--- | :--- | :--- | :--- |
+| **L0 (Pure)** | First Name, Last Name, Residential Address | `onramp.submitKycInfo(payload)` | Standard card/wallet purchases within L0 limits |
+| **L1 (Step-Up)** | DOB (`year`, `month`, `day`) + SSN (`us_ssn`) | `onramp.submitKycInfo(payload)` | Higher-value card/wallet transactions |
+| **L2 (Biometric)** | Government-issued photo ID + live selfie | `onramp.verifyDocuments()` | ACH bank debits and maximum limit transactions |
+
+---
+
+## 2. Strict Architectural Invariants (DO NOT BREAK)
+
+### Rule 1: The "No Auto-Escalation" Invariant
+> **CRITICAL**: Never set `setKycTierRequired("l1")` simply because a customer has not completed L1!
+
+- **Anti-Pattern (Catastrophic)**:
+  ```typescript
+  // ❌ ANTI-PATTERN: Automatically forces everyone to L1 on load
+  if (!isL0Verified) {
+    setKycTierRequired("l0");
+  } else if (!isL1Verified) {
+    setKycTierRequired("l1"); // BROKEN: Destroys Pure L0 checkout
+  }
+  ```
+- **Approved Pattern**:
+  ```typescript
+  // ✅ APPROVED: Keeps tier at L0 for standard purchases
+  if (!isL0Verified) {
+    setKycTierRequired("l0");
+  } else {
+    setKycTierRequired("l0");
+  }
+  const isCompleted = isL0Verified || isL1Verified || isL2Verified;
+  setIsAllKycCompleted(isCompleted);
+  ```
+
+### Rule 2: Pure L0 Immediate Advance (No Polling Fail-to-L1)
+- Stripe's customer REST API does **not** mark `l0.verification_status` as `"verified"` until the checkout transaction is authorized.
+- When a customer submits Step 2 (Name & Address for L0):
+  1. Submit the payload to `onramp.submitKycInfo(payload)`.
+  2. If the coordinator accepts without error, **immediately mark L0 complete (`isAllKycCompleted = true`) and advance to Step 3 (`collecting_payment`)**.
+  3. **Do not poll Stripe's API and fail into L1**.
+
+### Rule 3: Step-Up is Strictly Reactive
+- Step-Up to L1 (DOB + SSN) and L2 (Photo ID + Selfie) must **ONLY** be triggered when Stripe's payment execution endpoint actively returns:
+  - `crypto_onramp_missing_identity_verification` or `missing_kyc` -> Trigger L1 Step-Up.
+  - `crypto_onramp_missing_document_verification` -> Trigger L2 Biometric Verification.
+
+### Rule 4: Complete Payload Construction on All Submissions
+- When submitting Step 2 (even in Step-Up mode), **always construct and send the complete demographic payload**:
+  - `given_name` (First Name)
+  - `surname` (Last Name)
+  - `address` (`line1`, `line2`, `city`, `state`, `postal_code`, `country`)
+  - `date_of_birth` (if present)
+  - `id_number` (if present)
+- Omitting `given_name` / `surname` during Step-Up causes Stripe to reject the request with: `Invalid value for parameter first_name`.
+
+### Rule 5: Modal Overlay Separation (`z-50`)
+- When Stripe initiates L2 Document Verification (`verifyDocuments()`), the hook transitions to `"verifying_identity"`.
+- `PortalPayAccordionCheckoutV2` must **immediately dismiss the "Payment Processing" modal overlay** and reset `isSubmittingPayment = false` via `isIdentityActive`:
+  ```typescript
+  const isIdentityActive = Boolean(
+    headlessStep === "verifying_identity" ||
+    headlessStep === "collecting_kyc" ||
+    headlessStep === "checking_kyc" ||
+    (headlessStatus && headlessStatus.toLowerCase().includes("identity"))
+  );
+
+  const isPaymentProcessing = Boolean(
+    !isOrderConfirmed &&
+    !isReceiptPaid &&
+    !activeError &&
+    !isIdentityActive && // Processing backdrop NEVER covers identity scanner
+    // ...
+  );
+  ```
+
+### Rule 6: Immutable / Verified Link Account Bypass
+- When customers with existing verified Stripe Link accounts checkout, Stripe returns: `Invalid request: Customer identity already verified`.
+- The hook catch block must treat `invalid request` as an **approved KYC state (`isAllKycCompleted = true`)** and proceed directly to payment collection rather than popping an error modal.
+
+---
+
+## 3. UI State Matrix in `PortalPayAccordionCheckoutV2`
+
+| State / Condition | Step 1 (Contact) | Step 2 (L0 Address) | Step 2 (L1 Step-Up) | Step 3 (Payment) | Step 4 (Fulfillment) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **New Customer Initial Load** | Active (Email + Phone) | Collapsed | Hidden | Collapsed | Collapsed |
+| **Step 1 OTP Complete** | Checked (Verified) | Active (Name + Address) | Hidden | Collapsed | Collapsed |
+| **Step 2 Submitted (L0)** | Checked (Verified) | Checked (Verified) | Hidden | Active (Card / ACH Element) | Collapsed |
+| **Step 3 "Pay" Clicked** | Checked | Checked | Hidden | Processing Overlay (`z-50`) | Collapsed |
+| **Reactive Step-Up (L1 Required)** | Checked | Active (Name + Address summary) | Active (DOB + SSN visible) | Collapsed | Collapsed |
+| **Reactive L2 (Biometric)** | Checked | Checked | Collapsed | Dismissed | Stripe Live Verification Modal |
+| **Transaction Settled** | Locked (`<Lock />`) | Locked (`<Lock />`) | Hidden | Locked (`<Lock />`) | Active (Full Hero Complete) |
+
+---
+
+## 4. Key Parameter Schemas
+
+### Client Coordinator JS SDK (`onramp.submitKycInfo`)
+```typescript
+interface StripeKycPayload {
+  given_name: string;
+  surname: string;
+  address: {
+    line1: string;
+    line2?: string;
+    city: string;
+    state?: string; // 2-letter uppercase ISO code for US/CA
+    postal_code: string;
+    country: string; // 2-letter uppercase ISO code
+  };
+  date_of_birth?: {
+    year: number;
+    month: number;
+    day: number;
+  };
+  id_number?: {
+    type: "us_ssn";
+    value: string; // 9 digits, unmasked
+  };
+  nationalities?: string[]; // Required for EU
+  birth_country?: string;   // Required for EU
+}
+```
+
+### Server-Side REST API (`POST /v1/crypto/onramp_sessions`)
+```json
+{
+  "customer_information": {
+    "email": "customer@example.com",
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "address": {
+      "line1": "123 Main St",
+      "city": "Denver",
+      "state": "CO",
+      "postal_code": "80202",
+      "country": "US"
+    }
+  }
+}
+```
+
+---
+
+## 5. Verification & Testing Checklist for Future Changes
+
+Before merging any modifications to checkout or KYC flows:
+
+1. [ ] **Pure L0 Inspection**: Run with an unverified email. Confirm Step 2 displays **only** Name and Address (no DOB, no SSN) and the button reads *"Save Address & Continue"*.
+2. [ ] **Immediate L0 Progression**: Confirm clicking *"Save Address & Continue"* advances directly to Step 3 without an intermediate DOB/SSN flash or polling delay.
+3. [ ] **Step-Up Isolation**: Confirm DOB & SSN are **only** visible if `kycTierRequired === "l1"` is explicitly returned by Stripe during payment execution.
+4. [ ] **Address Error Dynamic Expansion**: Simulate an invalid address error and verify that Street Address, City, State, and Zip automatically expand with red validation indicators.
+5. [ ] **Modal Stacking**: Simulate L2 verification and verify the "Payment Processing" spinner dismisses immediately so Stripe's camera/ID scanner is completely unobstructed.
+6. [ ] **Settlement Lockdown**: Verify that completing payment transitions to Step 4 with previous steps locked and un-editable.
