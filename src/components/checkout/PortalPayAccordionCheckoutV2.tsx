@@ -1481,7 +1481,20 @@ export function PortalPayAccordionCheckoutV2({
       }
 
       if (!propError && headlessStep !== "error") {
-        setActiveStep(3);
+        if (
+          headlessStep === "checking_out" ||
+          headlessStep === "creating_session" ||
+          headlessStep === "confirming_fees" ||
+          headlessStep === "awaiting_funds" ||
+          headlessStep === "transferring" ||
+          headlessStep === "completed"
+        ) {
+          setActiveStep(4);
+        } else if (!isAllKycCompleted && !isL0Approved) {
+          setActiveStep(2);
+        } else {
+          setActiveStep(3);
+        }
       }
     } catch (err: any) {
       console.error("Identity submission error:", err);

@@ -127,6 +127,17 @@ PortalPay leverages Stripe's Embedded Components Crypto Onramp SDK (`@stripe/cry
   - Document errors must strictly match `crypto_onramp_missing_document_verification`, `missing_document_verification`, or `document_verification`.
   - All other identity errors must step up to **L1 (DOB + SSN) on Step 2**.
 
+### Rule 9: Post-KYC Step Routing Discrimination (L0 Initial vs. L1/L2 Resumption)
+- **Initial L0 Submission (`!paymentTokenRef.current`)**:
+  - Sets `updateStep("collecting_payment")`
+  - Calls `startOnramp()` to initialize the Stripe payment coordinator and mount the payment element in **Step 3**.
+  - Accordion advances to `activeStep = 3`.
+- **Reactive L1/L2 Step-Up Approval (`paymentTokenRef.current` exists)**:
+  - **Must NOT call `collecting_payment`**: The customer has already entered card details.
+  - Sets `updateStep("checking_out")`.
+  - Automatically resumes `runCheckoutLoop(...)` to finalize payment.
+  - `handleIdentitySubmit` checks `headlessStep`: if checking out or creating a session, `activeStep` moves directly to **Step 4 (Fulfillment / Processing)**, eliminating the glitch where Step 3 opens with a blank/loading spinner during payment processing.
+
 ---
 
 ## 3. UI State Matrix in `PortalPayAccordionCheckoutV2`
