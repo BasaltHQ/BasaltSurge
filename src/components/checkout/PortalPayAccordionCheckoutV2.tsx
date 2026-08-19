@@ -83,7 +83,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   simulatedError?: "none" | "address_error" | "payment_decline" | "kyc_rejection" | string;
   simulatedPath?: "normal" | "skip_kyc" | "step_up" | "doc_verify" | string;
   isAllKycCompleted?: boolean;
-  onHeadlessSubmitEmailPhone?: (email: string, phone: string, country?: string, fullName?: string) => Promise<void>;
+  onHeadlessSubmitEmailPhone?: (email: string, phone: string, country?: string, fullName?: string, isForceRetry?: boolean) => Promise<void>;
   onSubmitPhone?: (phoneNumber: string, email?: string, country?: string) => void | Promise<void>;
   onSubmitKycInfo?: (info: any) => Promise<void>;
   onVerifyDocuments?: () => Promise<void | boolean>;
@@ -1253,7 +1253,7 @@ export function PortalPayAccordionCheckoutV2({
       : (initialFullName?.trim() || undefined);
     if (activeStep === 3 && !paymentElement && email && onHeadlessSubmitEmailPhone) {
       console.log("[ACCORDION] ActiveStep is 3 but paymentElement is null. Auto-triggering onHeadlessSubmitEmailPhone to initialize Stripe payment form...");
-      onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName);
+      onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName, true);
     }
   }, [activeStep, paymentElement, email, phone, country, firstName, lastName, initialFullName, isReceiptPaid, isPaymentProcessing, activeError, onHeadlessSubmitEmailPhone]);
 
@@ -1296,6 +1296,13 @@ export function PortalPayAccordionCheckoutV2({
             setLocalError(err?.message || "Failed to submit contact information.");
             setIsSubmittingContact(false);
           });
+        }
+        if (!authElement) {
+          if (isAllKycCompleted || effectiveStatus === "verified") {
+            setActiveStep(3);
+          } else {
+            setActiveStep(2);
+          }
         }
         // Release the button spinner after a safety buffer if headlessStep hasn't transitioned yet
         setTimeout(() => {
@@ -1475,7 +1482,7 @@ export function PortalPayAccordionCheckoutV2({
           const fullContactName = (firstName?.trim() && lastName?.trim())
             ? `${firstName.trim()} ${lastName.trim()}`
             : (initialFullName?.trim() || undefined);
-          onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName);
+          onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName, true);
         }
         return;
       }
@@ -1541,7 +1548,7 @@ export function PortalPayAccordionCheckoutV2({
           const fullContactName = (firstName?.trim() && lastName?.trim())
             ? `${firstName.trim()} ${lastName.trim()}`
             : (initialFullName?.trim() || undefined);
-          onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName);
+          onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName, true);
         }
       } else {
         setLocalError(err?.message || "Failed to submit identity details.");
@@ -2009,7 +2016,7 @@ export function PortalPayAccordionCheckoutV2({
                     const fullContactName = (firstName?.trim() && lastName?.trim())
                       ? `${firstName.trim()} ${lastName.trim()}`
                       : (initialFullName?.trim() || undefined);
-                    onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName);
+                    onHeadlessSubmitEmailPhone(email, phone || "", country, fullContactName, true);
                   }
                 }}
                 className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer"

@@ -294,9 +294,9 @@ export type UseStripeEmbeddedOnrampReturn = {
   startOnramp: (
     overrideEmail?: string,
     overridePhone?: string,
-    overrideNameOrCountry?: string,
-    isForceRetryOrName?: boolean | string,
-    overrideCountry?: string
+    overrideCountryOrName?: string,
+    overrideNameOrRetry?: string | boolean,
+    isForceRetryOrCountry?: boolean | string
   ) => Promise<void>;
   /** Reset state */
   reset: () => void;
@@ -2501,6 +2501,8 @@ export function useStripeEmbeddedOnramp({
                 
                 if (!onrampRef.current) {
                   console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before verifyDocuments. Aborting.");
+                  isVerifyingRef.current = false;
+                  isRunningRef.current = false;
                   return;
                 }
                 
@@ -3047,31 +3049,28 @@ export function useStripeEmbeddedOnramp({
   const startOnramp = useCallback(async (
     overrideEmail?: string,
     overridePhone?: string,
-    overrideNameOrCountry?: string,
-    isForceRetryOrName?: boolean | string,
-    overrideCountry?: string
+    overrideCountryOrName?: string,
+    overrideNameOrRetry?: string | boolean,
+    isForceRetryOrCountry?: boolean | string
   ) => {
-    // Detect if Argument 3 was passed as a 2-letter country code (e.g. "DE", "FR", "US")
-    let resolvedCountry = overrideCountry;
+    // Detect country, name, and isForceRetry flags across any argument combinations
+    let resolvedCountry = activeCountryRef.current || "US";
     let resolvedName = fullName;
     let isForceRetry = false;
 
-    if (typeof overrideNameOrCountry === "string" && overrideNameOrCountry.length === 2 && overrideNameOrCountry === overrideNameOrCountry.toUpperCase()) {
-      resolvedCountry = overrideNameOrCountry;
-      if (typeof isForceRetryOrName === "string") {
-        resolvedName = isForceRetryOrName;
-      }
-    } else {
-      if (typeof overrideNameOrCountry === "string") {
-        resolvedName = overrideNameOrCountry;
-      }
-      if (typeof isForceRetryOrName === "boolean") {
-        isForceRetry = isForceRetryOrName;
+    const extraArgs = [overrideCountryOrName, overrideNameOrRetry, isForceRetryOrCountry];
+    for (const arg of extraArgs) {
+      if (typeof arg === "boolean") {
+        if (arg === true) isForceRetry = true;
+      } else if (typeof arg === "string" && arg.trim().length === 2 && arg.trim() === arg.trim().toUpperCase()) {
+        resolvedCountry = arg.trim();
+      } else if (typeof arg === "string" && arg.trim().length > 0) {
+        resolvedName = arg.trim();
       }
     }
 
-    if (isRunningRef.current && !isForceRetry && paymentElement) {
-      console.warn("[EMBEDDED ONRAMP] Onramp flow is already running with active payment element. Ignoring duplicate trigger.");
+    if (isRunningRef.current && !isForceRetry) {
+      console.warn("[EMBEDDED ONRAMP] Onramp flow is already in progress. Ignoring duplicate trigger.");
       return;
     }
     isRunningRef.current = true;
@@ -3831,8 +3830,10 @@ export function useStripeEmbeddedOnramp({
           ).then((element: HTMLElement) => {
             if (mountedRef.current) {
               setPaymentElement(element);
+              isRunningRef.current = false;
             }
           }).catch((err) => {
+            isRunningRef.current = false;
             paymentRejectRef.current = null;
             reject(err);
           });
@@ -4190,6 +4191,7 @@ export function useStripeEmbeddedOnramp({
           }
           if (!onrampRef.current) {
             console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before verifyDocuments. Aborting.");
+            isRunningRef.current = false;
             return;
           }
           const verifyResult = await onrampRef.current.verifyDocuments();
