@@ -687,20 +687,18 @@ export function useStripeEmbeddedOnramp({
     setKycLevel(computedLevel);
     kycLevelRef.current = computedLevel;
 
-    // Determine what next tier is required if any
+    // Determine what tier is required:
+    // Pure L0 is valid for standard checkout. Do NOT automatically escalate to L1 unless demanded during checkout.
     if (!isL0Verified) {
       setKycTierRequired("l0");
       kycTierRequiredRef.current = "l0";
-    } else if (!isL1Verified) {
-      setKycTierRequired("l1");
-      kycTierRequiredRef.current = "l1";
-    } else if (!isL2Verified) {
-      setKycTierRequired("l2");
-      kycTierRequiredRef.current = "l2";
+    } else {
+      setKycTierRequired("l0");
+      kycTierRequiredRef.current = "l0";
     }
 
-    // All standard KYC completed if at least L0/L1 are verified (or L2 if demanded)
-    const isCompleted = isL1Verified || isL2Verified || (isL0Verified && (!l1Tier || l1Tier.verification_status === "not_available"));
+    // Standard L0 card checkout is completed if L0 (or higher) is verified
+    const isCompleted = isL0Verified || isL1Verified || isL2Verified;
     setIsAllKycCompleted(isCompleted);
 
     if (kycData.customerId) {
@@ -1074,27 +1072,6 @@ export function useStripeEmbeddedOnramp({
                 } else {
                   console.log("[EMBEDDED ONRAMP] Global KYC check: L0 unverified/rejected. Directing to full L0 input...");
                   setKycTierRequired("l0");
-                  updateStep("collecting_kyc");
-                  isVerifyingRef.current = false;
-                  isRunningRef.current = false;
-                  return;
-                }
-              } else if (!isL1Verified) {
-                if (l1Tier?.verification_status === "pending") {
-                  console.log("[EMBEDDED ONRAMP] Global KYC check: L1 demographics pending. Polling for L1 approval before L2...");
-                  updateStep("checking_kyc");
-                  const l1Approved = await pollKycStatus(customerId, "l1");
-                  if (!l1Approved) {
-                    console.log("[EMBEDDED ONRAMP] Global KYC check: L1 demographics verification not approved.");
-                    setKycTierRequired("l1");
-                    updateStep("collecting_kyc");
-                    isVerifyingRef.current = false;
-                    isRunningRef.current = false;
-                    return;
-                  }
-                } else {
-                  console.log("[EMBEDDED ONRAMP] Global KYC check failed: L1 demographics unverified. Directing to L1 input.");
-                  setKycTierRequired("l1");
                   updateStep("collecting_kyc");
                   isVerifyingRef.current = false;
                   isRunningRef.current = false;
