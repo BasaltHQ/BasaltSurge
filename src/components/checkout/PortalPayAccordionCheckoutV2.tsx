@@ -79,7 +79,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   kycLevel?: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING" | string;
   kycTiers?: Array<{ tier: string; verification_status: string }>;
   simulatedTier?: "l0" | "l1" | "l2" | string;
-  simulatedStatus?: "normal" | "step_up" | "doc_verify" | "verified" | "paid" | string;
+  simulatedStatus?: "normal" | "step_up" | "doc_verify" | "verified" | "paid" | "processing" | string;
   simulatedError?: "none" | "address_error" | "payment_decline" | "kyc_rejection" | string;
   simulatedPath?: "normal" | "skip_kyc" | "step_up" | "doc_verify" | string;
   isAllKycCompleted?: boolean;
@@ -789,23 +789,60 @@ export function PortalPayAccordionCheckoutV2({
     ? Boolean(isReceiptPaid || paymentConfirmed || headlessStep === "completed")
     : Boolean(isReceiptPaid || fulfillmentStage === "complete");
 
+  // Payment Processing Modal Overlay Guard:
+  // Specifically active during fee review, payment processing, or fund transfer
+  // Automatically stays open and locks interactions until payment completes or fails with an error
+  const isPaymentProcessing = Boolean(
+    !isOrderConfirmed &&
+    !isReceiptPaid &&
+    !activeError &&
+    (
+      simulatedStatus === "processing" ||
+      isSubmittingPayment ||
+      (activeStep === 4 && (
+        fulfillmentStage === "processing" ||
+        fulfillmentStage === "confirming" ||
+        headlessStep === "confirming_fees" ||
+        headlessStep === "checking_out" ||
+        headlessStep === "transferring" ||
+        headlessStep === "creating_session" ||
+        (headlessStatus && (
+          headlessStatus.toLowerCase().includes("processing") ||
+          headlessStatus.toLowerCase().includes("fee") ||
+          headlessStatus.toLowerCase().includes("finalizing") ||
+          headlessStatus.toLowerCase().includes("transfer") ||
+          headlessStatus.toLowerCase().includes("confirming")
+        ))
+      ))
+    )
+  );
+
+  const processingStatusSubtitle = (
+    headlessStatus ||
+    (headlessStep === "confirming_fees"
+      ? "Reviewing payment fee & live conversion rates..."
+      : headlessStep === "checking_out"
+      ? "Processing transaction securely with Stripe..."
+      : "Finalizing your transaction. Please keep this window open.")
+  );
+
   // DOM Container Refs for Stripe Embedded Elements
   const authContainerRef = useRef<HTMLDivElement>(null);
   const paymentContainerRef = useRef<HTMLDivElement>(null);
   const identityContainerRef = useRef<HTMLDivElement>(null);
 
-  // Canonical Stripe Onramp KYC tier detection matching WizardView:
-  // Canonical Stripe Onramp KYC tier detection:
-  const l0Verified = (kycTiers || []).some(
-    (t: any) => t.tier === "l0" && t.verification_status === "verified",
+  // Canonical Stripe Onramp KYC tier detection from GET /v1/crypto/customers/:id kyc_tiers:
+  const rawKycTiers = kycTiers || [];
+  const l0Verified = rawKycTiers.some(
+    (t: any) => t.tier === "l0" && (t.verification_status === "verified" || t.verification_status === "not_available"),
   );
-  const l1Verified = (kycTiers || []).some(
+  const l1Verified = rawKycTiers.some(
     (t: any) => t.tier === "l1" && t.verification_status === "verified",
   );
-  const l1NotAvailable = (kycTiers || []).some(
+  const l1NotAvailable = rawKycTiers.some(
     (t: any) => t.tier === "l1" && t.verification_status === "not_available",
   );
-  const l2Verified = (kycTiers || []).some(
+  const l2Verified = rawKycTiers.some(
     (t: any) => t.tier === "l2" && t.verification_status === "verified",
   );
 
@@ -2757,6 +2794,81 @@ export function PortalPayAccordionCheckoutV2({
             )}
         </div>
       </div>
+
+      {/* ==================================================================== */}
+      {/* PROMINENT PAYMENT PROCESSING MODAL / OVERLAY */}
+      {/* Specifically active during "Processing payment" & "Reviewing service fee" */}
+      {/* Blocks all interactions until complete or failed */}
+      {/* ==================================================================== */}
+      {isPaymentProcessing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300 select-none">
+          <div
+            className={`w-full max-w-md p-6 sm:p-8 rounded-3xl border shadow-2xl relative overflow-hidden text-center space-y-5 animate-in zoom-in-95 duration-300 ${
+              isLightText
+                ? "bg-neutral-900/95 border-emerald-500/30 text-white shadow-[0_0_50px_-10px_rgba(16,185,129,0.25)]"
+                : "bg-white border-emerald-500/30 text-black shadow-[0_0_50px_-10px_rgba(16,185,129,0.25)]"
+            }`}
+          >
+            {/* Ambient Background Glow */}
+            <div className="absolute -top-24 -left-24 w-48 h-48 bg-emerald-500/20 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
+
+            {/* Glowing Spinner Hero Badge */}
+            <div className="relative flex items-center justify-center pt-2">
+              <div className="relative w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 flex items-center justify-center shadow-[0_0_40px_-5px_rgba(16,185,129,0.3)]">
+                <Loader2 className="w-10 h-10 text-emerald-400 animate-spin stroke-[2.5]" />
+                <div className="absolute inset-0 rounded-full border-2 border-dashed border-emerald-400/40 animate-[spin_8s_linear_infinite]" />
+              </div>
+            </div>
+
+            {/* Title & Subtitle */}
+            <div className="space-y-1.5 relative z-10">
+              <h3 className={`text-xl sm:text-2xl font-black tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
+                Payment Processing
+              </h3>
+              <div className="flex items-center justify-center gap-1.5 text-xs font-medium text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                <span>Thank you for your patience</span>
+              </div>
+            </div>
+
+            {/* Do Not Refresh Warning Banner */}
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 text-left relative z-10">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                <span>Do Not Refresh or Close</span>
+              </div>
+              <p className="text-[11.5px] leading-relaxed text-amber-200/90 font-normal">
+                Please do not refresh, navigate back, or close this window while Stripe finalizes your transaction.
+              </p>
+            </div>
+
+            {/* Live Progress / Status Details */}
+            <div className={`p-3 rounded-xl border text-xs text-left space-y-2 relative z-10 ${
+              isLightText ? "bg-black/40 border-white/10" : "bg-black/5 border-black/10"
+            }`}>
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="opacity-60">Status:</span>
+                <span className="font-semibold text-emerald-400">{processingStatusSubtitle}</span>
+              </div>
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="opacity-60">Amount:</span>
+                <span className="font-mono font-bold">${amountUsd.toFixed(2)} USD</span>
+              </div>
+              {/* Indeterminate Animated Progress Bar */}
+              <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden mt-2">
+                <div className="h-full bg-gradient-to-r from-emerald-500 via-amber-400 to-emerald-500 rounded-full animate-pulse w-full" />
+              </div>
+            </div>
+
+            {/* Security Trust Footnote */}
+            <div className="flex items-center justify-center gap-1.5 text-[10.5px] font-semibold opacity-60 relative z-10">
+              <Lock className="w-3 h-3 text-emerald-400 shrink-0" />
+              <span>256-Bit Encrypted Secure Stripe Transaction</span>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
