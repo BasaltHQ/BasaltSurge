@@ -73,11 +73,25 @@ export function Step3Payment({
 
       {/* Step 3 Expanded Body */}
       <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
-        {/* Top Error Alert Banner (if not shown in wallet challenge panel) */}
+        {/* Top Error Alert Banner & Decline Recovery Panel */}
         {activeError && !isWalletOwnershipRequired && (
-          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-2.5 text-xs text-amber-300 animate-in fade-in my-1">
-            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-            <span className="font-semibold leading-relaxed">{activeError}</span>
+          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 animate-in fade-in my-1 space-y-2">
+            <div className="flex items-start gap-2.5 text-xs">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <span className="font-bold text-amber-200">Payment Notice:</span>
+                <p className="leading-relaxed text-amber-300/90">{activeError}</p>
+              </div>
+            </div>
+            {activeError.toLowerCase().includes("declined") && (
+              <div className="pt-2 border-t border-amber-500/20 text-[11px] text-amber-200/80 space-y-1">
+                <span className="font-semibold text-amber-300">Quick Tips:</span>
+                <ul className="list-disc list-inside space-y-0.5 pl-1 opacity-90">
+                  <li>Try another debit card or Apple Pay / Google Pay</li>
+                  <li>Check your banking app or SMS for a temporary verification prompt, then retry</li>
+                </ul>
+              </div>
+            )}
           </div>
         )}
 

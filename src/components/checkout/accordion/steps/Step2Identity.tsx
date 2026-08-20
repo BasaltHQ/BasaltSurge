@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { SUPPORTED_COUNTRIES } from "../constants";
 import { getSubdivisionsForCountry } from "../subdivisions";
-import { formatSSN, getCountryAddressConfig } from "../utils";
+import { formatSSN, getCountryAddressConfig, splitFullName } from "../utils";
 import { DobPicker } from "../DobPicker";
 import { AccordionCard } from "../AccordionCard";
 import { AccordionStepHeader } from "../AccordionStepHeader";
@@ -40,6 +40,8 @@ export function Step2Identity({
   setCountry,
   line1,
   setLine1,
+  line2 = "",
+  setLine2,
   city,
   setCity,
   stateCode,
@@ -261,6 +263,19 @@ export function Step2Identity({
                       placeholder="Jane"
                       value={firstName}
                       onBlur={() => markFieldTouched("firstName")}
+                      onPaste={(e) => {
+                        if (!lastName) {
+                          const text = e.clipboardData.getData("text");
+                          const split = splitFullName(text);
+                          if (split.lastName) {
+                            e.preventDefault();
+                            setFirstName(split.firstName);
+                            setLastName(split.lastName);
+                            markFieldTouched("firstName");
+                            markFieldTouched("lastName");
+                          }
+                        }
+                      }}
                       onChange={(e) => setFirstName(e.target.value)}
                       className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${getFieldInputClass("firstName")}`}
                     />
@@ -349,15 +364,30 @@ export function Step2Identity({
                       </button>
                     </div>
 
-                    <div>
-                      <input
-                        type="text"
-                        placeholder="Street Address (Line 1)"
-                        value={line1}
-                        onBlur={() => markFieldTouched("line1")}
-                        onChange={(e) => setLine1(e.target.value)}
-                        className={`w-full h-9 px-3 rounded-lg text-xs ${getFieldInputClass("line1")}`}
-                      />
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="sm:col-span-2">
+                        <input
+                          type="text"
+                          placeholder="Street Address (Line 1)"
+                          value={line1}
+                          onBlur={() => markFieldTouched("line1")}
+                          onChange={(e) => setLine1(e.target.value)}
+                          className={`w-full h-9 px-3 rounded-lg text-xs ${getFieldInputClass("line1")}`}
+                        />
+                      </div>
+                      <div>
+                        <input
+                          type="text"
+                          placeholder="Apt, Suite (Optional)"
+                          value={line2}
+                          onChange={(e) => setLine2 && setLine2(e.target.value)}
+                          className={`w-full h-9 px-3 rounded-lg text-xs ${
+                            isLightText
+                              ? "bg-white/5 border border-white/10 text-white placeholder-white/30"
+                              : "bg-black/5 border border-black/10 text-black placeholder-black/30"
+                          }`}
+                        />
+                      </div>
                     </div>
 
                     <div className={`grid gap-2 ${hasSubdivisions ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"}`}>
@@ -398,7 +428,7 @@ export function Step2Identity({
                         placeholder={`${countryConfig.postalCodeLabel} (e.g. ${countryConfig.postalCodePlaceholder})`}
                         value={zipCode}
                         onBlur={() => markFieldTouched("zipCode")}
-                        onChange={(e) => setZipCode(e.target.value)}
+                        onChange={(e) => setZipCode(e.target.value.toUpperCase())}
                         className={`w-full h-9 px-3 rounded-lg text-xs text-left ${getFieldInputClass("zipCode")}`}
                       />
                     </div>

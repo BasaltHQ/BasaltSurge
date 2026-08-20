@@ -167,6 +167,8 @@ export interface Step2Props {
   setCountry: StateSetter<string>;
   line1: string;
   setLine1: StateSetter<string>;
+  line2?: string;
+  setLine2?: StateSetter<string>;
   city: string;
   setCity: StateSetter<string>;
   stateCode: string;

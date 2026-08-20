@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Loader2,
   Clock,
+  ExternalLink,
 } from "lucide-react";
 import { AccordionCard } from "../AccordionCard";
 import { Step4FulfillmentProps } from "../types";
@@ -150,6 +151,21 @@ export function Step4Fulfillment({
                   </span>
                 </span>
               </div>
+
+              {paymentConfirmed?.txHash && (
+                <div className="flex justify-between items-center text-xs">
+                  <span className="opacity-60">Verification:</span>
+                  <a
+                    href={`https://basescan.org/tx/${paymentConfirmed.txHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-amber-400 hover:underline inline-flex items-center gap-1 text-[11px]"
+                  >
+                    <span>BaseScan ({paymentConfirmed.txHash.slice(0, 6)}...{paymentConfirmed.txHash.slice(-4)})</span>
+                    <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+              )}
             </div>
 
             {isAchPending && (

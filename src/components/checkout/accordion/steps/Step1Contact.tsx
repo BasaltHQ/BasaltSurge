@@ -12,7 +12,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { SUPPORTED_COUNTRIES } from "../constants";
-import { formatPhoneInput } from "../utils";
+import { formatPhoneInput, suggestEmailCorrection, sanitizeInternationalPhone } from "../utils";
 import { AccordionCard } from "../AccordionCard";
 import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step1ContactProps } from "../types";
@@ -41,6 +41,8 @@ export function Step1Contact({
   onHeaderClick,
 }: Step1ContactProps) {
   const isLinkPhoneRegistration = headlessStep === "collecting_phone";
+  const emailCorrection = suggestEmailCorrection(email);
+  const countryDialCode = SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial || "+1";
 
   return (
     <AccordionCard isActive={isOpen} isLightText={isLightText}>
@@ -99,11 +101,12 @@ export function Step1Contact({
             <input
               type="email"
               required
+              autoComplete="email"
               readOnly={isEmailLocked}
               placeholder="customer@example.com"
               value={email}
               onChange={(e) => {
-                if (!isEmailLocked) setEmail(e.target.value);
+                if (!isEmailLocked) setEmail(e.target.value.trim());
               }}
               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
                 isEmailLocked
@@ -121,6 +124,19 @@ export function Step1Contact({
               </div>
             )}
           </div>
+          {emailCorrection && !isEmailLocked && (
+            <div className="mt-1.5 flex items-center gap-1.5 text-[11px] animate-in fade-in slide-in-from-top-1">
+              <span className={isLightText ? "text-white/60" : "text-black/60"}>Did you mean</span>
+              <button
+                type="button"
+                onClick={() => setEmail(emailCorrection)}
+                className="px-2 py-0.5 rounded-md font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 transition-all cursor-pointer flex items-center gap-1"
+              >
+                <span>{emailCorrection}</span>
+                <span className="text-[9px] opacity-70">↵</span>
+              </button>
+            </div>
+          )}
           {isEmailLocked && (
             <p className="text-[10px] text-emerald-400/80 flex items-center gap-1 mt-1 pl-0.5">
               <span>Account authenticated via Stripe Link / custom auth. Email is locked for this transaction.</span>
@@ -137,8 +153,15 @@ export function Step1Contact({
             </label>
             <input
               type="tel"
+              autoComplete="tel"
               placeholder="+1 (555) 000-0000"
               value={phone}
+              onPaste={(e) => {
+                e.preventDefault();
+                const pasted = e.clipboardData.getData("text");
+                const sanitized = sanitizeInternationalPhone(pasted, countryDialCode);
+                setPhone(formatPhoneInput(sanitized));
+              }}
               onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
               className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
                 isLightText

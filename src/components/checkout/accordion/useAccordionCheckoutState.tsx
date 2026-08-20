@@ -419,6 +419,36 @@ export function useAccordionCheckoutState(
     initialDob,
   ]);
 
+  // Session Storage Rehydration on mount
+  useEffect(() => {
+    if (typeof window === "undefined" || !receiptId) return;
+    try {
+      const saved = window.sessionStorage.getItem(`pp_checkout_${receiptId}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.email && !email) setEmail(parsed.email);
+        if (parsed.phone && !phone) setPhone(parsed.phone);
+        if (parsed.country && (!country || country === "US")) setCountry(parsed.country);
+        if (parsed.firstName && !firstName) setFirstName(parsed.firstName);
+        if (parsed.lastName && !lastName) setLastName(parsed.lastName);
+        if (parsed.line1 && !line1) setLine1(parsed.line1);
+        if (parsed.line2 && !line2) setLine2(parsed.line2);
+        if (parsed.city && !city) setCity(parsed.city);
+        if (parsed.stateCode && !stateCode) setStateCode(parsed.stateCode);
+        if (parsed.zipCode && !zipCode) setZipCode(parsed.zipCode);
+      }
+    } catch {}
+  }, [receiptId]);
+
+  // Session Storage Persistence on change
+  useEffect(() => {
+    if (typeof window === "undefined" || !receiptId) return;
+    try {
+      const payload = { email, phone, country, firstName, lastName, line1, line2, city, stateCode, zipCode };
+      window.sessionStorage.setItem(`pp_checkout_${receiptId}`, JSON.stringify(payload));
+    } catch {}
+  }, [receiptId, email, phone, country, firstName, lastName, line1, line2, city, stateCode, zipCode]);
+
   // Address Autocomplete handler
   const handleFetchSuggestions = async (input: string) => {
     if (!input || input.trim().length < 3) {
@@ -603,6 +633,12 @@ export function useAccordionCheckoutState(
     e.preventDefault();
     setAttemptedIdentitySubmit(true);
     setLocalError(null);
+
+    // Fallback: If user typed in address search but didn't click dropdown, preserve line1 and expand fields
+    if (!line1 && addressSearchInput && addressSearchInput.trim().length >= 3) {
+      setLine1(addressSearchInput.trim());
+      setManualEditAddress(true);
+    }
 
     if (!isIdentityComplete) {
       setLocalError(`Please complete all required fields: ${missingIdentityFields.map((f) => f.label).join(", ")}`);
@@ -827,6 +863,8 @@ export function useAccordionCheckoutState(
       setCountry,
       line1,
       setLine1,
+      line2,
+      setLine2,
       city,
       setCity,
       stateCode,

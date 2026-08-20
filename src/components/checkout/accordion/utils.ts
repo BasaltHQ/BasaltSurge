@@ -586,13 +586,13 @@ export const formatErrorMessage = (err?: string | null): string | null => {
     lower.includes("unsupported_region") ||
     lower.includes("unsupported_country")
   ) {
-    return "Instant card checkout is currently unavailable for this residential address or state (e.g., NY, HI, or US territories) due to regional crypto regulations. Please verify your address or use an alternative payment method.";
+    return "Instant card checkout is currently unavailable for this residential address or state (e.g., NY, HI, or US territories) due to regional regulations. Please verify your address or use an alternative payment method.";
   }
   if (lower.includes("card_declined") || lower.includes("do_not_honor") || lower.includes("card was declined")) {
     return "Your card was declined by your issuing bank. Please check your card balance, contact your bank, or select another payment method.";
   }
   if (lower.includes("insufficient_funds")) {
-    return "Payment failed due to insufficient funds on this card. Please try another card or bank account.";
+    return "Payment failed due to insufficient funds on this card. Please try another card or payment method.";
   }
   if (lower.includes("expired_card")) {
     return "This card has expired. Please enter an active card.";
@@ -610,13 +610,89 @@ export const formatErrorMessage = (err?: string | null): string | null => {
     return "This Link account cannot be used for this checkout. Please verify your details or use another payment method.";
   }
   if (lower.includes("wallet_ownership_verification_required") || lower.includes("travel rule")) {
-    return "EU Travel Rule requires cryptographic proof of destination wallet ownership for transactions at or above €1,000. Please sign the challenge message to proceed.";
+    return "Verification is required to confirm wallet ownership for orders at or above €1,000. Please sign the confirmation message to proceed.";
   }
   if (lower.includes("invalid_wallet_ownership_signature") || lower.includes("invalid signature")) {
-    return "The submitted signature does not prove control of this destination wallet. In test mode, use 'abcd'.";
+    return "The submitted confirmation signature is invalid. In test mode, use 'abcd'.";
   }
   if (lower.includes("wallet_ownership_challenge_expired")) {
-    return "The wallet ownership challenge has expired. A fresh challenge has been generated for you.";
+    return "The confirmation session has expired. A fresh confirmation prompt has been generated.";
   }
   return err;
 };
+
+// Popular email domain typos auto-suggest dictionary
+const POPULAR_DOMAIN_TYPOS: Record<string, string> = {
+  "gamil.com": "gmail.com",
+  "gmial.com": "gmail.com",
+  "gmaill.com": "gmail.com",
+  "gmai.com": "gmail.com",
+  "gmeil.com": "gmail.com",
+  "gmail.co": "gmail.com",
+  "gmaol.com": "gmail.com",
+  "hotmial.com": "hotmail.com",
+  "hotmai.com": "hotmail.com",
+  "hotmil.com": "hotmail.com",
+  "hotmaill.com": "hotmail.com",
+  "homail.com": "hotmail.com",
+  "outlok.com": "outlook.com",
+  "outloo.com": "outlook.com",
+  "outlk.com": "outlook.com",
+  "yaho.com": "yahoo.com",
+  "yahooo.com": "yahoo.com",
+  "yhaoo.com": "yahoo.com",
+  "yaho.co": "yahoo.com",
+  "iclod.com": "icloud.com",
+  "icoud.com": "icloud.com",
+  "protonmial.com": "protonmail.com",
+  "protonmai.com": "protonmail.com",
+};
+
+export const suggestEmailCorrection = (email: string): string | null => {
+  if (!email || !email.includes("@")) return null;
+  const cleanEmail = email.trim().toLowerCase();
+  const [localPart, domain] = cleanEmail.split("@");
+  if (!localPart || !domain) return null;
+  const suggestedDomain = POPULAR_DOMAIN_TYPOS[domain];
+  if (suggestedDomain && suggestedDomain !== domain) {
+    return `${localPart}@${suggestedDomain}`;
+  }
+  return null;
+};
+
+// Auto-clean pasted and typed international phone numbers
+export const sanitizeInternationalPhone = (rawPhone: string, defaultDialCode: string = "+1"): string => {
+  if (!rawPhone) return "";
+  // Strip non-breaking spaces and formatting characters
+  let cleaned = rawPhone.replace(/[\s\u00A0\(\)\-\.]/g, "");
+
+  // Prevent double dial code prefixes (e.g. +1+1, +44+44)
+  cleaned = cleaned.replace(/^\++/, "+");
+  const bareDial = defaultDialCode.replace("+", "");
+  const doublePrefixRegex = new RegExp(`^\\+?${bareDial}\\+?${bareDial}`);
+  if (doublePrefixRegex.test(cleaned)) {
+    cleaned = `+${bareDial}${cleaned.replace(doublePrefixRegex, "")}`;
+  }
+
+  // Remove leading local zero if phone already has country code (e.g. +44 07911 -> +447911)
+  if (cleaned.startsWith(`+${bareDial}0`)) {
+    cleaned = `+${bareDial}${cleaned.slice(bareDial.length + 2)}`;
+  }
+
+  return cleaned;
+};
+
+// Automatically split full names on paste
+export const splitFullName = (fullName: string): { firstName: string; lastName: string } => {
+  if (!fullName) return { firstName: "", lastName: "" };
+  const trimmed = fullName.trim().replace(/\s+/g, " ");
+  const parts = trimmed.split(" ");
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: "" };
+  }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(" "),
+  };
+};
+

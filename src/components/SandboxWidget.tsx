@@ -104,11 +104,15 @@ export function SandboxWidget() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const isSandboxHost = window.location.hostname.includes("sandbox.");
-    const cookies = window.document.cookie || "";
-    const isSandboxCookie = cookies.includes("pp_sandbox_mode=true");
-    
-    if (isSandboxHost || isSandboxCookie) {
+    const host = (window.location.hostname || "").toLowerCase();
+
+    const isSandboxHost =
+      host.includes("surge-sand.basalthq.com") ||
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host.endsWith(".localhost");
+
+    if (isSandboxHost) {
       setVisible(true);
       fetchInitialData();
     }
@@ -166,13 +170,10 @@ export function SandboxWidget() {
     const host = typeof window !== "undefined" ? window.location.hostname : "";
     let domainAttr = "";
     
-    if (host.includes("portalpay.ai")) {
+    if (host.includes("basalthq.com") || host.includes("surge-sand.")) {
+      domainAttr = "; domain=.basalthq.com";
+    } else if (host.includes("portalpay.ai")) {
       domainAttr = "; domain=.portalpay.ai";
-    } else if (host.includes("sandbox.")) {
-      const parts = host.split(".");
-      if (parts.length > 2) {
-        domainAttr = `; domain=.${parts.slice(-2).join(".")}`;
-      }
     }
 
     const secureAttr = isSecure ? "; Secure; SameSite=None" : "; SameSite=Lax";
