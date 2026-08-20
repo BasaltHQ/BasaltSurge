@@ -6,7 +6,7 @@ import { PortalPayAccordionCheckoutV2 } from "@/components/checkout/PortalPayAcc
 export default function SampleFormsPage() {
   const [checkoutVersion, setCheckoutVersion] = useState<"v1" | "v2">("v2");
   const [simulatedTier, setSimulatedTier] = useState<"l0" | "l1" | "l2">("l0");
-  const [simulatedStatus, setSimulatedStatus] = useState<"normal" | "step_up" | "doc_verify" | "verified" | "paid" | "processing">("normal");
+  const [simulatedStatus, setSimulatedStatus] = useState<"normal" | "step_up" | "doc_verify" | "verified">("normal");
   const [simulatedError, setSimulatedError] = useState<"none" | "address_error" | "payment_decline" | "kyc_rejection">("none");
   const [simulatedPath, setSimulatedPath] = useState<"normal" | "skip_kyc" | "step_up" | "doc_verify">("normal");
   const [activeTier, setActiveTier] = useState<"l0" | "l1">("l1");
@@ -195,8 +195,6 @@ export default function SampleFormsPage() {
                 <option value="step_up">Step-Up Required</option>
                 <option value="doc_verify">Doc Upload Required</option>
                 <option value="verified">Fully Verified (Auto-Advance)</option>
-                <option value="processing">⏳ Payment Processing (Modal Overlay)</option>
-                <option value="paid">✓ Paid & Settled (Full Lockdown Hero)</option>
               </select>
             </div>
 
@@ -253,64 +251,23 @@ export default function SampleFormsPage() {
           : "bg-white border-black/10 shadow-black/10"
       }`}>
         
-        {checkoutVersion === "v2" ? (() => {
-          const simulatedKycTiers = (
-            simulatedStatus === "paid" || simulatedStatus === "verified"
-              ? [
-                  { tier: "l0", verification_status: "verified", verification_errors: [] },
-                  { tier: "l1", verification_status: "verified", verification_errors: [] },
-                  { tier: "l2", verification_status: "not_started", verification_errors: [] },
-                ]
-              : simulatedStatus === "doc_verify" || simulatedTier === "l2"
-              ? [
-                  { tier: "l0", verification_status: "verified", verification_errors: [] },
-                  { tier: "l1", verification_status: "verified", verification_errors: [] },
-                  { tier: "l2", verification_status: "not_started", verification_errors: [] },
-                ]
-              : simulatedStatus === "step_up" || simulatedTier === "l1"
-              ? [
-                  { tier: "l0", verification_status: "verified", verification_errors: [] },
-                  { tier: "l1", verification_status: "not_started", verification_errors: [] },
-                  { tier: "l2", verification_status: "not_started", verification_errors: [] },
-                ]
-              : [
-                  { tier: "l0", verification_status: "not_started", verification_errors: [] },
-                  { tier: "l1", verification_status: "not_started", verification_errors: [] },
-                  { tier: "l2", verification_status: "not_started", verification_errors: [] },
-                ]
-          );
-
-          return (
-            <PortalPayAccordionCheckoutV2
-              theme={{ primaryColor }}
-              isLightText={isLightText}
-              email={shipEmail}
-              phone={headlessPhoneInput}
-              fullName={`${kycFirstName} ${kycLastName}`}
-              amountUsd={25.00}
-              receiptId="rec_01J6G78K9A_9481b67f3c2a_live"
-              receiptStatus={simulatedStatus === "paid" ? "paid" : undefined}
-              isPaid={simulatedStatus === "paid"}
-              receipt={{ status: simulatedStatus === "paid" ? "paid" : "pending" }}
-              kycTierRequired={simulatedTier}
-              kycLevel={
-                simulatedStatus === "paid" || simulatedStatus === "verified"
-                  ? "L1"
-                  : simulatedStatus === "doc_verify" || simulatedTier === "l2"
-                  ? "L1"
-                  : simulatedStatus === "step_up" || simulatedTier === "l1"
-                  ? "L0"
-                  : "REQUIRES_KYC"
-              }
-              kycTiers={simulatedKycTiers}
-              simulatedTier={simulatedTier}
-              simulatedStatus={simulatedStatus}
-              simulatedError={simulatedError}
-              simulatedPath={simulatedPath}
-              isAllKycCompleted={simulatedStatus === "verified" || simulatedStatus === "paid"}
-            />
-          );
-        })() : (
+        {checkoutVersion === "v2" ? (
+          <PortalPayAccordionCheckoutV2
+            theme={{ primaryColor }}
+            isLightText={isLightText}
+            email={shipEmail}
+            phone={headlessPhoneInput}
+            fullName={`${kycFirstName} ${kycLastName}`}
+            amountUsd={25.00}
+            receiptId="REC-SAMPLE-99"
+            kycTierRequired={simulatedTier}
+            simulatedTier={simulatedTier}
+            simulatedStatus={simulatedStatus}
+            simulatedError={simulatedError}
+            simulatedPath={simulatedPath}
+            isAllKycCompleted={simulatedStatus === "verified"}
+          />
+        ) : (
         
         <div className="w-full flex flex-col items-stretch justify-start animate-in zoom-in duration-300 text-left">
           {/* Payment Methods Badges Bar - Guaranteed Single Row */}

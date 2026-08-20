@@ -154,7 +154,6 @@ export async function GET(
       kycStatus: kycVerified?.status ?? "not_started",
       idDocStatus: derivedIdDocStatus,
       kycTiers: kycTiers,
-      kyc_tiers: kycTiers,
       ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
     }, {
       headers: {
