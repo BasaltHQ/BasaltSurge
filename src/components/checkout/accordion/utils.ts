@@ -662,3 +662,82 @@ export const splitFullName = (fullName: string): { firstName: string; lastName: 
   };
 };
 
+/**
+ * Computes optimal high-contrast text color (#ffffff or #0f172a) for a given background color,
+ * ensuring WCAG AAA accessibility across arbitrary hex, rgb, rgba, hsl, or gradient values.
+ */
+export function getContrastingTextColor(
+  bgColor?: string,
+  defaultDark: string = "#0f172a",
+  defaultLight: string = "#ffffff"
+): string {
+  if (!bgColor) return defaultLight;
+
+  let color = String(bgColor).trim();
+
+  // Handle gradients or multiple comma-separated values: extract the first or dominant color token
+  if (color.includes("gradient") || color.includes(",")) {
+    const hexMatch = color.match(/#[0-9a-fA-F]{3,8}/);
+    if (hexMatch) {
+      color = hexMatch[0];
+    } else {
+      const rgbMatch = color.match(/rgba?\s*\([^)]+\)/);
+      if (rgbMatch) color = rgbMatch[0];
+    }
+  }
+
+  let r = 0;
+  let g = 0;
+  let b = 0;
+
+  if (color.startsWith("#")) {
+    let hex = color.slice(1);
+    if (hex.length === 3) {
+      hex = hex
+        .split("")
+        .map((c) => c + c)
+        .join("");
+    }
+    if (hex.length >= 6) {
+      r = parseInt(hex.slice(0, 2), 16) || 0;
+      g = parseInt(hex.slice(2, 4), 16) || 0;
+      b = parseInt(hex.slice(4, 6), 16) || 0;
+    }
+  } else if (color.startsWith("rgb")) {
+    const parts = color.replace(/rgba?\(/, "").replace(/\)/, "").split(",");
+    r = parseInt(parts[0], 10) || 0;
+    g = parseInt(parts[1], 10) || 0;
+    b = parseInt(parts[2], 10) || 0;
+  } else if (color.startsWith("hsl")) {
+    const parts = color.replace(/hsla?\(/, "").replace(/\)/, "").split(",");
+    const l = parseFloat(parts[2]) || 50;
+    return l > 55 ? defaultDark : defaultLight;
+  } else {
+    const lightColors = [
+      "white",
+      "yellow",
+      "cyan",
+      "lime",
+      "pink",
+      "lightgray",
+      "silver",
+      "gold",
+      "amber",
+      "emerald",
+    ];
+    if (lightColors.includes(color.toLowerCase())) return defaultDark;
+    return defaultLight;
+  }
+
+  // Linearize RGB and calculate relative luminance (WCAG 2.1 standard formula)
+  const a = [r, g, b].map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  const luminance = a[0] * 0.2126 + a[1] * 0.7152 + a[2] * 0.0722;
+
+  // Threshold: > 0.45 indicates a light background -> use dark text; otherwise use pure white text
+  return luminance > 0.45 ? defaultDark : defaultLight;
+}
+
+

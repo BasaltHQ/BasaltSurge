@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { AccordionCard } from "../AccordionCard";
 import { Step4FulfillmentProps } from "../types";
+import { getContrastingTextColor } from "../utils";
 
 export function Step4Fulfillment({
   isOpen,
@@ -29,6 +30,7 @@ export function Step4Fulfillment({
   paymentConfirmed,
   onEmailReceipt,
 }: Step4FulfillmentProps) {
+  const buttonTextColor = getContrastingTextColor(primaryColor);
   const isAchPending =
     detectedCardFunding === "us_bank_account" ||
     paymentConfirmed?.funding === "us_bank_account" ||
@@ -199,10 +201,10 @@ export function Step4Fulfillment({
                 <button
                   type="button"
                   onClick={onEmailReceipt}
-                  className="flex-1 py-2.5 rounded-xl text-xs font-bold shadow-lg transition active:scale-95 text-white flex items-center justify-center gap-1.5 cursor-pointer"
-                  style={{ backgroundColor: primaryColor }}
+                  className="flex-1 py-2.5 rounded-xl text-xs font-bold shadow-lg transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                  style={{ backgroundColor: primaryColor, color: buttonTextColor }}
                 >
-                  <span>Email Receipt</span>
+                  <span style={{ color: buttonTextColor }}>Email Receipt</span>
                 </button>
               )}
             </div>

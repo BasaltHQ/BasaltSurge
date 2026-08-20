@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { WalletOwnershipVerificationPanelProps } from "./types";
+import { getContrastingTextColor } from "./utils";
 
 export function WalletOwnershipVerificationPanel({
   challenge,
@@ -28,6 +29,7 @@ export function WalletOwnershipVerificationPanel({
   const [copied, setCopied] = useState(false);
   const [signingWithWallet, setSigningWithWallet] = useState(false);
   const [walletSignError, setWalletSignError] = useState<string | null>(null);
+  const buttonTextColor = getContrastingTextColor(primaryColor);
 
   const handleCopyChallenge = () => {
     if (!challenge.message) return;
@@ -273,18 +275,18 @@ export function WalletOwnershipVerificationPanel({
           type="button"
           onClick={onSubmit}
           disabled={loading || !sig.trim()}
-          className="w-full sm:flex-1 py-2.5 rounded-xl text-xs font-bold shadow-lg transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-white hover:scale-[1.01] active:scale-[0.99]"
-          style={{ backgroundColor: primaryColor }}
+          className="w-full sm:flex-1 py-2.5 rounded-xl text-xs font-bold shadow-lg transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.01] active:scale-[0.99]"
+          style={{ backgroundColor: primaryColor, color: buttonTextColor }}
         >
           {loading ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin text-white" />
-              <span>Verifying Authorization...</span>
+              <Loader2 className="w-4 h-4 animate-spin" style={{ color: buttonTextColor }} />
+              <span style={{ color: buttonTextColor }}>Verifying Authorization...</span>
             </>
           ) : (
             <>
-              <KeyRound className="w-3.5 h-3.5 text-white" />
-              <span>Confirm & Continue</span>
+              <KeyRound className="w-3.5 h-3.5" style={{ color: buttonTextColor }} />
+              <span style={{ color: buttonTextColor }}>Confirm & Continue</span>
             </>
           )}
         </button>

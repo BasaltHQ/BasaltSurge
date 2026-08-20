@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   AlertTriangle,
 } from "lucide-react";
+import { getContrastingTextColor } from "../utils";
 
 export interface SimulatedStripePaymentElementProps {
   amountUsd?: number;
@@ -35,6 +36,7 @@ export function SimulatedStripePaymentElement({
   onSuccess,
   onError,
 }: SimulatedStripePaymentElementProps) {
+  const buttonTextColor = getContrastingTextColor(primaryColor);
   const [paymentTab, setPaymentTab] = useState<"card" | "wallet" | "bank">("card");
   const [cardNumber, setCardNumber] = useState("4242 4242 4242 4242");
   const [expiry, setExpiry] = useState("12/28");
@@ -356,18 +358,18 @@ export function SimulatedStripePaymentElement({
           <button
             type="submit"
             disabled={isProcessing || !cardNumber || !expiry || !cvc || !zip}
-            className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg mt-3 text-white cursor-pointer hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{ backgroundColor: primaryColor }}
+            className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg mt-3 cursor-pointer hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ backgroundColor: primaryColor, color: buttonTextColor }}
           >
             {isProcessing ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Authorizing ${amountUsd.toFixed(2)} with Stripe...</span>
+                <Loader2 className="w-4 h-4 animate-spin" style={{ color: buttonTextColor }} />
+                <span style={{ color: buttonTextColor }}>Authorizing ${amountUsd.toFixed(2)} with Stripe...</span>
               </>
             ) : (
               <>
-                <Lock className="w-3.5 h-3.5" />
-                <span>Pay ${amountUsd.toFixed(2)} USD</span>
+                <Lock className="w-3.5 h-3.5" style={{ color: buttonTextColor }} />
+                <span style={{ color: buttonTextColor }}>Pay ${amountUsd.toFixed(2)} USD</span>
               </>
             )}
           </button>

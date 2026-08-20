@@ -12,7 +12,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { SUPPORTED_COUNTRIES } from "../constants";
-import { formatPhoneInput, suggestEmailCorrection, sanitizeInternationalPhone } from "../utils";
+import { formatPhoneInput, suggestEmailCorrection, sanitizeInternationalPhone, getContrastingTextColor } from "../utils";
 import { AccordionCard } from "../AccordionCard";
 import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step1ContactProps } from "../types";
@@ -42,6 +42,8 @@ export function Step1Contact({
   onSubmit,
   onHeaderClick,
 }: Step1ContactProps) {
+  const [emailSuggestion, setEmailSuggestion] = React.useState<string | null>(null);
+  const buttonTextColor = getContrastingTextColor(primaryColor);
   const isLinkPhoneRegistration = headlessStep === "collecting_phone";
   const emailCorrection = suggestEmailCorrection(email);
   const countryDialCode = SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial || "+1";
@@ -257,16 +259,16 @@ export function Step1Contact({
               (isLinkPhoneRegistration && (!phone || phone.trim().length < 7))
             }
             className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{ backgroundColor: primaryColor, color: "#fff" }}
+            style={{ backgroundColor: primaryColor, color: buttonTextColor }}
           >
             {isSubmittingContact ? (
               <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span>Checking Link Account...</span>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: buttonTextColor }} />
+                <span style={{ color: buttonTextColor }}>Checking Link Account...</span>
               </>
             ) : (
               <>
-                <span>
+                <span style={{ color: buttonTextColor }}>
                   {isLinkPhoneRegistration
                     ? "Register & Continue"
                     : isStep2Satisfied
@@ -275,7 +277,7 @@ export function Step1Contact({
                     ? "Continue to Next Step"
                     : "Continue to Verification"}
                 </span>
-                <ArrowRight className="w-3.5 h-3.5" />
+                <ArrowRight className="w-3.5 h-3.5" style={{ color: buttonTextColor }} />
               </>
             )}
           </button>

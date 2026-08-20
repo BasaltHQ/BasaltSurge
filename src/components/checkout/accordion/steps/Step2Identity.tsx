@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { SUPPORTED_COUNTRIES } from "../constants";
 import { getSubdivisionsForCountry } from "../subdivisions";
-import { formatSSN, getCountryAddressConfig, splitFullName } from "../utils";
+import { formatSSN, getCountryAddressConfig, splitFullName, getContrastingTextColor } from "../utils";
 import { DobPicker } from "../DobPicker";
 import { AccordionCard } from "../AccordionCard";
 import { AccordionStepHeader } from "../AccordionStepHeader";
@@ -90,6 +90,7 @@ export function Step2Identity({
   const hasSubdivisions = subdivisions.length > 0;
   const isUS = countryConfig.isUS;
   const ssnDigits = (ssn || "").replace(/\D/g, "");
+  const buttonTextColor = getContrastingTextColor(primaryColor);
 
   const isFieldValid = (field: string): boolean => {
     switch (field) {
@@ -209,14 +210,38 @@ export function Step2Identity({
               )}
             </div>
 
+            {/* Error Notice on Verified Card if any */}
+            {activeError && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 animate-in fade-in text-left">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                <div className="space-y-0.5">
+                  <span className="font-bold text-amber-200">Verification Notice:</span>
+                  <p className="text-[11px] leading-relaxed text-amber-300/90">{activeError}</p>
+                </div>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={onContinueToStep3}
-              className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
-              style={{ backgroundColor: primaryColor, color: "#fff" }}
+              disabled={isSubmittingIdentity}
+              className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              style={{
+                backgroundColor: primaryColor,
+                color: buttonTextColor,
+              }}
             >
-              <span>Continue to Payment Method</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              {isSubmittingIdentity ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: buttonTextColor }} />
+                  <span style={{ color: buttonTextColor }}>Verifying & Loading Payment...</span>
+                </>
+              ) : (
+                <>
+                  <span style={{ color: buttonTextColor }}>Continue to Payment Method</span>
+                  <ArrowRight className="w-3.5 h-3.5" style={{ color: buttonTextColor }} />
+                </>
+              )}
             </button>
           </div>
         ) : (
@@ -522,17 +547,20 @@ export function Step2Identity({
               type="submit"
               disabled={isSubmittingIdentity}
               className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mt-2"
-              style={{ backgroundColor: primaryColor, color: "#fff" }}
+              style={{
+                backgroundColor: primaryColor,
+                color: buttonTextColor,
+              }}
             >
               {isSubmittingIdentity ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Verifying Identity with Stripe...</span>
+                  <Loader2 className="w-4 h-4 animate-spin" style={{ color: buttonTextColor }} />
+                  <span style={{ color: buttonTextColor }}>Verifying Identity with Stripe...</span>
                 </>
               ) : (
                 <>
-                  <span>Save & Continue to Payment</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  <span style={{ color: buttonTextColor }}>Save & Continue to Payment</span>
+                  <ArrowRight className="w-3.5 h-3.5" style={{ color: buttonTextColor }} />
                 </>
               )}
             </button>

@@ -111,10 +111,13 @@ export function useStepProgressionGuard({
       parsed?.isKycRequirement ||
       (parsed?.isAmountLimit && (!kyc.isL1Verified || !kyc.isL2Verified));
 
+    const isPaymentReady = Boolean(propPaymentElement) || headlessStep === "collecting_payment";
+    const isKycIncomplete = !isStep2Satisfied && !kyc.isL0Verified && !isPaymentReady;
+
     const needsKycStep =
-      headlessStep === "collecting_kyc" ||
-      headlessStep === "verifying_identity" ||
-      showStepUpForm ||
+      (headlessStep === "collecting_kyc" && isKycIncomplete) ||
+      (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
+      (showStepUpForm && !kyc.isL1Verified) ||
       (isL2Requirement && !kyc.isL2Verified) ||
       isKycError;
 
@@ -129,7 +132,10 @@ export function useStepProgressionGuard({
   }, [
     headlessStep,
     showStepUpForm,
+    showVerifyDocs,
     isL2Requirement,
+    isStep2Satisfied,
+    propPaymentElement,
     kyc,
     activeError,
     effectiveError,
@@ -143,18 +149,21 @@ export function useStepProgressionGuard({
   useEffect(() => {
     if (isPaid || isOrderConfirmed) return;
 
+    const isPaymentReady = Boolean(propPaymentElement) || headlessStep === "collecting_payment";
+    const isKycIncomplete = !isStep2Satisfied && !kyc.isL0Verified && !isPaymentReady;
+
     // Case A: Stripe Onramp is collecting payment, awaiting funds, or paymentElement is ready
     if (
       headlessStep === "collecting_payment" ||
       headlessStep === "awaiting_funds" ||
       Boolean(propPaymentElement)
     ) {
-      if (isStep2Satisfied) {
-        if (activeStep < 3) {
-          logTransition(activeStep, 3, "Payment Element Ready & KYC Satisfied");
-          setActiveStep(3);
-        }
-      } else if (showStepUpForm || showVerifyDocs || isL2Requirement || headlessStep === "collecting_kyc" || headlessStep === "verifying_identity") {
+      if (
+        showStepUpForm ||
+        showVerifyDocs ||
+        (isL2Requirement && !kyc.isL2Verified) ||
+        (headlessStep === "verifying_identity" && !kyc.isL2Verified)
+      ) {
         if (activeStep !== 2) {
           logTransition(activeStep, 2, "Payment Ready but KYC Step-Up Required");
           setActiveStep(2);
@@ -168,8 +177,8 @@ export function useStepProgressionGuard({
 
     // Case B: Explicit KYC or Document Verification step from Onramp
     if (
-      headlessStep === "collecting_kyc" ||
-      headlessStep === "verifying_identity"
+      (headlessStep === "collecting_kyc" && isKycIncomplete) ||
+      (headlessStep === "verifying_identity" && !kyc.isL2Verified)
     ) {
       if (activeStep !== 2) {
         logTransition(activeStep, 2, `Onramp Step: ${headlessStep}`);

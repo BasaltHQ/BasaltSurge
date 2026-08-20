@@ -490,9 +490,38 @@ export function useAccordionCheckoutState(
     setIsAddressParsed(true);
   };
 
+  // Missing fields list for Step 2
+  const missingIdentityFields: { key: string; label: string }[] = [];
+  if (showStepUpForm) {
+    if (!fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
+    if (isUS && !fieldValidation.ssn) {
+      missingIdentityFields.push({
+        key: "ssn",
+        label: ssnDigits.length > 0 ? `SSN (${9 - ssnDigits.length} digits left)` : "9-Digit SSN",
+      });
+    }
+    if (manualEditAddress) {
+      if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
+      if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
+      if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
+      if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: countryConfig.cityLabel });
+      if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
+      if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
+    }
+  } else if (showFullForm) {
+    if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
+    if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
+    if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
+    if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: countryConfig.cityLabel });
+    if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
+    if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
+  }
+
+  const isIdentityComplete = missingIdentityFields.length === 0;
+
   // Step 2 satisfaction check: KYC / Demographics are verified and no further step-up / doc verification is required
   const isStep2Satisfied = Boolean(
-    (isL0Approved || isAllKycCompleted || effectiveStatus === "verified") &&
+    (isIdentityComplete || isL0Approved || isAllKycCompleted || effectiveStatus === "verified") &&
     !showStepUpForm &&
     !showVerifyDocs
   );
@@ -519,8 +548,10 @@ export function useAccordionCheckoutState(
   });
 
   // Step 1 Submit
-  const handleContactSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleContactSubmit = async (e?: React.FormEvent) => {
+    if (e && typeof e.preventDefault === "function") {
+      e.preventDefault();
+    }
     if (!email) return;
 
     // If email is already locked/authorized or OTP verified, proceed to appropriate step without re-authenticating
@@ -588,38 +619,11 @@ export function useAccordionCheckoutState(
     }
   };
 
-  // Missing fields list for Step 2
-  const missingIdentityFields: { key: string; label: string }[] = [];
-  if (showStepUpForm) {
-    if (!fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
-    if (isUS && !fieldValidation.ssn) {
-      missingIdentityFields.push({
-        key: "ssn",
-        label: ssnDigits.length > 0 ? `SSN (${9 - ssnDigits.length} digits left)` : "9-Digit SSN",
-      });
-    }
-    if (manualEditAddress) {
-      if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
-      if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
-      if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
-      if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: countryConfig.cityLabel });
-      if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
-      if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
-    }
-  } else if (showFullForm) {
-    if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
-    if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
-    if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
-    if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: countryConfig.cityLabel });
-    if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
-    if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
-  }
-
-  const isIdentityComplete = missingIdentityFields.length === 0;
-
   // Step 2 Submit
-  const handleIdentitySubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleIdentitySubmit = async (e?: React.FormEvent) => {
+    if (e && typeof e.preventDefault === "function") {
+      e.preventDefault();
+    }
     setAttemptedIdentitySubmit(true);
     setLocalError(null);
 
@@ -889,7 +893,7 @@ export function useAccordionCheckoutState(
       onSelectSuggestion: handleSelectSuggestion,
       onSubmit: handleIdentitySubmit,
       onHeaderClick: () => handleStepChange(2),
-      onContinueToStep3: () => handleStepChange(3),
+      onContinueToStep3: () => handleIdentitySubmit(),
     },
     // Step 3 Props Bundle
     step3Props: {
