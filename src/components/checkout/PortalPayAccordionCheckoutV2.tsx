@@ -666,8 +666,8 @@ export function PortalPayAccordionCheckoutV2({
     if (lower.includes("amount_below_minimum")) {
       return "This order is below the minimum supported purchase limit.";
     }
-    if (lower.includes("unsupportable_customer") || lower.includes("unsupported link account")) {
-      return "This Link account cannot be used for this checkout. Please verify your details or use another payment method.";
+    if (lower.includes("not authenticated") || lower.includes("user is not authenticated")) {
+      return "Please enter your 6-digit Link security code on Step 1 to complete verification.";
     }
     return err;
   };
@@ -1143,9 +1143,7 @@ export function PortalPayAccordionCheckoutV2({
       headlessStep === "authenticating" ||
       headlessStep === "collecting_phone"
     ) {
-      setIsSubmittingContact(false);
-      // Only set activeStep to 1 if we are still at initial step (activeStep <= 1). Do NOT pull back from Step 2, 3, or 4!
-      if (activeStep <= 1 && (authElement || headlessStep === "collecting_phone" || headlessStep === "authenticating")) {
+      if (authElement || headlessStep === "collecting_phone" || headlessStep === "authenticating") {
         setActiveStep(1);
       }
     } else if (
@@ -1296,13 +1294,6 @@ export function PortalPayAccordionCheckoutV2({
             setLocalError(err?.message || "Failed to submit contact information.");
             setIsSubmittingContact(false);
           });
-        }
-        if (!authElement) {
-          if (isAllKycCompleted || effectiveStatus === "verified") {
-            setActiveStep(3);
-          } else {
-            setActiveStep(2);
-          }
         }
         // Release the button spinner after a safety buffer if headlessStep hasn't transitioned yet
         setTimeout(() => {

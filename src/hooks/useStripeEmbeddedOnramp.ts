@@ -3857,6 +3857,7 @@ export function useStripeEmbeddedOnramp({
                                                 paymentErrMsg.includes("aborted") || 
                                                 paymentErrMsg.includes("already") || 
                                                 paymentErrMsg.includes("destroyed") ||
+                                                paymentErrMsg.includes("not authenticated") ||
                                                 paymentErrMsg.includes("collection failed");
 
           if (isCardDecline || isStaleCoordinatorOrMessenger) {
