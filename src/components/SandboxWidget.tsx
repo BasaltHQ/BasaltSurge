@@ -21,7 +21,9 @@ import {
   Zap,
   KeyRound,
   Maximize2,
-  Minimize2
+  Minimize2,
+  CheckCircle2,
+  Play
 } from "lucide-react";
 
 export function SandboxWidget() {
@@ -192,7 +194,7 @@ export function SandboxWidget() {
     window.document.cookie = `${name}=${val}; path=/${domainAttr}; max-age=31536000${secureAttr}`;
   };
 
-  const applyPreset = (preset: "fast_pass" | "link_otp" | "l1_stepup" | "l2_identity" | "card_decline" | "ach_bank" | "eu_travel_rule") => {
+  const applyPreset = (preset: "fast_pass" | "link_otp" | "l1_stepup" | "l2_identity" | "card_decline" | "ach_bank" | "eu_travel_rule" | "insufficient_funds" | "kyc_rejection" | "address_error") => {
     setSimEnabled(true);
     updateCookie("pp_sandbox_sim_enabled", "true");
 
@@ -258,6 +260,33 @@ export function SandboxWidget() {
       updateCookie("pp_sandbox_sim_tier", "l2");
       updateCookie("pp_sandbox_sim_status", "wallet_challenge");
       updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "card");
+    } else if (preset === "insufficient_funds") {
+      setSimTier("l0");
+      setSimStatus("verified");
+      setSimError("insufficient_funds");
+      setSimPaymentMethod("card");
+      updateCookie("pp_sandbox_sim_tier", "l0");
+      updateCookie("pp_sandbox_sim_status", "verified");
+      updateCookie("pp_sandbox_sim_error", "insufficient_funds");
+      updateCookie("pp_sandbox_sim_pm", "card");
+    } else if (preset === "kyc_rejection") {
+      setSimTier("l2");
+      setSimStatus("doc_verify");
+      setSimError("kyc_rejection");
+      setSimPaymentMethod("card");
+      updateCookie("pp_sandbox_sim_tier", "l2");
+      updateCookie("pp_sandbox_sim_status", "doc_verify");
+      updateCookie("pp_sandbox_sim_error", "kyc_rejection");
+      updateCookie("pp_sandbox_sim_pm", "card");
+    } else if (preset === "address_error") {
+      setSimTier("l0");
+      setSimStatus("normal");
+      setSimError("address_error");
+      setSimPaymentMethod("card");
+      updateCookie("pp_sandbox_sim_tier", "l0");
+      updateCookie("pp_sandbox_sim_status", "normal");
+      updateCookie("pp_sandbox_sim_error", "address_error");
       updateCookie("pp_sandbox_sim_pm", "card");
     }
 
@@ -334,7 +363,7 @@ export function SandboxWidget() {
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[9999] font-sans antialiased flex flex-col items-end">
+    <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[10005] font-sans antialiased flex flex-col items-end pointer-events-none">
       <style>{`
         .sandbox-custom-scrollbar {
           scrollbar-width: thin;
@@ -361,7 +390,7 @@ export function SandboxWidget() {
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="group relative flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 text-black shadow-2xl hover:scale-105 transition-all duration-300 ring-2 ring-amber-400/50 hover:ring-amber-300 cursor-pointer"
+          className="pointer-events-auto group relative flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 text-black shadow-2xl hover:scale-105 transition-all duration-300 ring-2 ring-amber-400/50 hover:ring-amber-300 cursor-pointer"
           title="Sandbox Quick Controls"
         >
           <Sliders className="w-6 h-6 animate-pulse" />
@@ -374,32 +403,36 @@ export function SandboxWidget() {
       {/* Expanded Sandbox Panel */}
       {isOpen && (
         <div 
-          className={`flex flex-col rounded-3xl border border-white/15 bg-black/95 backdrop-blur-2xl shadow-2xl transition-all duration-200 text-left overflow-hidden ${
+          className={`pointer-events-auto flex flex-col rounded-3xl border border-white/15 bg-black/95 backdrop-blur-2xl shadow-2xl transition-all duration-200 text-left overflow-hidden ${
             widgetSize === "compact"
               ? "w-[360px]"
               : widgetSize === "medium"
-              ? "w-[460px]"
+              ? "w-[480px]"
               : widgetSize === "large"
-              ? "w-[680px]"
-              : "w-[min(940px,calc(100vw-2rem))]"
+              ? "w-[720px]"
+              : "w-[min(960px,calc(100vw-2rem))]"
           } ${
             widgetSize === "full"
-              ? "h-[calc(100dvh-2.5rem)]"
-              : "max-h-[calc(100dvh-2.5rem)]"
+              ? "h-[calc(100dvh-6.5rem)]"
+              : "max-h-[calc(100dvh-6.5rem)]"
           } max-w-[calc(100vw-2rem)]`}
         >
-          {/* Header - Fixed & Sticky */}
-          <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/10 bg-zinc-950/80 backdrop-blur-md">
+          {/* Header - Fixed & Sticky, Safe from Top Navbar */}
+          <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-white/10 bg-zinc-950/90 backdrop-blur-md">
             <div className="flex items-center gap-2 text-amber-400">
-              <Sparkles className="w-4 h-4" />
-              <span className="text-xs font-bold uppercase tracking-wider">Sandbox Engine Overrides</span>
-              <span className="px-1.5 py-0.2 rounded text-[8px] font-extrabold uppercase bg-amber-500/20 border border-amber-500/30 text-amber-300">
-                {simEnabled ? "SIM" : "SAND"}
+              <Sparkles className="w-4 h-4 shrink-0" />
+              <span className="text-xs font-bold uppercase tracking-wider truncate">Sandbox Engine Overrides</span>
+              <span className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase border ${
+                simEnabled
+                  ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                  : "bg-white/5 border-white/10 text-zinc-400"
+              }`}>
+                {simEnabled ? "SIM ⚡" : "LIVE"}
               </span>
             </div>
             
             {/* Header Controls: Size Switcher + Maximize + Close */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 shrink-0">
               <div className="flex items-center bg-zinc-900 border border-white/10 rounded-lg p-0.5">
                 {(["compact", "medium", "large"] as const).map((s) => (
                   <button
@@ -426,7 +459,7 @@ export function SandboxWidget() {
                     ? "text-amber-400 bg-amber-500/15"
                     : "text-zinc-400 hover:text-white hover:bg-white/10"
                 }`}
-                title={widgetSize === "full" ? "Restore default size" : "Maximize widget"}
+                title={widgetSize === "full" ? "Restore standard size" : "Maximize widget"}
               >
                 {widgetSize === "full" ? (
                   <Minimize2 className="w-3.5 h-3.5" />
@@ -446,165 +479,216 @@ export function SandboxWidget() {
           </div>
 
           {/* Controls Body - Dedicated Scroll Area with Multi-column support */}
-          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4.5 sandbox-custom-scrollbar">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sandbox-custom-scrollbar">
             <div className={widgetSize === "large" || widgetSize === "full" ? "grid grid-cols-1 md:grid-cols-2 gap-4 items-start" : "space-y-4"}>
               
-              {/* Column 1: Simulation Suite */}
+              {/* Column 1: Stripe & Link Accordion Simulation Suite */}
               <div className="space-y-4">
                 {hideExtraSandboxControls && (
-                  <div className="p-3 rounded-xl border border-amber-500/25 bg-amber-500/5 text-amber-400 text-[10px] flex items-start gap-2 leading-relaxed">
+                  <div className="p-2.5 rounded-xl border border-amber-500/25 bg-amber-500/5 text-amber-400 text-[10px] flex items-start gap-2 leading-relaxed">
                     <Lock className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span>To simulate custom merchant themes, test split strategies, or view system diagnostics, please connect your wallet first.</span>
+                    <span>Connect your wallet to simulate merchant partition targets or view split diagnostics.</span>
                   </div>
                 )}
 
-                {/* ─── SECTION 1: STRIPE & LINK SIMULATION SUITE ─── */}
-                <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/25 space-y-3">
-                  <div className="flex items-center justify-between">
+                {/* ─── STRIPE & LINK SIMULATION SUITE ─── */}
+                <div className="p-3.5 rounded-2xl bg-amber-500/5 border border-amber-500/30 space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-amber-500/15">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400">
-                      <Zap className="w-3.5 h-3.5" />
-                      <span>Stripe & Link Embed Simulations</span>
+                      <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Stripe Accordion Simulations</span>
                     </div>
                     <button
                       type="button"
                       onClick={() => setSimEnabled(!simEnabled)}
-                      className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase transition cursor-pointer ${
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase transition cursor-pointer flex items-center gap-1 ${
                         simEnabled
                           ? "bg-amber-500 text-black shadow-md"
-                          : "bg-white/10 text-zinc-400 hover:text-white"
+                          : "bg-white/10 text-zinc-300 hover:text-white hover:bg-white/20"
                       }`}
                     >
+                      <span className={`w-1.5 h-1.5 rounded-full ${simEnabled ? "bg-black" : "bg-zinc-500"}`} />
                       {simEnabled ? "Active" : "Disabled"}
                     </button>
                   </div>
 
-                  {simEnabled && (
-                    <div className="space-y-3 pt-1 border-t border-amber-500/15 animate-in fade-in">
-                      {/* One-Click Quick Presets */}
-                      <div className="space-y-1.5">
-                        <label className="text-[9.5px] font-bold text-zinc-300 uppercase tracking-wider block">
-                          Quick Flow Presets:
-                        </label>
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => applyPreset("fast_pass")}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                          >
-                            <Zap className="w-3 h-3 text-amber-400 shrink-0" />
-                            <span>⚡ Fast Checkout</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => applyPreset("link_otp")}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                          >
-                            <Smartphone className="w-3 h-3 text-emerald-400 shrink-0" />
-                            <span>📲 Link 6-Digit OTP</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => applyPreset("l1_stepup")}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                          >
-                            <ShieldCheck className="w-3 h-3 text-sky-400 shrink-0" />
-                            <span>🛡️ L1 SSN + DOB</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => applyPreset("l2_identity")}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                          >
-                            <Camera className="w-3 h-3 text-purple-400 shrink-0" />
-                            <span>📸 L2 ID Scan</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => applyPreset("card_decline")}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                          >
-                            <XCircle className="w-3 h-3 text-rose-400 shrink-0" />
-                            <span>❌ Card Decline</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => applyPreset("ach_bank")}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                          >
-                            <CreditCard className="w-3 h-3 text-emerald-400 shrink-0" />
-                            <span>🏦 ACH Pending</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => applyPreset("eu_travel_rule")}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-amber-500/30 text-[10px] font-semibold text-amber-300 flex items-center gap-1.5 transition text-left cursor-pointer col-span-2"
-                          >
-                            <KeyRound className="w-3 h-3 text-amber-400 shrink-0" />
-                            <span>🇪🇺 EU Travel Rule (≥€1,000 Challenge)</span>
-                          </button>
+                  {/* 1-Click Simulation Presets (Always Available) */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold text-zinc-300 uppercase tracking-wider">
+                        1-Click Checkout Presets:
+                      </label>
+                      <span className="text-[8.5px] text-amber-400/80 font-mono">
+                        Instant apply & reload
+                      </span>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("fast_pass")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-amber-500/15 border border-white/10 hover:border-amber-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 1 & 2: Pre-verified customer, instant 1-click pass"
+                      >
+                        <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">⚡ Fast Pass</div>
+                          <div className="text-[8px] text-zinc-400">Pre-Verified Instant</div>
                         </div>
-                      </div>
+                      </button>
 
-                      {/* Target KYC Tier */}
-                      <div className="space-y-1">
-                        <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">
-                          Target KYC Tier:
-                        </label>
-                        <div className="grid grid-cols-3 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
-                          {(["l0", "l1", "l2"] as const).map((t) => (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={() => setSimTier(t)}
-                              className={`py-1 text-[10px] font-bold uppercase rounded transition cursor-pointer ${
-                                simTier === t ? "bg-amber-500 text-black shadow" : "text-zinc-400 hover:text-white"
-                              }`}
-                            >
-                              {t.toUpperCase()}
-                            </button>
-                          ))}
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("link_otp")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-emerald-500/15 border border-white/10 hover:border-emerald-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 1: Prompt 6-digit Link SMS OTP authentication"
+                      >
+                        <Smartphone className="w-3.5 h-3.5 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">📲 Link OTP</div>
+                          <div className="text-[8px] text-zinc-400">6-Digit SMS Code</div>
                         </div>
-                      </div>
+                      </button>
 
-                      {/* Flow Mode / Link Status */}
-                      <div className="space-y-1">
-                        <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">
-                          Link / Verification Flow:
-                        </label>
-                        <select
-                          value={simStatus}
-                          onChange={(e) => setSimStatus(e.target.value as any)}
-                          className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-white/10 text-white font-semibold focus:outline-none focus:border-amber-400"
-                        >
-                          <option value="normal">Normal Step-by-Step</option>
-                          <option value="otp">Prompt 6-Digit Link OTP</option>
-                          <option value="step_up">Prompt L1 Step-Up (DOB+SSN)</option>
-                          <option value="doc_verify">Prompt L2 Document & Selfie</option>
-                          <option value="wallet_challenge">EU Travel Rule Wallet Challenge</option>
-                          <option value="verified">Pre-Verified (Instant Pass)</option>
-                        </select>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("l1_stepup")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-sky-500/15 border border-white/10 hover:border-sky-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 2: Prompt L1 KYC collection (DOB Picker + Last 4 SSN)"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-sky-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">🛡️ L1 Step-Up</div>
+                          <div className="text-[8px] text-zinc-400">DOB + Last 4 SSN</div>
+                        </div>
+                      </button>
 
-                      {/* Injected Error Scenario */}
-                      <div className="space-y-1">
-                        <label className="text-[9.5px] font-semibold text-amber-400 uppercase tracking-wider block">
-                          Injected Error Scenario:
-                        </label>
-                        <select
-                          value={simError}
-                          onChange={(e) => setSimError(e.target.value as any)}
-                          className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-amber-500/40 text-amber-300 font-semibold focus:outline-none focus:border-amber-400"
-                        >
-                          <option value="none">✓ None (Success Path)</option>
-                          <option value="address_error">⚠️ Address Restriction (NY/HI)</option>
-                          <option value="payment_decline">❌ Card Authorization Declined</option>
-                          <option value="insufficient_funds">⚠ Card Insufficient Funds</option>
-                          <option value="kyc_rejection">🚫 Stripe Identity Rejection</option>
-                          <option value="invalid_signature">🔑 Invalid Wallet Signature</option>
-                        </select>
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("l2_identity")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-purple-500/15 border border-white/10 hover:border-purple-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 2: Prompt L2 Stripe Identity document & selfie verification"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-purple-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">📸 L2 ID Scan</div>
+                          <div className="text-[8px] text-zinc-400">Doc & Selfie Upload</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("card_decline")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-rose-500/15 border border-white/10 hover:border-rose-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 3: Simulate card authorization decline failure"
+                      >
+                        <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">❌ Card Decline</div>
+                          <div className="text-[8px] text-zinc-400">Auth Failed / Error</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("ach_bank")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-emerald-500/15 border border-white/10 hover:border-emerald-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 3: Simulate ACH Direct Debit bank settlement flow"
+                      >
+                        <CreditCard className="w-3.5 h-3.5 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">🏦 ACH Direct</div>
+                          <div className="text-[8px] text-zinc-400">Bank Transfer Flow</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("eu_travel_rule")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-amber-500/15 border border-amber-500/30 text-[10px] font-semibold text-amber-300 flex items-center gap-2 transition text-left cursor-pointer col-span-2 group"
+                        title="Step 4: Prompt cryptographic wallet ownership challenge signature for orders ≥€1,000"
+                      >
+                        <KeyRound className="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div className="flex-1">
+                          <div className="font-bold text-amber-300 leading-tight">🇪🇺 EU Travel Rule (≥€1,000 Challenge)</div>
+                          <div className="text-[8.5px] text-zinc-400">Simulate wallet signature ownership verification</div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Granular Accordion Simulation Controls */}
+                  <div className="pt-2 border-t border-amber-500/15 space-y-2.5">
+                    {/* Target KYC Tier */}
+                    <div className="space-y-1">
+                      <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                        Accordion KYC Tier:
+                      </label>
+                      <div className="grid grid-cols-3 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
+                        {(["l0", "l1", "l2"] as const).map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => {
+                              setSimEnabled(true);
+                              setSimTier(t);
+                            }}
+                            className={`py-1 text-[10px] font-bold uppercase rounded transition cursor-pointer ${
+                              simTier === t && simEnabled
+                                ? "bg-amber-500 text-black shadow font-black"
+                                : "text-zinc-400 hover:text-white"
+                            }`}
+                          >
+                            {t.toUpperCase()} {t === "l0" ? "(Base)" : t === "l1" ? "(SSN)" : "(ID)"}
+                          </button>
+                        ))}
                       </div>
                     </div>
-                  )}
+
+                    {/* Flow Mode / Link Status */}
+                    <div className="space-y-1">
+                      <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                        Step Challenge Flow:
+                      </label>
+                      <select
+                        value={simStatus}
+                        onChange={(e) => {
+                          setSimEnabled(true);
+                          setSimStatus(e.target.value as any);
+                        }}
+                        className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-white/10 text-white font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
+                      >
+                        <option value="normal">Normal Step-by-Step</option>
+                        <option value="otp">Prompt 6-Digit Link OTP</option>
+                        <option value="step_up">Prompt L1 Step-Up (DOB + SSN)</option>
+                        <option value="doc_verify">Prompt L2 Document & Selfie</option>
+                        <option value="wallet_challenge">EU Travel Rule Wallet Challenge</option>
+                        <option value="verified">Pre-Verified (Instant Pass)</option>
+                      </select>
+                    </div>
+
+                    {/* Injected Error Scenario */}
+                    <div className="space-y-1">
+                      <label className="text-[9.5px] font-semibold text-amber-400 uppercase tracking-wider block">
+                        Injected Error Scenario:
+                      </label>
+                      <select
+                        value={simError}
+                        onChange={(e) => {
+                          setSimEnabled(true);
+                          setSimError(e.target.value as any);
+                        }}
+                        className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-amber-500/40 text-amber-300 font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
+                      >
+                        <option value="none">✓ None (Success Path)</option>
+                        <option value="address_error">⚠️ Address Restriction (NY/HI)</option>
+                        <option value="payment_decline">❌ Card Authorization Declined</option>
+                        <option value="insufficient_funds">⚠ Card Insufficient Funds</option>
+                        <option value="kyc_rejection">🚫 Stripe Identity Rejection</option>
+                        <option value="invalid_signature">🔑 Invalid Wallet Signature</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -630,7 +714,7 @@ export function SandboxWidget() {
                       }}
                       className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
                         !stripeV2
-                          ? "bg-amber-500 text-black shadow-md"
+                          ? "bg-amber-500 text-black shadow-md font-black"
                           : "text-zinc-400 hover:text-white"
                       }`}
                     >
@@ -644,7 +728,7 @@ export function SandboxWidget() {
                       }}
                       className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
                         stripeV2
-                          ? "bg-amber-500 text-black shadow-md"
+                          ? "bg-amber-500 text-black shadow-md font-black"
                           : "text-zinc-400 hover:text-white"
                       }`}
                     >
@@ -714,7 +798,7 @@ export function SandboxWidget() {
                         onClick={() => setFeeMode("fee_plus")}
                         className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
                           feeMode === "fee_plus"
-                            ? "bg-amber-500 text-black shadow-md"
+                            ? "bg-amber-500 text-black shadow-md font-black"
                             : "text-zinc-400 hover:text-white"
                         }`}
                       >
@@ -724,7 +808,7 @@ export function SandboxWidget() {
                         onClick={() => setFeeMode("fee_minus")}
                         className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
                           feeMode === "fee_minus"
-                            ? "bg-amber-500 text-black shadow-md"
+                            ? "bg-amber-500 text-black shadow-md font-black"
                             : "text-zinc-400 hover:text-white"
                         }`}
                       >
@@ -793,8 +877,8 @@ export function SandboxWidget() {
           </div>
 
           {/* Action buttons - Fixed & Sticky Footer */}
-          <div className="shrink-0 px-4 py-3 border-t border-white/10 bg-zinc-950/90 backdrop-blur-md flex items-center justify-between">
-            <span className="text-[9px] text-zinc-400 font-medium italic">
+          <div className="shrink-0 px-4 py-2.5 border-t border-white/10 bg-zinc-950/90 backdrop-blur-md flex items-center justify-between">
+            <span className="text-[9px] text-zinc-400 font-medium italic truncate max-w-[200px]">
               {statusMessage || (isConfigLoading ? "Loading config..." : (hasChanges ? "Unsaved changes" : "Config active"))}
             </span>
             <button
@@ -810,4 +894,5 @@ export function SandboxWidget() {
     </div>
   );
 }
+
 
