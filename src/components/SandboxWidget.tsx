@@ -6,7 +6,6 @@ import {
   Sliders, 
   X, 
   RefreshCw, 
-  Check, 
   Globe, 
   DollarSign, 
   GitMerge, 
@@ -19,14 +18,16 @@ import {
   CreditCard,
   Camera,
   Smartphone,
-  CheckCircle2,
   Zap,
   KeyRound,
+  Maximize2,
+  Minimize2
 } from "lucide-react";
 
 export function SandboxWidget() {
   const [visible, setVisible] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [widgetSize, setWidgetSize] = useState<"compact" | "medium" | "large" | "full">("medium");
   const [feeMode, setFeeMode] = useState<"fee_plus" | "fee_minus">("fee_plus");
   const [splitMode, setSplitMode] = useState<"single" | "dual">("single");
   const [brandsList, setBrandsList] = useState<string[]>([]);
@@ -43,8 +44,19 @@ export function SandboxWidget() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       setIsLandingPage(window.location.pathname === "/");
+      const savedSize = localStorage.getItem("pp_sandbox_widget_size");
+      if (savedSize && ["compact", "medium", "large", "full"].includes(savedSize)) {
+        setWidgetSize(savedSize as any);
+      }
     }
   }, []);
+
+  const updateSize = (size: "compact" | "medium" | "large" | "full") => {
+    setWidgetSize(size);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("pp_sandbox_widget_size", size);
+    }
+  };
 
   const hideExtraSandboxControls = isLandingPage && !account?.address;
 
@@ -322,7 +334,29 @@ export function SandboxWidget() {
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-[9999] font-sans antialiased">
+    <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[9999] font-sans antialiased flex flex-col items-end">
+      <style>{`
+        .sandbox-custom-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(245, 158, 11, 0.45) rgba(255, 255, 255, 0.05);
+        }
+        .sandbox-custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        .sandbox-custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.04);
+          border-radius: 6px;
+        }
+        .sandbox-custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(245, 158, 11, 0.45);
+          border-radius: 6px;
+        }
+        .sandbox-custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(245, 158, 11, 0.8);
+        }
+      `}</style>
+
       {/* Floating Gear/Slider Trigger Button */}
       {!isOpen && (
         <button
@@ -339,360 +373,427 @@ export function SandboxWidget() {
 
       {/* Expanded Sandbox Panel */}
       {isOpen && (
-        <div className="w-84 max-h-[90vh] overflow-y-auto rounded-3xl border border-white/15 bg-black/90 backdrop-blur-2xl p-5 shadow-2xl transition-all duration-300 animate-in fade-in slide-from-bottom-4 text-left">
-          {/* Header */}
-          <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
+        <div 
+          className={`flex flex-col rounded-3xl border border-white/15 bg-black/95 backdrop-blur-2xl shadow-2xl transition-all duration-200 text-left overflow-hidden ${
+            widgetSize === "compact"
+              ? "w-[360px]"
+              : widgetSize === "medium"
+              ? "w-[460px]"
+              : widgetSize === "large"
+              ? "w-[680px]"
+              : "w-[min(940px,calc(100vw-2rem))]"
+          } ${
+            widgetSize === "full"
+              ? "h-[calc(100dvh-2.5rem)]"
+              : "max-h-[calc(100dvh-2.5rem)]"
+          } max-w-[calc(100vw-2rem)]`}
+        >
+          {/* Header - Fixed & Sticky */}
+          <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/10 bg-zinc-950/80 backdrop-blur-md">
             <div className="flex items-center gap-2 text-amber-400">
               <Sparkles className="w-4 h-4" />
               <span className="text-xs font-bold uppercase tracking-wider">Sandbox Engine Overrides</span>
+              <span className="px-1.5 py-0.2 rounded text-[8px] font-extrabold uppercase bg-amber-500/20 border border-amber-500/30 text-amber-300">
+                {simEnabled ? "SIM" : "SAND"}
+              </span>
             </div>
-            <button
-              onClick={() => setIsOpen(false)}
-              className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            
+            {/* Header Controls: Size Switcher + Maximize + Close */}
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center bg-zinc-900 border border-white/10 rounded-lg p-0.5">
+                {(["compact", "medium", "large"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => updateSize(s)}
+                    className={`px-1.5 py-0.5 text-[9px] font-bold uppercase rounded transition cursor-pointer ${
+                      widgetSize === s
+                        ? "bg-amber-500 text-black shadow-sm font-black"
+                        : "text-zinc-400 hover:text-white"
+                    }`}
+                    title={`Set width to ${s.toUpperCase()}`}
+                  >
+                    {s === "compact" ? "S" : s === "medium" ? "M" : "L"}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => updateSize(widgetSize === "full" ? "medium" : "full")}
+                className={`p-1 rounded-md transition-colors cursor-pointer ${
+                  widgetSize === "full"
+                    ? "text-amber-400 bg-amber-500/15"
+                    : "text-zinc-400 hover:text-white hover:bg-white/10"
+                }`}
+                title={widgetSize === "full" ? "Restore default size" : "Maximize widget"}
+              >
+                {widgetSize === "full" ? (
+                  <Minimize2 className="w-3.5 h-3.5" />
+                ) : (
+                  <Maximize2 className="w-3.5 h-3.5" />
+                )}
+              </button>
+
+              <button
+                onClick={() => setIsOpen(false)}
+                className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
-          {/* Controls list */}
-          <div className="space-y-4">
-            {hideExtraSandboxControls && (
-              <div className="p-3 rounded-xl border border-amber-500/25 bg-amber-500/5 text-amber-400 text-[10px] flex items-start gap-2 leading-relaxed">
-                <Lock className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>To simulate custom merchant themes, test split strategies, or view system diagnostics, please connect your wallet first.</span>
-              </div>
-            )}
+          {/* Controls Body - Dedicated Scroll Area with Multi-column support */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4.5 sandbox-custom-scrollbar">
+            <div className={widgetSize === "large" || widgetSize === "full" ? "grid grid-cols-1 md:grid-cols-2 gap-4 items-start" : "space-y-4"}>
+              
+              {/* Column 1: Simulation Suite */}
+              <div className="space-y-4">
+                {hideExtraSandboxControls && (
+                  <div className="p-3 rounded-xl border border-amber-500/25 bg-amber-500/5 text-amber-400 text-[10px] flex items-start gap-2 leading-relaxed">
+                    <Lock className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>To simulate custom merchant themes, test split strategies, or view system diagnostics, please connect your wallet first.</span>
+                  </div>
+                )}
 
-            {/* ─── SECTION 1: STRIPE & LINK SIMULATION SUITE ─── */}
-            <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/25 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400">
-                  <Zap className="w-3.5 h-3.5" />
-                  <span>Stripe & Link Embed Simulations</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSimEnabled(!simEnabled)}
-                  className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase transition cursor-pointer ${
-                    simEnabled
-                      ? "bg-amber-500 text-black shadow-md"
-                      : "bg-white/10 text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  {simEnabled ? "Active" : "Disabled"}
-                </button>
-              </div>
-
-              {simEnabled && (
-                <div className="space-y-3 pt-1 border-t border-amber-500/15 animate-in fade-in">
-                  {/* One-Click Quick Presets */}
-                  <div className="space-y-1.5">
-                    <label className="text-[9.5px] font-bold text-zinc-300 uppercase tracking-wider block">
-                      Quick Flow Presets:
-                    </label>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => applyPreset("fast_pass")}
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                      >
-                        <Zap className="w-3 h-3 text-amber-400 shrink-0" />
-                        <span>⚡ Fast Checkout</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => applyPreset("link_otp")}
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                      >
-                        <Smartphone className="w-3 h-3 text-emerald-400 shrink-0" />
-                        <span>📲 Link 6-Digit OTP</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => applyPreset("l1_stepup")}
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                      >
-                        <ShieldCheck className="w-3 h-3 text-sky-400 shrink-0" />
-                        <span>🛡️ L1 SSN + DOB</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => applyPreset("l2_identity")}
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                      >
-                        <Camera className="w-3 h-3 text-purple-400 shrink-0" />
-                        <span>📸 L2 ID Scan</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => applyPreset("card_decline")}
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                      >
-                        <XCircle className="w-3 h-3 text-rose-400 shrink-0" />
-                        <span>❌ Card Decline</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => applyPreset("ach_bank")}
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
-                      >
-                        <CreditCard className="w-3 h-3 text-emerald-400 shrink-0" />
-                        <span>🏦 ACH Pending</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => applyPreset("eu_travel_rule")}
-                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-amber-500/30 text-[10px] font-semibold text-amber-300 flex items-center gap-1.5 transition text-left cursor-pointer col-span-2"
-                      >
-                        <KeyRound className="w-3 h-3 text-amber-400 shrink-0" />
-                        <span>🇪🇺 EU Travel Rule (≥€1,000 Challenge)</span>
-                      </button>
+                {/* ─── SECTION 1: STRIPE & LINK SIMULATION SUITE ─── */}
+                <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/25 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400">
+                      <Zap className="w-3.5 h-3.5" />
+                      <span>Stripe & Link Embed Simulations</span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setSimEnabled(!simEnabled)}
+                      className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase transition cursor-pointer ${
+                        simEnabled
+                          ? "bg-amber-500 text-black shadow-md"
+                          : "bg-white/10 text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      {simEnabled ? "Active" : "Disabled"}
+                    </button>
                   </div>
 
-                  {/* Target KYC Tier */}
-                  <div className="space-y-1">
-                    <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">
-                      Target KYC Tier:
-                    </label>
-                    <div className="grid grid-cols-3 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
-                      {(["l0", "l1", "l2"] as const).map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => setSimTier(t)}
-                          className={`py-1 text-[10px] font-bold uppercase rounded transition cursor-pointer ${
-                            simTier === t ? "bg-amber-500 text-black shadow" : "text-zinc-400 hover:text-white"
-                          }`}
+                  {simEnabled && (
+                    <div className="space-y-3 pt-1 border-t border-amber-500/15 animate-in fade-in">
+                      {/* One-Click Quick Presets */}
+                      <div className="space-y-1.5">
+                        <label className="text-[9.5px] font-bold text-zinc-300 uppercase tracking-wider block">
+                          Quick Flow Presets:
+                        </label>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => applyPreset("fast_pass")}
+                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
+                          >
+                            <Zap className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>⚡ Fast Checkout</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => applyPreset("link_otp")}
+                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
+                          >
+                            <Smartphone className="w-3 h-3 text-emerald-400 shrink-0" />
+                            <span>📲 Link 6-Digit OTP</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => applyPreset("l1_stepup")}
+                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
+                          >
+                            <ShieldCheck className="w-3 h-3 text-sky-400 shrink-0" />
+                            <span>🛡️ L1 SSN + DOB</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => applyPreset("l2_identity")}
+                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
+                          >
+                            <Camera className="w-3 h-3 text-purple-400 shrink-0" />
+                            <span>📸 L2 ID Scan</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => applyPreset("card_decline")}
+                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
+                          >
+                            <XCircle className="w-3 h-3 text-rose-400 shrink-0" />
+                            <span>❌ Card Decline</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => applyPreset("ach_bank")}
+                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer"
+                          >
+                            <CreditCard className="w-3 h-3 text-emerald-400 shrink-0" />
+                            <span>🏦 ACH Pending</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => applyPreset("eu_travel_rule")}
+                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-amber-500/30 text-[10px] font-semibold text-amber-300 flex items-center gap-1.5 transition text-left cursor-pointer col-span-2"
+                          >
+                            <KeyRound className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>🇪🇺 EU Travel Rule (≥€1,000 Challenge)</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Target KYC Tier */}
+                      <div className="space-y-1">
+                        <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                          Target KYC Tier:
+                        </label>
+                        <div className="grid grid-cols-3 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
+                          {(["l0", "l1", "l2"] as const).map((t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => setSimTier(t)}
+                              className={`py-1 text-[10px] font-bold uppercase rounded transition cursor-pointer ${
+                                simTier === t ? "bg-amber-500 text-black shadow" : "text-zinc-400 hover:text-white"
+                              }`}
+                            >
+                              {t.toUpperCase()}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Flow Mode / Link Status */}
+                      <div className="space-y-1">
+                        <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                          Link / Verification Flow:
+                        </label>
+                        <select
+                          value={simStatus}
+                          onChange={(e) => setSimStatus(e.target.value as any)}
+                          className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-white/10 text-white font-semibold focus:outline-none focus:border-amber-400"
                         >
-                          {t.toUpperCase()}
-                        </button>
-                      ))}
+                          <option value="normal">Normal Step-by-Step</option>
+                          <option value="otp">Prompt 6-Digit Link OTP</option>
+                          <option value="step_up">Prompt L1 Step-Up (DOB+SSN)</option>
+                          <option value="doc_verify">Prompt L2 Document & Selfie</option>
+                          <option value="wallet_challenge">EU Travel Rule Wallet Challenge</option>
+                          <option value="verified">Pre-Verified (Instant Pass)</option>
+                        </select>
+                      </div>
+
+                      {/* Injected Error Scenario */}
+                      <div className="space-y-1">
+                        <label className="text-[9.5px] font-semibold text-amber-400 uppercase tracking-wider block">
+                          Injected Error Scenario:
+                        </label>
+                        <select
+                          value={simError}
+                          onChange={(e) => setSimError(e.target.value as any)}
+                          className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-amber-500/40 text-amber-300 font-semibold focus:outline-none focus:border-amber-400"
+                        >
+                          <option value="none">✓ None (Success Path)</option>
+                          <option value="address_error">⚠️ Address Restriction (NY/HI)</option>
+                          <option value="payment_decline">❌ Card Authorization Declined</option>
+                          <option value="insufficient_funds">⚠ Card Insufficient Funds</option>
+                          <option value="kyc_rejection">🚫 Stripe Identity Rejection</option>
+                          <option value="invalid_signature">🔑 Invalid Wallet Signature</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Column 2: Engine, Brand, Partition, Mode, Diagnostics */}
+              <div className="space-y-4">
+                {/* ─── SECTION 2: CHECKOUT ENGINE ─── */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide flex items-center justify-between">
+                    <span className="flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                      Checkout Engine
+                    </span>
+                    <span className="text-[9px] text-zinc-400 font-mono">
+                      {stripeV2 ? "v2-accordion" : "v1-modal"}
+                    </span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStripeV2(false);
+                        updateCookie("pp_sandbox_stripe_v2", "false");
+                      }}
+                      className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                        !stripeV2
+                          ? "bg-amber-500 text-black shadow-md"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      v1 Modal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStripeV2(true);
+                        updateCookie("pp_sandbox_stripe_v2", "true");
+                      }}
+                      className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                        stripeV2
+                          ? "bg-amber-500 text-black shadow-md"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      v2 Accordion
+                    </button>
+                  </div>
+                </div>
+
+                {/* ─── SECTION 3: BRAND CONTAINER ─── */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                    <Globe className="w-3 h-3 text-sky-400" />
+                    Brand Container Key
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={selectedBrand}
+                      onChange={(e) => setSelectedBrand(e.target.value.toLowerCase().trim())}
+                      className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400 transition cursor-pointer font-mono"
+                    >
+                      {brandsList.length > 0 ? (
+                        brandsList.map((b) => (
+                          <option key={b} value={b}>
+                            {b}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="basaltsurge">basaltsurge</option>
+                      )}
+                    </select>
+                  </div>
+                </div>
+
+                {/* ─── SECTION 4: MERCHANT WALLET ─── */}
+                {!hideExtraSandboxControls && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                      <User className="w-3 h-3 text-emerald-400" />
+                      Merchant Partition Target
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={selectedMerchant}
+                        onChange={(e) => setSelectedMerchant(e.target.value.toLowerCase().trim())}
+                        className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400 transition cursor-pointer font-mono truncate"
+                      >
+                        <option value="">-- Active Portal Merchant --</option>
+                        {merchantsList.map((m) => (
+                          <option key={m.merchant} value={m.merchant.toLowerCase()}>
+                            {m.displayName ? `${m.displayName} (${m.merchant.slice(0, 6)}...)` : m.merchant}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
+                )}
 
-                  {/* Flow Mode / Link Status */}
-                  <div className="space-y-1">
-                    <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">
-                      Link / Verification Flow:
+                {/* Fee Mode */}
+                {!hideExtraSandboxControls && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                      <DollarSign className="w-3 h-3 text-emerald-400" />
+                      Fee Calculation Mode
                     </label>
-                    <select
-                      value={simStatus}
-                      onChange={(e) => setSimStatus(e.target.value as any)}
-                      className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-white/10 text-white font-semibold focus:outline-none focus:border-amber-400"
-                    >
-                      <option value="normal">Normal Step-by-Step</option>
-                      <option value="otp">Prompt 6-Digit Link OTP</option>
-                      <option value="step_up">Prompt L1 Step-Up (DOB+SSN)</option>
-                      <option value="doc_verify">Prompt L2 Document & Selfie</option>
-                      <option value="wallet_challenge">EU Travel Rule Wallet Challenge</option>
-                      <option value="verified">Pre-Verified (Instant Pass)</option>
-                    </select>
+                    <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
+                      <button
+                        onClick={() => setFeeMode("fee_plus")}
+                        className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                          feeMode === "fee_plus"
+                            ? "bg-amber-500 text-black shadow-md"
+                            : "text-zinc-400 hover:text-white"
+                        }`}
+                      >
+                        Fee Plus (Buyer)
+                      </button>
+                      <button
+                        onClick={() => setFeeMode("fee_minus")}
+                        className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                          feeMode === "fee_minus"
+                            ? "bg-amber-500 text-black shadow-md"
+                            : "text-zinc-400 hover:text-white"
+                        }`}
+                      >
+                        Fee Minus (Merchant)
+                      </button>
+                    </div>
                   </div>
+                )}
 
-                  {/* Injected Error Scenario */}
-                  <div className="space-y-1">
-                    <label className="text-[9.5px] font-semibold text-amber-400 uppercase tracking-wider block">
-                      Injected Error Scenario:
+                {/* Split Mode */}
+                {!hideExtraSandboxControls && (
+                  <div className="space-y-1.5 relative opacity-60 select-none">
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
+                      <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
+                        <Lock className="w-2.5 h-2.5 text-amber-400" />
+                        Locked: Brand Config
+                      </span>
+                    </div>
+                    <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                      <GitMerge className="w-3 h-3 text-purple-400" />
+                      Split Strategy
                     </label>
-                    <select
-                      value={simError}
-                      onChange={(e) => setSimError(e.target.value as any)}
-                      className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-amber-500/40 text-amber-300 font-semibold focus:outline-none focus:border-amber-400"
-                    >
-                      <option value="none">✓ None (Success Path)</option>
-                      <option value="address_error">⚠️ Address Restriction (NY/HI)</option>
-                      <option value="payment_decline">❌ Card Authorization Declined</option>
-                      <option value="insufficient_funds">⚠ Card Insufficient Funds</option>
-                      <option value="kyc_rejection">🚫 Stripe Identity Rejection</option>
-                      <option value="invalid_signature">🔑 Invalid Wallet Signature</option>
-                    </select>
+                    <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
+                      <div
+                        className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
+                          splitMode === "single"
+                            ? "bg-amber-500 text-black shadow-md"
+                            : "text-zinc-600"
+                        }`}
+                      >
+                        Single Split
+                      </div>
+                      <div
+                        className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
+                          splitMode === "dual"
+                            ? "bg-amber-500 text-black shadow-md"
+                            : "text-zinc-600"
+                        }`}
+                      >
+                        Dual Split
+                      </div>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
 
-            {/* ─── SECTION 2: CHECKOUT ENGINE ─── */}
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide flex items-center justify-between">
-                <span className="flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-amber-400" />
-                  Checkout Engine
-                </span>
-                <span className="text-[9px] text-zinc-400 font-mono">
-                  {stripeV2 ? "v2-accordion" : "v1-modal"}
-                </span>
-              </label>
-              <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStripeV2(false);
-                    updateCookie("pp_sandbox_stripe_v2", "false");
-                  }}
-                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
-                    !stripeV2
-                      ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  v1 Modal
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStripeV2(true);
-                    updateCookie("pp_sandbox_stripe_v2", "true");
-                  }}
-                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
-                    stripeV2
-                      ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  v2 Accordion
-                </button>
-              </div>
-            </div>
-
-            {/* ─── SECTION 3: BRAND CONTAINER ─── */}
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                <Globe className="w-3 h-3 text-sky-400" />
-                Brand Container Key
-              </label>
-              <div className="relative">
-                <select
-                  value={selectedBrand}
-                  onChange={(e) => setSelectedBrand(e.target.value.toLowerCase().trim())}
-                  className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400 transition cursor-pointer font-mono"
-                >
-                  {brandsList.length > 0 ? (
-                    brandsList.map((b) => (
-                      <option key={b} value={b}>
-                        {b}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="basaltsurge">basaltsurge</option>
-                  )}
-                </select>
-              </div>
-            </div>
-
-            {/* ─── SECTION 4: MERCHANT WALLET ─── */}
-            {!hideExtraSandboxControls && (
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                  <User className="w-3 h-3 text-emerald-400" />
-                  Merchant Partition Target
-                </label>
-                <div className="relative">
-                  <select
-                    value={selectedMerchant}
-                    onChange={(e) => setSelectedMerchant(e.target.value.toLowerCase().trim())}
-                    className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400 transition cursor-pointer font-mono truncate"
-                  >
-                    <option value="">-- Active Portal Merchant --</option>
-                    {merchantsList.map((m) => (
-                      <option key={m.merchant} value={m.merchant.toLowerCase()}>
-                        {m.displayName ? `${m.displayName} (${m.merchant.slice(0, 6)}...)` : m.merchant}
-                      </option>
+                {/* Diagnostics feedback */}
+                {!hideExtraSandboxControls && (diag.errors.length > 0 || diag.warnings.length > 0) && (
+                  <div className="p-3 rounded-xl border border-red-500/20 bg-red-500/5 space-y-1.5 text-[10px]">
+                    {diag.errors.map((err, i) => (
+                      <div key={i} className="flex items-center gap-1.5 text-red-400 font-medium">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{err}</span>
+                      </div>
                     ))}
-                  </select>
-                </div>
+                    {diag.warnings.map((warn, i) => (
+                      <div key={i} className="flex items-center gap-1.5 text-amber-400 font-medium">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{warn}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
 
-            {/* Fee Mode */}
-            {!hideExtraSandboxControls && (
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                  <DollarSign className="w-3 h-3 text-emerald-400" />
-                  Fee Calculation Mode
-                </label>
-                <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
-                  <button
-                    onClick={() => setFeeMode("fee_plus")}
-                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
-                      feeMode === "fee_plus"
-                        ? "bg-amber-500 text-black shadow-md"
-                        : "text-zinc-400 hover:text-white"
-                    }`}
-                  >
-                    Fee Plus (Buyer)
-                  </button>
-                  <button
-                    onClick={() => setFeeMode("fee_minus")}
-                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
-                      feeMode === "fee_minus"
-                        ? "bg-amber-500 text-black shadow-md"
-                        : "text-zinc-400 hover:text-white"
-                    }`}
-                  >
-                    Fee Minus (Merchant)
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Split Mode */}
-            {!hideExtraSandboxControls && (
-              <div className="space-y-1.5 relative opacity-60 select-none">
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
-                  <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
-                    <Lock className="w-2.5 h-2.5 text-amber-400" />
-                    Locked: Brand Config
-                  </span>
-                </div>
-                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                  <GitMerge className="w-3 h-3 text-purple-400" />
-                  Split Strategy
-                </label>
-                <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
-                  <div
-                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                      splitMode === "single"
-                        ? "bg-amber-500 text-black shadow-md"
-                        : "text-zinc-600"
-                    }`}
-                  >
-                    Single Split
-                  </div>
-                  <div
-                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                      splitMode === "dual"
-                        ? "bg-amber-500 text-black shadow-md"
-                        : "text-zinc-600"
-                    }`}
-                  >
-                    Dual Split
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Diagnostics feedback */}
-            {!hideExtraSandboxControls && (diag.errors.length > 0 || diag.warnings.length > 0) && (
-              <div className="p-3 rounded-xl border border-red-500/20 bg-red-500/5 space-y-1.5 text-[10px]">
-                {diag.errors.map((err, i) => (
-                  <div key={i} className="flex items-center gap-1.5 text-red-400 font-medium">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{err}</span>
-                  </div>
-                ))}
-                {diag.warnings.map((warn, i) => (
-                  <div key={i} className="flex items-center gap-1.5 text-amber-400 font-medium">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    <span>{warn}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            </div>
           </div>
 
-          {/* Action buttons */}
-          <div className="mt-5 pt-3 border-t border-white/10 flex items-center justify-between">
+          {/* Action buttons - Fixed & Sticky Footer */}
+          <div className="shrink-0 px-4 py-3 border-t border-white/10 bg-zinc-950/90 backdrop-blur-md flex items-center justify-between">
             <span className="text-[9px] text-zinc-400 font-medium italic">
               {statusMessage || (isConfigLoading ? "Loading config..." : (hasChanges ? "Unsaved changes" : "Config active"))}
             </span>
@@ -709,3 +810,4 @@ export function SandboxWidget() {
     </div>
   );
 }
+
