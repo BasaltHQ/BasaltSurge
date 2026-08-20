@@ -6,7 +6,12 @@ import {
   UseAccordionCheckoutStateReturn,
   WalletOwnershipChallenge,
 } from "./types";
-import { formatErrorMessage, validateDob } from "./utils";
+import {
+  formatErrorMessage,
+  validateDob,
+  getCountryAddressConfig,
+} from "./utils";
+import { getSubdivisionsForCountry } from "./subdivisions";
 import {
   SimulatedLinkAuthElement,
   SimulatedStripePaymentElement,
@@ -277,15 +282,16 @@ export function useAccordionCheckoutState(
 
   const ssnDigits = (ssn || "").replace(/\D/g, "");
   const dobStatus = validateDob(dob);
-  const isUS = (country || "US").toUpperCase() === "US";
+  const countryConfig = getCountryAddressConfig(country);
+  const isUS = countryConfig.isUS;
 
   const fieldValidation = {
     firstName: (firstName || "").trim().length >= 1,
     lastName: (lastName || "").trim().length >= 1,
     line1: (line1 || "").trim().length >= 3,
     city: (city || "").trim().length >= 2,
-    stateCode: isUS ? (stateCode || "").trim().length >= 2 : true,
-    zipCode: (zipCode || "").trim().length >= 3,
+    stateCode: countryConfig.requiresState ? (stateCode || "").trim().length >= 2 : true,
+    zipCode: (zipCode || "").trim().length >= 2,
     dob: dobStatus.valid,
     ssn: isUS ? ssnDigits.length === 9 : true,
   };
@@ -452,9 +458,21 @@ export function useAccordionCheckoutState(
           if (data.streetAddress) setLine1(data.streetAddress);
           if (data.apartment) setLine2(data.apartment);
           if (data.city) setCity(data.city);
-          if (data.state) setStateCode(data.state);
           if (data.zip) setZipCode(data.zip);
           if (data.country) setCountry(data.country);
+
+          if (data.state) {
+            const targetCountry = data.country || country || "US";
+            const subs = getSubdivisionsForCountry(targetCountry);
+            const found = subs.find(
+              (s) =>
+                s.code.toUpperCase() === data.state.toUpperCase() ||
+                s.name.toLowerCase() === data.state.toLowerCase() ||
+                s.name.toLowerCase().includes(data.state.toLowerCase()) ||
+                data.state.toLowerCase().includes(s.name.toLowerCase())
+            );
+            setStateCode(found ? found.code : data.state);
+          }
         }
       } catch (err) {
         console.warn("Place details fetch failed:", err);
@@ -565,17 +583,17 @@ export function useAccordionCheckoutState(
       if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
       if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
       if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
-      if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: "City" });
-      if (isUS && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: "State" });
-      if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: isUS ? "Zip Code" : "Postal Code" });
+      if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: countryConfig.cityLabel });
+      if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
+      if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
     }
   } else if (showFullForm) {
     if (!fieldValidation.firstName) missingIdentityFields.push({ key: "firstName", label: "First Name" });
     if (!fieldValidation.lastName) missingIdentityFields.push({ key: "lastName", label: "Last Name" });
     if (!fieldValidation.line1) missingIdentityFields.push({ key: "line1", label: "Street Address" });
-    if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: "City" });
-    if (isUS && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: "State" });
-    if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: isUS ? "Zip Code" : "Postal Code" });
+    if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: countryConfig.cityLabel });
+    if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
+    if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
   }
 
   const isIdentityComplete = missingIdentityFields.length === 0;

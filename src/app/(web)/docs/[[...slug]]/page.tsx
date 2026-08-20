@@ -93,21 +93,21 @@ async function getMarkdownContent(slug: string[]) {
 
   let filePath: string;
   if (slug.length === 0) {
-    filePath = join(docsPath, 'README.md');
+    filePath = join(/*turbopackIgnore: true*/ docsPath, 'README.md');
   } else {
     // Try direct .md file first
-    filePath = join(docsPath, ...slug) + '.md';
+    filePath = join(/*turbopackIgnore: true*/ docsPath, ...slug) + '.md';
   }
 
   try {
-    const content = await readFile(filePath, 'utf-8');
+    const content = await readFile(/*turbopackIgnore: true*/ filePath, 'utf-8');
     return content;
   } catch {
     // If direct .md file doesn't exist, try README.md in directory
     if (slug.length > 0) {
       try {
-        const readmePath = join(docsPath, ...slug, 'README.md');
-        const content = await readFile(readmePath, 'utf-8');
+        const readmePath = join(/*turbopackIgnore: true*/ docsPath, ...slug, 'README.md');
+        const content = await readFile(/*turbopackIgnore: true*/ readmePath, 'utf-8');
         return content;
       } catch {
         return null;

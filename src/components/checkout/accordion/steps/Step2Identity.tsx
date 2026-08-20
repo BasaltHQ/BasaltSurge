@@ -16,9 +16,11 @@ import {
   Clock,
   Lock,
   Check,
+  ChevronDown,
 } from "lucide-react";
 import { SUPPORTED_COUNTRIES } from "../constants";
-import { formatSSN } from "../utils";
+import { getSubdivisionsForCountry } from "../subdivisions";
+import { formatSSN, getCountryAddressConfig } from "../utils";
 import { DobPicker } from "../DobPicker";
 import { AccordionCard } from "../AccordionCard";
 import { AccordionStepHeader } from "../AccordionStepHeader";
@@ -81,7 +83,10 @@ export function Step2Identity({
   onHeaderClick,
   onContinueToStep3,
 }: Step2IdentityProps) {
-  const isUS = (country || "US").toUpperCase() === "US";
+  const countryConfig = getCountryAddressConfig(country);
+  const subdivisions = getSubdivisionsForCountry(country);
+  const hasSubdivisions = subdivisions.length > 0;
+  const isUS = countryConfig.isUS;
   const ssnDigits = (ssn || "").replace(/\D/g, "");
 
   const isFieldValid = (field: string): boolean => {
@@ -95,9 +100,9 @@ export function Step2Identity({
       case "city":
         return (city || "").trim().length >= 2;
       case "stateCode":
-        return isUS ? (stateCode || "").trim().length >= 2 : true;
+        return countryConfig.requiresState ? (stateCode || "").trim().length >= 2 : true;
       case "zipCode":
-        return (zipCode || "").trim().length >= 3;
+        return (zipCode || "").trim().length >= 2;
       case "dob":
         return dobStatus.valid;
       case "ssn":
@@ -355,33 +360,46 @@ export function Step2Identity({
                       />
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className={`grid gap-2 ${hasSubdivisions ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"}`}>
                       <input
                         type="text"
-                        placeholder="City"
+                        placeholder={countryConfig.cityLabel}
                         value={city}
                         onBlur={() => markFieldTouched("city")}
                         onChange={(e) => setCity(e.target.value)}
-                        className={`w-full h-9 px-2 text-xs ${getFieldInputClass("city")}`}
+                        className={`w-full h-9 px-3 rounded-lg text-xs ${getFieldInputClass("city")}`}
                       />
-                      {isUS && (
-                        <input
-                          type="text"
-                          maxLength={2}
-                          placeholder="State (e.g. CA)"
-                          value={stateCode}
-                          onBlur={() => markFieldTouched("stateCode")}
-                          onChange={(e) => setStateCode(e.target.value.toUpperCase())}
-                          className={`w-full h-9 px-2 text-xs uppercase text-center ${getFieldInputClass("stateCode")}`}
-                        />
+                      {hasSubdivisions && (
+                        <div className="relative">
+                          <select
+                            value={stateCode}
+                            onBlur={() => markFieldTouched("stateCode")}
+                            onChange={(e) => setStateCode(e.target.value)}
+                            className={`w-full h-9 px-2.5 pr-7 rounded-lg text-xs font-semibold focus:outline-none transition-all cursor-pointer appearance-none ${getFieldInputClass("stateCode")}`}
+                          >
+                            <option value="" className={isLightText ? "bg-neutral-900 text-white/50" : "bg-white text-black/50"}>
+                              Select {countryConfig.stateLabel.replace(" (Optional)", "")}...
+                            </option>
+                            {subdivisions.map((s) => (
+                              <option
+                                key={s.code}
+                                value={s.code}
+                                className={isLightText ? "bg-neutral-900 text-white" : "bg-white text-black"}
+                              >
+                                {s.code} - {s.name}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-3 pointer-events-none opacity-50 text-amber-400" />
+                        </div>
                       )}
                       <input
                         type="text"
-                        placeholder={isUS ? "Zip Code" : "Postal Code"}
+                        placeholder={`${countryConfig.postalCodeLabel} (e.g. ${countryConfig.postalCodePlaceholder})`}
                         value={zipCode}
                         onBlur={() => markFieldTouched("zipCode")}
                         onChange={(e) => setZipCode(e.target.value)}
-                        className={`w-full h-9 px-2 text-xs text-center ${getFieldInputClass("zipCode")}`}
+                        className={`w-full h-9 px-3 rounded-lg text-xs text-left ${getFieldInputClass("zipCode")}`}
                       />
                     </div>
                   </div>

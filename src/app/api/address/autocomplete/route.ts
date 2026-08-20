@@ -52,18 +52,25 @@ export async function GET(req: Request) {
         if (types.includes("route")) route = comp.long_name;
         if (types.includes("subpremise")) subpremise = comp.long_name;
         if (types.includes("locality")) city = comp.long_name;
-        if (!city && types.includes("sublocality")) city = comp.long_name;
         if (!city && types.includes("postal_town")) city = comp.long_name;
-        if (types.includes("administrative_area_level_1")) state = comp.short_name;
+        if (!city && types.includes("sublocality_level_1")) city = comp.long_name;
+        if (!city && types.includes("sublocality")) city = comp.long_name;
+        if (!city && types.includes("administrative_area_level_2")) city = comp.long_name;
+        if (types.includes("administrative_area_level_1")) state = comp.short_name || comp.long_name;
         if (types.includes("postal_code")) zip = comp.long_name;
-        if (types.includes("country")) country = comp.short_name;
+        if (!zip && types.includes("postal_code_prefix")) zip = comp.long_name;
+        if (types.includes("country")) country = (comp.short_name || "").toUpperCase();
       }
 
-      const streetAddress = [streetNumber, route].filter(Boolean).join(" ");
+      // For European & international formats, use the first segment of formatted_address if available
+      const formattedAddress = data.result?.formatted_address || "";
+      const primaryLine = formattedAddress ? formattedAddress.split(",")[0].trim() : "";
+      const fallbackStreet = [streetNumber, route].filter(Boolean).join(" ") || route || streetNumber;
+      const streetAddress = primaryLine || fallbackStreet || input;
 
       return NextResponse.json({
-        formattedAddress: data.result?.formatted_address || "",
-        streetAddress: streetAddress || input,
+        formattedAddress,
+        streetAddress,
         apartment: subpremise ? `Apt ${subpremise}` : "",
         city,
         state,
