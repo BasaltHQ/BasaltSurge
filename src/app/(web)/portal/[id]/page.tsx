@@ -2105,6 +2105,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   // Dynamic receipt
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [paymentConfirmed, setPaymentConfirmed] = useState<{ txHash: string; amount: number; token: string; funding?: string } | null>(null);
   const [clientCountry, setClientCountry] = useState<string>("US");
   const [loadingReceipt, setLoadingReceipt] = useState(false);
   const [currencySelectionEnabled, setCurrencySelectionEnabled] = useState<boolean>(true);
@@ -2309,7 +2310,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const tipInitialSyncedRef = useRef(false);
 
   const handleTipUpdate = useCallback(async (val: string | number) => {
-    if (!receiptId || updatingTip || !receipt) return;
+    if (!receiptId || updatingTip || !receipt || isSettled(receipt?.status) || Boolean(paymentConfirmed)) return;
 
     // Calculate intended amount from percentage
     let amount = 0;
@@ -2343,7 +2344,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     } finally {
       setUpdatingTip(false);
     }
-  }, [receiptId, updatingTip, receipt, feeMinusEnabled, itemsSubtotalUsd, unscaleFactor]);
+  }, [receiptId, updatingTip, receipt, feeMinusEnabled, itemsSubtotalUsd, unscaleFactor, paymentConfirmed]);
 
   // Sync initial receipt tip to tipChoice when receipt is first loaded
   useEffect(() => {
@@ -2747,7 +2748,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [shipEmail, shipName, shipLine1, shipCity, shipZip, shipCountry]);
 
   const handleShippingSubmit = async () => {
-    if (!shippingAddressValid || !shipMethod || !receiptId) return;
+    if (!shippingAddressValid || !shipMethod || !receiptId || isSettled(receipt?.status) || Boolean(paymentConfirmed)) return;
     setShippingSaving(true);
     setShippingError('');
     try {
@@ -3275,9 +3276,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   useEffect(() => {
     setTokenIcons(STATIC_TOKEN_ICONS);
   }, [STATIC_TOKEN_ICONS]);
-
-  // Payment Confirmation State & Polling
-  const [paymentConfirmed, setPaymentConfirmed] = useState<{ txHash: string; amount: number; token: string; funding?: string } | null>(null);
 
   // Developer-configured redirect URL — passed through to Stripe onramp session only.
   // Not used for portal-level redirect (other providers open in new tabs making portal redirect unreliable).
@@ -4130,12 +4128,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         errMsg.includes("unsupported link account")
       ) {
         setShowUnsupportedLinkModal(true);
-      } else if (
-        errMsg.includes("already been verified") ||
-        errMsg.includes("already_verified") ||
-        errMsg.includes("cannot be updated")
-      ) {
-        console.warn("[PORTAL PAGE] Benign KYC already-verified notification suppressed from error modal:", error);
       } else {
         postStatus("failed", {
           error: String((error as any)?.message || error),
@@ -4200,29 +4192,38 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
   }, [headlessSessionId]);
 
-  // Clean up Stripe headless elements only on component unmount
+  // Clean up Stripe headless elements on unmount or when they are cleared/replaced
   useEffect(() => {
+    const authEl = headlessAuthElement;
     return () => {
-      if (headlessAuthElement) {
+      if (authEl) {
         try {
-          (headlessAuthElement as any).unmount?.();
-          (headlessAuthElement as any).destroy?.();
-          headlessAuthElement.remove();
+          (authEl as any).unmount?.();
+          (authEl as any).destroy?.();
+          authEl.remove();
+          console.log("[PORTAL] Cleaned up headless auth element successfully");
         } catch (e) {
-          console.warn("[PORTAL] Failed to clean up auth element on unmount:", e);
-        }
-      }
-      if (headlessPaymentElement) {
-        try {
-          (headlessPaymentElement as any).unmount?.();
-          (headlessPaymentElement as any).destroy?.();
-          headlessPaymentElement.remove();
-        } catch (e) {
-          console.warn("[PORTAL] Failed to clean up payment element on unmount:", e);
+          console.warn("[PORTAL] Failed to clean up auth element:", e);
         }
       }
     };
-  }, []);
+  }, [headlessAuthElement]);
+
+  useEffect(() => {
+    const payEl = headlessPaymentElement;
+    return () => {
+      if (payEl) {
+        try {
+          (payEl as any).unmount?.();
+          (payEl as any).destroy?.();
+          payEl.remove();
+          console.log("[PORTAL] Cleaned up headless payment element successfully");
+        } catch (e) {
+          console.warn("[PORTAL] Failed to clean up payment element:", e);
+        }
+      }
+    };
+  }, [headlessPaymentElement]);
 
   // Manually find and remove/hide any leftover iframe components or global Stripe overlays
   // Only clean up external overlays/iframes if we are in a terminal state (idle, error, completed)
@@ -4825,15 +4826,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           country={kycCountry || clientCountry || "US"}
           amountUsd={totalUsd}
           receiptId={receiptId}
-          receiptStatus={receipt?.status}
-          isPaid={isSettled(receipt?.status) || Boolean(paymentConfirmed)}
-          receipt={receipt}
+          isReceiptPaid={isSettled(receipt?.status) || Boolean(paymentConfirmed)}
           headlessError={headlessError}
           kycTierRequired={kycTierRequired}
           kycLevel={headlessKycLevel}
           kycTiers={headlessKycTiers}
           isAllKycCompleted={isAllKycCompleted}
-          onHeadlessSubmitEmailPhone={(email, phone, country, fullName, forceRetry) => startHeadlessOnramp(email, phone, country, fullName, forceRetry)}
+          onHeadlessSubmitEmailPhone={(email, phone, country, fullName) => startHeadlessOnramp(email, phone, country, fullName)}
           onSubmitPhone={headlessSubmitPhone}
           onSubmitKycInfo={submitKycInfo}
           onVerifyDocuments={headlessVerifyDocuments}
@@ -6086,9 +6085,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             if ((kycTierRequired as string) === "l0") {
                               const l0Payload: any = {
                                 given_name: kycFirstName.trim(),
-                                first_name: kycFirstName.trim(),
                                 surname: kycLastName.trim(),
-                                last_name: kycLastName.trim(),
                                 address: addressObj
                               };
 
@@ -6109,9 +6106,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             } else {
                               const l1Payload: any = {
                                 given_name: kycFirstName.trim(),
-                                first_name: kycFirstName.trim(),
                                 surname: kycLastName.trim(),
-                                last_name: kycLastName.trim(),
                                 address: addressObj
                               };
 
@@ -6950,7 +6945,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           </div>
                         </div>
                         <div className="ml-auto microtext text-muted-foreground">
-                          {loadingReceipt ? "Loading…" : "Live"}
+                          {loadingReceipt ? "Loading…" : (isSettled(receipt?.status) || Boolean(paymentConfirmed)) ? (
+                            <span className="inline-flex items-center gap-1 font-bold text-emerald-400">
+                              ✓ Paid
+                            </span>
+                          ) : "Live"}
                         </div>
                       </div>
 
@@ -6979,7 +6978,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           ));
                         })()}
 
-                        {merchantTipEnabled && (
+                        {merchantTipEnabled && !isSettled(receipt?.status) && !paymentConfirmed && (
                           <div className="mt-2">
                             <div className="text-xs font-medium">Add a tip</div>
                             <div className="mt-1 flex gap-2 flex-wrap">
@@ -7296,9 +7295,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     <div className="rounded-xl border overflow-hidden mb-3" style={{ borderColor: isLightText ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', background: isLightText ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)' }}>
                                       <button
                                         type="button"
-                                        className="w-full flex items-center justify-between px-4 py-3 text-left"
-                                        onClick={() => { if (shippingComplete) setShippingComplete(false); }}
-                                        style={{ cursor: shippingComplete ? 'pointer' : 'default' }}
+                                        className="w-full flex items-center justify-between px-4 py-3 text-left select-none"
+                                        onClick={() => { if (shippingComplete && !isSettled(receipt?.status) && !paymentConfirmed) setShippingComplete(false); }}
+                                        style={{ cursor: (shippingComplete && !isSettled(receipt?.status) && !paymentConfirmed) ? 'pointer' : 'default' }}
                                       >
                                         <div className="flex items-center gap-2">
                                           <div className={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${shippingComplete ? 'bg-green-500 text-white' : (isLightText ? 'bg-white/10 text-white' : 'bg-black/10 text-black')}`}>
@@ -7306,7 +7305,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           </div>
                                           <span className={`text-sm font-semibold ${isLightText ? 'text-white' : 'text-black'}`}>Shipping Details</span>
                                         </div>
-                                        {shippingComplete && (
+                                        {shippingComplete && !isSettled(receipt?.status) && !paymentConfirmed && (
                                           <span className={`text-xs ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Click to edit</span>
                                         )}
                                       </button>
