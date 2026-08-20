@@ -54,6 +54,8 @@ export type Receipt = {
   lastPolledAt?: number;
   stripeSessionStatus?: string;
   customerSessions?: any[];
+  kycLevel?: string;
+  kycOccurred?: boolean;
 };
 
 function toCents(n: number) {

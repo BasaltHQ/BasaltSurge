@@ -13,6 +13,7 @@ import { AccordionCard } from "../AccordionCard";
 import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step3PaymentProps } from "../types";
 import { WalletOwnershipVerificationPanel } from "../WalletOwnershipVerificationPanel";
+import { StripeEmbedContainer } from "../StripeEmbedContainer";
 
 export function Step3Payment({
   isOpen,
@@ -36,6 +37,23 @@ export function Step3Payment({
   const isIdentityVerifying = headlessStep === "verifying_identity";
   const isWalletOwnershipRequired =
     Boolean(walletOwnershipChallenge) && !isWalletOwnershipVerified;
+  const internalPaymentContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Guarantee DOM element attachment and iframe layout integrity across step transitions
+  React.useEffect(() => {
+    const target = (paymentContainerRef as any)?.current || internalPaymentContainerRef.current;
+    if (target && paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
+      if (!target.contains(paymentElement as Node)) {
+        target.innerHTML = "";
+        target.appendChild(paymentElement as HTMLElement);
+      }
+    }
+    if (isOpen) {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+    }
+  }, [paymentElement, isOpen, paymentContainerRef]);
 
   return (
     <AccordionCard isActive={isOpen} isLightText={isLightText}>
@@ -44,7 +62,7 @@ export function Step3Payment({
         stepNumber={3}
         title={
           isWalletOwnershipRequired
-            ? "3. EU Wallet Ownership & Payment"
+            ? "3. Security Verification & Payment"
             : isIdentityVerifying
             ? "3. Identity Verification & Payment"
             : "3. Payment Method"
@@ -60,7 +78,7 @@ export function Step3Payment({
         badge={
           isWalletOwnershipVerified ? (
             <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 inline-flex items-center gap-1">
-              <KeyRound className="w-2.5 h-2.5" /> Wallet Verified
+              <KeyRound className="w-2.5 h-2.5" /> Security Verified
             </span>
           ) : undefined
         }
@@ -75,7 +93,7 @@ export function Step3Payment({
       <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
         {/* Top Error Alert Banner & Decline Recovery Panel */}
         {activeError && !isWalletOwnershipRequired && (
-          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 animate-in fade-in my-1 space-y-2">
+          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 animate-in fade-in my-1 space-y-2 text-left">
             <div className="flex items-start gap-2.5 text-xs">
               <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
               <div className="space-y-0.5">
@@ -90,6 +108,22 @@ export function Step3Payment({
                   <li>Try another debit card or Apple Pay / Google Pay</li>
                   <li>Check your banking app or SMS for a temporary verification prompt, then retry</li>
                 </ul>
+              </div>
+            )}
+            {activeError.toLowerCase().includes("bank") && activeError.toLowerCase().includes("supported") && (
+              <div className="pt-2 border-t border-amber-500/20 text-[11px] text-amber-200/80 space-y-1">
+                <span className="font-semibold text-amber-300">Recommendation:</span>
+                <p className="pl-1 opacity-90">
+                  This specific banking institution does not allow instant card checkout. Please use a debit card, Apple Pay, or another bank.
+                </p>
+              </div>
+            )}
+            {(activeError.toLowerCase().includes("limit") || activeError.toLowerCase().includes("maximum")) && (
+              <div className="pt-2 border-t border-amber-500/20 text-[11px] text-amber-200/80 space-y-1">
+                <span className="font-semibold text-amber-300">Higher Limits Available:</span>
+                <p className="pl-1 opacity-90">
+                  ACH Direct Debit (US Bank Account) offers significantly higher single-transaction purchase limits.
+                </p>
               </div>
             )}
           </div>
@@ -128,27 +162,18 @@ export function Step3Payment({
         {/* Embedded Live Stripe Payment / Identity Element Container */}
         {!isWalletOwnershipRequired && (
           <div className="space-y-2">
-            <div
-              className={`p-3 rounded-xl bg-white/5 border border-white/10 my-2 ${paymentElement ? "block" : "hidden"}`}
-            >
-              <div
-                ref={(el) => {
-                  if (paymentContainerRef) {
-                    (paymentContainerRef as any).current = el;
-                  }
-                  if (el && paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
-                    if (!el.contains(paymentElement as Node)) {
-                      el.innerHTML = "";
-                      el.appendChild(paymentElement as HTMLElement);
-                    }
-                  }
-                }}
-              >
-                {typeof paymentElement !== "object" || !("nodeType" in (paymentElement || {}))
-                  ? (paymentElement as React.ReactNode)
-                  : null}
-              </div>
-            </div>
+            <StripeEmbedContainer
+              element={paymentElement}
+              isVisible={isOpen && !isWalletOwnershipRequired}
+              containerRef={paymentContainerRef}
+              isLightText={isLightText}
+              loadingMessage={
+                isIdentityVerifying
+                  ? "Loading secure Stripe identity verification..."
+                  : "Loading secure Stripe payment form..."
+              }
+              timeoutSeconds={12}
+            />
 
             {paymentElement && (
               <div className="flex items-center justify-center gap-1.5 py-1 text-[11px] font-semibold text-amber-400/90 text-center animate-in fade-in">
@@ -158,18 +183,6 @@ export function Step3Payment({
                     ? "Complete the secure photo verification above to proceed."
                     : "Please confirm your payment method in the secure form above to complete checkout."}
                 </span>
-              </div>
-            )}
-
-            {/* Live Production Loading State */}
-            {!paymentElement && !isSimulationMode && (
-              <div className="p-8 flex flex-col items-center justify-center space-y-3 text-center animate-in fade-in">
-                <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
-                <p className={`text-xs font-medium ${isLightText ? "text-white/70" : "text-black/70"}`}>
-                  {isIdentityVerifying
-                    ? "Loading secure Stripe identity verification..."
-                    : "Loading secure Stripe payment form..."}
-                </p>
               </div>
             )}
           </div>

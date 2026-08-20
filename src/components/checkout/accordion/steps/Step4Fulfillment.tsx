@@ -161,7 +161,7 @@ export function Step4Fulfillment({
                     rel="noopener noreferrer"
                     className="font-mono text-amber-400 hover:underline inline-flex items-center gap-1 text-[11px]"
                   >
-                    <span>BaseScan ({paymentConfirmed.txHash.slice(0, 6)}...{paymentConfirmed.txHash.slice(-4)})</span>
+                    <span>Receipt Audit ({paymentConfirmed.txHash.slice(0, 6)}...{paymentConfirmed.txHash.slice(-4)})</span>
                     <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                 </div>

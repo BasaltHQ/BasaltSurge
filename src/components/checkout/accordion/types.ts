@@ -146,6 +146,7 @@ export interface Step1Props {
   effectiveStatus?: string;
   isAllKycCompleted?: boolean;
   isEmailLocked?: boolean;
+  isStep2Satisfied?: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onHeaderClick: () => void;
 }

@@ -576,49 +576,15 @@ export const validateDob = (val: string): { valid: boolean; age?: number; error?
   return { valid: true, age };
 };
 
-// Format and translate raw errors into clear customer guidance
-export const formatErrorMessage = (err?: string | null): string | null => {
+import { formatOnrampErrorMessage } from "./errorTaxonomy";
+
+// Format and translate raw errors into clear customer guidance backed by central taxonomy
+export const formatErrorMessage = (
+  err?: any,
+  kycState?: { isL1Approved: boolean; isL2Approved: boolean }
+): string | null => {
   if (!err) return null;
-  const lower = err.toLowerCase();
-  if (
-    lower.includes("address provided isn't supported for headless mode") ||
-    lower.includes("unsupported for headless mode") ||
-    lower.includes("unsupported_region") ||
-    lower.includes("unsupported_country")
-  ) {
-    return "Instant card checkout is currently unavailable for this residential address or state (e.g., NY, HI, or US territories) due to regional regulations. Please verify your address or use an alternative payment method.";
-  }
-  if (lower.includes("card_declined") || lower.includes("do_not_honor") || lower.includes("card was declined")) {
-    return "Your card was declined by your issuing bank. Please check your card balance, contact your bank, or select another payment method.";
-  }
-  if (lower.includes("insufficient_funds")) {
-    return "Payment failed due to insufficient funds on this card. Please try another card or payment method.";
-  }
-  if (lower.includes("expired_card")) {
-    return "This card has expired. Please enter an active card.";
-  }
-  if (lower.includes("incorrect_cvc") || lower.includes("invalid_cvc")) {
-    return "The security code (CVC) entered is incorrect. Please verify the 3 or 4-digit code on your card.";
-  }
-  if (lower.includes("amount_above_maximum") || lower.includes("exceeds the maximum")) {
-    return "This order exceeds the single-transaction limit for this payment method. Please select a bank account or contact support.";
-  }
-  if (lower.includes("amount_below_minimum")) {
-    return "This order is below the minimum supported purchase limit.";
-  }
-  if (lower.includes("unsupportable_customer") || lower.includes("unsupported link account")) {
-    return "This Link account cannot be used for this checkout. Please verify your details or use another payment method.";
-  }
-  if (lower.includes("wallet_ownership_verification_required") || lower.includes("travel rule")) {
-    return "Verification is required to confirm wallet ownership for orders at or above €1,000. Please sign the confirmation message to proceed.";
-  }
-  if (lower.includes("invalid_wallet_ownership_signature") || lower.includes("invalid signature")) {
-    return "The submitted confirmation signature is invalid. In test mode, use 'abcd'.";
-  }
-  if (lower.includes("wallet_ownership_challenge_expired")) {
-    return "The confirmation session has expired. A fresh confirmation prompt has been generated.";
-  }
-  return err;
+  return formatOnrampErrorMessage(err, kycState);
 };
 
 // Popular email domain typos auto-suggest dictionary

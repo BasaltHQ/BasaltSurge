@@ -119,7 +119,7 @@ export function SimulatedStripePaymentElement({
       }
 
       if (cleanNum.endsWith("0119")) {
-        const msg = "Instant card checkout is currently unavailable for this residential address due to regional crypto regulations.";
+        const msg = "Instant card checkout is currently unavailable for this residential address due to regional banking regulations.";
         setLocalErr(msg);
         onError(msg);
         return;

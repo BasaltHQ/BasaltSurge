@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   PortalPayAccordionCheckoutV2Props,
   UseAccordionCheckoutStateReturn,
@@ -17,6 +17,9 @@ import {
   SimulatedStripePaymentElement,
   SimulatedStripeIdentityElement,
 } from "./simulations";
+import { resolveCustomerKycTier, KycTierEntry } from "./kycTierEngine";
+import { parseOnrampError, formatOnrampErrorMessage } from "./errorTaxonomy";
+import { useStepProgressionGuard } from "./useStepProgressionGuard";
 
 export function useAccordionCheckoutState(
   props: PortalPayAccordionCheckoutV2Props
@@ -314,38 +317,14 @@ export function useAccordionCheckoutState(
   const authContainerRef = useRef<HTMLDivElement | null>(null);
   const paymentContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Canonical Stripe Onramp KYC tier detection:
-  const l0Verified = (kycTiers || []).some(
-    (t: any) => t.tier === "l0" && t.verification_status === "verified"
-  );
-  const l1Verified = (kycTiers || []).some(
-    (t: any) => t.tier === "l1" && t.verification_status === "verified"
-  );
-  const l1NotAvailable = (kycTiers || []).some(
-    (t: any) => t.tier === "l1" && t.verification_status === "not_available"
-  );
-  const l2Verified = (kycTiers || []).some(
-    (t: any) => t.tier === "l2" && t.verification_status === "verified"
-  );
+  // Canonical Stripe Onramp KYC tier resolution via modular engine
+  const kyc = useMemo(() => {
+    return resolveCustomerKycTier(kycTiers as KycTierEntry[], kycLevel);
+  }, [kycTiers, kycLevel]);
 
-  const isL0Approved =
-    l0Verified ||
-    l1Verified ||
-    l2Verified ||
-    isAllKycCompleted ||
-    effectiveStatus === "verified";
-
-  const isL1Approved =
-    l1Verified ||
-    l1NotAvailable ||
-    l2Verified ||
-    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l1");
-
-  const isL2Approved =
-    l2Verified ||
-    docVerificationSuccess ||
-    kycLevel === "L2" ||
-    (effectiveStatus === "verified" && (kycTierRequired as string) !== "l2");
+  const isL0Approved = kyc.isL0Verified || isAllKycCompleted || effectiveStatus === "verified";
+  const isL1Approved = kyc.isL1Verified || (effectiveStatus === "verified" && (kycTierRequired as string) !== "l1");
+  const isL2Approved = kyc.isL2Verified || docVerificationSuccess || (effectiveStatus === "verified" && (kycTierRequired as string) !== "l2");
 
   // Step-up (DOB + SSN) is strictly ONLY shown when NOT already verified AND Stripe explicitly requires L1 tier
   const showStepUpForm =
@@ -511,32 +490,42 @@ export function useAccordionCheckoutState(
     setIsAddressParsed(true);
   };
 
-  // Dedicated Payment Lockout Guard: if status is paid, lock activeStep to 4 and complete fulfillment
-  useEffect(() => {
-    if (isPaid || isOrderConfirmed) {
-      setActiveStep(4);
-      setFulfillmentStage("complete");
-    }
-  }, [isPaid, isOrderConfirmed]);
+  // Step 2 satisfaction check: KYC / Demographics are verified and no further step-up / doc verification is required
+  const isStep2Satisfied = Boolean(
+    (isL0Approved || isAllKycCompleted || effectiveStatus === "verified") &&
+    !showStepUpForm &&
+    !showVerifyDocs
+  );
 
-  // Dedicated KYC Enforcement Guard
-  useEffect(() => {
-    if (isPaid || isOrderConfirmed) return;
-    if (showStepUpForm && !isL1Approved) {
-      if (activeStep > 2) {
-        setActiveStep(2);
-      }
-    }
-  }, [showStepUpForm, isL1Approved, activeStep, effectivePaymentConfirmed, isOrderConfirmed]);
+  // Dedicated Modular Reactive Step Controller Hook
+  useStepProgressionGuard({
+    activeStep,
+    setActiveStep,
+    headlessStep,
+    isPaid,
+    isOrderConfirmed,
+    isEmailLocked,
+    isLinkOtpVerified,
+    initialEmail,
+    effectiveStatus,
+    kyc,
+    showStepUpForm,
+    showVerifyDocs,
+    isL2Requirement,
+    isStep2Satisfied,
+    propPaymentElement,
+    activeError,
+    effectiveError,
+  });
 
   // Step 1 Submit
   const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
 
-    // If email is already locked/authorized, proceed to appropriate step without re-authenticating
-    if (isEmailLocked) {
-      if (simulatedPath === "skip_kyc" || effectiveStatus === "verified" || isAllKycCompleted) {
+    // If email is already locked/authorized or OTP verified, proceed to appropriate step without re-authenticating
+    if (isEmailLocked || isLinkOtpVerified) {
+      if (simulatedPath === "skip_kyc" || effectiveStatus === "verified" || isAllKycCompleted || isStep2Satisfied) {
         setActiveStep(3);
       } else {
         setActiveStep(2);
@@ -585,7 +574,7 @@ export function useAccordionCheckoutState(
           return;
         }
 
-        if (simulatedPath === "skip_kyc" || effectiveStatus === "verified" || isAllKycCompleted) {
+        if (simulatedPath === "skip_kyc" || effectiveStatus === "verified" || isAllKycCompleted || isStep2Satisfied) {
           setActiveStep(3);
         } else {
           setActiveStep(2);
@@ -686,46 +675,39 @@ export function useAccordionCheckoutState(
       const targetCountry = (country || "US").toUpperCase();
       const isEU = targetCountry !== "US" && targetCountry !== "CA";
 
+      // Compliance Invariant: Always submit the complete demographic payload to avoid Stripe parameter validation errors
       if (onSubmitKycInfo && !isSimulationMode) {
-        if (showStepUpForm && !manualEditAddress) {
-          await onSubmitKycInfo({
-            ...(parsedDob ? { date_of_birth: parsedDob } : {}),
-            ...(isUS && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
-            ...(isEU
-              ? {
-                  nationalities: [targetCountry],
-                  birth_country: targetCountry,
-                  nationality: targetCountry,
-                }
-              : {}),
-          });
-        } else {
-          await onSubmitKycInfo({
-            given_name: firstName.trim(),
-            surname: lastName.trim(),
-            address: {
-              line1: line1.trim(),
-              ...(line2 ? { line2: line2.trim() } : {}),
-              city: city.trim(),
-              ...(stateCode ? { state: stateCode.trim() } : {}),
-              postal_code: zipCode.trim(),
-              country: targetCountry,
-            },
-            ...(parsedDob ? { date_of_birth: parsedDob } : {}),
-            ...(isUS && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
-            ...(isEU
-              ? {
-                  nationalities: [targetCountry],
-                  birth_country: targetCountry,
-                  nationality: targetCountry,
-                }
-              : {}),
-          });
-        }
+        await onSubmitKycInfo({
+          given_name: firstName.trim(),
+          surname: lastName.trim(),
+          address: {
+            line1: line1.trim(),
+            ...(line2 ? { line2: line2.trim() } : {}),
+            city: city.trim(),
+            ...(stateCode ? { state: stateCode.trim() } : {}),
+            postal_code: zipCode.trim(),
+            country: targetCountry,
+          },
+          ...(parsedDob ? { date_of_birth: parsedDob } : {}),
+          ...(isUS && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
+          ...(isEU
+            ? {
+                nationalities: [targetCountry],
+                birth_country: targetCountry,
+                nationality: targetCountry,
+              }
+            : {}),
+        });
       }
 
+      // Post-KYC Step Routing Discrimination:
+      // If payment token exists (reactive step-up), resume fulfillment in Step 4; otherwise open Step 3 payment selection
       if (!propError && headlessStep !== "error") {
-        setActiveStep(3);
+        if (effectivePaymentConfirmed || headlessStep === "checking_out" || headlessStep === "confirming_fees") {
+          setActiveStep(4);
+        } else {
+          setActiveStep(3);
+        }
       }
     } catch (err: any) {
       console.error("Identity submission error:", err);
@@ -757,7 +739,7 @@ export function useAccordionCheckoutState(
         onSuccess={() => {
           setIsLinkOtpVerified(true);
           setShowSimOtp(false);
-          if (simulatedPath === "skip_kyc" || effectiveStatus === "verified" || isAllKycCompleted) {
+          if (simulatedPath === "skip_kyc" || effectiveStatus === "verified" || isAllKycCompleted || isStep2Satisfied) {
             setActiveStep(3);
           } else {
             setActiveStep(2);
@@ -850,6 +832,7 @@ export function useAccordionCheckoutState(
       effectiveStatus,
       isAllKycCompleted,
       isEmailLocked,
+      isStep2Satisfied,
       onSubmit: handleContactSubmit,
       onHeaderClick: () => handleStepChange(1),
     },

@@ -47,27 +47,26 @@ export function WalletOwnershipVerificationPanel({
     setSigningWithWallet(true);
     try {
       if (typeof window !== "undefined" && (window as any).ethereum) {
-        const provider = (window as any).ethereum;
-        const accounts = await provider.request({ method: "eth_requestAccounts" });
-        const fromAccount = accounts[0];
-        if (!fromAccount) {
-          throw new Error("No connected Ethereum account found in wallet.");
-        }
-        const signature = await provider.request({
-          method: "personal_sign",
-          params: [challenge.message, fromAccount],
+        const accounts = await (window as any).ethereum.request({
+          method: "eth_requestAccounts",
         });
-        if (signature) {
-          onSigChange(signature);
+        if (!accounts || !accounts[0]) {
+          throw new Error("No active authorization account found.");
         }
+        const signature = await (window as any).ethereum.request({
+          method: "personal_sign",
+          params: [challenge.message, accounts[0]],
+        });
+        onSigChange(signature);
+        setWalletSignError(null);
       } else {
-        throw new Error(
-          "No injected Web3 wallet (e.g. MetaMask, Phantom) detected. Please paste the signature manually or use test mode 'abcd'."
+        setWalletSignError(
+          "No browser authenticator detected. Please enter the authorization code manually or use test mode 'abcd'."
         );
       }
     } catch (err: any) {
-      console.warn("[EU WALLET OWNERSHIP] Browser wallet signing failed:", err);
-      setWalletSignError(err?.message || "Wallet rejected signing request.");
+      console.warn("[SECURITY AUTHORIZATION] Authorization failed:", err);
+      setWalletSignError(err?.message || "Authorization request was cancelled.");
     } finally {
       setSigningWithWallet(false);
     }
@@ -96,11 +95,11 @@ export function WalletOwnershipVerificationPanel({
               } ${isLightText ? "text-white" : "text-black"}`}
             >
               {compact
-                ? "EU Travel Rule — Verify Wallet Ownership"
-                : "EU Travel Rule: Verify Wallet Ownership"}
+                ? "Payment Security Authorization"
+                : "High-Value Payment Security Authorization"}
             </h4>
-            <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/40">
-              MiCA Compliant
+            <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+              Security Compliance
             </span>
           </div>
           <p
@@ -108,14 +107,13 @@ export function WalletOwnershipVerificationPanel({
               isLightText ? "text-white/70" : "text-black/70"
             }`}
           >
-            Under EU Travel Rule regulations, crypto transactions at or above{" "}
-            <strong>€1,000</strong> require cryptographic proof that you control
-            the destination wallet address.
+            To comply with financial security standards for orders at or above{" "}
+            <strong>€1,000</strong>, please confirm your secure payment authorization.
           </p>
         </div>
       </div>
 
-      {/* Target Destination Wallet Info (if provided) */}
+      {/* Target Transaction Ref Info (if provided) */}
       {(challenge.walletAddress || challenge.network) && (
         <div
           className={`p-2.5 rounded-xl text-xs flex items-center justify-between border gap-2 ${
@@ -124,10 +122,9 @@ export function WalletOwnershipVerificationPanel({
               : "bg-white border-black/10"
           }`}
         >
-          <span className="opacity-60 text-[11px] shrink-0">Destination Wallet:</span>
+          <span className="opacity-60 text-[11px] shrink-0">Transaction Ref:</span>
           <span className="font-mono font-semibold text-[11px] truncate max-w-[140px] sm:max-w-[220px]">
             {challenge.walletAddress}
-            {challenge.network ? ` (${challenge.network})` : ""}
           </span>
         </div>
       )}
@@ -198,7 +195,7 @@ export function WalletOwnershipVerificationPanel({
         </div>
       )}
 
-      {/* Signature Input & Wallet Action */}
+      {/* Signature Input & Action */}
       <div className="space-y-2 text-left">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <label
@@ -206,7 +203,7 @@ export function WalletOwnershipVerificationPanel({
               isLightText ? "text-white/50" : "text-black/50"
             }`}
           >
-            Cryptographic Signature (Hex or 'abcd')
+            Security Authorization Code
           </label>
           {typeof window !== "undefined" && (window as any).ethereum && (
             <button
@@ -218,12 +215,12 @@ export function WalletOwnershipVerificationPanel({
               {signingWithWallet ? (
                 <>
                   <Loader2 className="w-3 h-3 animate-spin" />
-                  <span>Requesting Signature...</span>
+                  <span>Authorizing...</span>
                 </>
               ) : (
                 <>
                   <KeyRound className="w-3 h-3" />
-                  <span>Sign with Wallet</span>
+                  <span>One-Click Authorize</span>
                 </>
               )}
             </button>
@@ -234,7 +231,7 @@ export function WalletOwnershipVerificationPanel({
           rows={compact ? 2 : 3}
           value={sig}
           onChange={(e) => onSigChange(e.target.value)}
-          placeholder="Paste signature hex (e.g. 0x... or 'abcd' for test mode)"
+          placeholder="Enter authorization code (in test mode, use 'abcd')"
           className={`w-full p-2.5 rounded-xl font-mono text-xs focus:outline-none transition-all ${
             isLightText
               ? "bg-black/30 border border-white/15 text-white placeholder-white/30 focus:border-amber-400/80 focus:ring-1 focus:ring-amber-400/20"
@@ -243,12 +240,12 @@ export function WalletOwnershipVerificationPanel({
         />
       </div>
 
-      {/* Wallet Signature Error Notice */}
+      {/* Signature Error Notice */}
       {(walletSignError || errorMessage) && (
         <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-start gap-2 animate-in fade-in text-left">
           <AlertTriangle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
           <div className="space-y-0.5">
-            <div className="font-bold text-red-200">Signature Error:</div>
+            <div className="font-bold text-red-200">Authorization Notice:</div>
             <div className="text-[11px] leading-relaxed text-red-300">
               {walletSignError || errorMessage}
             </div>
@@ -282,12 +279,12 @@ export function WalletOwnershipVerificationPanel({
           {loading ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin text-white" />
-              <span>Verifying Signature...</span>
+              <span>Verifying Authorization...</span>
             </>
           ) : (
             <>
               <KeyRound className="w-3.5 h-3.5 text-white" />
-              <span>Submit Signature & Continue</span>
+              <span>Confirm & Continue</span>
             </>
           )}
         </button>

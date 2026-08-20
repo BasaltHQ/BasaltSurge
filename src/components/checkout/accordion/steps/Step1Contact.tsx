@@ -16,6 +16,7 @@ import { formatPhoneInput, suggestEmailCorrection, sanitizeInternationalPhone } 
 import { AccordionCard } from "../AccordionCard";
 import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step1ContactProps } from "../types";
+import { StripeEmbedContainer } from "../StripeEmbedContainer";
 
 export function Step1Contact({
   isOpen,
@@ -37,12 +38,30 @@ export function Step1Contact({
   effectiveStatus,
   isAllKycCompleted,
   isEmailLocked = false,
+  isStep2Satisfied = false,
   onSubmit,
   onHeaderClick,
 }: Step1ContactProps) {
   const isLinkPhoneRegistration = headlessStep === "collecting_phone";
   const emailCorrection = suggestEmailCorrection(email);
   const countryDialCode = SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial || "+1";
+  const internalAuthContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Guarantee DOM element attachment and layout integrity across step transitions
+  React.useEffect(() => {
+    const target = (authContainerRef as any)?.current || internalAuthContainerRef.current;
+    if (target && authElement && typeof authElement === "object" && "nodeType" in authElement) {
+      if (!target.contains(authElement as Node)) {
+        target.innerHTML = "";
+        target.appendChild(authElement as HTMLElement);
+      }
+    }
+    if (isOpen) {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+    }
+  }, [authElement, isOpen, authContainerRef]);
 
   return (
     <AccordionCard isActive={isOpen} isLightText={isLightText}>
@@ -144,33 +163,6 @@ export function Step1Contact({
           )}
         </div>
 
-        {/* Mobile Phone (Optional / Recommended) */}
-        {!isLinkPhoneRegistration && (
-          <div>
-            <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-              <Phone className="w-3 h-3" />
-              <span>Mobile Phone (for SMS receipts & Link)</span>
-            </label>
-            <input
-              type="tel"
-              autoComplete="tel"
-              placeholder="+1 (555) 000-0000"
-              value={phone}
-              onPaste={(e) => {
-                e.preventDefault();
-                const pasted = e.clipboardData.getData("text");
-                const sanitized = sanitizeInternationalPhone(pasted, countryDialCode);
-                setPhone(formatPhoneInput(sanitized));
-              }}
-              onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
-              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
-                isLightText
-                  ? "bg-white/5 border border-white/10 text-white placeholder-white/30 focus:border-amber-400/50"
-                  : "bg-black/5 border border-black/10 text-black placeholder-black/30 focus:border-amber-400/50"
-              }`}
-            />
-          </div>
-        )}
 
         {/* Country of Residence */}
         <div>
@@ -232,24 +224,14 @@ export function Step1Contact({
 
         {/* Inline OTP Element if triggered by Stripe Link */}
         {authElement && (
-          <div className="my-2">
-            <div
-              ref={(el) => {
-                if (authContainerRef) {
-                  (authContainerRef as any).current = el;
-                }
-                if (el && authElement && typeof authElement === "object" && "nodeType" in authElement) {
-                  if (!el.contains(authElement as Node)) {
-                    el.innerHTML = "";
-                    el.appendChild(authElement as HTMLElement);
-                  }
-                }
-              }}
-            >
-              {typeof authElement !== "object" || !("nodeType" in (authElement || {}))
-                ? (authElement as React.ReactNode)
-                : null}
-            </div>
+          <div className={`my-2 ${headlessStep && !["authenticating", "collecting_phone"].includes(headlessStep) ? "hidden" : ""}`}>
+            <StripeEmbedContainer
+              element={authElement}
+              isVisible={isOpen && (!headlessStep || ["authenticating", "collecting_phone"].includes(headlessStep))}
+              containerRef={authContainerRef}
+              isLightText={isLightText}
+              loadingMessage="Connecting to Stripe Link verification..."
+            />
           </div>
         )}
 
@@ -285,10 +267,12 @@ export function Step1Contact({
             ) : (
               <>
                 <span>
-                  {isEmailLocked
-                    ? "Continue to Next Step"
-                    : isLinkPhoneRegistration
+                  {isLinkPhoneRegistration
                     ? "Register & Continue"
+                    : isStep2Satisfied
+                    ? "Continue to Payment"
+                    : isEmailLocked
+                    ? "Continue to Next Step"
                     : "Continue to Verification"}
                 </span>
                 <ArrowRight className="w-3.5 h-3.5" />

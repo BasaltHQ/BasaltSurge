@@ -222,8 +222,21 @@ export function Step2Identity({
         ) : (
           /* Full Demographic or Step-Up KYC Form */
           <form onSubmit={onSubmit} className="space-y-3">
+            {/* Limit Upgrade Step-Up Notice Banner */}
+            {activeError && (activeError.toLowerCase().includes("limit") || activeError.toLowerCase().includes("maximum") || activeError.toLowerCase().includes("exceeds")) && (
+              <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-300 space-y-1.5 animate-in fade-in duration-200 text-left">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-blue-400">
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Higher Purchase Limit Required</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-blue-200/90">
+                  This purchase exceeds your current tier limit. Complete identity verification below to unlock higher limits for this order.
+                </p>
+              </div>
+            )}
+
             {/* Top Step-Up Notice Banner */}
-            {showStepUpForm && (
+            {showStepUpForm && !(activeError && (activeError.toLowerCase().includes("limit") || activeError.toLowerCase().includes("maximum"))) && (
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 animate-in fade-in duration-200 text-left">
                 <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400">
                   <Shield className="w-3.5 h-3.5" />

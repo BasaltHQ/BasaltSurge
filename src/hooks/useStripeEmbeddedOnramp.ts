@@ -2286,7 +2286,16 @@ export function useStripeEmbeddedOnramp({
                                             errMessage.includes("timed out") ||
                                             errMessage.includes("try creating a new session");
 
-            const isRecoverableError = isL0Error || isL1Error || isL2Error || isGenericKycError ||
+            const isAmountLimitError =
+              errCode === "crypto_onramp_amount_above_maximum" ||
+              errCode === "crypto_onramp_limit_exceeded" ||
+              lastError === "crypto_onramp_amount_above_maximum" ||
+              lastError === "crypto_onramp_limit_exceeded" ||
+              errMessage.includes("amount_above_maximum") ||
+              errMessage.includes("limit_exceeded") ||
+              errMessage.includes("purchase limit has been reached");
+
+            const isRecoverableError = isL0Error || isL1Error || isL2Error || isAmountLimitError || isGenericKycError ||
                                        isQuoteExpired || isWalletMissing || isVerificationError || isTransientServiceError ||
                                        lastError === "missing_consumer_wallet" ||
                                        lastError === "charged_with_expired_quote" ||
@@ -2296,6 +2305,23 @@ export function useStripeEmbeddedOnramp({
               console.warn(`[EMBEDDED ONRAMP] Terminal onramp error code detected: ${errCode}. Aborting retry loop immediately.`);
               handleError(checkoutErr?.message || "Checkout failed", checkoutErr);
               return;
+            }
+
+            if (isAmountLimitError) {
+              console.log("[EMBEDDED ONRAMP] Amount above maximum / limit exceeded. Checking if KYC step-up can unlock higher limits...");
+              if (kycLevelRef.current !== "L1" && kycLevelRef.current !== "L2") {
+                console.log("[EMBEDDED ONRAMP] Directing to L1 step-up for limit upgrade.");
+                setKycTierRequired("l1");
+                updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
+              } else if (kycLevelRef.current === "L1") {
+                console.log("[EMBEDDED ONRAMP] Directing to L2 ID scan for limit upgrade.");
+                setKycTierRequired("l2");
+                updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
+              }
             }
 
             if (isL0Error) {
