@@ -1597,6 +1597,7 @@ export function useStripeEmbeddedOnramp({
               return null;
             }
             
+            let isL1Verified = false;
             try {
               // Pre-check customer KYC status to see if L1 is needed first, or if L2 is already under review.
               const customerCheckRes = await fetch(`/api/stripe/crypto-customer/${encodeURIComponent(customerId)}?t=${Date.now()}`, {
@@ -1617,9 +1618,9 @@ export function useStripeEmbeddedOnramp({
                 
                 const kycTiers = kycData.kycTiers || [];
                 const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-                let isL1Verified = l1Tier 
+                isL1Verified = l1Tier 
                   ? l1Tier.verification_status === "verified"
-                  : false;
+                  : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
                 
                 // If L1 demographics are pending, poll and wait for L1 approval before L2
                 if (!isL1Verified && l1Tier?.verification_status === "pending") {
@@ -1684,6 +1685,13 @@ export function useStripeEmbeddedOnramp({
               }
             } catch (checkErr) {
               console.warn("[EMBEDDED ONRAMP] Failed to pre-check customer status:", checkErr);
+            }
+
+            if (isL1Verified && !isAchEnforcedRef.current) {
+              console.log("[EMBEDDED ONRAMP] Customer is already L1 verified. Session creation failure is not an L2 KYC requirement.");
+              const err = new Error(errData.error || "Session creation failed");
+              (err as any).code = errData.code;
+              throw err;
             }
 
             console.log("[EMBEDDED ONRAMP] Session creation requires L2 document verification. Routing to Step 2 L2 screen...");

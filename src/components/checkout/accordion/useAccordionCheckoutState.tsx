@@ -322,38 +322,39 @@ export function useAccordionCheckoutState(
     return resolveCustomerKycTier(kycTiers as KycTierEntry[], kycLevel);
   }, [kycTiers, kycLevel]);
 
-  const isL0Approved = kyc.isL0Verified || isAllKycCompleted;
-  const isL1Approved = kyc.isL1Verified;
-  const isL2Approved = kyc.isL2Verified || docVerificationSuccess;
+  const l1Verified = kyc.isL1Verified || kycTiers.some((t: any) => t.tier === "l1" && t.verification_status === "verified");
+  const l2Verified = kyc.isL2Verified || docVerificationSuccess || kycTiers.some((t: any) => t.tier === "l2" && t.verification_status === "verified");
 
-  // Step-up (DOB + SSN) is strictly ONLY shown when NOT already verified AND Stripe explicitly requires L1 tier
+  const isL0Approved = kyc.isL0Verified || isAllKycCompleted;
+  const isL1Approved = l1Verified;
+  const isL2Approved = l2Verified;
+
+  // Full L0 form (name, address): for new users (REQUIRES_KYC) or REJECTED where L1 itself failed
+  const showFullForm =
+    kycLevel === "REQUIRES_KYC" ||
+    (kycLevel === "REJECTED" && !l1Verified) ||
+    manualEditAddress ||
+    (!l1Verified && !kyc.isL0Verified && !isL0Approved);
+
+  // Step-up (DOB + SSN required): user is at L0 (name & address verified, needs L1)
   const showStepUpForm =
-    !isL1Approved &&
-    (effectiveTier === "l1" ||
+    !l1Verified &&
+    !showFullForm &&
+    (kycLevel === "L0" ||
+      effectiveTier === "l1" ||
       effectiveStatus === "step_up" ||
       (kycTierRequired as string) === "l1");
 
-  // Document verification requirement: only when L2 tier is explicitly demanded AND L1 is already approved
+  // Document verification button (Photo ID/Selfie): user is at L1 and needs L2 (or retry L2 on rejection)
   const showVerifyDocs =
-    isL1Approved &&
-    !isL2Approved &&
+    l1Verified &&
+    !l2Verified &&
     (effectiveTier === "l2" ||
       effectiveStatus === "doc_verify" ||
       (kycTierRequired as string) === "l2" ||
       headlessStep === "verifying_identity");
 
-  const isL2Requirement =
-    isL1Approved &&
-    !isL2Approved &&
-    (effectiveTier === "l2" ||
-      (kycTierRequired as string) === "l2" ||
-      headlessStep === "verifying_identity");
-
-  // Full L0 form (name, address): default for all unverified users starting at L0, or when manual address editing is active
-  const showFullForm =
-    !showStepUpForm ||
-    manualEditAddress ||
-    kycLevel === "REQUIRES_KYC";
+  const isL2Requirement = showVerifyDocs;
 
   // Sync props when initial values change
   useEffect(() => {

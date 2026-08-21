@@ -124,7 +124,6 @@ export async function POST(req: NextRequest) {
     params.append("destination_currencies[]", destinationCurrency);
     params.append("destination_network", destinationNetwork);
     params.append("destination_networks[]", destinationNetwork);
-    params.append("customer_ip_address", customerIp);
 
     if (sourceAmount) {
       params.append("source_amount", sourceAmount);
@@ -133,7 +132,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (walletAddress) {
-      params.append("wallet_address", walletAddress);
+      params.append(`wallet_addresses[${destinationNetwork}_network]`, walletAddress);
+      params.append(`wallet_addresses[${destinationNetwork}]`, walletAddress);
+      params.append("lock_wallet_address", "true");
     }
 
     const settlementSpeed = String(body.settlementSpeed || "standard").trim().toLowerCase();
