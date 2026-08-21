@@ -2577,14 +2577,18 @@ export function useStripeEmbeddedOnramp({
             }
           });
         } else {
-          console.log("[EMBEDDED ONRAMP] KYC info approved. Advancing to payment collection...");
+          console.log("[EMBEDDED ONRAMP] KYC info approved. Initializing payment element collection...");
           isRunningRef.current = false;
-          updateStep("collecting_payment");
+          setTimeout(() => {
+            startOnrampRef.current?.(activeEmailRef.current || undefined);
+          }, 50);
         }
       } else {
-        console.log("[EMBEDDED ONRAMP] KYC approved. Advancing to payment collection...");
+        console.log("[EMBEDDED ONRAMP] KYC approved. Initializing payment element collection...");
         isRunningRef.current = false;
-        updateStep("collecting_payment");
+        setTimeout(() => {
+          startOnrampRef.current?.(activeEmailRef.current || undefined);
+        }, 50);
       }
     } catch (err: any) {
       const errMsg = String(err?.message || err || "").toLowerCase();
@@ -2599,8 +2603,8 @@ export function useStripeEmbeddedOnramp({
         setIsAllKycCompleted(true);
         setKycLevel("L1");
         kycLevelRef.current = "L1";
-        setKycTierRequired("l1");
-        kycTierRequiredRef.current = "l1";
+        setKycTierRequired("l0");
+        kycTierRequiredRef.current = "l0";
         kycOccurredRef.current = true;
         updateStep("collecting_payment");
 
@@ -2641,11 +2645,15 @@ export function useStripeEmbeddedOnramp({
             });
           } else {
             isRunningRef.current = false;
-            updateStep("collecting_payment");
+            setTimeout(() => {
+              startOnrampRef.current?.(activeEmailRef.current || undefined);
+            }, 50);
           }
         } else {
           isRunningRef.current = false;
-          updateStep("collecting_payment");
+          setTimeout(() => {
+            startOnrampRef.current?.(activeEmailRef.current || undefined);
+          }, 50);
         }
         return;
       }
@@ -2719,25 +2727,14 @@ export function useStripeEmbeddedOnramp({
         throw new Error("Identity verification not approved. Please try again.");
       }
 
-      console.log("[EMBEDDED ONRAMP] L2 KYC approved! Resetting coordinator for fresh payment collection...");
+      console.log("[EMBEDDED ONRAMP] L2 KYC approved! Transitioning to payment collection...");
       setIsAllKycCompleted(true);
       setKycLevel("L2");
       kycLevelRef.current = "L2";
-      setKycTierRequired("l2");
-      kycTierRequiredRef.current = "l2";
+      setKycTierRequired("l0");
+      kycTierRequiredRef.current = "l0";
       kycOccurredRef.current = true;
       setPaymentElement(null);
-
-      // Clean up spent onramp coordinator so startOnramp initializes a fresh one for collectPaymentMethod
-      if (onrampRef.current) {
-        try {
-          onrampRef.current.destroy();
-        } catch (e) {
-          console.warn("[EMBEDDED ONRAMP] Error destroying onramp coordinator after verifyDocuments:", e);
-        }
-        onrampRef.current = null;
-      }
-      isCoordinatorAuthedRef.current = false;
       isRunningRef.current = false;
 
       if (startOnrampRef.current) {
@@ -3179,13 +3176,9 @@ export function useStripeEmbeddedOnramp({
         }
         setKycLevel(computedLevel);
         kycLevelRef.current = computedLevel;
-        if (computedLevel === "L2") {
-          setKycTierRequired("l2");
-          kycTierRequiredRef.current = "l2";
-          kycOccurredRef.current = true;
-        } else if (computedLevel === "L1") {
-          setKycTierRequired("l1");
-          kycTierRequiredRef.current = "l1";
+        if (computedLevel === "L2" || computedLevel === "L1") {
+          setKycTierRequired("l0");
+          kycTierRequiredRef.current = "l0";
           kycOccurredRef.current = true;
         }
 

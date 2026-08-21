@@ -641,7 +641,7 @@ export function useAccordionCheckoutState(
       return;
     }
 
-    if (isL2Requirement && !isL2Approved) {
+    if (isL2Requirement && !isL2Approved && !showStepUpForm && !showFullForm) {
       if (onVerifyDocuments) {
         try {
           setIsSubmittingIdentity(true);
