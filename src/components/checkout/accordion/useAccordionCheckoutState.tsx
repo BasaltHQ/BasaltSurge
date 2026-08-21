@@ -116,7 +116,12 @@ export function useAccordionCheckoutState(
     simulatedStatus ||
     cookieSimStatus ||
     (isAllKycCompleted ? "verified" : "normal");
-  const effectiveError: string = simulatedError || cookieSimError || "none";
+  const effectiveError: string =
+    simulatedError && simulatedError !== "none"
+      ? simulatedError
+      : cookieSimError && cookieSimError !== "none"
+      ? cookieSimError
+      : "";
 
   // Simulated confirmation and card state
   const [simulatedPaymentConfirmed, setSimulatedPaymentConfirmed] = useState<{
@@ -248,8 +253,9 @@ export function useAccordionCheckoutState(
     }
   };
 
-  // Active error (props or simulated, formatted)
-  const activeError = formatErrorMessage(localError || propError);
+  // Active error (props, local, or simulated, formatted)
+  const rawActiveError = localError || (propError && propError !== "none" ? propError : null) || (effectiveError && effectiveError !== "none" ? effectiveError : null);
+  const activeError = rawActiveError ? (formatErrorMessage(rawActiveError) || rawActiveError) : null;
 
   // Step 1: Contact State
   const [email, setEmail] = useState(initialEmail);
@@ -568,10 +574,11 @@ export function useAccordionCheckoutState(
     activeError,
     effectiveError,
     onPaymentDeclined: (reason) => {
+      const isCardDeclinedCode = !reason || reason === "card_declined" || reason === "none";
       setLocalError(
-        reason && typeof reason === "string" && !reason.includes("card_declined")
-          ? reason
-          : "Your payment method was declined or not supported. Please select or enter a different card, Apple Pay, Google Pay, or US Bank Account to complete your purchase."
+        isCardDeclinedCode
+          ? "Your card was declined or frozen by your bank. Please choose or enter a different card, Apple Pay, Google Pay, or US Bank Account to complete your purchase."
+          : reason
       );
     },
   });

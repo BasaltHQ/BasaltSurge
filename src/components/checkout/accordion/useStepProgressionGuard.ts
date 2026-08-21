@@ -69,6 +69,8 @@ export function useStepProgressionGuard({
   };
 
   const isFulfillmentInFlight =
+    headlessStep === "creating_session" ||
+    headlessStep === "confirming_fees" ||
     headlessStep === "checking_out" ||
     headlessStep === "awaiting_funds" ||
     headlessStep === "transferring" ||
@@ -111,16 +113,18 @@ export function useStepProgressionGuard({
 
     // Payment is no longer in-flight and not confirmed while at Step 4 -> Show decline state in modal, then return to Step 3 smoothly after 2.2s
     if (activeStep === 4) {
-      const parsed = parseOnrampError(activeError || effectiveError, {
-        isL1Approved: kyc.isL1Verified,
-        isL2Approved: kyc.isL2Verified,
-        currentTier: kyc.currentTier,
-      });
+      const actualError = (activeError && activeError !== "none") ? activeError : (effectiveError && effectiveError !== "none") ? effectiveError : null;
+      const parsed = actualError
+        ? parseOnrampError(actualError, {
+            isL1Approved: kyc.isL1Verified,
+            isL2Approved: kyc.isL2Verified,
+            currentTier: kyc.currentTier,
+          })
+        : null;
 
       const declineReason =
-        activeError ||
-        effectiveError ||
-        parsed?.code ||
+        actualError ||
+        parsed?.userMessage ||
         "Your card was declined or frozen by your bank. Please choose or enter a different card, Apple Pay, Google Pay, or US Bank Account.";
 
       onPaymentDeclined?.(declineReason);
@@ -218,8 +222,7 @@ export function useStepProgressionGuard({
 
     const isPaymentReady =
       Boolean(propPaymentElement) ||
-      headlessStep === "collecting_payment" ||
-      headlessStep === "confirming_fees";
+      headlessStep === "collecting_payment";
 
     // Case A: Stripe Onramp payment element is ready
     if (isPaymentReady) {

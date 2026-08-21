@@ -2574,18 +2574,19 @@ export function useStripeEmbeddedOnramp({
 
             if (isCardDecline) {
               console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval, returning to payment selection...");
-              setError(err?.message || "Your card was declined. Please try another card.");
+              const rawErr = String(err?.message || "").toLowerCase();
+              const declineMsg =
+                rawErr.includes("frozen") || rawErr.includes("freeze")
+                  ? "Your card is currently frozen by your issuing bank. Please unfreeze it or select a different payment method."
+                  : err?.message || "Your card was declined. Please try another card.";
+              setPersistedError(declineMsg);
+              onErrorRef.current?.(declineMsg);
               paymentTokenRef.current = null;
               sessionIdRef.current = null;
               setSessionId(null);
               if (typeof window !== "undefined") {
                 sessionStorage.removeItem(sessionKey);
               }
-              if (onrampRef.current) {
-                try { onrampRef.current.destroy(); } catch {}
-                onrampRef.current = null;
-              }
-              isCoordinatorAuthedRef.current = false;
               setDetectedCardFunding(null);
               setDetectedCardBrand(null);
               setDetectedCardLast4(null);
@@ -2642,16 +2643,18 @@ export function useStripeEmbeddedOnramp({
               const isCardDecline = checkIfCardDecline(loopErr);
               if (isCardDecline) {
                 console.warn("[EMBEDDED ONRAMP] Card decline caught after KYC approval bypass, returning to payment selection...");
-                setError(loopErr?.message || "Your card was declined. Please try another card.");
+                const rawErr = String(loopErr?.message || "").toLowerCase();
+                const declineMsg =
+                  rawErr.includes("frozen") || rawErr.includes("freeze")
+                    ? "Your card is currently frozen by your issuing bank. Please unfreeze it or select a different payment method."
+                    : loopErr?.message || "Your card was declined. Please try another card.";
+                setPersistedError(declineMsg);
+                onErrorRef.current?.(declineMsg);
                 paymentTokenRef.current = null;
                 sessionIdRef.current = null;
                 setSessionId(null);
                 if (typeof window !== "undefined") {
                   sessionStorage.removeItem(sessionKey);
-                }
-                if (onrampRef.current) {
-                  try { onrampRef.current.destroy(); } catch {}
-                  onrampRef.current = null;
                 }
                 setDetectedCardFunding(null);
                 setDetectedCardBrand(null);
@@ -3742,7 +3745,7 @@ export function useStripeEmbeddedOnramp({
             return;
           }
 
-          console.warn("[EMBEDDED ONRAMP] Checkout loop encountered an error, resetting spent payment element for fresh selection...", checkoutErr);
+          console.warn("[EMBEDDED ONRAMP] Checkout loop encountered an error, re-collecting payment method on active session...", checkoutErr);
           const rawErr = String(checkoutErr?.message || "").toLowerCase();
           const declineMsg =
             rawErr.includes("frozen") || rawErr.includes("freeze")
@@ -3752,27 +3755,19 @@ export function useStripeEmbeddedOnramp({
               : checkoutErr?.message || "Your card or payment method was declined. Please try another card or payment method.";
           setPersistedError(declineMsg);
           onErrorRef.current?.(declineMsg);
-          setPaymentElement(null); // Clear spent "Submitted" iframe so fresh one can mount
+          setPaymentElement(null); // Clear spent iframe
           paymentTokenRef.current = null;
           sessionIdRef.current = null;
           setSessionId(null);
           if (typeof window !== "undefined") {
             sessionStorage.removeItem(sessionKey);
           }
-          if (onrampRef.current) {
-            try { onrampRef.current.destroy(); } catch {}
-            onrampRef.current = null;
-          }
-          isCoordinatorAuthedRef.current = false;
           setDetectedCardFunding(null);
           setDetectedCardBrand(null);
           setDetectedCardLast4(null);
           onCardDetectedRef.current?.(null);
-          isRunningRef.current = false;
-          setTimeout(() => {
-            startOnrampRef.current?.(activeEmailRef.current || undefined);
-          }, 100);
-          return;
+          await new Promise(r => setTimeout(r, 60));
+          continue;
         }
       }
 

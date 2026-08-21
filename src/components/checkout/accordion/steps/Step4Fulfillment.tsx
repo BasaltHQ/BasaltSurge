@@ -72,7 +72,7 @@ export function Step4Fulfillment({
 
   // Step stage resolution for the timeline stepper
   const isStep1Done = ["awaiting_funds", "transferring", "completed"].includes(headlessStep || "");
-  const isStep1Active = ["checking_out", "creating_session"].includes(headlessStep || "") || !headlessStep;
+  const isStep1Active = ["checking_out", "creating_session", "confirming_fees"].includes(headlessStep || "") || !headlessStep;
 
   const isStep2Done = ["completed"].includes(headlessStep || "");
   const isStep2Active = ["awaiting_funds", "transferring"].includes(headlessStep || "");
