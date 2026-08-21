@@ -64,15 +64,27 @@ export function useStepProgressionGuard({
     }
   };
 
-  // ─── Rule 1: Payment Lockout Guard ───
+  // ─── Rule 1: Payment & Fulfillment In-Flight / Lockout Guard ───
   useEffect(() => {
-    if (isPaid || isOrderConfirmed) {
+    const isFulfillmentInFlight =
+      headlessStep === "checking_out" ||
+      headlessStep === "creating_session" ||
+      headlessStep === "awaiting_funds" ||
+      headlessStep === "transferring" ||
+      headlessStep === "confirming_fees" ||
+      headlessStep === "completed";
+
+    if (isPaid || isOrderConfirmed || isFulfillmentInFlight) {
       if (activeStep !== 4) {
-        logTransition(activeStep, 4, "Payment Confirmed / Settled");
+        logTransition(
+          activeStep,
+          4,
+          isPaid || isOrderConfirmed ? "Payment Confirmed / Settled" : `Payment In-Flight (${headlessStep})`
+        );
         setActiveStep(4);
       }
     }
-  }, [isPaid, isOrderConfirmed, activeStep, setActiveStep]);
+  }, [isPaid, isOrderConfirmed, headlessStep, activeStep, setActiveStep]);
 
   // ─── Rule 2: Card Decline & Payment Error Fallback (Step 4 ➔ Step 3) ───
   useEffect(() => {
