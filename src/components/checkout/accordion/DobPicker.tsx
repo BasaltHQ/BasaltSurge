@@ -207,12 +207,12 @@ export function DobPicker({
     <div ref={containerRef} className="relative w-full min-w-0">
       {/* 3-Segment Input Container */}
       <div
-        className={`w-full h-10 px-2.5 rounded-xl flex items-center justify-between transition-all select-none min-w-0 ${containerClass}`}
+        className={`w-full h-11 px-3 rounded-xl flex items-center justify-between transition-all select-none min-w-0 ${containerClass}`}
         onClick={() => {
           if (!month) monthRef.current?.focus();
         }}
       >
-        <div className="flex items-center gap-1 font-mono text-xs font-medium min-w-0 flex-1" onPaste={handlePaste}>
+        <div className="flex items-center gap-1.5 font-mono text-sm font-medium min-w-0 flex-1" onPaste={handlePaste}>
           <input
             ref={monthRef}
             type="text"
@@ -224,11 +224,11 @@ export function DobPicker({
             onChange={handleMonthChange}
             onKeyDown={(e) => handleKeyDown("m", e)}
             onBlur={onBlur}
-            className={`w-6 sm:w-7 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs shrink-0 ${
+            className={`w-7 sm:w-8 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-sm shrink-0 ${
               isLightText ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
             }`}
           />
-          <span className="opacity-30 text-xs shrink-0">/</span>
+          <span className="opacity-30 text-sm shrink-0">/</span>
           <input
             ref={dayRef}
             type="text"
@@ -240,11 +240,11 @@ export function DobPicker({
             onChange={handleDayChange}
             onKeyDown={(e) => handleKeyDown("d", e)}
             onBlur={onBlur}
-            className={`w-6 sm:w-7 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs shrink-0 ${
+            className={`w-7 sm:w-8 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-sm shrink-0 ${
               isLightText ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
             }`}
           />
-          <span className="opacity-30 text-xs shrink-0">/</span>
+          <span className="opacity-30 text-sm shrink-0">/</span>
           <input
             ref={yearRef}
             type="text"
@@ -256,7 +256,7 @@ export function DobPicker({
             onChange={handleYearChange}
             onKeyDown={(e) => handleKeyDown("y", e)}
             onBlur={onBlur}
-            className={`w-10 sm:w-12 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-xs shrink-0 ${
+            className={`w-12 sm:w-14 text-center bg-transparent focus:outline-none placeholder:opacity-40 font-mono text-sm shrink-0 ${
               isLightText ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
             }`}
           />
@@ -275,7 +275,7 @@ export function DobPicker({
               : "text-black/60 hover:text-black hover:bg-black/10"
           }`}
         >
-          <Calendar className="w-3.5 h-3.5" />
+          <Calendar className="w-4 h-4" />
         </button>
       </div>
 

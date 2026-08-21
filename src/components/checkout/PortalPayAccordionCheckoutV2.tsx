@@ -26,7 +26,7 @@ export function PortalPayAccordionCheckoutV2(props: PortalPayAccordionCheckoutV2
       {/* Global Error Notice Banner */}
       {state.activeError && (
         <div
-          className={`p-3.5 rounded-2xl border text-xs font-medium flex items-start justify-between gap-2 animate-in slide-in-from-top-2 ${
+          className={`p-3.5 rounded-2xl border text-sm font-medium flex items-start justify-between gap-2 animate-in slide-in-from-top-2 ${
             isLightText
               ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
               : "bg-amber-50 border-amber-300 text-amber-900"
@@ -39,7 +39,7 @@ export function PortalPayAccordionCheckoutV2(props: PortalPayAccordionCheckoutV2
           <button
             type="button"
             onClick={() => state.setLocalError(null)}
-            className="text-[10px] underline opacity-80 hover:opacity-100 cursor-pointer"
+            className="text-xs underline opacity-80 hover:opacity-100 cursor-pointer shrink-0"
           >
             Dismiss
           </button>

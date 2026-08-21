@@ -70,11 +70,11 @@ export function Step1Contact({
       {/* Step 1 Header */}
       <AccordionStepHeader
         stepNumber={1}
-        title="1. Contact & Account Information"
+        title="Contact & Account Information"
         subtitle={
           isCompleted ? (
-            <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
-              <Mail className="w-2.5 h-2.5 opacity-60" />
+            <p className={`text-xs font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
+              <Mail className="w-3 h-3 opacity-60" />
               <span>{email || "Customer Contact"}</span>
               {phone && (
                 <>
@@ -87,8 +87,8 @@ export function Step1Contact({
         }
         badge={
           isCompleted && (effectiveStatus === "verified" || isAllKycCompleted || isEmailLocked) ? (
-            <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
-              <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />
+            <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
               {isEmailLocked ? "Authorized" : "Verified"}
             </span>
           ) : undefined
@@ -103,18 +103,18 @@ export function Step1Contact({
       {/* Step 1 Expanded Form */}
       <form
         onSubmit={onSubmit}
-        className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}
+        className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}
       >
         {/* Email Address */}
         <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider ${isLightText ? "text-white/50" : "text-black/50"}`}>
-              <Mail className="w-3 h-3" />
+          <div className="flex items-center justify-between mb-1.5">
+            <label className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider ${isLightText ? "text-white/60" : "text-black/60"}`}>
+              <Mail className="w-3.5 h-3.5" />
               <span>Email Address</span>
             </label>
             {isEmailLocked && (
-              <span className="text-[10px] font-semibold text-emerald-400 inline-flex items-center gap-1">
-                <Lock className="w-2.5 h-2.5" /> Authorized & Locked
+              <span className="text-xs font-semibold text-emerald-400 inline-flex items-center gap-1">
+                <Lock className="w-3 h-3" /> Authorized & Locked
               </span>
             )}
           </div>
@@ -129,7 +129,7 @@ export function Step1Contact({
               onChange={(e) => {
                 if (!isEmailLocked) setEmail(e.target.value.trim());
               }}
-              className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
+              className={`w-full h-11 px-3.5 rounded-xl focus:outline-none transition-all text-sm font-medium ${
                 isEmailLocked
                   ? isLightText
                     ? "bg-emerald-500/5 border border-emerald-500/30 text-white/90 cursor-not-allowed select-none"
@@ -140,13 +140,13 @@ export function Step1Contact({
               }`}
             />
             {isEmailLocked && (
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400">
-                <Lock className="w-3.5 h-3.5 opacity-70" />
+              <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-emerald-400">
+                <Lock className="w-4 h-4 opacity-70" />
               </div>
             )}
           </div>
           {emailCorrection && !isEmailLocked && (
-            <div className="mt-1.5 flex items-center gap-1.5 text-[11px] animate-in fade-in slide-in-from-top-1">
+            <div className="mt-1.5 flex items-center gap-1.5 text-xs animate-in fade-in slide-in-from-top-1">
               <span className={isLightText ? "text-white/60" : "text-black/60"}>Did you mean</span>
               <button
                 type="button"
@@ -154,12 +154,12 @@ export function Step1Contact({
                 className="px-2 py-0.5 rounded-md font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 transition-all cursor-pointer flex items-center gap-1"
               >
                 <span>{emailCorrection}</span>
-                <span className="text-[9px] opacity-70">↵</span>
+                <span className="text-[10px] opacity-70">↵</span>
               </button>
             </div>
           )}
           {isEmailLocked && (
-            <p className="text-[10px] text-emerald-400/80 flex items-center gap-1 mt-1 pl-0.5">
+            <p className="text-xs text-emerald-400/80 flex items-center gap-1 mt-1 pl-0.5">
               <span>Account authenticated via Stripe Link / custom auth. Email is locked for this transaction.</span>
             </p>
           )}
@@ -168,14 +168,14 @@ export function Step1Contact({
 
         {/* Country of Residence */}
         <div>
-          <label className={`flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-            <Globe className="w-3 h-3" />
+          <label className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+            <Globe className="w-3.5 h-3.5" />
             <span>Country of Residence</span>
           </label>
           <select
             value={country}
             onChange={(e) => setCountry(e.target.value)}
-            className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium cursor-pointer ${
+            className={`w-full h-11 px-3.5 rounded-xl focus:outline-none transition-all text-sm font-medium cursor-pointer ${
               isLightText
                 ? "bg-neutral-900 border border-white/10 text-white focus:border-amber-400/50"
                 : "bg-white border border-black/10 text-black focus:border-amber-400/50"
@@ -192,11 +192,11 @@ export function Step1Contact({
         {/* Dynamic Phone Registration Input */}
         {isLinkPhoneRegistration && (
           <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2.5 animate-in fade-in slide-in-from-top-2 duration-300">
-            <div className="flex items-start gap-2 text-amber-300 text-xs font-bold">
+            <div className="flex items-start gap-2 text-amber-300 text-sm font-bold">
               <Phone className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
               <div>
                 <div>Stripe Verification Required</div>
-                <p className="text-[11px] font-normal text-amber-300/80 leading-relaxed mt-0.5">
+                <p className="text-xs font-normal text-amber-300/80 leading-relaxed mt-0.5">
                   Enter your mobile phone number to register your Link account securely.
                 </p>
               </div>
@@ -214,7 +214,7 @@ export function Step1Contact({
                 value={phone}
                 onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
                 autoFocus
-                className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${
+                className={`w-full h-11 px-3.5 rounded-xl focus:outline-none transition-all text-sm font-medium ${
                   isLightText
                     ? "bg-white/10 border border-amber-400/50 text-white placeholder-white/50 focus:ring-1 focus:ring-amber-400"
                     : "bg-black/10 border border-amber-500/50 text-black placeholder-black/50 focus:ring-1 focus:ring-amber-500"
@@ -239,11 +239,11 @@ export function Step1Contact({
 
         {/* Inline Step 1 Error Notice */}
         {activeError && (
-          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex items-start gap-2.5 animate-in fade-in duration-200">
             <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
             <div className="space-y-1">
               <div className="font-bold text-amber-200">Account Notice:</div>
-              <div className="text-[11px] leading-relaxed text-amber-300">
+              <div className="text-xs leading-relaxed text-amber-300">
                 {activeError}
               </div>
             </div>
@@ -266,12 +266,12 @@ export function Step1Contact({
                 !email ||
                 (isLinkPhoneRegistration && (!phone || phone.trim().length < 7))
               }
-              className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full h-11 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               style={{ backgroundColor: primaryColor, color: buttonTextColor }}
             >
               {isLoadingLink ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: buttonTextColor }} />
+                  <Loader2 className="w-4 h-4 animate-spin" style={{ color: buttonTextColor }} />
                   <span style={{ color: buttonTextColor }}>
                     {headlessStep === "authenticating"
                       ? "Loading Secure Stripe OTP..."
@@ -289,7 +289,7 @@ export function Step1Contact({
                       ? "Continue to Next Step"
                       : "Continue to Verification"}
                   </span>
-                  <ArrowRight className="w-3.5 h-3.5" style={{ color: buttonTextColor }} />
+                  <ArrowRight className="w-4 h-4" style={{ color: buttonTextColor }} />
                 </>
               )}
             </button>

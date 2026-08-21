@@ -541,9 +541,9 @@ export function Step4Fulfillment({
       >
         {/* Step 4 Header */}
         <div className="p-3.5 flex items-center justify-between select-none">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-3">
             <div
-              className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300 ${
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs sm:text-sm font-bold transition-all duration-300 ${
                 isConfirmed
                   ? "bg-emerald-500 text-black font-bold shadow-[0_0_12px_rgba(16,185,129,0.5)]"
                   : isOpen
@@ -556,21 +556,21 @@ export function Step4Fulfillment({
               }`}
             >
               {isConfirmed ? (
-                <Check className="w-3 h-3 text-black stroke-[3]" />
+                <Check className="w-3.5 h-3.5 text-black stroke-[3]" />
               ) : (
                 "4"
               )}
             </div>
             <div>
-              <h4 className={`text-xs font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
-                4. Payment & Order Fulfillment
+              <h4 className={`text-sm sm:text-base font-bold tracking-tight ${isLightText ? "text-white" : "text-black"}`}>
+                Payment & Order Fulfillment
               </h4>
             </div>
           </div>
         </div>
 
         {/* Step 4 Expanded Body */}
-        <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
+        <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
           {!isConfirmed ? (
             /* Inline Processing State inside Accordion */
             <div
@@ -587,18 +587,18 @@ export function Step4Fulfillment({
                 }`}
               >
                 <div
-                  className={`flex items-center gap-2 text-xs font-semibold ${
+                  className={`flex items-center gap-2 text-sm font-semibold ${
                     isLightText ? "text-white/90" : "text-neutral-900"
                   }`}
                 >
                   <span
-                    className="w-2 h-2 rounded-full animate-pulse shadow-sm"
+                    className="w-2.5 h-2.5 rounded-full animate-pulse shadow-sm"
                     style={{ backgroundColor: primaryColor }}
                   />
                   <span>Processing Payment</span>
                 </div>
                 <span
-                  className={`text-[10px] font-mono font-medium px-2.5 py-0.5 rounded-full backdrop-blur-md ${
+                  className={`text-xs font-mono font-medium px-2.5 py-0.5 rounded-full backdrop-blur-md ${
                     isLightText
                       ? "bg-white/10 text-white/90 border border-white/15"
                       : "bg-neutral-100 text-neutral-900 border border-neutral-200"
@@ -617,19 +617,19 @@ export function Step4Fulfillment({
                 }`}
               >
                 <div
-                  className={`text-xs font-medium flex items-center gap-1.5 ${
+                  className={`text-sm font-medium flex items-center gap-2 ${
                     isLightText ? "text-white" : "text-neutral-900"
                   }`}
                 >
                   <span
-                    className="w-1.5 h-1.5 rounded-full"
+                    className="w-2 h-2 rounded-full"
                     style={{ backgroundColor: primaryColor }}
                   />
                   <span>{headlessStatus || "Authorizing payment method with Stripe..."}</span>
                 </div>
                 <p
-                  className={`text-[11px] leading-relaxed ${
-                    isLightText ? "text-white/60" : "text-neutral-600"
+                  className={`text-xs leading-relaxed ${
+                    isLightText ? "text-white/70" : "text-neutral-600"
                   }`}
                 >
                   Please keep this page open while we confirm and fulfill your order. Thank you for your patience.
@@ -647,7 +647,7 @@ export function Step4Fulfillment({
                   
                   <div className="flex flex-col items-center gap-1 z-10">
                     <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                      className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
                         isStep1Done
                           ? isLightText
                             ? "bg-white text-black shadow-[0_0_10px_rgba(255,255,255,0.5)]"
@@ -668,11 +668,11 @@ export function Step4Fulfillment({
                           : undefined
                       }
                     >
-                      {isStep1Done ? <Check className="w-2.5 h-2.5 stroke-[3]" /> : "1"}
+                      {isStep1Done ? <Check className="w-3 h-3 stroke-[3]" /> : "1"}
                     </div>
                     <span
-                      className={`text-[9.5px] font-medium ${
-                        isLightText ? "text-white/70" : "text-neutral-600"
+                      className={`text-xs font-medium ${
+                        isLightText ? "text-white/80" : "text-neutral-700"
                       }`}
                     >
                       Authorize
@@ -681,7 +681,7 @@ export function Step4Fulfillment({
 
                   <div className="flex flex-col items-center gap-1 z-10">
                     <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                      className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
                         isStep2Done
                           ? isLightText
                             ? "bg-white text-black shadow-[0_0_10px_rgba(255,255,255,0.5)]"
@@ -702,11 +702,11 @@ export function Step4Fulfillment({
                           : undefined
                       }
                     >
-                      {isStep2Done ? <Check className="w-2.5 h-2.5 stroke-[3]" /> : "2"}
+                      {isStep2Done ? <Check className="w-3 h-3 stroke-[3]" /> : "2"}
                     </div>
                     <span
-                      className={`text-[9.5px] font-medium ${
-                        isLightText ? "text-white/70" : "text-neutral-600"
+                      className={`text-xs font-medium ${
+                        isLightText ? "text-white/80" : "text-neutral-700"
                       }`}
                     >
                       Settle
@@ -715,7 +715,7 @@ export function Step4Fulfillment({
 
                   <div className="flex flex-col items-center gap-1 z-10">
                     <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                      className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
                         isStep3Done
                           ? isLightText
                             ? "bg-white text-black shadow-[0_0_10px_rgba(255,255,255,0.5)]"
@@ -736,11 +736,11 @@ export function Step4Fulfillment({
                           : undefined
                       }
                     >
-                      {isStep3Done ? <Check className="w-2.5 h-2.5 stroke-[3]" /> : "3"}
+                      {isStep3Done ? <Check className="w-3 h-3 stroke-[3]" /> : "3"}
                     </div>
                     <span
-                      className={`text-[9.5px] font-medium ${
-                        isLightText ? "text-white/70" : "text-neutral-600"
+                      className={`text-xs font-medium ${
+                        isLightText ? "text-white/80" : "text-neutral-700"
                       }`}
                     >
                       Deliver
@@ -758,14 +758,14 @@ export function Step4Fulfillment({
                   : "bg-gradient-to-b from-emerald-50 to-white border-emerald-200 shadow-md"
               }`}
             >
-              <div className="flex items-center gap-2 text-emerald-500">
+              <div className="flex items-center gap-2.5 text-emerald-500">
                 <CheckCircle2 className="w-5 h-5 drop-shadow-sm" />
-                <span className="text-xs font-bold uppercase tracking-wider">
+                <span className="text-sm sm:text-base font-bold uppercase tracking-wider">
                   Order #{receiptId} Confirmed
                 </span>
               </div>
 
-              <div className="space-y-2 text-xs">
+              <div className="space-y-2.5 text-sm">
                 <div className="flex justify-between">
                   <span className={isLightText ? "text-white/60" : "text-neutral-500"}>Total Paid:</span>
                   <span className={`font-bold ${isLightText ? "text-white" : "text-neutral-900"}`}>
@@ -794,8 +794,8 @@ export function Step4Fulfillment({
                 </div>
                 <div className="flex justify-between">
                   <span className={isLightText ? "text-white/60" : "text-neutral-500"}>Status:</span>
-                  <span className="text-emerald-500 font-bold inline-flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span className="text-emerald-500 font-bold inline-flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
                     <span>
                       {isAchPending
                         ? "Payment Authorized (ACH Pending)"
@@ -805,36 +805,36 @@ export function Step4Fulfillment({
                 </div>
 
                 {paymentConfirmed?.txHash && (
-                  <div className="flex justify-between items-center text-xs">
+                  <div className="flex justify-between items-center text-sm">
                     <span className={isLightText ? "text-white/60" : "text-neutral-500"}>Verification:</span>
                     <a
                       href={`https://basescan.org/tx/${paymentConfirmed.txHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className={`font-mono hover:underline inline-flex items-center gap-1 text-[11px] ${
+                      className={`font-mono hover:underline inline-flex items-center gap-1 text-xs ${
                         isLightText ? "text-white/80 hover:text-white" : "text-neutral-800 hover:text-black"
                       }`}
                     >
                       <span>Receipt Audit ({paymentConfirmed.txHash.slice(0, 6)}...{paymentConfirmed.txHash.slice(-4)})</span>
-                      <ExternalLink className="w-2.5 h-2.5" />
+                      <ExternalLink className="w-3 h-3" />
                     </a>
                   </div>
                 )}
               </div>
 
               {isAchPending && (
-                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-400 leading-relaxed">
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-400 leading-relaxed">
                   Funds will be deducted from your bank account within 2–3 business days. Your order is confirmed.
                 </div>
               )}
 
               {email && (
-                <p className="text-[11px] text-emerald-500 font-medium text-center">
+                <p className="text-xs text-emerald-500 font-medium text-center">
                   ✓ Receipt automatically sent to <span className="underline">{email}</span>
                 </p>
               )}
 
-              <div className="flex gap-2 pt-1">
+              <div className="flex gap-2.5 pt-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -844,20 +844,20 @@ export function Step4Fulfillment({
                       } catch {}
                     }
                   }}
-                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold border backdrop-blur-md flex items-center justify-center gap-1.5 transition active:scale-95 cursor-pointer shadow-lg ${
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-bold border backdrop-blur-md flex items-center justify-center gap-2 transition active:scale-95 cursor-pointer shadow-lg ${
                     isLightText
                       ? "bg-white/10 hover:bg-white/20 text-white border-white/15"
                       : "bg-neutral-100 hover:bg-neutral-200 text-neutral-900 border-neutral-200"
                   }`}
                 >
-                  <Check className="w-3.5 h-3.5 text-emerald-500" />
+                  <Check className="w-4 h-4 text-emerald-500" />
                   <span>Done</span>
                 </button>
                 {onEmailReceipt && (
                   <button
                     type="button"
                     onClick={onEmailReceipt}
-                    className="flex-1 py-2.5 rounded-xl text-xs font-bold shadow-lg transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="flex-1 py-2.5 rounded-xl text-sm font-bold shadow-lg transition active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                     style={{ backgroundColor: primaryColor, color: buttonTextColor }}
                   >
                     <span style={{ color: buttonTextColor }}>Email Receipt</span>

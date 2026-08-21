@@ -25,14 +25,14 @@ export function AccordionStepHeader({
         isClickable ? "cursor-pointer hover:bg-white/[0.04]" : "cursor-default"
       }`}
     >
-      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+      <div className="flex items-center gap-3 min-w-0 flex-1">
         {isCompleted && !isActive ? (
-          <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40 shrink-0">
-            <Check className="w-3 h-3 text-emerald-400 stroke-[3]" />
+          <div className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/40 shrink-0">
+            <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
           </div>
         ) : (
           <div
-            className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+            className={`w-6 h-6 rounded-full flex items-center justify-center text-xs sm:text-sm font-bold shrink-0 ${
               isActive ? "bg-amber-500 text-black shadow-sm" : "bg-white/10 text-white/40"
             }`}
           >
@@ -42,7 +42,7 @@ export function AccordionStepHeader({
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-            <h4 className={`text-xs font-bold tracking-tight truncate ${isLightText ? "text-white" : "text-black"}`}>
+            <h4 className={`text-sm sm:text-base font-bold tracking-tight truncate ${isLightText ? "text-white" : "text-black"}`}>
               {title}
             </h4>
             {badge}
@@ -59,7 +59,7 @@ export function AccordionStepHeader({
             e.stopPropagation();
             if (!isLocked) onHeaderClick?.();
           }}
-          className="text-[11px] font-semibold text-amber-400 flex items-center gap-1 hover:underline cursor-pointer shrink-0 ml-1"
+          className="text-xs font-semibold text-amber-400 flex items-center gap-1 hover:underline cursor-pointer shrink-0 ml-1"
         >
           <Edit2 className="w-3 h-3" /> Edit
         </button>

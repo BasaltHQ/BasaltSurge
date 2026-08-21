@@ -158,22 +158,22 @@ export function Step2Identity({
       {/* Step 2 Header */}
       <AccordionStepHeader
         stepNumber={2}
-        title="2. Identity & Residential Verification"
+        title="Identity & Residential Verification"
         badge={
           isL2Approved || (isL0Approved && !showStepUpForm && !isDocVerifyRequired) ? (
-            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
-              <Check className="w-2.5 h-2.5 stroke-[3]" /> Verified
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
+              <Check className="w-3 h-3 stroke-[3]" /> Verified
             </span>
           ) : (showStepUpForm || isDocVerifyRequired) ? (
-            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 inline-flex items-center gap-1">
-              <Shield className="w-2.5 h-2.5" /> Action Required
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 inline-flex items-center gap-1">
+              <Shield className="w-3 h-3" /> Action Required
             </span>
           ) : undefined
         }
         subtitle={
           (isCompleted || effectiveStatus === "verified" || isAllKycCompleted || isL0Approved) ? (
-            <p className={`text-[11px] font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
-              <User className="w-2.5 h-2.5 opacity-60" />
+            <p className={`text-xs font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
+              <User className="w-3 h-3 opacity-60" />
               <span>{firstName} {lastName}</span>
               {line1 && <span>• {line1}, {city}</span>}
             </p>
@@ -187,17 +187,17 @@ export function Step2Identity({
       />
 
       {/* Step 2 Expanded Body */}
-      <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
+      <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
         {isDocVerifyRequired ? (
           /* Level 2 Document Verification Card */
           <div className="p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/20 space-y-3.5 animate-in fade-in duration-200 mt-2 text-left">
             <div className="flex items-start gap-2.5 text-cyan-400">
               <Shield className="w-5 h-5 shrink-0 mt-0.5" />
               <div className="space-y-1">
-                <h5 className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                <h5 className="text-sm font-bold uppercase tracking-wider text-cyan-300">
                   Level 2 Identity Document Verification Required
                 </h5>
-                <p className="text-[11px] text-cyan-200/90 leading-relaxed">
+                <p className="text-xs text-cyan-200/90 leading-relaxed">
                   Stripe requires government photo ID or passport verification to unlock this purchase amount.
                 </p>
               </div>
@@ -211,21 +211,21 @@ export function Step2Identity({
                 }
               }}
               disabled={isSubmittingIdentity}
-              className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer text-white disabled:opacity-60"
+              className="w-full h-11 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer text-white disabled:opacity-60"
               style={{
                 backgroundColor: "#00b8d4",
               }}
             >
               {isSubmittingIdentity ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
                   <span>Launching Stripe Identity Camera...</span>
                 </>
               ) : (
                 <>
-                  <Shield className="w-3.5 h-3.5 text-white" />
+                  <Shield className="w-4 h-4 text-white" />
                   <span>Verify ID Documents</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-white" />
+                  <ArrowRight className="w-4 h-4 text-white" />
                 </>
               )}
             </button>
@@ -236,16 +236,16 @@ export function Step2Identity({
             <div className="flex items-start gap-2.5 text-emerald-400">
               <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
               <div className="space-y-1">
-                <h5 className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                <h5 className="text-sm font-bold uppercase tracking-wider text-emerald-300">
                   Identity & Residential Verification Approved
                 </h5>
-                <p className="text-[11px] text-emerald-400/80 leading-relaxed">
+                <p className="text-xs text-emerald-400/80 leading-relaxed">
                   Your identity is verified and securely linked with Stripe. No additional verification or demographic changes are needed.
                 </p>
               </div>
             </div>
 
-            <div className="p-3 rounded-lg bg-black/20 border border-white/5 space-y-1.5 text-xs">
+            <div className="p-3 rounded-lg bg-black/20 border border-white/5 space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="opacity-60">Verified Name:</span>
                 <span className="font-semibold text-white">{firstName} {lastName}</span>
@@ -260,11 +260,11 @@ export function Step2Identity({
 
             {/* Error Notice on Verified Card if any */}
             {activeError && (
-              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5 animate-in fade-in text-left">
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex items-start gap-2.5 animate-in fade-in text-left">
                 <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
                 <div className="space-y-0.5">
                   <span className="font-bold text-amber-200">Verification Notice:</span>
-                  <p className="text-[11px] leading-relaxed text-amber-300/90">{activeError}</p>
+                  <p className="text-xs leading-relaxed text-amber-300/90">{activeError}</p>
                 </div>
               </div>
             )}
@@ -273,7 +273,7 @@ export function Step2Identity({
               type="button"
               onClick={onContinueToStep3}
               disabled={isSubmittingIdentity}
-              className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full h-11 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               style={{
                 backgroundColor: primaryColor,
                 color: buttonTextColor,
@@ -281,28 +281,28 @@ export function Step2Identity({
             >
               {isSubmittingIdentity ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: buttonTextColor }} />
+                  <Loader2 className="w-4 h-4 animate-spin" style={{ color: buttonTextColor }} />
                   <span style={{ color: buttonTextColor }}>Verifying & Loading Payment...</span>
                 </>
               ) : (
                 <>
                   <span style={{ color: buttonTextColor }}>Continue to Payment Method</span>
-                  <ArrowRight className="w-3.5 h-3.5" style={{ color: buttonTextColor }} />
+                  <ArrowRight className="w-4 h-4" style={{ color: buttonTextColor }} />
                 </>
               )}
             </button>
           </div>
         ) : (
           /* Full Demographic or Step-Up KYC Form */
-          <form onSubmit={onSubmit} className="space-y-3">
+          <form onSubmit={onSubmit} className="space-y-3.5">
             {/* Limit Upgrade Step-Up Notice Banner */}
             {activeError && (activeError.toLowerCase().includes("limit") || activeError.toLowerCase().includes("maximum") || activeError.toLowerCase().includes("exceeds")) && (
               <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-300 space-y-1.5 animate-in fade-in duration-200 text-left">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-blue-400">
-                  <Shield className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-2 text-sm font-bold text-blue-400">
+                  <Shield className="w-4 h-4" />
                   <span>Higher Purchase Limit Required</span>
                 </div>
-                <p className="text-[11px] leading-relaxed text-blue-200/90">
+                <p className="text-xs leading-relaxed text-blue-200/90">
                   This purchase exceeds your current tier limit. Complete identity verification below to unlock higher limits for this order.
                 </p>
               </div>
@@ -311,11 +311,11 @@ export function Step2Identity({
             {/* Top Step-Up Notice Banner */}
             {showStepUpForm && !(activeError && (activeError.toLowerCase().includes("limit") || activeError.toLowerCase().includes("maximum"))) && (
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 animate-in fade-in duration-200 text-left">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400">
-                  <Shield className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-2 text-sm font-bold text-amber-400">
+                  <Shield className="w-4 h-4" />
                   <span>Stripe Identity Step-Up Verification</span>
                 </div>
-                <p className="text-[11px] leading-relaxed text-amber-200/80">
+                <p className="text-xs leading-relaxed text-amber-200/80">
                   Please provide your Date of Birth and Social Security Number (SSN) to satisfy federal financial compliance guidelines.
                 </p>
               </div>
@@ -324,11 +324,11 @@ export function Step2Identity({
             {/* Document Verification Notice if L2 */}
             {isL2Requirement && !isL2Approved && (
               <div className="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/30 space-y-2 text-left animate-in fade-in">
-                <div className="flex items-center gap-2 text-purple-300 text-xs font-bold">
+                <div className="flex items-center gap-2 text-purple-300 text-sm font-bold">
                   <Shield className="w-4 h-4 text-purple-400" />
                   <span>Level 2 Document Verification Required</span>
                 </div>
-                <p className="text-[11px] text-purple-300/80 leading-relaxed">
+                <p className="text-xs text-purple-300/80 leading-relaxed">
                   Government photo ID or passport verification is required for this transaction level.
                 </p>
               </div>
@@ -338,9 +338,9 @@ export function Step2Identity({
             {showFullForm && (
               <div className="space-y-3 text-left">
                 {/* Legal Name */}
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2.5">
                   <div>
-                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                    <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
                       First Name
                     </label>
                     <input
@@ -363,12 +363,12 @@ export function Step2Identity({
                         }
                       }}
                       onChange={(e) => setFirstName(e.target.value)}
-                      className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${getFieldInputClass("firstName")}`}
+                      className={`w-full h-11 px-3.5 rounded-xl focus:outline-none transition-all text-sm font-medium ${getFieldInputClass("firstName")}`}
                     />
                   </div>
 
                   <div>
-                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
+                    <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
                       Last Name
                     </label>
                     <input
@@ -378,7 +378,7 @@ export function Step2Identity({
                       value={lastName}
                       onBlur={() => markFieldTouched("lastName")}
                       onChange={(e) => setLastName(e.target.value)}
-                      className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium ${getFieldInputClass("lastName")}`}
+                      className={`w-full h-11 px-3.5 rounded-xl focus:outline-none transition-all text-sm font-medium ${getFieldInputClass("lastName")}`}
                     />
                   </div>
                 </div>
@@ -386,14 +386,14 @@ export function Step2Identity({
                 {/* Address Autocomplete Box */}
                 {!manualEditAddress && (
                   <div className="relative">
-                    <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                      <span className="flex items-center gap-1">
-                        <MapPin className="w-3 h-3 text-amber-400" /> Residential Street Address
+                    <label className={`flex items-center justify-between text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+                      <span className="flex items-center gap-1.5">
+                        <MapPin className="w-3.5 h-3.5 text-amber-400" /> Residential Street Address
                       </span>
                       <button
                         type="button"
                         onClick={() => setManualEditAddress(true)}
-                        className="text-[10px] text-amber-400 hover:underline cursor-pointer lowercase"
+                        className="text-xs text-amber-400 hover:underline cursor-pointer lowercase"
                       >
                         (enter manually)
                       </button>
@@ -408,25 +408,25 @@ export function Step2Identity({
                           setIsAddressParsed(false);
                           onFetchSuggestions(e.target.value);
                         }}
-                        className={`w-full h-10 px-3 pl-9 rounded-xl focus:outline-none transition-all text-xs font-medium ${getFieldInputClass("line1")}`}
+                        className={`w-full h-11 px-3.5 pl-10 rounded-xl focus:outline-none transition-all text-sm font-medium ${getFieldInputClass("line1")}`}
                       />
-                      <Search className="w-4 h-4 absolute left-3 top-3 opacity-50 text-amber-400" />
+                      <Search className="w-4 h-4 absolute left-3.5 top-3.5 opacity-50 text-amber-400" />
                     </div>
 
                     {/* Autocomplete Dropdown List */}
                     {showSuggestions && addressSuggestions.length > 0 && (
-                      <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-xl bg-neutral-900 border border-white/15 shadow-2xl overflow-hidden max-h-48 overflow-y-auto divide-y divide-white/5 animate-in fade-in zoom-in-95">
+                      <div className="absolute left-0 right-0 top-full mt-1 z-50 rounded-xl bg-neutral-900 border border-white/15 shadow-2xl overflow-hidden max-h-52 overflow-y-auto divide-y divide-white/5 animate-in fade-in zoom-in-95">
                         {addressSuggestions.map((item, i) => (
                           <div
                             key={i}
                             onClick={() => onSelectSuggestion(item)}
-                            className="p-2.5 text-xs text-left hover:bg-white/10 cursor-pointer flex items-start gap-2 transition"
+                            className="p-3 text-sm text-left hover:bg-white/10 cursor-pointer flex items-start gap-2.5 transition"
                           >
-                            <MapPin className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
+                            <MapPin className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
                             <div>
                               <div className="font-semibold text-white">{item.mainText || item.description}</div>
                               {item.secondaryText && (
-                                <div className="text-[10.5px] text-zinc-400">{item.secondaryText}</div>
+                                <div className="text-xs text-zinc-400">{item.secondaryText}</div>
                               )}
                             </div>
                           </div>
@@ -438,13 +438,13 @@ export function Step2Identity({
 
                 {/* Manual Address Fields */}
                 {manualEditAddress && (
-                  <div className="space-y-2 p-3 rounded-xl bg-white/5 border border-white/10 animate-in fade-in">
-                    <div className="flex items-center justify-between text-[11px] font-bold text-amber-400 mb-1">
+                  <div className="space-y-2.5 p-3.5 rounded-xl bg-white/5 border border-white/10 animate-in fade-in">
+                    <div className="flex items-center justify-between text-xs font-bold text-amber-400 mb-1">
                       <span>Manual Address Entry</span>
                       <button
                         type="button"
                         onClick={() => setManualEditAddress(false)}
-                        className="text-[10px] underline text-zinc-400 hover:text-white cursor-pointer"
+                        className="text-xs underline text-zinc-400 hover:text-white cursor-pointer"
                       >
                         Switch to Lookup
                       </button>
@@ -458,7 +458,7 @@ export function Step2Identity({
                           value={line1}
                           onBlur={() => markFieldTouched("line1")}
                           onChange={(e) => setLine1(e.target.value)}
-                          className={`w-full h-9 px-3 rounded-lg text-xs ${getFieldInputClass("line1")}`}
+                          className={`w-full h-10 px-3 rounded-lg text-sm ${getFieldInputClass("line1")}`}
                         />
                       </div>
                       <div>
@@ -467,7 +467,7 @@ export function Step2Identity({
                           placeholder="Apt, Suite (Optional)"
                           value={line2}
                           onChange={(e) => setLine2 && setLine2(e.target.value)}
-                          className={`w-full h-9 px-3 rounded-lg text-xs ${
+                          className={`w-full h-10 px-3 rounded-lg text-sm ${
                             isLightText
                               ? "bg-white/5 border border-white/10 text-white placeholder-white/30"
                               : "bg-black/5 border border-black/10 text-black placeholder-black/30"
@@ -483,7 +483,7 @@ export function Step2Identity({
                         value={city}
                         onBlur={() => markFieldTouched("city")}
                         onChange={(e) => setCity(e.target.value)}
-                        className={`w-full h-9 px-3 rounded-lg text-xs ${getFieldInputClass("city")}`}
+                        className={`w-full h-10 px-3 rounded-lg text-sm ${getFieldInputClass("city")}`}
                       />
                       {hasSubdivisions && (
                         <div className="relative">
@@ -491,7 +491,7 @@ export function Step2Identity({
                             value={stateCode}
                             onBlur={() => markFieldTouched("stateCode")}
                             onChange={(e) => setStateCode(e.target.value)}
-                            className={`w-full h-9 px-2.5 pr-7 rounded-lg text-xs font-semibold focus:outline-none transition-all cursor-pointer appearance-none ${getFieldInputClass("stateCode")}`}
+                            className={`w-full h-10 px-3 pr-8 rounded-lg text-sm font-semibold focus:outline-none transition-all cursor-pointer appearance-none ${getFieldInputClass("stateCode")}`}
                           >
                             <option value="" className={isLightText ? "bg-neutral-900 text-white/50" : "bg-white text-black/50"}>
                               Select {countryConfig.stateLabel.replace(" (Optional)", "")}...
@@ -506,7 +506,7 @@ export function Step2Identity({
                               </option>
                             ))}
                           </select>
-                          <ChevronDown className="w-3.5 h-3.5 absolute right-2 top-3 pointer-events-none opacity-50 text-amber-400" />
+                          <ChevronDown className="w-4 h-4 absolute right-2.5 top-3 pointer-events-none opacity-50 text-amber-400" />
                         </div>
                       )}
                       <input
@@ -515,7 +515,7 @@ export function Step2Identity({
                         value={zipCode}
                         onBlur={() => markFieldTouched("zipCode")}
                         onChange={(e) => setZipCode(e.target.value.toUpperCase())}
-                        className={`w-full h-9 px-3 rounded-lg text-xs text-left ${getFieldInputClass("zipCode")}`}
+                        className={`w-full h-10 px-3 rounded-lg text-sm text-left ${getFieldInputClass("zipCode")}`}
                       />
                     </div>
                   </div>
@@ -525,15 +525,15 @@ export function Step2Identity({
 
             {/* Step-Up Fields: Date of Birth & SSN */}
             {(showStepUpForm || isL2Requirement) && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2.5 border-t border-dashed border-white/10 text-left">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-3 border-t border-dashed border-white/10 text-left">
                 {/* DOB Picker */}
                 <div className="w-full min-w-0">
-                  <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                    <span className="flex items-center gap-1 truncate">
-                      <Calendar className="w-3 h-3 text-amber-400 shrink-0" /> Date of Birth
+                  <label className={`flex items-center justify-between text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+                    <span className="flex items-center gap-1.5 truncate">
+                      <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" /> Date of Birth
                     </span>
                     {dobStatus.valid && dobStatus.age && (
-                      <span className="text-emerald-400 text-[10px] shrink-0 font-mono">Age: {dobStatus.age} yrs</span>
+                      <span className="text-emerald-400 text-xs shrink-0 font-mono">Age: {dobStatus.age} yrs</span>
                     )}
                   </label>
                   <DobPicker
@@ -553,12 +553,12 @@ export function Step2Identity({
                 {/* SSN Input (US Only) */}
                 {isUS && (
                   <div className="w-full min-w-0">
-                    <label className={`flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/50" : "text-black/50"}`}>
-                      <span className="flex items-center gap-1 truncate">
-                        <Lock className="w-3 h-3 text-amber-400 shrink-0" /> SSN (9-Digits)
+                    <label className={`flex items-center justify-between text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+                      <span className="flex items-center gap-1.5 truncate">
+                        <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" /> SSN (9-Digits)
                       </span>
                       {ssnDigits.length > 0 && (
-                        <span className={`text-[10px] font-mono shrink-0 ${ssnDigits.length === 9 ? "text-emerald-400 font-bold" : "text-zinc-400"}`}>
+                        <span className={`text-xs font-mono shrink-0 ${ssnDigits.length === 9 ? "text-emerald-400 font-bold" : "text-zinc-400"}`}>
                           {ssnDigits.length === 9 ? "✓ 9 Digits" : `${9 - ssnDigits.length} left`}
                         </span>
                       )}
@@ -570,7 +570,7 @@ export function Step2Identity({
                       value={formatSSN(ssn)}
                       onBlur={() => markFieldTouched("ssn")}
                       onChange={(e) => setSsn(e.target.value)}
-                      className={`w-full h-10 px-3 font-mono text-xs font-semibold rounded-xl focus:outline-none transition-all ${getFieldInputClass("ssn")}`}
+                      className={`w-full h-11 px-3.5 font-mono text-sm font-semibold rounded-xl focus:outline-none transition-all ${getFieldInputClass("ssn")}`}
                     />
                   </div>
                 )}
@@ -579,11 +579,11 @@ export function Step2Identity({
 
             {/* Error Notice */}
             {activeError && (
-              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
+              <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-start gap-2.5 animate-in fade-in duration-200">
                 <AlertCircle className="w-4 h-4 shrink-0 text-red-400 mt-0.5" />
                 <div className="space-y-1 text-left">
                   <div className="font-bold text-red-200">Verification Notice:</div>
-                  <div className="text-[11px] leading-relaxed text-red-300">
+                  <div className="text-xs leading-relaxed text-red-300">
                     {activeError}
                   </div>
                 </div>
@@ -594,7 +594,7 @@ export function Step2Identity({
             <button
               type="submit"
               disabled={isSubmittingIdentity}
-              className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+              className="w-full h-11 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mt-2"
               style={{
                 backgroundColor: primaryColor,
                 color: buttonTextColor,
@@ -608,7 +608,7 @@ export function Step2Identity({
               ) : (
                 <>
                   <span style={{ color: buttonTextColor }}>Save & Continue to Payment</span>
-                  <ArrowRight className="w-3.5 h-3.5" style={{ color: buttonTextColor }} />
+                  <ArrowRight className="w-4 h-4" style={{ color: buttonTextColor }} />
                 </>
               )}
             </button>
