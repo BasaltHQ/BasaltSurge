@@ -97,9 +97,9 @@ export function resolveCustomerKycTier(
   const l1Status = String(l1?.verification_status || "").toLowerCase();
   const l2Status = String(l2?.verification_status || "").toLowerCase();
 
-  const isL0Verified = l0Status === "verified" || l0Status === "not_available";
-  const isL1Verified = l1Status === "verified" || l1Status === "not_available";
-  const isL2Verified = l2Status === "verified" || l2Status === "not_available";
+  const isL0Verified = l0Status === "verified";
+  const isL1Verified = l1Status === "verified";
+  const isL2Verified = l2Status === "verified";
 
   const isPending = l0Status === "pending" || l1Status === "pending" || l2Status === "pending";
   const pendingTier: KycTierLevel | undefined =
