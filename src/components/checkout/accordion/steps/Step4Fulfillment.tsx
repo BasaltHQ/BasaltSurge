@@ -8,7 +8,6 @@ import {
   Loader2,
   Clock,
   ExternalLink,
-  AlertCircle,
   ShieldCheck,
   Lock,
 } from "lucide-react";
@@ -54,6 +53,16 @@ export function Step4Fulfillment({
     (headlessStatus || "").toLowerCase().includes("document") ||
     kycLevel === "L2";
 
+  // Step stage resolution for the timeline stepper
+  const isStep1Done = ["awaiting_funds", "transferring", "completed"].includes(headlessStep || "");
+  const isStep1Active = ["checking_out", "creating_session"].includes(headlessStep || "") || !headlessStep;
+
+  const isStep2Done = ["completed"].includes(headlessStep || "");
+  const isStep2Active = ["awaiting_funds", "transferring"].includes(headlessStep || "");
+
+  const isStep3Done = headlessStep === "completed";
+  const isStep3Active = headlessStep === "transferring";
+
   // Modal active during active processing (Step 4 open and order not yet confirmed)
   const isProcessingModalActive = isOpen && !isConfirmed;
 
@@ -77,14 +86,14 @@ export function Step4Fulfillment({
     };
   }, [isProcessingModalActive]);
 
-  // ─── Fullscreen Viewport Processing Modal ───
+  // ─── Fullscreen Viewport Processing Modal (High-End Luxury Design) ───
   const processingModalElement = isProcessingModalActive && mounted && typeof document !== "undefined" ? (
     createPortal(
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Payment Processing"
-        className="fixed inset-0 z-[999999] w-screen h-[100dvh] min-h-[100dvh] flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-2xl transition-all duration-500 select-none pointer-events-auto touch-none overflow-hidden"
+        className="fixed inset-0 z-[999999] w-screen h-[100dvh] min-h-[100dvh] flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-xl transition-all duration-500 select-none pointer-events-auto touch-none overflow-hidden"
         style={{
           paddingTop: "max(1rem, env(safe-area-inset-top))",
           paddingBottom: "max(1rem, env(safe-area-inset-bottom))",
@@ -94,146 +103,162 @@ export function Step4Fulfillment({
         onClick={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
       >
-        {/* Ambient Glow Lights */}
+        {/* Subtle Ambient Depth Lighting */}
         <div
-          className="absolute -top-24 -left-24 w-72 h-72 rounded-full blur-3xl opacity-20 pointer-events-none animate-pulse duration-3000"
+          className="absolute -top-32 -left-32 w-80 h-80 rounded-full blur-3xl opacity-10 pointer-events-none"
           style={{ backgroundColor: primaryColor }}
         />
-        <div className="absolute -bottom-24 -right-24 w-72 h-72 rounded-full bg-emerald-500/20 blur-3xl pointer-events-none animate-pulse duration-3000" />
+        <div className="absolute -bottom-32 -right-32 w-80 h-80 rounded-full bg-white/5 blur-3xl pointer-events-none" />
 
-        {/* Modal Card */}
+        {/* Executive Modal Card */}
         <div
-          className="relative w-full max-w-[420px] max-h-[92dvh] overflow-y-auto rounded-3xl border border-white/15 bg-neutral-950/95 p-5 sm:p-7 text-center shadow-2xl shadow-black/90 space-y-4.5 animate-in zoom-in-95 fade-in duration-300"
+          className="relative w-full max-w-[420px] max-h-[92dvh] overflow-y-auto rounded-3xl border border-white/[0.12] bg-[#0c0d12]/95 backdrop-blur-2xl p-6 sm:p-8 text-center shadow-[0_32px_96px_rgba(0,0,0,0.85)] space-y-5 animate-in zoom-in-[0.98] fade-in duration-300"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header Status Indicator */}
-          <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              <span>Processing Payment</span>
+          {/* Header Status Bar */}
+          <div className="flex items-center justify-between gap-3 border-b border-white/[0.08] pb-3.5">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-xs font-semibold tracking-tight text-white/90">Processing Payment</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-white/10 text-white/90 border border-white/15">
+              <span className="text-[11px] font-mono font-medium px-2.5 py-0.5 rounded-full bg-white/[0.06] text-white/80 border border-white/[0.08]">
                 ${amountUsd.toFixed(2)} USD
               </span>
-              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 animate-pulse">
-                LIVE
+            </div>
+          </div>
+
+          {/* Central Precision Spinner & Monogram */}
+          <div className="relative flex items-center justify-center py-5 my-1">
+            {/* Smooth SVG Gradient Arc */}
+            <svg className="w-20 h-20 sm:w-24 sm:h-24 animate-spin" style={{ animationDuration: "2s" }} viewBox="0 0 100 100">
+              <circle
+                cx="50"
+                cy="50"
+                r="42"
+                stroke="currentColor"
+                strokeWidth="3"
+                className="text-white/[0.06]"
+                fill="none"
+              />
+              <circle
+                cx="50"
+                cy="50"
+                r="42"
+                stroke="url(#luxurySpinnerGradient)"
+                strokeWidth="3.5"
+                strokeLinecap="round"
+                strokeDasharray="65 200"
+                fill="none"
+              />
+              <defs>
+                <linearGradient id="luxurySpinnerGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
+                  <stop offset="100%" stopColor={primaryColor || "#635BFF"} stopOpacity="0.4" />
+                </linearGradient>
+              </defs>
+            </svg>
+
+            {/* Core Shield Glass Badge */}
+            <div className="absolute w-11 h-11 rounded-full bg-white/[0.04] border border-white/[0.1] flex items-center justify-center shadow-inner">
+              <ShieldCheck className="w-5 h-5 text-white/80 stroke-[1.8]" />
+            </div>
+          </div>
+
+          {/* Unified Reassurance & Live Status Panel */}
+          <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08] text-left space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+              </span>
+              <span className="text-xs font-medium text-white/90">
+                {headlessStatus || "Authorizing payment method with Stripe..."}
               </span>
             </div>
-          </div>
-
-          {/* Central Layered Orbital Animation */}
-          <div className="relative flex items-center justify-center py-4 my-1">
-            {/* Outer Radial Glow */}
-            <div
-              className="absolute w-32 h-32 rounded-full blur-xl opacity-25 animate-pulse duration-2000"
-              style={{ backgroundColor: primaryColor }}
-            />
-
-            {/* Rotating Outer Dashed Ring */}
-            <div
-              className="w-24 h-24 sm:w-28 sm:h-28 rounded-full border-2 border-dashed border-white/20 animate-spin"
-              style={{ animationDuration: "12s", borderTopColor: primaryColor }}
-            />
-
-            {/* Rotating Inner Dotted Ring (Reverse) */}
-            <div
-              className="absolute w-18 h-18 sm:w-20 sm:h-20 rounded-full border border-dotted border-emerald-400/40 animate-spin"
-              style={{ animationDuration: "4s", animationDirection: "reverse" }}
-            />
-
-            {/* Core Luminous Badge */}
-            <div className="absolute w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-neutral-900 border border-emerald-500/40 flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.35)]">
-              <Loader2 className="w-6 h-6 sm:w-7 sm:h-7 text-emerald-400 animate-spin stroke-[2.5]" />
-            </div>
-          </div>
-
-          {/* Critical Refresh Warning Notice */}
-          <div className="p-3 sm:p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 text-left shadow-lg">
-            <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
-              <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 animate-bounce" />
-              <span>Please do not refresh or leave this page</span>
-            </div>
-            <p className="text-[11px] leading-relaxed text-amber-200/90 font-normal">
-              Your transaction is currently being processed securely. Refreshing may interrupt payment settlement.
+            <p className="text-[11.5px] leading-relaxed text-white/50 font-normal">
+              Please keep this window open while we secure and confirm your order. Thank you for your patience.
             </p>
           </div>
 
-          {/* Live Status Message & Gratitude Callout */}
-          <div className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/10 text-left space-y-1.5">
-            <div className="text-[11.5px] font-semibold text-emerald-300 flex items-center gap-1.5 animate-pulse">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span>{headlessStatus || "Finalizing order and confirming transaction..."}</span>
+          {/* Minimalist 3-Step Connected Stepper */}
+          <div className="pt-1 px-1">
+            <div className="flex items-center justify-between relative">
+              {/* Connecting Background Line */}
+              <div className="absolute left-6 right-6 top-3 h-[1px] bg-white/[0.08] -z-0" />
+              
+              {/* Step 1: Authorize */}
+              <div className="flex flex-col items-center gap-1.5 z-10">
+                <div
+                  className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300 ${
+                    isStep1Done
+                      ? "bg-white text-black shadow-[0_0_12px_rgba(255,255,255,0.3)]"
+                      : isStep1Active
+                      ? "bg-white/15 text-white border border-white/40 ring-2 ring-white/10"
+                      : "bg-neutral-900 text-white/30 border border-white/10"
+                  }`}
+                >
+                  {isStep1Done ? <Check className="w-3 h-3 text-black stroke-[3]" /> : "1"}
+                </div>
+                <span className={`text-[10px] font-medium tracking-tight transition-colors ${isStep1Active || isStep1Done ? "text-white/90 font-semibold" : "text-white/35"}`}>
+                  Authorize
+                </span>
+              </div>
+
+              {/* Step 2: Settle */}
+              <div className="flex flex-col items-center gap-1.5 z-10">
+                <div
+                  className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300 ${
+                    isStep2Done
+                      ? "bg-white text-black shadow-[0_0_12px_rgba(255,255,255,0.3)]"
+                      : isStep2Active
+                      ? "bg-white/15 text-white border border-white/40 ring-2 ring-white/10"
+                      : "bg-neutral-900 text-white/30 border border-white/10"
+                  }`}
+                >
+                  {isStep2Done ? <Check className="w-3 h-3 text-black stroke-[3]" /> : "2"}
+                </div>
+                <span className={`text-[10px] font-medium tracking-tight transition-colors ${isStep2Active || isStep2Done ? "text-white/90 font-semibold" : "text-white/35"}`}>
+                  Settle
+                </span>
+              </div>
+
+              {/* Step 3: Deliver */}
+              <div className="flex flex-col items-center gap-1.5 z-10">
+                <div
+                  className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300 ${
+                    isStep3Done
+                      ? "bg-white text-black shadow-[0_0_12px_rgba(255,255,255,0.3)]"
+                      : isStep3Active
+                      ? "bg-white/15 text-white border border-white/40 ring-2 ring-white/10"
+                      : "bg-neutral-900 text-white/30 border border-white/10"
+                  }`}
+                >
+                  {isStep3Done ? <Check className="w-3 h-3 text-black stroke-[3]" /> : "3"}
+                </div>
+                <span className={`text-[10px] font-medium tracking-tight transition-colors ${isStep3Active || isStep3Done ? "text-white/90 font-semibold" : "text-white/35"}`}>
+                  Deliver
+                </span>
+              </div>
             </div>
-            <p className="text-[11px] text-white/60 leading-relaxed font-normal">
-              Thank you for your patience while Stripe authorizes funds and settles your order.
-            </p>
           </div>
 
-          {/* Staged Visual Progress Pipeline */}
-          <div className="grid grid-cols-3 gap-1.5 pt-0.5">
-            <div
-              className={`p-2 sm:p-2.5 rounded-xl text-center transition-all ${
-                ["checking_out", "creating_session", "awaiting_funds", "transferring", "completed"].includes(
-                  headlessStep || ""
-                )
-                  ? "bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-semibold"
-                  : "bg-white/5 border border-white/5 text-white/40"
-              }`}
-            >
-              <div className="text-[10.5px] font-bold flex items-center justify-center gap-1">
-                <span>1. Authorize</span>
-              </div>
-              <div className="text-[8.5px] opacity-75">Card / Bank</div>
-            </div>
-
-            <div
-              className={`p-2 sm:p-2.5 rounded-xl text-center transition-all ${
-                ["awaiting_funds", "transferring", "completed"].includes(headlessStep || "")
-                  ? "bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-semibold"
-                  : ["checking_out", "creating_session"].includes(headlessStep || "")
-                  ? "bg-amber-500/20 border border-amber-500/40 text-amber-300 font-semibold animate-pulse"
-                  : "bg-white/5 border border-white/5 text-white/40"
-              }`}
-            >
-              <div className="text-[10.5px] font-bold flex items-center justify-center gap-1">
-                <span>2. Settle</span>
-              </div>
-              <div className="text-[8.5px] opacity-75">Payment Gateway</div>
-            </div>
-
-            <div
-              className={`p-2 sm:p-2.5 rounded-xl text-center transition-all ${
-                ["completed"].includes(headlessStep || "")
-                  ? "bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-semibold"
-                  : ["awaiting_funds", "transferring"].includes(headlessStep || "")
-                  ? "bg-amber-500/20 border border-amber-500/40 text-amber-300 font-semibold animate-pulse"
-                  : "bg-white/5 border border-white/5 text-white/40"
-              }`}
-            >
-              <div className="text-[10.5px] font-bold flex items-center justify-center gap-1">
-                <span>3. Deliver</span>
-              </div>
-              <div className="text-[8.5px] opacity-75">Fulfillment</div>
-            </div>
-          </div>
-
-          {/* Identity / Document Verification Notice */}
+          {/* Identity Verification Notice (if applicable) */}
           {isIdentityVerifying && (
-            <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 text-left animate-in fade-in duration-300">
-              <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
-                <Clock className="w-4 h-4 shrink-0 text-amber-400" />
+            <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.1] text-left space-y-1 animate-in fade-in duration-300">
+              <div className="flex items-center gap-2 text-xs font-semibold text-white/90">
+                <Clock className="w-4 h-4 text-white/70" />
                 <span>Identity Verification in Progress</span>
               </div>
-              <p className="text-[11px] leading-relaxed text-amber-200/90 font-normal">
-                Document and identity checks take <strong>2 to 3 minutes</strong> to process. Please keep this page open.
+              <p className="text-[11px] leading-relaxed text-white/50 font-normal">
+                Document and identity verification can take 2 to 3 minutes. Please keep this page open.
               </p>
             </div>
           )}
 
-          {/* Footer Security Badge */}
-          <div className="flex items-center justify-center gap-1.5 text-[10px] text-white/40 pt-1 select-none">
-            <Lock className="w-3 h-3 text-emerald-400" />
+          {/* Subtle Security Stamp */}
+          <div className="flex items-center justify-center gap-1.5 text-[10.5px] text-white/40 pt-1 select-none font-medium">
+            <Lock className="w-3.5 h-3.5 text-white/40" />
             <span>256-Bit SSL Encrypted • Guaranteed Settlement</span>
           </div>
         </div>
@@ -253,8 +278,8 @@ export function Step4Fulfillment({
         className={
           isOpen
             ? isLightText
-              ? "border-emerald-500/40 bg-emerald-500/5 shadow-xl"
-              : "border-emerald-500/40 bg-emerald-50 shadow-md"
+              ? "border-white/[0.15] bg-white/[0.02] shadow-xl"
+              : "border-neutral-200 bg-neutral-50 shadow-md"
             : ""
         }
       >
@@ -266,7 +291,7 @@ export function Step4Fulfillment({
                 isConfirmed
                   ? "bg-emerald-500 text-black font-bold"
                   : isOpen
-                  ? "bg-emerald-500 text-black animate-pulse"
+                  ? "bg-white text-black animate-pulse"
                   : "bg-white/10 text-white/40"
               }`}
             >
@@ -288,94 +313,80 @@ export function Step4Fulfillment({
         <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
           {!isConfirmed ? (
             /* Inline Processing State inside Accordion */
-            <div className="p-4 rounded-xl bg-black/30 border border-white/10 space-y-3.5 animate-in fade-in duration-300">
+            <div className="p-5 rounded-2xl bg-white/[0.02] border border-white/[0.08] space-y-4 animate-in fade-in duration-300 text-center">
               {/* Header Status Indicator */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs font-bold text-emerald-400">
-                  <Loader2 className="w-4 h-4 shrink-0 animate-spin text-emerald-400" />
-                  <span>Processing Payment with Stripe</span>
+              <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+                <div className="flex items-center gap-2 text-xs font-semibold text-white/90">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Processing Payment</span>
                 </div>
-                <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 animate-pulse">
-                  LIVE
+                <span className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-white/[0.06] text-white/80 border border-white/[0.08]">
+                  ${amountUsd.toFixed(2)} USD
                 </span>
               </div>
 
-              {/* Please do not refresh warning notice */}
-              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-left space-y-1">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400 animate-bounce" />
-                  <span>Please do not refresh</span>
+              {/* Dynamic Status Reassurance */}
+              <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-left space-y-1.5">
+                <div className="text-xs font-medium text-white/90 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  <span>{headlessStatus || "Authorizing payment method with Stripe..."}</span>
                 </div>
-                <p className="text-[10.5px] text-amber-200/80 leading-relaxed font-normal">
-                  Your payment is currently being authorized and settled. Thank you for your patience.
+                <p className="text-[11px] text-white/50 leading-relaxed">
+                  Please keep this page open while we confirm and fulfill your order. Thank you for your patience.
                 </p>
               </div>
 
-              {/* Dynamic Status Message */}
-              <div className="p-3 rounded-lg bg-white/5 border border-white/10 text-left space-y-1">
-                <div className="text-[11px] font-semibold text-emerald-300 flex items-center gap-1.5 animate-pulse">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                  <span>{headlessStatus || "Finalizing order and confirming transaction..."}</span>
-                </div>
-                <p className="text-[10.5px] text-white/50 leading-relaxed">
-                  Thank you for your patience while we confirm your transaction and fulfill your order.
-                </p>
-              </div>
-
-              {/* Staged Visual Progress Pipeline */}
-              <div className="grid grid-cols-3 gap-1.5 pt-1">
-                <div
-                  className={`p-2 rounded-lg text-center transition-all ${
-                    ["checking_out", "creating_session", "awaiting_funds", "transferring", "completed"].includes(
-                      headlessStep || ""
-                    )
-                      ? "bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-semibold"
-                      : "bg-white/5 border border-white/5 text-white/40"
-                  }`}
-                >
-                  <div className="text-[10px] font-bold">1. Authorize</div>
-                  <div className="text-[8.5px] opacity-75">Card / Bank</div>
-                </div>
-
-                <div
-                  className={`p-2 rounded-lg text-center transition-all ${
-                    ["awaiting_funds", "transferring", "completed"].includes(headlessStep || "")
-                      ? "bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-semibold"
-                      : ["checking_out", "creating_session"].includes(headlessStep || "")
-                      ? "bg-amber-500/20 border border-amber-500/40 text-amber-300 animate-pulse font-semibold"
-                      : "bg-white/5 border border-white/5 text-white/40"
-                  }`}
-                >
-                  <div className="text-[10px] font-bold">2. Settle</div>
-                  <div className="text-[8.5px] opacity-75">Payment Gateway</div>
-                </div>
-
-                <div
-                  className={`p-2 rounded-lg text-center transition-all ${
-                    ["completed"].includes(headlessStep || "")
-                      ? "bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-semibold"
-                      : ["awaiting_funds", "transferring"].includes(headlessStep || "")
-                      ? "bg-amber-500/20 border border-amber-500/40 text-amber-300 animate-pulse font-semibold"
-                      : "bg-white/5 border border-white/5 text-white/40"
-                  }`}
-                >
-                  <div className="text-[10px] font-bold">3. Deliver</div>
-                  <div className="text-[8.5px] opacity-75">Fulfillment</div>
-                </div>
-              </div>
-
-              {/* Identity / Document Verification Notice */}
-              {isIdentityVerifying && (
-                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 animate-in fade-in duration-300 text-left">
-                  <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
-                    <Clock className="w-4 h-4 shrink-0 text-amber-400" />
-                    <span>Identity Verification in Progress</span>
+              {/* Stepper Timeline */}
+              <div className="pt-1 px-2">
+                <div className="flex items-center justify-between relative">
+                  <div className="absolute left-6 right-6 top-3 h-[1px] bg-white/[0.08] -z-0" />
+                  
+                  <div className="flex flex-col items-center gap-1 z-10">
+                    <div
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                        isStep1Done
+                          ? "bg-white text-black"
+                          : isStep1Active
+                          ? "bg-white/20 text-white border border-white/40"
+                          : "bg-neutral-900 text-white/30 border border-white/10"
+                      }`}
+                    >
+                      {isStep1Done ? <Check className="w-2.5 h-2.5 text-black stroke-[3]" /> : "1"}
+                    </div>
+                    <span className="text-[9.5px] text-white/60">Authorize</span>
                   </div>
-                  <p className="text-[11.5px] leading-relaxed text-amber-200/90 font-normal">
-                    Document and identity checks can take <strong>2 to 3 minutes</strong> to process. Please keep this page open while Stripe completes your verification.
-                  </p>
+
+                  <div className="flex flex-col items-center gap-1 z-10">
+                    <div
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                        isStep2Done
+                          ? "bg-white text-black"
+                          : isStep2Active
+                          ? "bg-white/20 text-white border border-white/40"
+                          : "bg-neutral-900 text-white/30 border border-white/10"
+                      }`}
+                    >
+                      {isStep2Done ? <Check className="w-2.5 h-2.5 text-black stroke-[3]" /> : "2"}
+                    </div>
+                    <span className="text-[9.5px] text-white/60">Settle</span>
+                  </div>
+
+                  <div className="flex flex-col items-center gap-1 z-10">
+                    <div
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold ${
+                        isStep3Done
+                          ? "bg-white text-black"
+                          : isStep3Active
+                          ? "bg-white/20 text-white border border-white/40"
+                          : "bg-neutral-900 text-white/30 border border-white/10"
+                      }`}
+                    >
+                      {isStep3Done ? <Check className="w-2.5 h-2.5 text-black stroke-[3]" /> : "3"}
+                    </div>
+                    <span className="text-[9.5px] text-white/60">Deliver</span>
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           ) : (
             /* Order Success Summary Receipt Card */
@@ -429,7 +440,7 @@ export function Step4Fulfillment({
                       href={`https://basescan.org/tx/${paymentConfirmed.txHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="font-mono text-amber-400 hover:underline inline-flex items-center gap-1 text-[11px]"
+                      className="font-mono text-white/80 hover:text-white hover:underline inline-flex items-center gap-1 text-[11px]"
                     >
                       <span>Receipt Audit ({paymentConfirmed.txHash.slice(0, 6)}...{paymentConfirmed.txHash.slice(-4)})</span>
                       <ExternalLink className="w-2.5 h-2.5" />
