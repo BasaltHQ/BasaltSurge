@@ -1676,33 +1676,11 @@ export function useStripeEmbeddedOnramp({
                   return await execute(amt);
                 }
               } else {
-                const errData = await customerCheckRes.json().catch(() => ({}));
-                console.error("[EMBEDDED ONRAMP] Pre-verification customer status check failed during session creation:", errData);
-                
-                if (customerCheckRes.status === 401 || errData.error === "missing_oauth_token" || errData.error === "invalid_oauth_token") {
-                  console.warn("[EMBEDDED ONRAMP] Stale/invalid OAuth token during session helper check. Resetting Link session...");
-                  if (typeof window !== "undefined") {
-                    sessionStorage.removeItem("stripe_onramp_customer_id");
-                    sessionStorage.removeItem("stripe_onramp_oauth_token");
-                    sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-                    sessionStorage.removeItem(sessionKey);
-                  }
-                  customerIdRef.current = null;
-                  oauthTokenRef.current = null;
-                  buyerWalletRef.current = null;
-                  sessionIdRef.current = null;
-                  isRunningRef.current = false;
-                  setTimeout(() => {
-                    startOnrampRef.current?.(activeEmailRef.current || undefined);
-                  }, 0);
-                  return null;
-                } else {
-                  console.log("[EMBEDDED ONRAMP] Defaulting to L1 verification checklist due to fetch failure.");
-                  setKycTierRequired("l1");
-                  updateStep("collecting_kyc");
-                  isRunningRef.current = false;
-                  return null;
-                }
+                console.log("[EMBEDDED ONRAMP] Customer check returned non-200, defaulting to L1 verification collection.");
+                setKycTierRequired("l1");
+                updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return null;
               }
             } catch (checkErr) {
               console.warn("[EMBEDDED ONRAMP] Failed to pre-check customer status:", checkErr);
@@ -2288,33 +2266,11 @@ export function useStripeEmbeddedOnramp({
                       return;
                     }
                   } else {
-                    const errData = await checkRes.json().catch(() => ({}));
-                    console.error("[EMBEDDED ONRAMP] Pre-verification customer status check failed inside checkout loop:", errData);
-                    
-                    if (checkRes.status === 401 || errData.error === "missing_oauth_token" || errData.error === "invalid_oauth_token") {
-                      console.warn("[EMBEDDED ONRAMP] Stale/invalid OAuth token inside checkout loop. Resetting Link session...");
-                      if (typeof window !== "undefined") {
-                        sessionStorage.removeItem("stripe_onramp_customer_id");
-                        sessionStorage.removeItem("stripe_onramp_oauth_token");
-                        sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-                        sessionStorage.removeItem(sessionKey);
-                      }
-                      customerIdRef.current = null;
-                      oauthTokenRef.current = null;
-                      buyerWalletRef.current = null;
-                      sessionIdRef.current = null;
-                      isRunningRef.current = false;
-                      setTimeout(() => {
-                        startOnrampRef.current?.(activeEmailRef.current || undefined);
-                      }, 0);
-                      return;
-                    } else {
-                      console.log("[EMBEDDED ONRAMP] Defaulting to L1 verification checklist due to fetch failure.");
-                      setKycTierRequired("l1");
-                      updateStep("collecting_kyc");
-                      isRunningRef.current = false;
-                      return;
-                    }
+                    console.log("[EMBEDDED ONRAMP] Customer check failed inside checkout loop, defaulting to L1 KYC collection.");
+                    setKycTierRequired("l1");
+                    updateStep("collecting_kyc");
+                    isRunningRef.current = false;
+                    return;
                   }
                 } catch (checkErr) {
                   console.warn("[EMBEDDED ONRAMP] Failed to pre-check status inside checkout loop:", checkErr);
@@ -2621,9 +2577,14 @@ export function useStripeEmbeddedOnramp({
             }
           });
         } else {
+          console.log("[EMBEDDED ONRAMP] KYC info approved. Advancing to payment collection...");
           isRunningRef.current = false;
-          startOnrampRef.current?.(activeEmailRef.current || undefined);
+          updateStep("collecting_payment");
         }
+      } else {
+        console.log("[EMBEDDED ONRAMP] KYC approved. Advancing to payment collection...");
+        isRunningRef.current = false;
+        updateStep("collecting_payment");
       }
     } catch (err: any) {
       const errMsg = String(err?.message || err || "").toLowerCase();
@@ -2680,12 +2641,11 @@ export function useStripeEmbeddedOnramp({
             });
           } else {
             isRunningRef.current = false;
-            startOnrampRef.current?.(activeEmailRef.current || undefined);
+            updateStep("collecting_payment");
           }
         } else {
-          console.warn("[EMBEDDED ONRAMP] Missing required refs after KYC approval bypass, restarting flow...");
           isRunningRef.current = false;
-          startOnrampRef.current?.(activeEmailRef.current || undefined);
+          updateStep("collecting_payment");
         }
         return;
       }

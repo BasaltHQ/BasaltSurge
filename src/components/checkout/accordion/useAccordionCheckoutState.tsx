@@ -322,9 +322,9 @@ export function useAccordionCheckoutState(
     return resolveCustomerKycTier(kycTiers as KycTierEntry[], kycLevel);
   }, [kycTiers, kycLevel]);
 
-  const isL0Approved = kyc.isL0Verified || isAllKycCompleted || effectiveStatus === "verified";
-  const isL1Approved = kyc.isL1Verified || (effectiveStatus === "verified" && (kycTierRequired as string) !== "l1");
-  const isL2Approved = kyc.isL2Verified || docVerificationSuccess || (effectiveStatus === "verified" && (kycTierRequired as string) !== "l2");
+  const isL0Approved = kyc.isL0Verified || isAllKycCompleted;
+  const isL1Approved = kyc.isL1Verified;
+  const isL2Approved = kyc.isL2Verified || docVerificationSuccess;
 
   // Step-up (DOB + SSN) is strictly ONLY shown when NOT already verified AND Stripe explicitly requires L1 tier
   const showStepUpForm =
