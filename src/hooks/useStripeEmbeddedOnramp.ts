@@ -1031,95 +1031,12 @@ export function useStripeEmbeddedOnramp({
               return;
             }
 
-            updateStep("verifying_identity");
-            if (onrampRef.current) {
-              const runVerify = async () => {
-                try {
-                  const isTestMode = !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_");
-                  
-                  if (isTestMode) {
-                    console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics globally...");
-                    await submitKycInfoWithTimeout(onrampRef.current!, {
-                      given_name: "John",
-                      surname: "Verified",
-                      date_of_birth: { day: 1, month: 1, year: 1901 },
-                      address: {
-                        line1: "address_full_match",
-                        city: "Seattle",
-                        state: "WA",
-                        postal_code: "12345",
-                        country: "US"
-                      },
-                      id_number: {
-                        value: "000000000",
-                        type: "us_ssn"
-                      }
-                    });
-                  } else {
-                    console.log("[EMBEDDED ONRAMP] Live mode detected. Skipping mock demographics submission.");
-                  }
-                } catch (kycSubmitErr: any) {
-                  console.warn("[EMBEDDED ONRAMP] Global submitKycInfo failed:", kycSubmitErr?.message);
-                  fetch("/api/portal/log", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      level: "warn",
-                      message: `[EMBEDDED ONRAMP] Global submitKycInfo failed: ${kycSubmitErr?.message || kycSubmitErr}`,
-                      meta: { error: String(kycSubmitErr?.stack || kycSubmitErr) }
-                    })
-                  }).catch(() => {});
-                }
-                if (!onrampRef.current) {
-                  console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before verifyDocuments. Aborting.");
-                  throw new Error("Onramp coordinator was cleared");
-                }
-                return await onrampRef.current.verifyDocuments();
-              };
-
-              runVerify()
-                .then(async (res) => {
-                  console.log("[EMBEDDED ONRAMP] Global verifyDocuments completed:", res);
-                  isVerifyingRef.current = false;
-                  if (res.result === "abandoned") {
-                    handleError("Identity verification was abandoned");
-                    return;
-                  }
-
-                  console.log("[EMBEDDED ONRAMP] Document verification successful. Polling status...");
-                  updateStep("checking_kyc");
-                  let success = false;
-                  if (customerIdRef.current) {
-                    success = await pollKycStatus(customerIdRef.current, "l2");
-                  }
-                  
-                  if (!success) {
-                    handleError("Identity verification was not approved. Please try again.");
-                    return;
-                  }
-
-                  setIsAllKycCompleted(true);
-                  setKycLevel("L2");
-                  setPaymentElement(null);
-                  if (onrampRef.current) {
-                    try { onrampRef.current.destroy(); } catch {}
-                    onrampRef.current = null;
-                  }
-                  isCoordinatorAuthedRef.current = false;
-                  isRunningRef.current = false;
-                  if (startOnrampRef.current && activeEmailRef.current) {
-                    await startOnrampRef.current(activeEmailRef.current, undefined, undefined);
-                  }
-                })
-                .catch((verifyErr) => {
-                  console.error("[EMBEDDED ONRAMP] Global verifyDocuments error:", verifyErr);
-                  isVerifyingRef.current = false;
-                  handleError(verifyErr?.message || "Identity verification failed");
-                });
-            } else {
-              isVerifyingRef.current = false;
-              updateStep("collecting_payment");
-            }
+            // Both L0 and L1 are verified, so L2 document verification is required
+            console.log("[EMBEDDED ONRAMP] Global KYC check: L0/L1 verified, routing to L2 document verification screen.");
+            setKycTierRequired("l2");
+            updateStep("collecting_kyc");
+            isVerifyingRef.current = false;
+            isRunningRef.current = false;
           } catch (err: any) {
             console.warn("[EMBEDDED ONRAMP] Global KYC check failed, defaulting to L1 demographics:", err);
             setKycTierRequired("l1");
@@ -1791,33 +1708,11 @@ export function useStripeEmbeddedOnramp({
               console.warn("[EMBEDDED ONRAMP] Failed to pre-check customer status:", checkErr);
             }
 
-            console.log("[EMBEDDED ONRAMP] Launching verifyDocuments modal...");
-            updateStep("verifying_identity");
-            
-            try {
-              isVerifyingRef.current = true;
-              if (!onrampRef.current) {
-                console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before verifyDocuments. Aborting.");
-                return null;
-              }
-              const verifyResult = await onrampRef.current.verifyDocuments();
-              isVerifyingRef.current = false;
-              console.log("[EMBEDDED ONRAMP] Stripe verifyDocuments response (session helper):", verifyResult);
-              
-              if (!verifyResult || verifyResult.result !== "success") {
-                const err = new Error(`Identity verification was not completed (result: ${verifyResult?.result || "failed/cancelled"})`);
-                (err as any).code = "kyc_not_completed";
-                throw err;
-              }
-              
-              console.log("[EMBEDDED ONRAMP] Document verification completed. Retrying session creation...");
-              return await execute(amt);
-            } catch (verifyErr: any) {
-              isVerifyingRef.current = false;
-              const err = new Error(verifyErr?.message || "Identity verification failed or was cancelled");
-              (err as any).code = verifyErr?.code;
-              throw err;
-            }
+            console.log("[EMBEDDED ONRAMP] Session creation requires L2 document verification. Routing to Step 2 L2 screen...");
+            setKycTierRequired("l2");
+            updateStep("collecting_kyc");
+            isRunningRef.current = false;
+            return null;
           } else {
             const err = new Error(errData.error || "Session creation failed");
             (err as any).code = errData.code;
@@ -2432,35 +2327,11 @@ export function useStripeEmbeddedOnramp({
 
                 console.log("[EMBEDDED ONRAMP] KYC/Identity verification required during checkout. Launching verifyDocuments...");
                 isVerifyingRef.current = true;
-                updateStep("verifying_identity");
-                
-                if (!onrampRef.current) {
-                  console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before verifyDocuments. Aborting.");
-                  return;
-                }
-                
-                try {
-                  const verifyResult = await onrampRef.current.verifyDocuments();
-                  isVerifyingRef.current = false;
-                  console.log("[EMBEDDED ONRAMP] Stripe verifyDocuments response (checkout loop):", verifyResult);
-                  if (verifyResult.result === "abandoned") {
-                    handleError("Identity verification was abandoned");
-                    return;
-                  }
-                  console.log("[EMBEDDED ONRAMP] Document verification successful. Polling status...");
-                  updateStep("checking_kyc");
-                  const kycApproved = await pollKycStatus(customerId, "l2");
-                  if (!kycApproved) {
-                    throw new Error("Identity verification was not approved. Please try again.");
-                  }
-                  console.log("[EMBEDDED ONRAMP] Document verification successful, retrying checkout...");
-                  updateStep("checking_out");
-                  continue;
-                } catch (verifyErr: any) {
-                  isVerifyingRef.current = false;
-                  handleError(verifyErr?.message || "Identity verification failed");
-                  return;
-                }
+                console.log("[EMBEDDED ONRAMP] L2 document verification required during checkout. Routing to Step 2 L2 screen...");
+                setKycTierRequired("l2");
+                updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
               }
             }
 
@@ -2530,21 +2401,11 @@ export function useStripeEmbeddedOnramp({
               const isDoc = errMessage.includes("document") || errMessage.includes("id");
               const isL0 = errMessage.includes("address") || errMessage.includes("name");
               if (isDoc) {
-                console.log("[EMBEDDED ONRAMP] Verification error requires document step-up. Launching verifyDocuments...");
-                updateStep("verifying_identity");
-                if (onrampRef.current) {
-                  try {
-                    isVerifyingRef.current = true;
-                    await onrampRef.current.verifyDocuments();
-                    isVerifyingRef.current = false;
-                    updateStep("checking_out");
-                    continue;
-                  } catch (vErr: any) {
-                    isVerifyingRef.current = false;
-                    handleError(vErr?.message || "Identity verification failed", vErr);
-                    return;
-                  }
-                }
+                console.log("[EMBEDDED ONRAMP] Verification error requires document step-up (L2). Routing to Step 2 L2 screen...");
+                setKycTierRequired("l2");
+                updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
               } else if (isL0) {
                 console.log("[EMBEDDED ONRAMP] Verification error requires address details (L0).");
                 setKycTierRequired("l0");
@@ -4038,81 +3899,11 @@ export function useStripeEmbeddedOnramp({
           console.warn("[EMBEDDED ONRAMP] Status check failed before document verification:", statusCheckErr);
         }
 
-        console.log("[EMBEDDED ONRAMP] KYC error caught during payment collection. Triggering verifyDocuments...");
-        try {
-          updateStep("verifying_identity");
-          try {
-            const isTestMode = !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY?.startsWith("pk_test_");
-            
-            if (isTestMode && !isL1Verified) {
-              console.log("[EMBEDDED ONRAMP] Submitting test KYC demographics on payment collection catch...");
-              await submitKycInfoWithTimeout(onrampRef.current, {
-                given_name: "John",
-                surname: "Verified",
-                date_of_birth: { day: 1, month: 1, year: 1901 },
-                address: {
-                  line1: "address_full_match",
-                  city: "Seattle",
-                  state: "WA",
-                  postal_code: "12345",
-                  country: "US"
-                },
-                id_number: {
-                  value: "000000000",
-                  type: "us_ssn"
-                }
-              });
-            } else {
-              console.log("[EMBEDDED ONRAMP] Live mode detected. Skipping mock demographics submission.");
-            }
-          } catch (kycSubmitErr: any) {
-            const sanitizedErrMsg = maskSensitiveData(kycSubmitErr?.message || kycSubmitErr);
-            console.warn("[EMBEDDED ONRAMP] submitKycInfo failed:", sanitizedErrMsg);
-            fetch("/api/portal/log", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                level: "warn",
-                message: `[EMBEDDED ONRAMP] submitKycInfo failed: ${sanitizedErrMsg}`,
-                meta: { error: maskSensitiveData(String(kycSubmitErr?.stack || kycSubmitErr)) }
-              })
-            }).catch(() => {});
-          }
-          if (!onrampRef.current) {
-            console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before verifyDocuments. Aborting.");
-            return;
-          }
-          const verifyResult = await onrampRef.current.verifyDocuments();
-          console.log("[EMBEDDED ONRAMP] Stripe verifyDocuments response (payment catch):", verifyResult);
-          if (verifyResult.result === "abandoned") {
-            handleError("Identity verification was abandoned");
-            return;
-          }
-          console.log("[EMBEDDED ONRAMP] KYC/Document verification completed. Polling status...");
-          updateStep("checking_kyc");
-          const success = await pollKycStatus(customerIdRef.current || "", "l2");
-          if (!success) {
-            handleError("Identity verification was not approved. Please try again.");
-            return;
-          }
-
-          setIsAllKycCompleted(true);
-          setKycLevel("L2");
-          setPaymentElement(null);
-          if (onrampRef.current) {
-            try { onrampRef.current.destroy(); } catch {}
-            onrampRef.current = null;
-          }
-          isCoordinatorAuthedRef.current = false;
-          isRunningRef.current = false;
-          if (startOnrampRef.current) {
-            await startOnrampRef.current(activeEmail, activePhone, activeName);
-          }
-          return;
-        } catch (verifyErr: any) {
-          handleError(verifyErr?.message || "Identity verification failed");
-          return;
-        }
+        console.log("[EMBEDDED ONRAMP] L2 KYC document verification required during payment collection. Routing to Step 2 L2 screen...");
+        setKycTierRequired("l2");
+        updateStep("collecting_kyc");
+        isRunningRef.current = false;
+        return;
       }
 
       handleError(err?.message || "Onramp flow failed");

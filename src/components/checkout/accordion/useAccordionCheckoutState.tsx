@@ -333,8 +333,9 @@ export function useAccordionCheckoutState(
       effectiveStatus === "step_up" ||
       (kycTierRequired as string) === "l1");
 
-  // Document verification requirement: only when L2 tier is explicitly demanded
+  // Document verification requirement: only when L2 tier is explicitly demanded AND L1 is already approved
   const showVerifyDocs =
+    isL1Approved &&
     !isL2Approved &&
     (effectiveTier === "l2" ||
       effectiveStatus === "doc_verify" ||
@@ -342,9 +343,11 @@ export function useAccordionCheckoutState(
       headlessStep === "verifying_identity");
 
   const isL2Requirement =
-    effectiveTier === "l2" ||
-    (kycTierRequired as string) === "l2" ||
-    headlessStep === "verifying_identity";
+    isL1Approved &&
+    !isL2Approved &&
+    (effectiveTier === "l2" ||
+      (kycTierRequired as string) === "l2" ||
+      headlessStep === "verifying_identity");
 
   // Full L0 form (name, address): default for all unverified users starting at L0, or when manual address editing is active
   const showFullForm =
@@ -639,6 +642,21 @@ export function useAccordionCheckoutState(
     }
 
     if (isL2Requirement && !isL2Approved) {
+      if (onVerifyDocuments) {
+        try {
+          setIsSubmittingIdentity(true);
+          const res = await onVerifyDocuments();
+          if (res) {
+            setDocVerificationSuccess(true);
+            setActiveStep(3);
+          }
+        } catch (vErr: any) {
+          setLocalError(vErr?.message || "Document verification was not completed.");
+        } finally {
+          setIsSubmittingIdentity(false);
+        }
+        return;
+      }
       setLocalError("Government ID / Document upload is required for Level 2 verification. Please complete document upload.");
       return;
     }
