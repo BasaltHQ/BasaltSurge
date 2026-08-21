@@ -4133,7 +4133,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           error: String((error as any)?.message || error),
           stripeSessionId: headlessSessionId || undefined
         });
-        setDisplayError((error as any)?.message || String(error) || "An error occurred during payment.");
+        if (!isV2Active) {
+          setDisplayError((error as any)?.message || String(error) || "An error occurred during payment.");
+        }
       }
 
       if (!isV2Active) {
@@ -8442,7 +8444,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       )}
 
       {/* Pristine Error Modal */}
-      {displayError && typeof window !== "undefined" && createPortal(
+      {!isV2Active && displayError && typeof window !== "undefined" && createPortal(
         <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm grid place-items-center p-4 animate-in fade-in text-left">
           <div className={`rounded-2xl max-w-sm w-full p-6 relative shadow-2xl border transition-all duration-300 ${isLightText
               ? 'bg-neutral-900 border-white/10 text-white'
