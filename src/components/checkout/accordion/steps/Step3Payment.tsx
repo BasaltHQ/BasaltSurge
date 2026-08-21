@@ -101,7 +101,15 @@ export function Step3Payment({
                 <p className="text-xs leading-relaxed text-amber-300/90">{activeError}</p>
               </div>
             </div>
-            {(activeError.toLowerCase().includes("decline") || activeError.toLowerCase().includes("support") || activeError.toLowerCase().includes("failed")) && (
+            {(activeError.toLowerCase().includes("frozen") || activeError.toLowerCase().includes("freeze")) && (
+              <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
+                <span className="font-semibold text-amber-300">Card Locked or Frozen:</span>
+                <p className="pl-1 opacity-90">
+                  Your card is currently frozen by your bank. Please unfreeze it in your mobile banking app, or choose a different payment method below.
+                </p>
+              </div>
+            )}
+            {(activeError.toLowerCase().includes("decline") || activeError.toLowerCase().includes("support") || activeError.toLowerCase().includes("failed")) && !(activeError.toLowerCase().includes("frozen") || activeError.toLowerCase().includes("freeze")) && (
               <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
                 <span className="font-semibold text-amber-300">Quick Tips:</span>
                 <ul className="list-disc list-inside space-y-0.5 pl-1 opacity-90">

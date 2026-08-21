@@ -51,8 +51,13 @@ export function Step4Fulfillment({
     !isAchPending &&
     (headlessStep === "collecting_payment" ||
       headlessStep === "error" ||
+      headlessStep === "idle" ||
+      headlessStep === "initializing" ||
       (headlessStatus || "").toLowerCase().includes("decline") ||
       (headlessStatus || "").toLowerCase().includes("failed") ||
+      (headlessStatus || "").toLowerCase().includes("frozen") ||
+      (headlessStatus || "").toLowerCase().includes("freeze") ||
+      (headlessStatus || "").toLowerCase().includes("blocked") ||
       (headlessStatus || "").toLowerCase().includes("select payment"));
 
   const modalAccentColor = isDeclined ? "#F59E0B" : primaryColor;

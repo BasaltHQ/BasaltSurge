@@ -4136,9 +4136,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         setDisplayError((error as any)?.message || String(error) || "An error occurred during payment.");
       }
 
-      resetHeadlessOnramp();
-      setHeadlessEmailPrompt(true);
-      setHeadlessInitiated(false);
+      if (!isV2Active) {
+        resetHeadlessOnramp();
+        setHeadlessEmailPrompt(true);
+        setHeadlessInitiated(false);
+      }
     },
   });
 
@@ -4827,7 +4829,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           amountUsd={totalUsd}
           receiptId={receiptId}
           isReceiptPaid={isSettled(receipt?.status) || Boolean(paymentConfirmed)}
-          headlessError={headlessError}
+          headlessError={headlessError || displayError}
           kycTierRequired={kycTierRequired}
           kycLevel={headlessKycLevel}
           kycTiers={headlessKycTiers}

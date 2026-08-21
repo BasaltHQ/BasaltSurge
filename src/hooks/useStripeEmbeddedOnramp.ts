@@ -511,11 +511,41 @@ function checkIfCardDecline(err: any, lastError?: string): boolean {
   }
 
   // 2. If the thrown error is an active payment failure or decline, prioritize it immediately
-  const isThrownCardDecline = msg.includes("decline") || msg.includes("card") || msg.includes("bank") || msg.includes("institution") ||
-                              msg.includes("payment_failed") || msg.includes("payment failed") || msg.includes("card_failed") ||
-                              msg.includes("funds") || msg.includes("cvc") || msg.includes("zip") || msg.includes("expired") || msg.includes("invalid") ||
-                              code.includes("decline") || code.includes("card") || code.includes("payment_method") || code.includes("bank") ||
-                              code.includes("payment_failed") || code.includes("payment failed") || code.includes("card_failed") || code.includes("funds") || code.includes("cvc") || code.includes("zip");
+  const isThrownCardDecline =
+    msg.includes("decline") ||
+    msg.includes("card") ||
+    msg.includes("bank") ||
+    msg.includes("institution") ||
+    msg.includes("payment_failed") ||
+    msg.includes("payment failed") ||
+    msg.includes("card_failed") ||
+    msg.includes("funds") ||
+    msg.includes("cvc") ||
+    msg.includes("zip") ||
+    msg.includes("expired") ||
+    msg.includes("invalid") ||
+    msg.includes("frozen") ||
+    msg.includes("freeze") ||
+    msg.includes("blocked") ||
+    msg.includes("honor") ||
+    msg.includes("not allowed") ||
+    msg.includes("unauthorized") ||
+    msg.includes("refused") ||
+    msg.includes("rejected") ||
+    msg.includes("checkout_unsuccessful") ||
+    code.includes("decline") ||
+    code.includes("card") ||
+    code.includes("payment_method") ||
+    code.includes("bank") ||
+    code.includes("payment_failed") ||
+    code.includes("payment failed") ||
+    code.includes("card_failed") ||
+    code.includes("funds") ||
+    code.includes("cvc") ||
+    code.includes("zip") ||
+    code.includes("frozen") ||
+    code.includes("blocked") ||
+    Boolean(declineCode);
 
   if (isThrownCardDecline) {
     return true;
@@ -566,6 +596,11 @@ export function useStripeEmbeddedOnramp({
 }: UseStripeEmbeddedOnrampProps): UseStripeEmbeddedOnrampReturn {
   const [step, setStep] = useState<OnrampStep>("idle");
   const [error, setError] = useState<string | null>(null);
+  const lastErrorSetTimeRef = useRef<number>(0);
+  const setPersistedError = useCallback((msg: string | null) => {
+    if (msg) lastErrorSetTimeRef.current = Date.now();
+    setError(msg);
+  }, []);
   const [authElement, setAuthElement] = useState<HTMLElement | null>(null);
   const [paymentElement, setPaymentElement] = useState<HTMLElement | null>(null);
   const [cryptoCustomerId, setCryptoCustomerId] = useState<string | null>(() => {
@@ -2781,7 +2816,9 @@ export function useStripeEmbeddedOnramp({
       return;
     }
     isRunningRef.current = true;
-    setError(null);
+    if (isForceRetry || Date.now() - lastErrorSetTimeRef.current > 5000) {
+      setError(null);
+    }
     if (isForceRetry && onrampRef.current) {
       try { onrampRef.current.destroy(); } catch {}
       onrampRef.current = null;
@@ -3706,7 +3743,15 @@ export function useStripeEmbeddedOnramp({
           }
 
           console.warn("[EMBEDDED ONRAMP] Checkout loop encountered an error, resetting spent payment element for fresh selection...", checkoutErr);
-          setError(checkoutErr?.message || "Payment could not be completed. Please select or re-enter your payment method.");
+          const rawErr = String(checkoutErr?.message || "").toLowerCase();
+          const declineMsg =
+            rawErr.includes("frozen") || rawErr.includes("freeze")
+              ? "Your card is currently frozen by your issuing bank. Please unfreeze it or select a different payment method."
+              : rawErr.includes("block") || rawErr.includes("institution")
+              ? "This card was blocked by your bank for crypto purchases. Please use a debit card, Apple Pay, Google Pay, or US Bank Account."
+              : checkoutErr?.message || "Your card or payment method was declined. Please try another card or payment method.";
+          setPersistedError(declineMsg);
+          onErrorRef.current?.(declineMsg);
           setPaymentElement(null); // Clear spent "Submitted" iframe so fresh one can mount
           paymentTokenRef.current = null;
           sessionIdRef.current = null;
@@ -3726,7 +3771,7 @@ export function useStripeEmbeddedOnramp({
           isRunningRef.current = false;
           setTimeout(() => {
             startOnrampRef.current?.(activeEmailRef.current || undefined);
-          }, 50);
+          }, 100);
           return;
         }
       }

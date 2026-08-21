@@ -117,6 +117,14 @@ export function useStepProgressionGuard({
         currentTier: kyc.currentTier,
       });
 
+      const declineReason =
+        activeError ||
+        effectiveError ||
+        parsed?.code ||
+        "Your card was declined or frozen by your bank. Please choose or enter a different card, Apple Pay, Google Pay, or US Bank Account.";
+
+      onPaymentDeclined?.(declineReason);
+
       if (!declineTimerRef.current) {
         logTransition(
           4,
@@ -125,10 +133,7 @@ export function useStepProgressionGuard({
         );
         declineTimerRef.current = setTimeout(() => {
           setActiveStep(3);
-          onPaymentDeclined?.(
-            parsed?.code ||
-            "Your card or payment method was declined. Please choose or enter a different card, Apple Pay, Google Pay, or US Bank Account."
-          );
+          onPaymentDeclined?.(declineReason);
           declineTimerRef.current = null;
         }, 2200);
       }
