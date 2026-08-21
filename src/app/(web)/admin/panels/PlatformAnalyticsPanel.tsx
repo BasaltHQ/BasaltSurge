@@ -42,7 +42,10 @@ import {
   X,
   Sparkles,
   Layers,
-  Clock
+  Clock,
+  Coins,
+  ArrowRightLeft,
+  Wallet
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 import RollercoasterOverlay from "../components/RollercoasterOverlay";
@@ -78,6 +81,36 @@ function getPacificComponents(date: Date) {
     date: Number(map.day),
     day
   };
+}
+
+function getBlockExplorerTxUrl(chainId?: number | string | null, txHash?: string | null): string {
+  if (!txHash) return "";
+  const num = Number(chainId);
+  if (num === 8453) return `https://basescan.org/tx/${txHash}`;
+  if (num === 84532) return `https://sepolia.basescan.org/tx/${txHash}`;
+  if (num === 1) return `https://etherscan.io/tx/${txHash}`;
+  if (num === 137) return `https://polygonscan.com/tx/${txHash}`;
+  if (num === 42161) return `https://arbiscan.io/tx/${txHash}`;
+  if (num === 10) return `https://optimistic.etherscan.com/tx/${txHash}`;
+  if (num === 56) return `https://bscscan.com/tx/${txHash}`;
+  if (num === 43114) return `https://snowtrace.io/tx/${txHash}`;
+  if (num === 101 || txHash.length > 70 || !txHash.startsWith("0x")) return `https://solscan.io/tx/${txHash}`;
+  return `https://basescan.org/tx/${txHash}`;
+}
+
+function getChainDisplayName(chainId?: number | string | null): string {
+  const num = Number(chainId);
+  if (num === 8453) return "Base (8453)";
+  if (num === 84532) return "Base Sepolia (84532)";
+  if (num === 1) return "Ethereum Mainnet (1)";
+  if (num === 137) return "Polygon (137)";
+  if (num === 42161) return "Arbitrum One (42161)";
+  if (num === 10) return "Optimism (10)";
+  if (num === 56) return "BNB Chain (56)";
+  if (num === 43114) return "Avalanche C-Chain (43114)";
+  if (num === 101) return "Solana";
+  if (!chainId) return "Base (8453)";
+  return `Chain ID ${chainId}`;
 }
 
 interface Stat {
@@ -185,7 +218,9 @@ interface ReceiptInfo {
   merchantWallet?: string;
   stripeChargeAmountUsd?: number | null;
   stripeAmountUsd?: number | null;
+  amountUsd?: number | null;
   processedAmountUsd?: number | null;
+  buyerWallet?: string | null;
   taxAmount?: number;
   tipAmount?: number;
   gratuity?: number;
@@ -196,6 +231,16 @@ interface ReceiptInfo {
   actualTransferredUsd?: number;
   destinationAmount?: number;
   destination_amount?: number;
+  isCrypto?: boolean;
+  thirdwebMetadata?: any;
+  paymentId?: string | null;
+  transactions?: any[];
+  originChainId?: number | null;
+  destinationChainId?: number | null;
+  originToken?: any;
+  destinationToken?: any;
+  originAmount?: string | number | null;
+  quoteSummary?: any;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -3680,29 +3725,35 @@ export default function PlatformAnalyticsPanel() {
 
                                   {/* Menu Item Options */}
                                   <div className="space-y-1.5 text-[11px] font-mono">
-                                    {[
-                                      { id: "overview", label: "Overview & Funnel Trajectory", icon: Sliders, color: "text-emerald-400" },
-                                      { id: "items", label: "Items Ordered", icon: FileText, color: "text-blue-400" },
-                                      { id: "origin", label: "Initialization & Origin", icon: Chrome, color: "text-purple-400" },
-                                      { id: "logs", label: "Client Diagnostic Logs", icon: Activity, color: "text-amber-400" },
-                                      { id: "customers", label: "Customer Metadata", icon: Users, color: "text-teal-400" },
-                                      { id: "fees", label: "Fee & Split Breakdown", icon: Percent, color: "text-amber-400" },
-                                    ].map(tab => {
-                                      const Icon = tab.icon;
-                                      return (
-                                        <button
-                                          key={tab.id}
-                                          onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: tab.id }))}
-                                          className="w-full p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 flex items-center justify-between text-white/90 text-left transition-all active:scale-[0.98]"
-                                        >
-                                          <div className="flex items-center gap-2">
-                                            <Icon className={`w-3.5 h-3.5 ${tab.color}`} />
-                                            <span className="font-semibold text-[11px]">{tab.label}</span>
-                                          </div>
-                                          <span className="text-white/40 text-xs font-bold">›</span>
-                                        </button>
-                                      );
-                                    })}
+                                    {(() => {
+                                      const isReceiptCrypto = r.isCrypto || r.cardFunding === "crypto" || !!r.thirdwebMetadata || !!r.paymentId || (Array.isArray(r.transactions) && r.transactions.length > 0);
+                                      const mobileMenuItems = [
+                                        { id: "overview", label: "Overview & Funnel Trajectory", icon: Sliders, color: "text-emerald-400" },
+                                        ...(isReceiptCrypto ? [{ id: "crypto", label: "Crypto Details", icon: Coins, color: "text-purple-400" }] : []),
+                                        { id: "items", label: "Items Ordered", icon: FileText, color: "text-blue-400" },
+                                        { id: "origin", label: "Initialization & Origin", icon: Chrome, color: "text-purple-400" },
+                                        { id: "logs", label: "Client Diagnostic Logs", icon: Activity, color: "text-amber-400" },
+                                        { id: "customers", label: "Customer Metadata", icon: Users, color: "text-teal-400" },
+                                        { id: "fees", label: "Fee & Split Breakdown", icon: Percent, color: "text-amber-400" },
+                                      ];
+
+                                      return mobileMenuItems.map(tab => {
+                                        const Icon = tab.icon;
+                                        return (
+                                          <button
+                                            key={tab.id}
+                                            onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: tab.id }))}
+                                            className="w-full p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 flex items-center justify-between text-white/90 text-left transition-all active:scale-[0.98]"
+                                          >
+                                            <div className="flex items-center gap-2">
+                                              <Icon className={`w-3.5 h-3.5 ${tab.color}`} />
+                                              <span className="font-semibold text-[11px]">{tab.label}</span>
+                                            </div>
+                                            <span className="text-white/40 text-xs font-bold">›</span>
+                                          </button>
+                                        );
+                                      });
+                                    })()}
                                     {/* Tab 7: Reconcile & Single-Receipt Targeted Actions */}
                                     <button
                                       onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: "reconcile" }))}
@@ -3769,6 +3820,68 @@ export default function PlatformAnalyticsPanel() {
                                     )}
                                   </div>
                                 )}
+
+                                {activeSubTab === "crypto" && (() => {
+                                  const meta = r.thirdwebMetadata || {};
+                                  const paymentId = r.paymentId || meta.paymentId || "N/A";
+                                  const originToken = r.originToken || meta.originToken || {};
+                                  const destinationToken = r.destinationToken || meta.destinationToken || {};
+                                  const originAmount = r.originAmount || meta.originAmount;
+                                  const destinationAmount = r.destinationAmount || meta.destinationAmount || r.totalUsd;
+                                  const originChainId = r.originChainId || meta.originChainId;
+                                  const destinationChainId = r.destinationChainId || meta.destinationChainId || 8453;
+                                  const quoteSummary = r.quoteSummary || meta.quoteSummary || meta.quote || {};
+                                  const isCrossChain = originChainId && destinationChainId && Number(originChainId) !== Number(destinationChainId);
+
+                                  return (
+                                    <div className="my-2 space-y-2 text-[10px] font-mono">
+                                      <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 space-y-1">
+                                        <div className="text-[8px] text-purple-300 font-bold uppercase flex items-center justify-between">
+                                          <span>Thirdweb Universal Pay</span>
+                                          <span className="text-emerald-400 font-bold">{isCrossChain ? "Cross-Chain" : "Direct On-Chain"}</span>
+                                        </div>
+                                        <div className="text-white font-bold truncate">Payment ID: {paymentId}</div>
+                                      </div>
+
+                                      <div className="grid grid-cols-2 gap-1.5">
+                                        <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-0.5">
+                                          <div className="text-[8px] text-white/40 font-bold uppercase">Paid (Origin)</div>
+                                          <div className="text-white font-bold">{originAmount ? `${originAmount} ` : ""}{originToken.symbol || "Crypto"}</div>
+                                          <div className="text-[8px] text-purple-300">{getChainDisplayName(originChainId)}</div>
+                                        </div>
+                                        <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-0.5">
+                                          <div className="text-[8px] text-emerald-300 font-bold uppercase">Settled (Base)</div>
+                                          <div className="text-emerald-400 font-extrabold">{destinationAmount ? `${destinationAmount} ` : `$${r.totalUsd.toFixed(2)} `}{destinationToken.symbol || "USDC"}</div>
+                                          <div className="text-[8px] text-emerald-200/70">{getChainDisplayName(destinationChainId)}</div>
+                                        </div>
+                                      </div>
+
+                                      {r.transactionHash && (
+                                        <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
+                                          <div className="text-[8px] text-white/40 font-bold uppercase">Base Transaction Hash</div>
+                                          <div className="flex items-center justify-between gap-1">
+                                            <span className="text-emerald-400 truncate max-w-[140px] font-bold">{r.transactionHash}</span>
+                                            <a
+                                              href={getBlockExplorerTxUrl(destinationChainId, r.transactionHash)}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-[9px] text-emerald-300 bg-emerald-500/20 px-1.5 py-0.5 rounded border border-emerald-500/30 flex items-center gap-0.5"
+                                            >
+                                              <span>Explorer</span>
+                                              <ExternalLink className="w-2.5 h-2.5" />
+                                            </a>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {quoteSummary.provider && (
+                                        <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 text-[9px] text-white/70">
+                                          Routing Provider: <span className="text-white font-bold">{quoteSummary.provider}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
 
                                 {activeSubTab === "items" && (
                                   <div className="my-2 space-y-1.5 text-[10px] font-mono">
@@ -4094,6 +4207,18 @@ export default function PlatformAnalyticsPanel() {
                               );
                           const splitBadgeLabel = isDebit ? "Debit Split" : "Credit/Crypto/ACH Split";
 
+                          const isReceiptCrypto = r.isCrypto || r.cardFunding === "crypto" || !!r.thirdwebMetadata || !!r.paymentId || (Array.isArray(r.transactions) && r.transactions.length > 0);
+                          const desktopTabs = [
+                            { id: "overview", label: "Overview", icon: Sliders },
+                            ...(isReceiptCrypto ? [{ id: "crypto", label: "Crypto Details", icon: Coins, isCryptoTab: true }] : []),
+                            { id: "items", label: "Items Ordered", icon: FileText },
+                            { id: "origin", label: "Initialization & Origin", icon: Chrome },
+                            { id: "logs", label: "Client Logs", icon: Activity },
+                            { id: "customers", label: "Customer Metadata", icon: Users },
+                            { id: "fees", label: "Fee & Split Breakdown", icon: Percent },
+                            { id: "reconcile", label: "Reconcile & Actions", icon: Wrench }
+                          ];
+
                           return (
                             <tr>
                               <td colSpan={9} className="bg-zinc-950 p-4 sm:p-5 border-t border-b border-white/10">
@@ -4101,32 +4226,391 @@ export default function PlatformAnalyticsPanel() {
 
                                   {/* Horizontal Scrollable Tabs Navigation */}
                                   <div className="flex items-center gap-1.5 border-b border-white/10 pb-3 overflow-x-auto scrollbar-none">
-                                    {[
-                                      { id: "overview", label: "Overview", icon: Sliders },
-                                      { id: "items", label: "Items Ordered", icon: FileText },
-                                      { id: "origin", label: "Initialization & Origin", icon: Chrome },
-                                      { id: "logs", label: "Client Logs", icon: Activity },
-                                      { id: "customers", label: "Customer Metadata", icon: Users },
-                                      { id: "fees", label: "Fee & Split Breakdown", icon: Percent },
-                                      { id: "reconcile", label: "Reconcile & Actions", icon: Wrench }
-                                    ].map(tab => {
+                                    {desktopTabs.map(tab => {
                                       const Icon = tab.icon;
                                       const isActive = rowActiveTab === tab.id;
+                                      const isCryptoTab = (tab as any).isCryptoTab;
                                       return (
                                         <button
                                           key={tab.id}
                                           onClick={() => setActiveTabMap(prev => ({ ...prev, [r.receiptId]: tab.id }))}
                                           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap ${isActive
-                                            ? "bg-primary text-white shadow-md shadow-primary/20"
+                                            ? isCryptoTab
+                                              ? "bg-purple-600 text-white shadow-md shadow-purple-600/30 border border-purple-400/40 font-bold"
+                                              : "bg-primary text-white shadow-md shadow-primary/20"
+                                            : isCryptoTab
+                                            ? "text-purple-300 bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 hover:text-white"
                                             : "text-muted-foreground hover:text-white hover:bg-white/[0.05]"
                                             }`}
                                         >
-                                          <Icon className="w-3.5 h-3.5" />
+                                          <Icon className={`w-3.5 h-3.5 ${isCryptoTab && !isActive ? "text-purple-400" : ""}`} />
                                           <span>{tab.label}</span>
+                                          {isCryptoTab && (
+                                            <span className="ml-1 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-400/20 text-purple-200 border border-purple-400/30">
+                                              Thirdweb
+                                            </span>
+                                          )}
                                         </button>
                                       );
                                     })}
                                   </div>
+
+                                  {/* Tab: Crypto / Thirdweb Details */}
+                                  {rowActiveTab === "crypto" && (() => {
+                                    const meta = r.thirdwebMetadata || {};
+                                    const paymentId = r.paymentId || meta.paymentId || "N/A";
+                                    const txList: any[] = (Array.isArray(r.transactions) && r.transactions.length > 0)
+                                      ? r.transactions
+                                      : (Array.isArray(meta.transactions) && meta.transactions.length > 0)
+                                      ? meta.transactions
+                                      : (r.transactionHash ? [{
+                                          transactionHash: r.transactionHash,
+                                          chainId: r.destinationChainId || 8453,
+                                          sender: r.buyerWallet || r.wallet,
+                                          receiver: actualSplitAddress || r.wallet,
+                                          destinationAmount: r.destinationAmount || r.totalUsd,
+                                          destinationToken: r.destinationToken || { symbol: "USDC", name: "USD Coin" }
+                                        }] : []);
+
+                                    const originToken = r.originToken || meta.originToken || {};
+                                    const destinationToken = r.destinationToken || meta.destinationToken || {};
+                                    const originAmount = r.originAmount || meta.originAmount;
+                                    const destinationAmount = r.destinationAmount || meta.destinationAmount || r.totalUsd;
+                                    const originChainId = r.originChainId || meta.originChainId;
+                                    const destinationChainId = r.destinationChainId || meta.destinationChainId || 8453;
+                                    const quoteSummary = r.quoteSummary || meta.quoteSummary || meta.quote || {};
+
+                                    const isCrossChain = originChainId && destinationChainId && Number(originChainId) !== Number(destinationChainId);
+                                    const payerWallet = r.buyerWallet || meta.sender || txList[0]?.sender || r.wallet || "N/A";
+                                    const receiverWallet = actualSplitAddress || meta.receiver || txList[0]?.receiver || r.wallet || "N/A";
+
+                                    const rawJson = JSON.stringify(
+                                      {
+                                        paymentId: paymentId !== "N/A" ? paymentId : undefined,
+                                        receiptId: r.receiptId,
+                                        status: r.status,
+                                        isCrypto: true,
+                                        originChainId,
+                                        destinationChainId,
+                                        originToken: Object.keys(originToken).length ? originToken : undefined,
+                                        destinationToken: Object.keys(destinationToken).length ? destinationToken : undefined,
+                                        originAmount,
+                                        destinationAmount,
+                                        quoteSummary: Object.keys(quoteSummary).length ? quoteSummary : undefined,
+                                        transactions: txList,
+                                        thirdwebMetadata: Object.keys(meta).length ? meta : undefined
+                                      },
+                                      null,
+                                      2
+                                    );
+
+                                    return (
+                                      <div className="space-y-4 animate-in fade-in duration-200 mt-1 font-mono text-xs">
+                                        {/* 1. Header Badges & Payment ID */}
+                                        <div className="bg-gradient-to-r from-purple-950/40 via-zinc-950/90 to-purple-950/30 p-4 sm:p-5 rounded-2xl border border-purple-500/20 shadow-xl space-y-3">
+                                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                              <div className="w-7 h-7 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                                                <Coins className="w-4 h-4" />
+                                              </div>
+                                              <div>
+                                                <div className="text-white font-black text-sm flex items-center gap-2">
+                                                  <span>Thirdweb Universal Bridge & Pay</span>
+                                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                                    {isCrossChain ? "Cross-Chain Swap" : "Direct On-Chain"}
+                                                  </span>
+                                                </div>
+                                                <div className="text-muted-foreground text-[10px]">
+                                                  Decentralized on-chain settlement verified via Thirdweb SDK v5
+                                                </div>
+                                              </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-2 self-start sm:self-auto">
+                                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${
+                                                ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)
+                                                  ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                                                  : r.status === "failed"
+                                                  ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
+                                                  : "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                                              }`}>
+                                                {["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) ? "✓ Settled" : r.status}
+                                              </span>
+                                            </div>
+                                          </div>
+
+                                          {/* Payment ID Row */}
+                                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                                            <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 space-y-1">
+                                              <div className="text-white/40 text-[9px] uppercase font-bold tracking-wider">Thirdweb Payment ID</div>
+                                              <div className="flex items-center justify-between gap-2">
+                                                <span className="font-mono text-white text-xs truncate max-w-[280px]" title={paymentId}>
+                                                  {paymentId}
+                                                </span>
+                                                {paymentId !== "N/A" && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleCopy(paymentId, `tw-pid-${r.receiptId}`)}
+                                                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors flex items-center gap-1 shrink-0"
+                                                  >
+                                                    <Copy className="w-3 h-3" />
+                                                    <span>{copySuccess[`tw-pid-${r.receiptId}`] ? "Copied!" : "Copy"}</span>
+                                                  </button>
+                                                )}
+                                              </div>
+                                            </div>
+
+                                            <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 space-y-1">
+                                              <div className="text-white/40 text-[9px] uppercase font-bold tracking-wider">Primary Tx Hash</div>
+                                              <div className="flex items-center justify-between gap-2">
+                                                <span className="font-mono text-emerald-400 text-xs truncate max-w-[240px]">
+                                                  {r.transactionHash ? `${r.transactionHash.slice(0, 10)}...${r.transactionHash.slice(-8)}` : "Pending on-chain"}
+                                                </span>
+                                                {r.transactionHash && (
+                                                  <div className="flex items-center gap-1 shrink-0">
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleCopy(r.transactionHash!, `tw-tx-${r.receiptId}`)}
+                                                      className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors flex items-center gap-1"
+                                                    >
+                                                      <Copy className="w-3 h-3" />
+                                                      <span>{copySuccess[`tw-tx-${r.receiptId}`] ? "Copied!" : "Copy"}</span>
+                                                    </button>
+                                                    <a
+                                                      href={getBlockExplorerTxUrl(destinationChainId, r.transactionHash)}
+                                                      target="_blank"
+                                                      rel="noopener noreferrer"
+                                                      className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold transition-colors flex items-center gap-1"
+                                                    >
+                                                      <span>Explorer</span>
+                                                      <ExternalLink className="w-3 h-3" />
+                                                    </a>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* 2. Token Flow Route & Conversion Card */}
+                                        <div className="bg-black/40 p-4 sm:p-5 rounded-2xl border border-white/10 space-y-4">
+                                          <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+                                            <div className="text-xs font-bold text-white flex items-center gap-2">
+                                              <ArrowRightLeft className="w-4 h-4 text-purple-400" />
+                                              <span>Token Flow & Cross-Chain Settlement Route</span>
+                                            </div>
+                                            <span className="text-[10px] text-white/50 font-mono">
+                                              {isCrossChain ? `Bridged: ${getChainDisplayName(originChainId)} → ${getChainDisplayName(destinationChainId)}` : `Direct: ${getChainDisplayName(destinationChainId)}`}
+                                            </span>
+                                          </div>
+
+                                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
+                                            {/* Origin Token Box */}
+                                            <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 space-y-2">
+                                              <div className="flex items-center justify-between">
+                                                <span className="text-[9px] uppercase font-bold text-purple-300 tracking-wider">Origin Token (Paid)</span>
+                                                <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                                  {getChainDisplayName(originChainId)}
+                                                </span>
+                                              </div>
+                                              <div className="text-lg font-black text-white">
+                                                {originAmount ? `${originAmount} ` : ""}{originToken.symbol || "Crypto"}
+                                              </div>
+                                              <div className="text-[10px] text-muted-foreground truncate" title={originToken.name || originToken.symbol}>
+                                                {originToken.name || "Payer Selected Asset"}
+                                              </div>
+                                              {originToken.address && (
+                                                <div className="text-[9px] text-white/40 truncate font-mono pt-1 border-t border-white/5">
+                                                  Contract: {originToken.address}
+                                                </div>
+                                              )}
+                                            </div>
+
+                                            {/* Bridge / Routing Center Box */}
+                                            <div className="bg-purple-950/20 border border-purple-500/20 rounded-2xl p-3.5 flex flex-col items-center justify-center text-center space-y-2">
+                                              <div className="w-8 h-8 rounded-full bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                                                <Zap className="w-4 h-4 animate-pulse text-purple-400" />
+                                              </div>
+                                              <div>
+                                                <div className="text-xs font-bold text-white">
+                                                  {quoteSummary.provider || "Thirdweb Universal Bridge"}
+                                                </div>
+                                                <div className="text-[10px] text-purple-300/80 mt-0.5">
+                                                  {isCrossChain ? "Automated Bridge & Swap Routing" : "Same-Chain Native Transfer"}
+                                                </div>
+                                              </div>
+                                              {quoteSummary.estimatedDurationSeconds && (
+                                                <span className="px-2 py-0.5 rounded text-[9px] font-mono text-white/60 bg-white/5 border border-white/10">
+                                                  ~{quoteSummary.estimatedDurationSeconds}s settlement time
+                                                </span>
+                                              )}
+                                            </div>
+
+                                            {/* Destination Token Box */}
+                                            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 space-y-2">
+                                              <div className="flex items-center justify-between">
+                                                <span className="text-[9px] uppercase font-bold text-emerald-300 tracking-wider">Destination (Settled)</span>
+                                                <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                                  {getChainDisplayName(destinationChainId)}
+                                                </span>
+                                              </div>
+                                              <div className="text-lg font-black text-emerald-400">
+                                                {destinationAmount ? `${destinationAmount} ` : `$${r.totalUsd.toFixed(2)} `}{destinationToken.symbol || "USDC"}
+                                              </div>
+                                              <div className="text-[10px] text-emerald-200/70 truncate" title={destinationToken.name || "USD Coin"}>
+                                                {destinationToken.name || "Merchant Split Settlement"}
+                                              </div>
+                                              {destinationToken.address && (
+                                                <div className="text-[9px] text-emerald-300/50 truncate font-mono pt-1 border-t border-emerald-500/10">
+                                                  Contract: {destinationToken.address}
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* 3. On-Chain Transactions List */}
+                                        <div className="bg-black/40 p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3">
+                                          <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+                                            <div className="text-xs font-bold text-white flex items-center gap-2">
+                                              <Layers className="w-4 h-4 text-emerald-400" />
+                                              <span>On-Chain Transaction Receipts & Hops ({txList.length})</span>
+                                            </div>
+                                            <span className="text-[10px] text-muted-foreground font-mono">
+                                              Cryptographic Hashes
+                                            </span>
+                                          </div>
+
+                                          {txList.length > 0 ? (
+                                            <div className="divide-y divide-white/5 bg-white/[0.02] border border-white/10 rounded-2xl overflow-hidden">
+                                              {txList.map((tx: any, idx: number) => {
+                                                const txHash = tx.transactionHash || tx.hash || (typeof tx === "string" ? tx : "");
+                                                const txChain = tx.chainId || destinationChainId || 8453;
+                                                const explorerUrl = getBlockExplorerTxUrl(txChain, txHash);
+
+                                                return (
+                                                  <div key={idx} className="p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-white/[0.03] transition-colors">
+                                                    <div className="space-y-1 min-w-0 flex-1">
+                                                      <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-white/10 text-white border border-white/10">
+                                                          Hop #{idx + 1}
+                                                        </span>
+                                                        <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                                          {getChainDisplayName(txChain)}
+                                                        </span>
+                                                        {tx.type && (
+                                                          <span className="text-[10px] text-white/50 uppercase font-semibold">
+                                                            ({tx.type})
+                                                          </span>
+                                                        )}
+                                                      </div>
+                                                      <div className="font-mono text-emerald-300 text-xs truncate select-all pt-0.5" title={txHash}>
+                                                        {txHash || "Pending Confirmation"}
+                                                      </div>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-2 shrink-0">
+                                                      {txHash && (
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => handleCopy(txHash, `tw-hop-${idx}-${r.receiptId}`)}
+                                                          className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all flex items-center gap-1.5"
+                                                        >
+                                                          <Copy className="w-3.5 h-3.5" />
+                                                          <span>{copySuccess[`tw-hop-${idx}-${r.receiptId}`] ? "Copied!" : "Copy Hash"}</span>
+                                                        </button>
+                                                      )}
+                                                      {explorerUrl && (
+                                                        <a
+                                                          href={explorerUrl}
+                                                          target="_blank"
+                                                          rel="noopener noreferrer"
+                                                          className="px-2.5 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all flex items-center gap-1.5"
+                                                        >
+                                                          <span>View on Explorer</span>
+                                                          <ExternalLink className="w-3.5 h-3.5" />
+                                                        </a>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          ) : (
+                                            <div className="p-4 border border-white/10 border-dashed rounded-2xl text-center text-muted-foreground text-xs">
+                                              No on-chain transaction hashes recorded yet for this session.
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {/* 4. Participant Wallets */}
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                          <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 space-y-1.5">
+                                            <div className="text-white/40 text-[9px] uppercase font-bold tracking-wider flex items-center gap-1.5">
+                                              <Wallet className="w-3 h-3 text-purple-400" />
+                                              <span>Buyer / Sender Wallet</span>
+                                            </div>
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span className="font-mono text-white text-xs truncate max-w-[280px]" title={payerWallet}>
+                                                {payerWallet}
+                                              </span>
+                                              {payerWallet !== "N/A" && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleCopy(payerWallet, `tw-sender-${r.receiptId}`)}
+                                                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors shrink-0"
+                                                >
+                                                  {copySuccess[`tw-sender-${r.receiptId}`] ? "Copied!" : "Copy"}
+                                                </button>
+                                              )}
+                                            </div>
+                                          </div>
+
+                                          <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 space-y-1.5">
+                                            <div className="text-white/40 text-[9px] uppercase font-bold tracking-wider flex items-center gap-1.5">
+                                              <Building2 className="w-3 h-3 text-emerald-400" />
+                                              <span>Merchant / Split Receiver Wallet</span>
+                                            </div>
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span className="font-mono text-emerald-400 text-xs truncate max-w-[280px]" title={receiverWallet}>
+                                                {receiverWallet}
+                                              </span>
+                                              {receiverWallet !== "N/A" && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleCopy(receiverWallet, `tw-recv-${r.receiptId}`)}
+                                                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors shrink-0"
+                                                >
+                                                  {copySuccess[`tw-recv-${r.receiptId}`] ? "Copied!" : "Copy"}
+                                                </button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* 5. Raw Thirdweb Telemetry JSON Inspector */}
+                                        <div className="bg-black/50 border border-white/10 rounded-2xl p-4 space-y-2">
+                                          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                                            <div className="flex items-center gap-2 text-xs font-bold text-white">
+                                              <Terminal className="w-3.5 h-3.5 text-purple-400" />
+                                              <span>Raw Thirdweb Payload Inspector</span>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleCopy(rawJson, `tw-json-${r.receiptId}`)}
+                                              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors flex items-center gap-1"
+                                            >
+                                              <Copy className="w-3.5 h-3.5" />
+                                              <span>{copySuccess[`tw-json-${r.receiptId}`] ? "JSON Copied!" : "Copy JSON"}</span>
+                                            </button>
+                                          </div>
+                                          <pre className="text-emerald-300 text-[11px] font-mono overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap p-2 rounded-xl bg-black/60 border border-white/5 leading-relaxed">
+                                            {rawJson}
+                                          </pre>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
 
                                   {/* Tab 1: Overview & Meta */}
                                   {rowActiveTab === "overview" && (() => {
@@ -5547,14 +6031,55 @@ export default function PlatformAnalyticsPanel() {
                       <div className="text-white font-bold text-xs">{mr.email || "N/A"}</div>
                     </div>
 
-                    <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-0.5">
-                      <span className="text-[9px] text-white/40 font-bold uppercase">Stripe Session ID</span>
-                      <div className="text-primary font-bold text-xs truncate">{mr.stripeSessionId || "N/A"}</div>
-                    </div>
+                    {(mr.isCrypto || mr.thirdwebMetadata || mr.paymentId) && (
+                      <div className="p-3 rounded-2xl bg-purple-500/10 border border-purple-500/20 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] text-purple-300 font-bold uppercase">Thirdweb Payment ID</span>
+                          <span className="text-[9px] text-emerald-400 font-bold">Crypto Verified</span>
+                        </div>
+                        <div className="text-white font-bold text-xs truncate select-all">{mr.paymentId || mr.thirdwebMetadata?.paymentId || "N/A"}</div>
+                        
+                        {/* Token Conversion summary if available */}
+                        {(mr.originToken || mr.destinationToken) && (
+                          <div className="pt-1.5 border-t border-purple-500/20 grid grid-cols-2 gap-2 text-[10px]">
+                            <div>
+                              <div className="text-white/40 text-[8px] uppercase">Paid (Origin)</div>
+                              <div className="text-white font-bold">{mr.originAmount ? `${mr.originAmount} ` : ""}{mr.originToken?.symbol || "Crypto"}</div>
+                              <div className="text-purple-300 text-[8px]">{getChainDisplayName(mr.originChainId)}</div>
+                            </div>
+                            <div>
+                              <div className="text-emerald-300 text-[8px] uppercase">Settled (Base)</div>
+                              <div className="text-emerald-400 font-bold">{mr.destinationAmount ? `${mr.destinationAmount} ` : `$${mr.totalUsd.toFixed(2)} `}{mr.destinationToken?.symbol || "USDC"}</div>
+                              <div className="text-emerald-200/70 text-[8px]">{getChainDisplayName(mr.destinationChainId)}</div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
-                    <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-0.5">
+                    {mr.stripeSessionId && (
+                      <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-0.5">
+                        <span className="text-[9px] text-white/40 font-bold uppercase">Stripe Session ID</span>
+                        <div className="text-primary font-bold text-xs truncate">{mr.stripeSessionId}</div>
+                      </div>
+                    )}
+
+                    <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-1">
                       <span className="text-[9px] text-white/40 font-bold uppercase">On-Chain Tx Hash</span>
-                      <div className="text-emerald-400 font-bold text-xs truncate">{mr.transactionHash || "N/A"}</div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-emerald-400 font-bold text-xs truncate">{mr.transactionHash || "N/A"}</span>
+                        {mr.transactionHash && (
+                          <a
+                            href={getBlockExplorerTxUrl(mr.destinationChainId, mr.transactionHash)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold flex items-center gap-1 shrink-0"
+                          >
+                            <span>Explorer</span>
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        )}
+                      </div>
                     </div>
 
                     {mr.failureReason && (

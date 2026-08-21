@@ -131,6 +131,17 @@ export async function POST(req: NextRequest) {
     let brandKey: string | undefined = undefined;
     try { brandKey = getBrandKey(); } catch { brandKey = undefined; }
 
+    const thirdwebMetadata = typeof body.thirdwebMetadata === "object" ? body.thirdwebMetadata : undefined;
+    const paymentId = typeof body.paymentId === "string" ? String(body.paymentId).trim() : (thirdwebMetadata?.paymentId || undefined);
+    const transactions = Array.isArray(body.transactions) ? body.transactions : (thirdwebMetadata?.transactions || undefined);
+    const originChainId = typeof body.originChainId === "number" ? body.originChainId : (thirdwebMetadata?.originChainId || undefined);
+    const destinationChainId = typeof body.destinationChainId === "number" ? body.destinationChainId : (thirdwebMetadata?.destinationChainId || undefined);
+    const originToken = typeof body.originToken === "object" ? body.originToken : (thirdwebMetadata?.originToken || undefined);
+    const destinationToken = typeof body.destinationToken === "object" ? body.destinationToken : (thirdwebMetadata?.destinationToken || undefined);
+    const originAmount = body.originAmount ? String(body.originAmount) : (thirdwebMetadata?.originAmount || undefined);
+    const destinationAmount = body.destinationAmount ? String(body.destinationAmount) : (thirdwebMetadata?.destinationAmount || undefined);
+    const quoteSummary = typeof body.quoteSummary === "object" ? body.quoteSummary : (thirdwebMetadata?.quoteSummary || undefined);
+
     if (!receiptId) {
       return NextResponse.json(
         { ok: false, error: "missing_receipt_id" },
@@ -300,6 +311,17 @@ export async function POST(req: NextRequest) {
           ...(failureReason ? { failureReason } : {}),
           ...(mergedKycLevel ? { kycLevel: mergedKycLevel } : {}),
           ...(typeof body.kycOccurred === "boolean" ? { kycOccurred: body.kycOccurred } : resource?.kycOccurred ? { kycOccurred: true } : {}),
+          // Persist Thirdweb transaction and bridge metadata for platform analytics
+          ...(paymentId ? { paymentId } : {}),
+          ...(transactions && transactions.length > 0 ? { transactions } : {}),
+          ...(originChainId ? { originChainId } : {}),
+          ...(destinationChainId ? { destinationChainId } : {}),
+          ...(originToken ? { originToken } : {}),
+          ...(destinationToken ? { destinationToken } : {}),
+          ...(originAmount ? { originAmount } : {}),
+          ...(destinationAmount ? { destinationAmount } : {}),
+          ...(quoteSummary ? { quoteSummary } : {}),
+          ...(thirdwebMetadata ? { thirdwebMetadata } : {}),
           // Persist smart contract split addresses and configs
           ...(resource?.splitAddress ? { splitAddress: resource.splitAddress } : {}),
           ...(resource?.splitAddressCredit ? { splitAddressCredit: resource.splitAddressCredit } : {}),
@@ -343,6 +365,17 @@ export async function POST(req: NextRequest) {
           ...(failureReason ? { failureReason } : {}),
           ...(mergedKycLevel ? { kycLevel: mergedKycLevel } : {}),
           ...(typeof body.kycOccurred === "boolean" ? { kycOccurred: body.kycOccurred } : {}),
+          // Persist Thirdweb transaction and bridge metadata for platform analytics
+          ...(paymentId ? { paymentId } : {}),
+          ...(transactions && transactions.length > 0 ? { transactions } : {}),
+          ...(originChainId ? { originChainId } : {}),
+          ...(destinationChainId ? { destinationChainId } : {}),
+          ...(originToken ? { originToken } : {}),
+          ...(destinationToken ? { destinationToken } : {}),
+          ...(originAmount ? { originAmount } : {}),
+          ...(destinationAmount ? { destinationAmount } : {}),
+          ...(quoteSummary ? { quoteSummary } : {}),
+          ...(thirdwebMetadata ? { thirdwebMetadata } : {}),
         };
 
       // Track customerSessions if stripeSessionId or customerEmail or buyerWallet is available

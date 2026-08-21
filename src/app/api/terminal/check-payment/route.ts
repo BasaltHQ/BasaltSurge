@@ -78,7 +78,7 @@ async function handleCheckPayment(params: {
             "USDC": { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 },
             "USDT": { address: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", decimals: 6 },
             "cbBTC": { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", decimals: 8 },
-            "cbXRP": { address: "0xcbB7C0000ab88B473b1f5AFd9ef808440EeD33bF", decimals: 6 },
+            "cbXRP": { address: "0xcb585250f852C6c6bf90434AB21A00f02833a4af", decimals: 6 },
             "SOL": { address: "0x1C61629598e4a901136a81BC138E5828dc150d67", decimals: 9 },
         };
         const fallback = fallbackTokens[currency];
@@ -192,15 +192,17 @@ async function handleCheckPayment(params: {
                 console.error("RPC block fetch failed", e);
             }
 
-            // Verify timestamp if available
-            if (ts !== 0 && ts < sinceTime) {
+            // Verify timestamp strictly: Must have a valid timestamp >= receipt creation time
+            if (ts <= 0 || ts < sinceTime) {
+                console.log(`[CHECK PAYMENT] Block timestamp ${ts} is before receipt created ${sinceTime} or invalid. Skipping tx ${c.transactionHash}`);
                 continue;
             }
 
             // Check if this transaction hash is already used in the database to prevent duplicate matching
+            const normTxHash = String(c.transactionHash).toLowerCase();
             const querySpec = {
-                query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.txHash = @txHash OR c.transactionHash = @txHash)",
-                parameters: [{ name: "@txHash", value: c.transactionHash }]
+                query: "SELECT * FROM c WHERE c.type = 'receipt' AND (LOWER(c.txHash) = @txHash OR LOWER(c.transactionHash) = @txHash)",
+                parameters: [{ name: "@txHash", value: normTxHash }]
             };
             const { resources: existingReceipts } = await container.items.query(querySpec).fetchAll();
             if (existingReceipts && existingReceipts.length > 0) {
