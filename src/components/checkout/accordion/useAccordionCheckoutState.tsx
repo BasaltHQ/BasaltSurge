@@ -567,6 +567,13 @@ export function useAccordionCheckoutState(
     propPaymentElement,
     activeError,
     effectiveError,
+    onPaymentDeclined: (reason) => {
+      setLocalError(
+        reason && typeof reason === "string" && !reason.includes("card_declined")
+          ? reason
+          : "Your payment method was declined or not supported. Please select or enter a different card, Apple Pay, Google Pay, or US Bank Account to complete your purchase."
+      );
+    },
   });
 
   // Step 1 Submit

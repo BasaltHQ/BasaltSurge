@@ -21,6 +21,7 @@ export interface StepProgressionGuardProps {
   propPaymentElement?: any;
   activeError?: string | null;
   effectiveError?: string | null;
+  onPaymentDeclined?: (reason?: string) => void;
   onStepAutoAdvanced?: (fromStep: number, toStep: number, reason: string) => void;
 }
 
@@ -53,6 +54,7 @@ export function useStepProgressionGuard({
   propPaymentElement,
   activeError,
   effectiveError,
+  onPaymentDeclined,
   onStepAutoAdvanced,
 }: StepProgressionGuardProps) {
   const lastLoggedTransitionRef = useRef<string>("");
@@ -66,14 +68,14 @@ export function useStepProgressionGuard({
     }
   };
 
+  const isFulfillmentInFlight =
+    headlessStep === "checking_out" ||
+    headlessStep === "awaiting_funds" ||
+    headlessStep === "transferring" ||
+    headlessStep === "completed";
+
   // ─── Rule 1: Payment & Fulfillment In-Flight / Lockout Guard ───
   useEffect(() => {
-    const isFulfillmentInFlight =
-      headlessStep === "checking_out" ||
-      headlessStep === "awaiting_funds" ||
-      headlessStep === "transferring" ||
-      headlessStep === "completed";
-
     if (isPaid || isOrderConfirmed || isFulfillmentInFlight) {
       if (activeStep !== 4) {
         logTransition(
@@ -84,52 +86,62 @@ export function useStepProgressionGuard({
         setActiveStep(4);
       }
     }
-  }, [isPaid, isOrderConfirmed, headlessStep, activeStep, setActiveStep]);
+  }, [isPaid, isOrderConfirmed, isFulfillmentInFlight, headlessStep, activeStep, setActiveStep]);
 
-  // ─── Rule 2: Card Decline & Payment Error Fallback (Step 4 ➔ Step 3) ───
+  // ─── Rule 2: Card Decline & Payment Error Fallback (Step 4 ➔ Step 3) with Smooth Delay ───
+  const declineTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
-    if (isPaid || isOrderConfirmed) return;
-
-    const parsed = parseOnrampError(activeError || effectiveError, {
-      isL1Approved: kyc.isL1Verified,
-      isL2Approved: kyc.isL2Verified,
-      currentTier: kyc.currentTier,
-    });
-
-    const statusLower = (headlessStatus || "").toLowerCase();
-    const isStatusDeclineOrPrompt =
-      statusLower.includes("select payment") ||
-      statusLower.includes("decline") ||
-      statusLower.includes("declined") ||
-      statusLower.includes("failed") ||
-      statusLower.includes("invalid") ||
-      statusLower.includes("error") ||
-      statusLower.includes("try another") ||
-      statusLower.includes("insufficient");
-
-    const isPaymentDecline =
-      parsed?.isDecline ||
-      parsed?.code === "crypto_onramp_bank_institution_block" ||
-      parsed?.code === "crypto_onramp_invalid_payment_method" ||
-      effectiveError === "payment_decline" ||
-      headlessStep === "collecting_payment" ||
-      headlessStep === "error" ||
-      isStatusDeclineOrPrompt;
-
-    const isFulfillmentInFlight =
-      headlessStep === "checking_out" ||
-      headlessStep === "awaiting_funds" ||
-      headlessStep === "transferring" ||
-      headlessStep === "completed";
-
-    if ((isPaymentDecline || !isFulfillmentInFlight) && activeStep === 4) {
-      logTransition(
-        4,
-        3,
-        `Payment Declined / Returned to Payment Method (${parsed?.code || headlessStep || headlessStatus || "card_declined"})`
-      );
-      setActiveStep(3);
+    if (isPaid || isOrderConfirmed) {
+      if (declineTimerRef.current) {
+        clearTimeout(declineTimerRef.current);
+        declineTimerRef.current = null;
+      }
+      return;
     }
+
+    // While payment is actively processing in-flight, preserve Step 4 & the fullscreen modal
+    if (isFulfillmentInFlight) {
+      if (declineTimerRef.current) {
+        clearTimeout(declineTimerRef.current);
+        declineTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Payment is no longer in-flight and not confirmed while at Step 4 -> Show decline state in modal, then return to Step 3 smoothly after 2.2s
+    if (activeStep === 4) {
+      const parsed = parseOnrampError(activeError || effectiveError, {
+        isL1Approved: kyc.isL1Verified,
+        isL2Approved: kyc.isL2Verified,
+        currentTier: kyc.currentTier,
+      });
+
+      if (!declineTimerRef.current) {
+        logTransition(
+          4,
+          3,
+          `Payment Declined / Returned to Payment Method (${parsed?.code || headlessStep || headlessStatus || "card_declined"}) - Waiting 2s before return`
+        );
+        declineTimerRef.current = setTimeout(() => {
+          setActiveStep(3);
+          onPaymentDeclined?.(
+            parsed?.code ||
+            "Your card or payment method was declined. Please choose or enter a different card, Apple Pay, Google Pay, or US Bank Account."
+          );
+          declineTimerRef.current = null;
+        }, 2200);
+      }
+    } else {
+      if (declineTimerRef.current) {
+        clearTimeout(declineTimerRef.current);
+        declineTimerRef.current = null;
+      }
+    }
+
+    return () => {
+      // Cleanup on unmount
+    };
   }, [
     activeError,
     effectiveError,
@@ -138,8 +150,10 @@ export function useStepProgressionGuard({
     activeStep,
     isPaid,
     isOrderConfirmed,
+    isFulfillmentInFlight,
     kyc,
     setActiveStep,
+    onPaymentDeclined,
   ]);
 
   // ─── Rule 3: KYC Escalation Guard (Step 3/4 ➔ Step 2) ───

@@ -101,7 +101,7 @@ export function Step3Payment({
                 <p className="text-xs leading-relaxed text-amber-300/90">{activeError}</p>
               </div>
             </div>
-            {activeError.toLowerCase().includes("declined") && (
+            {(activeError.toLowerCase().includes("decline") || activeError.toLowerCase().includes("support") || activeError.toLowerCase().includes("failed")) && (
               <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
                 <span className="font-semibold text-amber-300">Quick Tips:</span>
                 <ul className="list-disc list-inside space-y-0.5 pl-1 opacity-90">

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  AlertCircle,
   Check,
   CheckCircle2,
   Clock,
@@ -45,6 +46,17 @@ export function Step4Fulfillment({
     paymentConfirmed?.funding === "us_bank_account" ||
     headlessStep === "awaiting_funds";
 
+  const isDeclined =
+    !isConfirmed &&
+    !isAchPending &&
+    (headlessStep === "collecting_payment" ||
+      headlessStep === "error" ||
+      (headlessStatus || "").toLowerCase().includes("decline") ||
+      (headlessStatus || "").toLowerCase().includes("failed") ||
+      (headlessStatus || "").toLowerCase().includes("select payment"));
+
+  const modalAccentColor = isDeclined ? "#F59E0B" : primaryColor;
+
   const isIdentityVerifying =
     headlessStep === "verifying_identity" ||
     headlessStep === "checking_kyc" ||
@@ -74,13 +86,8 @@ export function Step4Fulfillment({
     ? 20
     : 0;
 
-  // Modal active during active in-flight processing (Step 4 open, order not confirmed, and in-flight processing step)
-  const isProcessingModalActive =
-    isOpen &&
-    !isConfirmed &&
-    headlessStep !== "collecting_payment" &&
-    headlessStep !== "error" &&
-    headlessStep !== "idle";
+  // Modal active during active in-flight processing or during the smooth decline feedback transition
+  const isProcessingModalActive = isOpen && !isConfirmed;
 
   // ─── Scroll Locking Guard for Processing Modal ───
   useEffect(() => {
@@ -126,11 +133,11 @@ export function Step4Fulfillment({
         {/* Layered Merchant-Themed Chromatic Light Blooms */}
         <div
           className="absolute -top-36 -left-36 w-[420px] h-[420px] rounded-full blur-[120px] opacity-25 pointer-events-none animate-pulse"
-          style={{ backgroundColor: primaryColor, animationDuration: "6s" }}
+          style={{ backgroundColor: modalAccentColor, animationDuration: "6s" }}
         />
         <div
           className="absolute -bottom-36 -right-36 w-[420px] h-[420px] rounded-full blur-[130px] opacity-20 pointer-events-none animate-pulse"
-          style={{ backgroundColor: primaryColor, animationDuration: "8s" }}
+          style={{ backgroundColor: modalAccentColor, animationDuration: "8s" }}
         />
         <div
           className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 rounded-full blur-[90px] pointer-events-none ${
@@ -141,7 +148,9 @@ export function Step4Fulfillment({
         {/* Master Theme-Adaptive Glassmorphic Card */}
         <div
           className={`relative w-full max-w-[430px] max-h-[92dvh] overflow-y-auto rounded-[32px] p-6 sm:p-8 text-center space-y-6 animate-in zoom-in-[0.98] fade-in duration-400 backdrop-blur-3xl backdrop-saturate-[180%] ${
-            isLightText
+            isDeclined
+              ? "border border-amber-500/30 bg-gradient-to-b from-amber-950/20 via-black/80 to-black/90 shadow-[0_32px_100px_-15px_rgba(245,158,11,0.2),inset_0_1px_1px_0_rgba(255,255,255,0.2)]"
+              : isLightText
               ? "border border-white/20 bg-gradient-to-b from-white/[0.12] via-white/[0.05] to-black/[0.50] shadow-[0_32px_100px_-15px_rgba(0,0,0,0.9),inset_0_1px_1px_0_rgba(255,255,255,0.4),inset_0_-1px_1px_0_rgba(255,255,255,0.08)]"
               : "border border-black/[0.08] bg-gradient-to-b from-white/95 via-white/85 to-white/90 shadow-[0_32px_100px_-15px_rgba(0,0,0,0.18),inset_0_1px_1px_0_rgba(255,255,255,1)]"
           }`}
@@ -157,19 +166,23 @@ export function Step4Fulfillment({
               <span className="relative flex h-2.5 w-2.5">
                 <span
                   className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                  style={{ backgroundColor: primaryColor }}
+                  style={{ backgroundColor: modalAccentColor }}
                 />
                 <span
                   className="relative inline-flex rounded-full h-2.5 w-2.5 shadow-sm"
-                  style={{ backgroundColor: primaryColor }}
+                  style={{ backgroundColor: modalAccentColor }}
                 />
               </span>
               <span
                 className={`text-xs sm:text-[13px] font-semibold tracking-tight ${
-                  isLightText ? "text-white/95 drop-shadow-sm" : "text-neutral-900"
+                  isDeclined
+                    ? "text-amber-400 font-bold"
+                    : isLightText
+                    ? "text-white/95 drop-shadow-sm"
+                    : "text-neutral-900"
                 }`}
               >
-                Processing Payment
+                {isDeclined ? "Payment Declined" : "Processing Payment"}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -190,7 +203,7 @@ export function Step4Fulfillment({
             {/* Ambient Radial Aura */}
             <div
               className="absolute w-36 h-36 rounded-full blur-2xl opacity-20 pointer-events-none animate-pulse"
-              style={{ backgroundColor: primaryColor }}
+              style={{ backgroundColor: modalAccentColor }}
             />
 
             {/* Static Optical Crystal Outer Guide Ring */}
@@ -202,8 +215,8 @@ export function Step4Fulfillment({
 
             {/* Primary Clockwise Luminous Arc */}
             <svg
-              className="absolute w-28 h-28 sm:w-32 sm:h-32 animate-spin"
-              style={{ animationDuration: "2.6s", animationTimingFunction: "cubic-bezier(0.4, 0, 0.2, 1)" }}
+              className={`absolute w-28 h-28 sm:w-32 sm:h-32 ${isDeclined ? "animate-pulse" : "animate-spin"}`}
+              style={{ animationDuration: isDeclined ? "2s" : "2.6s", animationTimingFunction: "cubic-bezier(0.4, 0, 0.2, 1)" }}
               viewBox="0 0 100 100"
             >
               <circle
@@ -228,15 +241,15 @@ export function Step4Fulfillment({
               <defs>
                 <linearGradient id="primaryGlassOrbitalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
                   <stop offset="0%" stopColor="#ffffff" stopOpacity={isLightText ? "1" : "0.9"} />
-                  <stop offset="60%" stopColor={primaryColor || "#635BFF"} stopOpacity="0.9" />
-                  <stop offset="100%" stopColor={primaryColor || "#635BFF"} stopOpacity="0.15" />
+                  <stop offset="60%" stopColor={modalAccentColor || "#635BFF"} stopOpacity="0.9" />
+                  <stop offset="100%" stopColor={modalAccentColor || "#635BFF"} stopOpacity="0.15" />
                 </linearGradient>
               </defs>
             </svg>
 
             {/* Secondary Counter-Rotating Whisper Accent Arc */}
             <svg
-              className="absolute w-22 h-22 sm:w-26 sm:h-26 animate-spin"
+              className={`absolute w-22 h-22 sm:w-26 sm:h-26 ${isDeclined ? "hidden" : "animate-spin"}`}
               style={{
                 animationDuration: "4.2s",
                 animationDirection: "reverse",
@@ -256,7 +269,7 @@ export function Step4Fulfillment({
               />
               <defs>
                 <linearGradient id="secondaryGlassOrbitalGradient" x1="100%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor={primaryColor || "#635BFF"} stopOpacity="0.85" />
+                  <stop offset="0%" stopColor={modalAccentColor || "#635BFF"} stopOpacity="0.85" />
                   <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
                 </linearGradient>
               </defs>
@@ -265,50 +278,73 @@ export function Step4Fulfillment({
             {/* Central 3D Layered Glass Medallion */}
             <div
               className={`absolute w-14 h-14 sm:w-16 sm:h-16 rounded-2xl backdrop-blur-xl border flex items-center justify-center transition-all ${
-                isLightText
+                isDeclined
+                  ? "bg-amber-500/15 border-amber-500/30 shadow-[0_8px_32px_rgba(245,158,11,0.3),inset_0_1px_1px_rgba(255,255,255,0.4)]"
+                  : isLightText
                   ? "bg-gradient-to-b from-white/[0.22] to-white/[0.04] border-white/30 shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.6)]"
                   : "bg-gradient-to-b from-white/95 to-neutral-100/70 border-black/10 shadow-[0_8px_24px_rgba(0,0,0,0.08),inset_0_1px_1px_rgba(255,255,255,1)]"
               }`}
             >
-              <ShieldCheck
-                className="w-6 h-6 sm:w-7 sm:h-7 stroke-[1.8] transition-colors"
-                style={{
-                  color: primaryColor,
-                  filter: isLightText
-                    ? `drop-shadow(0 0 10px ${primaryColor}80)`
-                    : "none",
-                }}
-              />
+              {isDeclined ? (
+                <AlertCircle
+                  className="w-7 h-7 stroke-[2] text-amber-400 animate-pulse"
+                  style={{ filter: "drop-shadow(0 0 10px rgba(245,158,11,0.8))" }}
+                />
+              ) : (
+                <ShieldCheck
+                  className="w-6 h-6 sm:w-7 sm:h-7 stroke-[1.8] transition-colors"
+                  style={{
+                    color: primaryColor,
+                    filter: isLightText
+                      ? `drop-shadow(0 0 10px ${primaryColor}80)`
+                      : "none",
+                  }}
+                />
+              )}
             </div>
           </div>
 
           {/* Frosted Executive Reassurance & Dynamic Status Pill */}
           <div
-            className={`p-4 sm:p-5 rounded-2xl backdrop-blur-xl border text-left space-y-2 ${
-              isLightText
+            className={`p-4 sm:p-5 rounded-2xl backdrop-blur-xl border text-left space-y-2 transition-all duration-300 ${
+              isDeclined
+                ? "bg-amber-500/10 border-amber-500/30 shadow-[0_4px_24px_rgba(245,158,11,0.2)] text-amber-300"
+                : isLightText
                 ? "bg-white/[0.05] border-white/15 shadow-[0_4px_24px_rgba(0,0,0,0.25),inset_0_1px_0_rgba(255,255,255,0.15)]"
                 : "bg-black/[0.02] border-black/[0.06] shadow-sm"
             }`}
           >
             <div className="flex items-center gap-2">
               <span
-                className="w-2 h-2 rounded-full shadow-sm"
-                style={{ backgroundColor: primaryColor }}
+                className="w-2 h-2 rounded-full shadow-sm shrink-0"
+                style={{ backgroundColor: modalAccentColor }}
               />
               <span
                 className={`text-xs sm:text-[13px] font-semibold ${
-                  isLightText ? "text-white/95" : "text-neutral-900"
+                  isDeclined
+                    ? "text-amber-200"
+                    : isLightText
+                    ? "text-white/95"
+                    : "text-neutral-900"
                 }`}
               >
-                {headlessStatus || "Authorizing payment method with Stripe..."}
+                {isDeclined
+                  ? "Card Declined or Not Supported"
+                  : headlessStatus || "Authorizing payment method with Stripe..."}
               </span>
             </div>
             <p
               className={`text-[11.5px] leading-relaxed font-normal ${
-                isLightText ? "text-white/70" : "text-neutral-600"
+                isDeclined
+                  ? "text-amber-300/90"
+                  : isLightText
+                  ? "text-white/70"
+                  : "text-neutral-600"
               }`}
             >
-              Please keep this window open while Stripe authorizes funds and settles your order. Thank you for your patience.
+              {isDeclined
+                ? "The payment was not authorized by your bank. Returning to payment selection so you can choose another method..."
+                : "Please keep this window open while Stripe authorizes funds and settles your order. Thank you for your patience."}
             </p>
           </div>
 
@@ -520,11 +556,17 @@ export function Step4Fulfillment({
               <button
                 type="button"
                 onClick={onBackToPayment}
-                className={`text-xs font-semibold underline underline-offset-4 transition cursor-pointer opacity-70 hover:opacity-100 ${
-                  isLightText ? "text-white/80 hover:text-white" : "text-neutral-700 hover:text-black"
+                className={`text-xs font-semibold underline underline-offset-4 transition cursor-pointer opacity-80 hover:opacity-100 ${
+                  isDeclined
+                    ? "text-amber-300 hover:text-amber-200 font-bold"
+                    : isLightText
+                    ? "text-white/80 hover:text-white"
+                    : "text-neutral-700 hover:text-black"
                 }`}
               >
-                Cancel & choose another payment method
+                {isDeclined
+                  ? "Choose another payment method now →"
+                  : "Cancel & choose another payment method"}
               </button>
             </div>
           )}
