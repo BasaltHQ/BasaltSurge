@@ -689,7 +689,7 @@ export function useAccordionCheckoutState(
         }
       }
 
-      if ((isAllKycCompleted || effectiveStatus === "verified") && !showStepUpForm && (!isL2Requirement || isL2Approved)) {
+      if ((isL1Approved || isL0Approved || isAllKycCompleted || effectiveStatus === "verified") && !showStepUpForm && (!isL2Requirement || isL2Approved)) {
         setIsSubmittingIdentity(false);
         setActiveStep(3);
         return;
@@ -903,6 +903,7 @@ export function useAccordionCheckoutState(
       effectiveStatus,
       showStepUpForm,
       showFullForm,
+      showVerifyDocs,
       isL2Requirement,
       isIdentityComplete,
       missingIdentityFields,
@@ -911,6 +912,7 @@ export function useAccordionCheckoutState(
       onFetchSuggestions: handleFetchSuggestions,
       onSelectSuggestion: handleSelectSuggestion,
       onSubmit: handleIdentitySubmit,
+      onVerifyDocuments,
       onHeaderClick: () => handleStepChange(2),
       onContinueToStep3: () => handleIdentitySubmit(),
     },

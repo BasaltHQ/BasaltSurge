@@ -202,6 +202,7 @@ export interface Step2Props {
   effectiveStatus?: string;
   showStepUpForm: boolean;
   showFullForm: boolean;
+  showVerifyDocs?: boolean;
   isL2Requirement: boolean;
   isIdentityComplete: boolean;
   missingIdentityFields: Array<{ key: string; label: string }>;
@@ -210,6 +211,7 @@ export interface Step2Props {
   onFetchSuggestions: (query: string) => void;
   onSelectSuggestion: (item: any) => void;
   onSubmit: (e: React.FormEvent) => void;
+  onVerifyDocuments?: () => Promise<void | boolean>;
   onHeaderClick: () => void;
   onContinueToStep3: () => void;
 }

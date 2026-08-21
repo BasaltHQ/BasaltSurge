@@ -850,8 +850,8 @@ export function useStripeEmbeddedOnramp({
             errorCode = msgData.code || "";
           }
           console.warn("[EMBEDDED ONRAMP] Iframe error payload identified. Rejecting active payment method collection promise:", errorMsg || errorCode);
-          const err = new Error(errorMsg || "crypto_onramp_missing_minimum_identity_verification");
-          (err as any).code = errorCode || "crypto_onramp_missing_minimum_identity_verification";
+          const err = new Error(errorMsg || "payment_method_collection_failed");
+          (err as any).code = errorCode || (errorMsg ? errorMsg.toLowerCase().replace(/\s+/g, "_") : "payment_method_collection_failed");
           const rejectFn = paymentRejectRef.current;
           paymentRejectRef.current = null;
           rejectFn(err);
@@ -3733,6 +3733,21 @@ export function useStripeEmbeddedOnramp({
           await runCheckoutLoop(activeEmail, customerId || "", pmToken, finalBuyerWallet, collectedFunding);
           checkoutSucceeded = true;
         } catch (checkoutErr: any) {
+          const errMsg = String(checkoutErr?.message || "").toLowerCase();
+          const errCode = String(checkoutErr?.code || "").toLowerCase();
+
+          const isDocReq = errCode.includes("document") || 
+                           errMsg.includes("document") || 
+                           errCode === "crypto_onramp_missing_document_verification";
+
+          if (isDocReq && onrampRef.current) {
+            console.log("[EMBEDDED ONRAMP] L2 Document verification required during checkout. Preserving coordinator and routing to Step 2 L2 screen...");
+            setKycTierRequired("l2");
+            updateStep("collecting_kyc");
+            isRunningRef.current = false;
+            return;
+          }
+
           console.warn("[EMBEDDED ONRAMP] Checkout loop encountered an error, resetting spent payment element for fresh selection...", checkoutErr);
           setError(checkoutErr?.message || "Payment could not be completed. Please select or re-enter your payment method.");
           setPaymentElement(null); // Clear spent "Submitted" iframe so fresh one can mount
@@ -3854,6 +3869,12 @@ export function useStripeEmbeddedOnramp({
           }
         } catch (statusCheckErr) {
           console.warn("[EMBEDDED ONRAMP] Status check failed before document verification:", statusCheckErr);
+        }
+
+        if (isL1Verified && !isAchEnforcedRef.current) {
+          console.log("[EMBEDDED ONRAMP] Customer is already L1 verified. Error during payment collection is not an L2 KYC requirement.");
+          handleError(err?.message || "Payment collection failed");
+          return;
         }
 
         console.log("[EMBEDDED ONRAMP] L2 KYC document verification required during payment collection. Routing to Step 2 L2 screen...");

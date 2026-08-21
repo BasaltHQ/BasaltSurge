@@ -74,6 +74,7 @@ export function Step2Identity({
   effectiveStatus,
   showStepUpForm,
   showFullForm,
+  showVerifyDocs,
   isL2Requirement,
   isIdentityComplete,
   missingIdentityFields,
@@ -82,6 +83,7 @@ export function Step2Identity({
   onFetchSuggestions,
   onSelectSuggestion,
   onSubmit,
+  onVerifyDocuments,
   onHeaderClick,
   onContinueToStep3,
 }: Step2IdentityProps) {
@@ -139,8 +141,12 @@ export function Step2Identity({
       : "bg-black/5 border border-black/10 text-black focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30";
   };
 
+  const isDocVerifyRequired = Boolean(
+    (showVerifyDocs || isL2Requirement) && !isL2Approved && !showFullForm && !showStepUpForm
+  );
+
   const isAlreadyVerifiedCard = Boolean(
-    isL0Approved && !showStepUpForm && (!isL2Requirement || isL2Approved)
+    isL0Approved && !showStepUpForm && !isDocVerifyRequired && (!isL2Requirement || isL2Approved)
   );
 
   return (
@@ -154,11 +160,11 @@ export function Step2Identity({
         stepNumber={2}
         title="2. Identity & Residential Verification"
         badge={
-          ((isL0Approved && !showStepUpForm && (!isL2Requirement || isL2Approved)) || isL2Approved) ? (
+          isL2Approved || (isL0Approved && !showStepUpForm && !isDocVerifyRequired) ? (
             <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
               <Check className="w-2.5 h-2.5 stroke-[3]" /> Verified
             </span>
-          ) : (showStepUpForm || isL2Requirement) ? (
+          ) : (showStepUpForm || isDocVerifyRequired) ? (
             <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 inline-flex items-center gap-1">
               <Shield className="w-2.5 h-2.5" /> Action Required
             </span>
@@ -175,14 +181,56 @@ export function Step2Identity({
         }
         isActive={isOpen}
         isCompleted={isCompleted}
-        isLocked={isLocked || Boolean(isL0Approved && !showStepUpForm && (!isL2Requirement || isL2Approved))}
+        isLocked={isLocked || Boolean(isL0Approved && !showStepUpForm && !isDocVerifyRequired && (!isL2Requirement || isL2Approved))}
         isLightText={isLightText}
         onHeaderClick={onHeaderClick}
       />
 
       {/* Step 2 Expanded Body */}
       <div className={`p-3.5 pt-0 space-y-3 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
-        {isAlreadyVerifiedCard ? (
+        {isDocVerifyRequired ? (
+          /* Level 2 Document Verification Card */
+          <div className="p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/20 space-y-3.5 animate-in fade-in duration-200 mt-2 text-left">
+            <div className="flex items-start gap-2.5 text-cyan-400">
+              <Shield className="w-5 h-5 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h5 className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                  Level 2 Identity Document Verification Required
+                </h5>
+                <p className="text-[11px] text-cyan-200/90 leading-relaxed">
+                  Stripe requires government photo ID or passport verification to unlock this purchase amount.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={async () => {
+                if (onVerifyDocuments) {
+                  await onVerifyDocuments();
+                }
+              }}
+              disabled={isSubmittingIdentity}
+              className="w-full h-11 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer text-white disabled:opacity-60"
+              style={{
+                backgroundColor: "#00b8d4",
+              }}
+            >
+              {isSubmittingIdentity ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                  <span>Launching Stripe Identity Camera...</span>
+                </>
+              ) : (
+                <>
+                  <Shield className="w-3.5 h-3.5 text-white" />
+                  <span>Verify ID Documents</span>
+                  <ArrowRight className="w-3.5 h-3.5 text-white" />
+                </>
+              )}
+            </button>
+          </div>
+        ) : isAlreadyVerifiedCard ? (
           /* Already Verified Locked Summary Card */
           <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-3 animate-in fade-in duration-200 mt-2">
             <div className="flex items-start gap-2.5 text-emerald-400">

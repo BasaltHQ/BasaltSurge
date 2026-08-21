@@ -132,8 +132,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (walletAddress) {
-      params.append(`wallet_addresses[${destinationNetwork}_network]`, walletAddress);
-      params.append(`wallet_addresses[${destinationNetwork}]`, walletAddress);
+      const net = (destinationNetwork || "base").toLowerCase();
+      const netKey = net === "base" ? "base_network" : net;
+      params.append(`wallet_addresses[${netKey}]`, walletAddress);
       params.append("lock_wallet_address", "true");
     }
 
