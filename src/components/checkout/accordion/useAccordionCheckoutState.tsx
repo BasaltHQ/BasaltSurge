@@ -130,6 +130,15 @@ export function useAccordionCheckoutState(
   const [detectedSimFunding, setDetectedSimFunding] = useState<string | null>(null);
   const [isLinkOtpVerified, setIsLinkOtpVerified] = useState(false);
   const [showSimOtp, setShowSimOtp] = useState(false);
+  const [simulatedHeadlessStep, setSimulatedHeadlessStep] = useState<string | null>(null);
+  const [simulatedHeadlessStatus, setSimulatedHeadlessStatus] = useState<string | null>(null);
+  const simFulfillmentTimersRef = useRef<any[]>([]);
+
+  useEffect(() => {
+    return () => {
+      simFulfillmentTimersRef.current.forEach(clearTimeout);
+    };
+  }, []);
 
   // Email Lockout Guard: once OTP is complete, authorized from token, or KYC/payment is underway, lock email modification
   const isEmailLocked = Boolean(
@@ -303,15 +312,23 @@ export function useAccordionCheckoutState(
   const [selectedPaymentType, setSelectedPaymentType] = useState<"applePay" | "googlePay" | "card" | "bank">("card");
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
 
-  // Step 4: Fulfillment Stage ("processing" | "confirming" | "complete")
-  const [fulfillmentStage, setFulfillmentStage] = useState<"processing" | "confirming" | "complete">("processing");
+  // Step 4: Fulfillment Stage ("idle" | "processing" | "confirming" | "complete")
+  const [fulfillmentStage, setFulfillmentStage] = useState<"idle" | "processing" | "confirming" | "complete">("idle");
+
+  const effectiveHeadlessStep = isSimulationMode ? (simulatedHeadlessStep || headlessStep) : headlessStep;
+  const effectiveHeadlessStatus = isSimulationMode ? (simulatedHeadlessStatus || headlessStatus) : headlessStatus;
 
   // Canonical payment completion status
   const effectivePaymentConfirmed = propPaymentConfirmed || simulatedPaymentConfirmed;
-  const isPaid = Boolean(isReceiptPaid || effectivePaymentConfirmed || headlessStep === "completed");
+  const isPaid = isLiveMode
+    ? Boolean(isReceiptPaid || effectivePaymentConfirmed || headlessStep === "completed")
+    : Boolean(fulfillmentStage === "complete" && simulatedPaymentConfirmed);
 
   // In live production mode, order confirmation strictly requires verifiable payment confirmation or completed onramp state
-  const isOrderConfirmed = isLiveMode ? isPaid : (fulfillmentStage === "complete" || Boolean(effectivePaymentConfirmed));
+  // In simulation mode, fulfillmentStage must be "complete" and simulatedPaymentConfirmed must be present
+  const isOrderConfirmed = isLiveMode
+    ? isPaid
+    : Boolean(fulfillmentStage === "complete" && effectivePaymentConfirmed);
 
   // DOM Container Refs for Stripe Embedded Elements
   const authContainerRef = useRef<HTMLDivElement | null>(null);
@@ -534,7 +551,7 @@ export function useAccordionCheckoutState(
   useStepProgressionGuard({
     activeStep,
     setActiveStep,
-    headlessStep,
+    headlessStep: effectiveHeadlessStep,
     isPaid,
     isOrderConfirmed,
     isEmailLocked,
@@ -790,12 +807,6 @@ export function useAccordionCheckoutState(
           primaryColor={primaryColor}
           simulatedError={effectiveError}
           onSuccess={(details) => {
-            setSimulatedPaymentConfirmed({
-              txHash: `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")}`,
-              amount: amountUsd,
-              token: "USDC",
-              funding: details.funding,
-            });
             setDetectedSimCardBrand(details.brand || "Visa");
             setDetectedSimCardLast4(details.last4 || "4242");
             setDetectedSimFunding(details.funding);
@@ -808,12 +819,46 @@ export function useAccordionCheckoutState(
               setSelectedPaymentType("card");
             }
 
-            if (onCompleteCheckout) {
-              onCompleteCheckout();
-            }
+            // Clear any lingering simulation timers
+            simFulfillmentTimersRef.current.forEach(clearTimeout);
+            simFulfillmentTimersRef.current = [];
 
+            // Step 1: Open Step 4 immediately in active processing state
             setActiveStep(4);
-            setFulfillmentStage("complete");
+            setFulfillmentStage("processing");
+            setSimulatedHeadlessStep("checking_out");
+            setSimulatedHeadlessStatus("Authorizing payment method with Stripe...");
+
+            // Step 2: Transition to Settle after 1.1s
+            const t1 = setTimeout(() => {
+              setSimulatedHeadlessStep("awaiting_funds");
+              setSimulatedHeadlessStatus("Settling payment with payment gateway...");
+            }, 1100);
+
+            // Step 3: Transition to Deliver after 2.2s
+            const t2 = setTimeout(() => {
+              setSimulatedHeadlessStep("transferring");
+              setSimulatedHeadlessStatus("Finalizing order and confirming transaction...");
+            }, 2200);
+
+            // Step 4: Complete transaction after 3.4s
+            const t3 = setTimeout(() => {
+              setSimulatedPaymentConfirmed({
+                txHash: `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")}`,
+                amount: amountUsd,
+                token: "USD",
+                funding: details.funding,
+              });
+              setSimulatedHeadlessStep("completed");
+              setSimulatedHeadlessStatus("Order confirmed!");
+              setFulfillmentStage("complete");
+
+              if (onCompleteCheckout) {
+                onCompleteCheckout();
+              }
+            }, 3400);
+
+            simFulfillmentTimersRef.current = [t1, t2, t3];
           }}
           onError={(err) => setLocalError(err)}
         />
@@ -844,7 +889,7 @@ export function useAccordionCheckoutState(
       setPhone,
       country,
       setCountry,
-      headlessStep,
+      headlessStep: effectiveHeadlessStep,
       authElement: effectiveAuthElement,
       authContainerRef,
       activeError,
@@ -915,7 +960,7 @@ export function useAccordionCheckoutState(
     },
     // Step 3 Props Bundle
     step3Props: {
-      headlessStep,
+      headlessStep: effectiveHeadlessStep,
       paymentElement: effectivePaymentElement,
       paymentContainerRef,
       activeError,
@@ -933,8 +978,8 @@ export function useAccordionCheckoutState(
       receiptId,
       amountUsd,
       email,
-      headlessStatus,
-      headlessStep,
+      headlessStatus: effectiveHeadlessStatus,
+      headlessStep: effectiveHeadlessStep,
       kycLevel,
       detectedCardBrand: propDetectedCardBrand || detectedSimCardBrand,
       detectedCardLast4: propDetectedCardLast4 || detectedSimCardLast4,
