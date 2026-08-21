@@ -552,6 +552,7 @@ export function useAccordionCheckoutState(
     activeStep,
     setActiveStep,
     headlessStep: effectiveHeadlessStep,
+    headlessStatus: effectiveHeadlessStatus,
     isPaid,
     isOrderConfirmed,
     isEmailLocked,
@@ -987,6 +988,7 @@ export function useAccordionCheckoutState(
       selectedPaymentType,
       paymentConfirmed: effectivePaymentConfirmed,
       onEmailReceipt,
+      onBackToPayment: () => setActiveStep(3),
     },
   };
 }

@@ -6,6 +6,7 @@ export interface StepProgressionGuardProps {
   activeStep: number;
   setActiveStep: (step: number | ((prev: number) => number)) => void;
   headlessStep?: string;
+  headlessStatus?: string;
   isPaid: boolean;
   isOrderConfirmed: boolean;
   isEmailLocked: boolean;
@@ -37,6 +38,7 @@ export function useStepProgressionGuard({
   activeStep,
   setActiveStep,
   headlessStep,
+  headlessStatus,
   isPaid,
   isOrderConfirmed,
   isEmailLocked,
@@ -96,17 +98,53 @@ export function useStepProgressionGuard({
       currentTier: kyc.currentTier,
     });
 
+    const statusLower = (headlessStatus || "").toLowerCase();
+    const isStatusDeclineOrPrompt =
+      statusLower.includes("select payment") ||
+      statusLower.includes("decline") ||
+      statusLower.includes("declined") ||
+      statusLower.includes("failed") ||
+      statusLower.includes("invalid") ||
+      statusLower.includes("error") ||
+      statusLower.includes("try another") ||
+      statusLower.includes("insufficient");
+
     const isPaymentDecline =
       parsed?.isDecline ||
       parsed?.code === "crypto_onramp_bank_institution_block" ||
       parsed?.code === "crypto_onramp_invalid_payment_method" ||
-      effectiveError === "payment_decline";
+      effectiveError === "payment_decline" ||
+      headlessStep === "collecting_payment" ||
+      headlessStep === "error" ||
+      isStatusDeclineOrPrompt;
 
-    if (isPaymentDecline && activeStep === 4) {
-      logTransition(4, 3, `Payment Declined/Failed (${parsed?.code || "card_declined"}) - Returning to Payment embed`);
+    const isFulfillmentInFlight =
+      headlessStep === "checking_out" ||
+      headlessStep === "creating_session" ||
+      headlessStep === "awaiting_funds" ||
+      headlessStep === "transferring" ||
+      headlessStep === "confirming_fees" ||
+      headlessStep === "completed";
+
+    if ((isPaymentDecline || !isFulfillmentInFlight) && activeStep === 4) {
+      logTransition(
+        4,
+        3,
+        `Payment Declined / Not In-Flight (${parsed?.code || headlessStep || headlessStatus || "card_declined"}) - Returning to Step 3`
+      );
       setActiveStep(3);
     }
-  }, [activeError, effectiveError, activeStep, isPaid, isOrderConfirmed, kyc, setActiveStep]);
+  }, [
+    activeError,
+    effectiveError,
+    headlessStep,
+    headlessStatus,
+    activeStep,
+    isPaid,
+    isOrderConfirmed,
+    kyc,
+    setActiveStep,
+  ]);
 
   // ─── Rule 3: KYC Escalation Guard (Step 3/4 ➔ Step 2) ───
   useEffect(() => {
@@ -124,7 +162,6 @@ export function useStepProgressionGuard({
       (parsed?.isAmountLimit && (!kyc.isL1Verified || !kyc.isL2Verified));
 
     const isPaymentReady = Boolean(propPaymentElement) || headlessStep === "collecting_payment";
-    const isKycIncomplete = !isStep2Satisfied && (!kyc.isL0Verified || showStepUpForm || (isL2Requirement && !kyc.isL2Verified)) && !isPaymentReady;
 
     const needsKycStep =
       (headlessStep === "collecting_kyc" && !isPaymentReady) ||
@@ -162,12 +199,10 @@ export function useStepProgressionGuard({
     if (isPaid || isOrderConfirmed) return;
 
     const isPaymentReady = Boolean(propPaymentElement) || headlessStep === "collecting_payment";
-    const isKycIncomplete = !isStep2Satisfied && (!kyc.isL0Verified || showStepUpForm || (isL2Requirement && !kyc.isL2Verified)) && !isPaymentReady;
 
     // Case A: Stripe Onramp is collecting payment, awaiting funds, or paymentElement is ready
     if (
       headlessStep === "collecting_payment" ||
-      headlessStep === "awaiting_funds" ||
       Boolean(propPaymentElement)
     ) {
       if (
@@ -180,8 +215,14 @@ export function useStepProgressionGuard({
           logTransition(activeStep, 2, "Payment Ready but KYC Step-Up Required");
           setActiveStep(2);
         }
-      } else if (activeStep < 3) {
-        logTransition(activeStep, 3, "Payment Element Ready");
+      } else if (activeStep !== 3) {
+        logTransition(
+          activeStep,
+          3,
+          activeStep === 4
+            ? "Payment Returned to Collection - Returning to Step 3"
+            : "Payment Element Ready"
+        );
         setActiveStep(3);
       }
       return;

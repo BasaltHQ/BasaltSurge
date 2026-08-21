@@ -31,6 +31,7 @@ export function Step4Fulfillment({
   selectedPaymentType = "card",
   paymentConfirmed,
   onEmailReceipt,
+  onBackToPayment,
 }: Step4FulfillmentProps) {
   const buttonTextColor = getContrastingTextColor(primaryColor);
   const [mounted, setMounted] = useState(false);
@@ -73,8 +74,13 @@ export function Step4Fulfillment({
     ? 20
     : 0;
 
-  // Modal active during active processing (Step 4 open and order not yet confirmed)
-  const isProcessingModalActive = isOpen && !isConfirmed;
+  // Modal active during active in-flight processing (Step 4 open, order not confirmed, and in-flight processing step)
+  const isProcessingModalActive =
+    isOpen &&
+    !isConfirmed &&
+    headlessStep !== "collecting_payment" &&
+    headlessStep !== "error" &&
+    headlessStep !== "idle";
 
   // ─── Scroll Locking Guard for Processing Modal ───
   useEffect(() => {
@@ -505,6 +511,21 @@ export function Step4Fulfillment({
               >
                 Document and identity verification can take 2 to 3 minutes. Please keep this window open.
               </p>
+            </div>
+          )}
+
+          {/* Fallback Cancel & Return to Payment Method Action */}
+          {onBackToPayment && (
+            <div className="pt-1 flex justify-center">
+              <button
+                type="button"
+                onClick={onBackToPayment}
+                className={`text-xs font-semibold underline underline-offset-4 transition cursor-pointer opacity-70 hover:opacity-100 ${
+                  isLightText ? "text-white/80 hover:text-white" : "text-neutral-700 hover:text-black"
+                }`}
+              >
+                Cancel & choose another payment method
+              </button>
             </div>
           )}
 

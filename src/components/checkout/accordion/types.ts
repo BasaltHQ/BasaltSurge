@@ -260,6 +260,7 @@ export interface Step4Props {
   selectedPaymentType?: "applePay" | "googlePay" | "card" | "bank" | string;
   paymentConfirmed?: { txHash: string; amount: number; token: string; funding?: string } | null;
   onEmailReceipt?: () => void;
+  onBackToPayment?: () => void;
 }
 
 export interface Step4FulfillmentProps extends Step4Props {
