@@ -132,10 +132,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (walletAddress) {
-      const net = (destinationNetwork || "base").toLowerCase();
-      const netKey = net === "base" ? "base_network" : net;
-      params.append(`wallet_addresses[${netKey}]`, walletAddress);
-      params.append("lock_wallet_address", "true");
+      params.append("wallet_address", walletAddress);
+    }
+    if (customerIp) {
+      params.append("customer_ip_address", customerIp);
     }
 
     const settlementSpeed = String(body.settlementSpeed || "standard").trim().toLowerCase();
