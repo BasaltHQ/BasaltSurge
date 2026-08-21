@@ -250,38 +250,51 @@ export function Step1Contact({
           </div>
         )}
 
-        {!authElement && (
-          <button
-            type="submit"
-            disabled={
-              isSubmittingContact ||
-              !email ||
-              (isLinkPhoneRegistration && (!phone || phone.trim().length < 7))
-            }
-            className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{ backgroundColor: primaryColor, color: buttonTextColor }}
-          >
-            {isSubmittingContact ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: buttonTextColor }} />
-                <span style={{ color: buttonTextColor }}>Checking Link Account...</span>
-              </>
-            ) : (
-              <>
-                <span style={{ color: buttonTextColor }}>
-                  {isLinkPhoneRegistration
-                    ? "Register & Continue"
-                    : isStep2Satisfied
-                    ? "Continue to Payment"
-                    : isEmailLocked
-                    ? "Continue to Next Step"
-                    : "Continue to Verification"}
-                </span>
-                <ArrowRight className="w-3.5 h-3.5" style={{ color: buttonTextColor }} />
-              </>
-            )}
-          </button>
-        )}
+        {!authElement && (() => {
+          const isLoadingLink = isSubmittingContact || (
+            headlessStep === "checking_link" ||
+            headlessStep === "authenticating" ||
+            headlessStep === "creating_wallet" ||
+            headlessStep === "checking_kyc"
+          );
+
+          return (
+            <button
+              type="submit"
+              disabled={
+                isLoadingLink ||
+                !email ||
+                (isLinkPhoneRegistration && (!phone || phone.trim().length < 7))
+              }
+              className="w-full h-10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              style={{ backgroundColor: primaryColor, color: buttonTextColor }}
+            >
+              {isLoadingLink ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: buttonTextColor }} />
+                  <span style={{ color: buttonTextColor }}>
+                    {headlessStep === "authenticating"
+                      ? "Loading Secure Stripe OTP..."
+                      : "Checking Link Account..."}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span style={{ color: buttonTextColor }}>
+                    {isLinkPhoneRegistration
+                      ? "Register & Continue"
+                      : isStep2Satisfied
+                      ? "Continue to Payment"
+                      : isEmailLocked
+                      ? "Continue to Next Step"
+                      : "Continue to Verification"}
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5" style={{ color: buttonTextColor }} />
+                </>
+              )}
+            </button>
+          );
+        })()}
       </form>
     </AccordionCard>
   );

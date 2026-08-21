@@ -590,17 +590,14 @@ export function useAccordionCheckoutState(
     setLocalError(null);
     try {
       if (onHeadlessSubmitEmailPhone && !isSimulationMode) {
-        const promise = onHeadlessSubmitEmailPhone(email, phone || "", country, `${firstName} ${lastName}`.trim());
-        if (promise && typeof (promise as any).catch === "function") {
-          (promise as any).catch((err: any) => {
-            console.error("Contact submission error:", err);
-            setLocalError(err?.message || "Failed to submit contact information.");
-            setIsSubmittingContact(false);
-          });
-        }
-        setTimeout(() => {
+        try {
+          await onHeadlessSubmitEmailPhone(email, phone || "", country, `${firstName} ${lastName}`.trim());
+        } catch (err: any) {
+          console.error("Contact submission error:", err);
+          setLocalError(err?.message || "Failed to submit contact information.");
+        } finally {
           setIsSubmittingContact(false);
-        }, 1800);
+        }
       } else {
         // Simulation Flow Handling
         if (effectiveStatus === "otp" && !isLinkOtpVerified) {
