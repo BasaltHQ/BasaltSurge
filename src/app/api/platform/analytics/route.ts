@@ -207,7 +207,18 @@ export async function GET(req: NextRequest) {
             splitConfigCredit: 1,
             partnerBps: 1,
             platformBps: 1,
-            feeMinusEnabled: 1
+            feeMinusEnabled: 1,
+            thirdwebMetadata: 1,
+            paymentId: 1,
+            transactions: 1,
+            originChainId: 1,
+            destinationChainId: 1,
+            originToken: 1,
+            destinationToken: 1,
+            originAmount: 1,
+            destinationAmount: 1,
+            quoteSummary: 1,
+            isCrypto: 1
           },
           readPreference: "secondaryPreferred"
         }
@@ -236,7 +247,7 @@ export async function GET(req: NextRequest) {
     } else {
       // Fallback for Cosmos DB
       const querySpec = {
-        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.effectiveProcessingFeeBps, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet, c.shopSlug, c.parentUrl, c.merchantName, c.presentedFeeBps, c.creditPresentedFeeBps, c.splitConfig, c.splitConfigCredit, c.partnerBps, c.platformBps, c.feeMinusEnabled, c.ipAddress, c.buyerWallet, c.stripeSessionId FROM c WHERE c.type = 'receipt'"
+        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.effectiveProcessingFeeBps, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet, c.shopSlug, c.parentUrl, c.merchantName, c.presentedFeeBps, c.creditPresentedFeeBps, c.splitConfig, c.splitConfigCredit, c.partnerBps, c.platformBps, c.feeMinusEnabled, c.ipAddress, c.buyerWallet, c.stripeSessionId, c.thirdwebMetadata, c.paymentId, c.transactions, c.originChainId, c.destinationChainId, c.originToken, c.destinationToken, c.originAmount, c.destinationAmount, c.quoteSummary, c.isCrypto FROM c WHERE c.type = 'receipt'"
       };
       const { resources } = await container.items.query(querySpec).fetchAll();
       allReceiptsLight = resources || [];
@@ -653,7 +664,18 @@ export async function GET(req: NextRequest) {
         ipAddress: r.ipAddress || null,
         statusHistory: r.statusHistory || [],
         customerEmail: r.customerEmail || null,
-        stripeEmail: r.stripeEmail || null
+        stripeEmail: r.stripeEmail || null,
+        thirdwebMetadata: r.thirdwebMetadata || null,
+        paymentId: r.paymentId || r.thirdwebMetadata?.paymentId || null,
+        transactions: r.transactions || r.thirdwebMetadata?.transactions || [],
+        originChainId: r.originChainId || r.thirdwebMetadata?.originChainId || null,
+        destinationChainId: r.destinationChainId || r.thirdwebMetadata?.destinationChainId || null,
+        originToken: r.originToken || r.thirdwebMetadata?.originToken || null,
+        destinationToken: r.destinationToken || r.thirdwebMetadata?.destinationToken || null,
+        originAmount: r.originAmount || r.thirdwebMetadata?.originAmount || null,
+        destinationAmount: r.destinationAmount || r.thirdwebMetadata?.destinationAmount || null,
+        quoteSummary: r.quoteSummary || r.thirdwebMetadata?.quoteSummary || null,
+        isCrypto: r.isCrypto || r.detectedCardFunding === "crypto" || r.cardFunding === "crypto" || !!r.transactionHash || false
       };
     });
 
