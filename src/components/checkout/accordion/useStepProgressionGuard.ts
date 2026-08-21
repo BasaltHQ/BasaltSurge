@@ -112,10 +112,10 @@ export function useStepProgressionGuard({
       (parsed?.isAmountLimit && (!kyc.isL1Verified || !kyc.isL2Verified));
 
     const isPaymentReady = Boolean(propPaymentElement) || headlessStep === "collecting_payment";
-    const isKycIncomplete = !isStep2Satisfied && !kyc.isL0Verified && !isPaymentReady;
+    const isKycIncomplete = !isStep2Satisfied && (!kyc.isL0Verified || showStepUpForm || (isL2Requirement && !kyc.isL2Verified)) && !isPaymentReady;
 
     const needsKycStep =
-      (headlessStep === "collecting_kyc" && isKycIncomplete) ||
+      (headlessStep === "collecting_kyc" && !isPaymentReady) ||
       (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
       (showStepUpForm && !kyc.isL1Verified) ||
       (isL2Requirement && !kyc.isL2Verified) ||
@@ -150,7 +150,7 @@ export function useStepProgressionGuard({
     if (isPaid || isOrderConfirmed) return;
 
     const isPaymentReady = Boolean(propPaymentElement) || headlessStep === "collecting_payment";
-    const isKycIncomplete = !isStep2Satisfied && !kyc.isL0Verified && !isPaymentReady;
+    const isKycIncomplete = !isStep2Satisfied && (!kyc.isL0Verified || showStepUpForm || (isL2Requirement && !kyc.isL2Verified)) && !isPaymentReady;
 
     // Case A: Stripe Onramp is collecting payment, awaiting funds, or paymentElement is ready
     if (
@@ -177,11 +177,13 @@ export function useStepProgressionGuard({
 
     // Case B: Explicit KYC or Document Verification step from Onramp
     if (
-      (headlessStep === "collecting_kyc" && isKycIncomplete) ||
-      (headlessStep === "verifying_identity" && !kyc.isL2Verified)
+      (headlessStep === "collecting_kyc" && !isPaymentReady) ||
+      (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
+      showStepUpForm ||
+      (isL2Requirement && !kyc.isL2Verified)
     ) {
       if (activeStep !== 2) {
-        logTransition(activeStep, 2, `Onramp Step: ${headlessStep}`);
+        logTransition(activeStep, 2, `Onramp Step: ${headlessStep || "kyc_required"}`);
         setActiveStep(2);
       }
       return;
@@ -196,12 +198,10 @@ export function useStepProgressionGuard({
       return;
     }
 
-    // Case D: Customer is pre-verified on mount or email/Link auth complete
+    // Case D: Customer is authenticated via Link session or OTP
     const isAuthComplete =
-      isEmailLocked ||
       isLinkOtpVerified ||
-      Boolean(initialEmail) ||
-      (headlessStep && !["authenticating", "collecting_phone", "idle"].includes(headlessStep));
+      Boolean(headlessStep && !["authenticating", "collecting_phone", "idle", "error"].includes(headlessStep));
 
     if (isAuthComplete && activeStep === 1) {
       if (isStep2Satisfied) {

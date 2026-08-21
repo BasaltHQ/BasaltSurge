@@ -1208,9 +1208,9 @@ export function useStripeEmbeddedOnramp({
                                     kycData.idDocStatus === "verified" ||
                                     kycData.idDocStatus === "completed";
 
-          const isL0Verified = l0Tier ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available") : isOverallVerified;
-          const isL1Verified = l1Tier ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") : isOverallVerified;
-          const isL2Verified = l2Tier ? l2Tier.verification_status === "verified" : isOverallVerified;
+          const isL0Verified = l0Tier ? l0Tier.verification_status === "verified" : isOverallVerified;
+          const isL1Verified = l1Tier ? l1Tier.verification_status === "verified" : false;
+          const isL2Verified = l2Tier ? l2Tier.verification_status === "verified" : (kycData.idDocStatus === "verified" || kycData.idDocStatus === "approved");
 
           const isL0Rejected = l0Tier?.verification_status === "rejected";
           const isL1Rejected = l1Tier?.verification_status === "rejected";
@@ -3154,13 +3154,13 @@ export function useStripeEmbeddedOnramp({
                                     kycData.idDocStatus === "completed";
 
         const isL0Verified = l0Tier 
-          ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available") 
+          ? l0Tier.verification_status === "verified" 
           : isOverallKycVerified;
         const isL1Verified = l1Tier 
-          ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available") 
-          : isOverallKycVerified;
+          ? l1Tier.verification_status === "verified" 
+          : false;
         const isL2Verified = l2Tier 
-          ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available") 
+          ? l2Tier.verification_status === "verified" 
           : isOverallIdVerified;
 
         let computedLevel: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING" = "REQUIRES_KYC";
