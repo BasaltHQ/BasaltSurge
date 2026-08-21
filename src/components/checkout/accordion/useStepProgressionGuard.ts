@@ -70,10 +70,8 @@ export function useStepProgressionGuard({
   useEffect(() => {
     const isFulfillmentInFlight =
       headlessStep === "checking_out" ||
-      headlessStep === "creating_session" ||
       headlessStep === "awaiting_funds" ||
       headlessStep === "transferring" ||
-      headlessStep === "confirming_fees" ||
       headlessStep === "completed";
 
     if (isPaid || isOrderConfirmed || isFulfillmentInFlight) {
@@ -120,17 +118,15 @@ export function useStepProgressionGuard({
 
     const isFulfillmentInFlight =
       headlessStep === "checking_out" ||
-      headlessStep === "creating_session" ||
       headlessStep === "awaiting_funds" ||
       headlessStep === "transferring" ||
-      headlessStep === "confirming_fees" ||
       headlessStep === "completed";
 
     if ((isPaymentDecline || !isFulfillmentInFlight) && activeStep === 4) {
       logTransition(
         4,
         3,
-        `Payment Declined / Not In-Flight (${parsed?.code || headlessStep || headlessStatus || "card_declined"}) - Returning to Step 3`
+        `Payment Declined / Returned to Payment Method (${parsed?.code || headlessStep || headlessStatus || "card_declined"})`
       );
       setActiveStep(3);
     }
@@ -161,7 +157,10 @@ export function useStepProgressionGuard({
       parsed?.isKycRequirement ||
       (parsed?.isAmountLimit && (!kyc.isL1Verified || !kyc.isL2Verified));
 
-    const isPaymentReady = Boolean(propPaymentElement) || headlessStep === "collecting_payment";
+    const isPaymentReady =
+      Boolean(propPaymentElement) ||
+      headlessStep === "collecting_payment" ||
+      headlessStep === "confirming_fees";
 
     const needsKycStep =
       (headlessStep === "collecting_kyc" && !isPaymentReady) ||
@@ -194,17 +193,17 @@ export function useStepProgressionGuard({
     setActiveStep,
   ]);
 
-  // ─── Rule 4: Onramp Step Progression & Pre-Verified Auto-Advance ───
+  // ─── Rule 4: Onramp Step Progression & Pre-Verified Auto-Advance (Step 1/2 ➔ Step 3) ───
   useEffect(() => {
     if (isPaid || isOrderConfirmed) return;
 
-    const isPaymentReady = Boolean(propPaymentElement) || headlessStep === "collecting_payment";
-
-    // Case A: Stripe Onramp is collecting payment, awaiting funds, or paymentElement is ready
-    if (
+    const isPaymentReady =
+      Boolean(propPaymentElement) ||
       headlessStep === "collecting_payment" ||
-      Boolean(propPaymentElement)
-    ) {
+      headlessStep === "confirming_fees";
+
+    // Case A: Stripe Onramp payment element is ready
+    if (isPaymentReady) {
       if (
         showStepUpForm ||
         showVerifyDocs ||
@@ -215,14 +214,8 @@ export function useStepProgressionGuard({
           logTransition(activeStep, 2, "Payment Ready but KYC Step-Up Required");
           setActiveStep(2);
         }
-      } else if (activeStep !== 3) {
-        logTransition(
-          activeStep,
-          3,
-          activeStep === 4
-            ? "Payment Returned to Collection - Returning to Step 3"
-            : "Payment Element Ready"
-        );
+      } else if (activeStep < 3) {
+        logTransition(activeStep, 3, "Payment Element Ready");
         setActiveStep(3);
       }
       return;
