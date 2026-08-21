@@ -836,27 +836,6 @@ export function useStripeEmbeddedOnramp({
                               msgData?.$__rpc === "call-error" ||
                               msgData?.$__data?.name === "OnrampError";
 
-        if (isErrorPayload && paymentRejectRef.current) {
-          let errorMsg = "";
-          let errorCode = "";
-          if (msgData?.error) {
-            errorMsg = msgData.error.message || msgData.error.code || "";
-            errorCode = msgData.error.code || "";
-          } else if (msgData?.$__data) {
-            errorMsg = msgData.$__data.message || msgData.$__data.code || "";
-            errorCode = msgData.$__data.code || "";
-          } else if (typeof msgData === "object") {
-            errorMsg = msgData.message || "";
-            errorCode = msgData.code || "";
-          }
-          console.warn("[EMBEDDED ONRAMP] Iframe error payload identified. Rejecting active payment method collection promise:", errorMsg || errorCode);
-          const err = new Error(errorMsg || "payment_method_collection_failed");
-          (err as any).code = errorCode || (errorMsg ? errorMsg.toLowerCase().replace(/\s+/g, "_") : "payment_method_collection_failed");
-          const rejectFn = paymentRejectRef.current;
-          paymentRejectRef.current = null;
-          rejectFn(err);
-        }
-
         if (isOtpTrigger && !isErrorPayload) {
           const currentStep = stepRef.current;
           console.warn("[STRIPE SDK MONITOR] Security/OTP trigger detected inside iframe:", {
@@ -3565,32 +3544,10 @@ export function useStripeEmbeddedOnramp({
           collectedBrand = result.brand;
           collectedLast4 = result.last4;
         } catch (paymentErr: any) {
-          const isCardDecline = checkIfCardDecline(paymentErr);
-          if (isCardDecline) {
-            console.warn("[EMBEDDED ONRAMP] Card decline/collection error caught in paymentPromise, returning to payment selection...");
-            setError(paymentErr?.message || "Payment method collection failed.");
-            paymentTokenRef.current = null;
-            sessionIdRef.current = null;
-            setSessionId(null);
-            if (typeof window !== "undefined") {
-              sessionStorage.removeItem(sessionKey);
-            }
-            if (onrampRef.current) {
-              try { onrampRef.current.destroy(); } catch {}
-              onrampRef.current = null;
-            }
-            setDetectedCardFunding(null);
-            setDetectedCardBrand(null);
-            setDetectedCardLast4(null);
-            onCardDetectedRef.current?.(null);
-            isRunningRef.current = false;
-            setTimeout(() => {
-              startOnrampRef.current?.(activeEmailRef.current || undefined);
-            }, 0);
-            return;
-          } else {
-            throw paymentErr;
-          }
+          console.warn("[EMBEDDED ONRAMP] Payment method collection rejected:", paymentErr);
+          setError(paymentErr?.message || "Payment method selection was not completed. Please try again.");
+          isRunningRef.current = false;
+          return;
         }
 
         paymentRejectRef.current = null;
