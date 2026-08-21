@@ -2859,24 +2859,15 @@ export function useStripeEmbeddedOnramp({
 
     try {
       let onramp = onrampRef.current;
-      let customerId = customerIdRef.current;
-      let buyerWallet = buyerWalletRef.current;
+      let customerId = customerIdRef.current || (typeof window !== "undefined" ? sessionStorage.getItem("stripe_onramp_customer_id") : null);
+      let oauthToken = oauthTokenRef.current || (typeof window !== "undefined" ? sessionStorage.getItem("stripe_onramp_oauth_token") : null);
+      let buyerWallet = buyerWalletRef.current || (typeof window !== "undefined" ? sessionStorage.getItem("stripe_onramp_buyer_wallet") : null);
 
-      if (onramp && isCoordinatorAuthedRef.current && customerId && oauthTokenRef.current && buyerWallet) {
-        console.log("[EMBEDDED ONRAMP] Reusing active authenticated onramp coordinator and customer session:", customerId);
-      } else {
-        if (onrampRef.current) {
-          try {
-            console.log("[EMBEDDED ONRAMP] Destroying previous stale onramp coordinator instance...");
-            onrampRef.current.destroy();
-          } catch (e) {
-            console.warn("[EMBEDDED ONRAMP] Error destroying previous onramp instance:", e);
-          }
-          onrampRef.current = null;
-        }
-        isCoordinatorAuthedRef.current = false;
-        kycOccurredRef.current = false;
+      if (customerId) customerIdRef.current = customerId;
+      if (oauthToken) oauthTokenRef.current = oauthToken;
+      if (buyerWallet) buyerWalletRef.current = buyerWallet;
 
+      if (!onramp) {
         // ─── Step 1: Initialize Stripe SDK with native Dark theme ───
         // @ts-ignore - beta SDK method missing from types
         const stripeCryptoModule = (await import("@stripe/crypto")) as any;
@@ -2899,9 +2890,14 @@ export function useStripeEmbeddedOnramp({
         return;
       }
 
-      let authIntentId = "";
+      const hasAuthenticatedSession = Boolean(customerId && oauthTokenRef.current && buyerWallet);
+      if (hasAuthenticatedSession) {
+        isCoordinatorAuthedRef.current = true;
+        console.log("[EMBEDDED ONRAMP] Active authenticated session found for customer:", customerId, "- Bypassing Link OTP.");
+      }
 
-      const needsAuth = !isCoordinatorAuthedRef.current || !customerId || !oauthTokenRef.current || !buyerWallet;
+      let authIntentId = "";
+      const needsAuth = !hasAuthenticatedSession;
 
       if (needsAuth) {
         // ─── Step 2: Check for Link account ───
