@@ -6,7 +6,6 @@ import {
   Sliders, 
   X, 
   RefreshCw, 
-  Check, 
   Globe, 
   DollarSign, 
   GitMerge, 
@@ -14,12 +13,23 @@ import {
   User,
   Lock,
   AlertTriangle,
-  XCircle
+  XCircle,
+  ShieldCheck,
+  CreditCard,
+  Camera,
+  Smartphone,
+  Zap,
+  KeyRound,
+  Maximize2,
+  Minimize2,
+  CheckCircle2,
+  Play
 } from "lucide-react";
 
 export function SandboxWidget() {
   const [visible, setVisible] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [widgetSize, setWidgetSize] = useState<"compact" | "medium" | "large" | "full">("medium");
   const [feeMode, setFeeMode] = useState<"fee_plus" | "fee_minus">("fee_plus");
   const [splitMode, setSplitMode] = useState<"single" | "dual">("single");
   const [brandsList, setBrandsList] = useState<string[]>([]);
@@ -36,13 +46,32 @@ export function SandboxWidget() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       setIsLandingPage(window.location.pathname === "/");
+      const savedSize = localStorage.getItem("pp_sandbox_widget_size");
+      if (savedSize && ["compact", "medium", "large", "full"].includes(savedSize)) {
+        setWidgetSize(savedSize as any);
+      }
     }
   }, []);
+
+  const updateSize = (size: "compact" | "medium" | "large" | "full") => {
+    setWidgetSize(size);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("pp_sandbox_widget_size", size);
+    }
+  };
 
   const hideExtraSandboxControls = isLandingPage && !account?.address;
 
   const [hasChanges, setHasChanges] = useState(false);
   const [stripeV2, setStripeV2] = useState<boolean>(true);
+
+  // Simulation controls state
+  const [simEnabled, setSimEnabled] = useState<boolean>(false);
+  const [simCountry, setSimCountry] = useState<string>("US");
+  const [simTier, setSimTier] = useState<"l0" | "l1" | "l2">("l0");
+  const [simStatus, setSimStatus] = useState<"normal" | "otp" | "step_up" | "doc_verify" | "wallet_challenge" | "verified">("normal");
+  const [simError, setSimError] = useState<"none" | "address_error" | "payment_decline" | "insufficient_funds" | "kyc_rejection" | "invalid_signature">("none");
+  const [simPaymentMethod, setSimPaymentMethod] = useState<"card" | "wallet" | "bank">("card");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -64,129 +93,254 @@ export function SandboxWidget() {
     const initialV2 = v2Match ? v2Match[1] === "true" : true;
     setStripeV2(initialV2);
 
+    const simEnabledMatch = cookies.match(/pp_sandbox_sim_enabled=([^;]+)/);
+    const initialSimEnabled = simEnabledMatch ? simEnabledMatch[1] === "true" : false;
+    setSimEnabled(initialSimEnabled);
+
+    const simCountryMatch = cookies.match(/pp_sandbox_sim_country=([^;]+)/);
+    if (simCountryMatch) setSimCountry(simCountryMatch[1]);
+
+    const simTierMatch = cookies.match(/pp_sandbox_sim_tier=([^;]+)/);
+    if (simTierMatch) setSimTier(simTierMatch[1] as any);
+
+    const simStatusMatch = cookies.match(/pp_sandbox_sim_status=([^;]+)/);
+    if (simStatusMatch) setSimStatus(simStatusMatch[1] as any);
+
+    const simErrorMatch = cookies.match(/pp_sandbox_sim_error=([^;]+)/);
+    if (simErrorMatch) setSimError(simErrorMatch[1] as any);
+
+    const simPmMatch = cookies.match(/pp_sandbox_sim_pm=([^;]+)/);
+    if (simPmMatch) setSimPaymentMethod(simPmMatch[1] as any);
+
     const changed =
       feeMode !== initialFee ||
       splitMode !== initialSplit ||
       selectedBrand !== initialBrand ||
-      selectedMerchant !== initialMerchant ||
-      stripeV2 !== initialV2;
-
+      selectedMerchant !== initialMerchant;
     setHasChanges(changed);
-  }, [feeMode, splitMode, selectedBrand, selectedMerchant, stripeV2]);
+  }, [feeMode, splitMode, selectedBrand, selectedMerchant]);
 
-  const updateCookie = (name: string, value: string) => {
-    if (typeof window !== "undefined") {
-      document.cookie = `${name}=${value}; path=/; max-age=31536000; SameSite=Lax`;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const host = (window.location.hostname || "").toLowerCase();
+
+    const isSandboxHost =
+      host.includes("surge-sand.basalthq.com") ||
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host.endsWith(".localhost");
+
+    if (isSandboxHost) {
+      setVisible(true);
+      fetchInitialData();
+    }
+  }, []);
+
+  const fetchInitialData = async () => {
+    try {
+      const res = await fetch("/api/admin/system/merchants?limit=100");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.merchants) {
+          setMerchantsList(data.merchants);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to fetch merchants list:", e);
+    }
+
+    try {
+      const res = await fetch("/api/admin/brands");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.brands) {
+          setBrandsList(data.brands.map((b: any) => b.brandKey?.toLowerCase() || b.id));
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to fetch brands list:", e);
     }
   };
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    // Never show the sandbox widget on partner containers
-    const isPartnerContainer = process.env.NEXT_PUBLIC_CONTAINER_TYPE === "partner";
-    if (isPartnerContainer) {
-      setVisible(false);
-      return;
+    if (selectedBrand) {
+      fetchBrandConfig(selectedBrand);
     }
-
-    // Only show on the official sandbox hostname
-    const hostname = window.location.hostname;
-    const isSandboxHost = hostname === "surge-sand.basalthq.com";
-    if (!isSandboxHost) return;
-
-    const cookies = window.document.cookie || "";
-    if (cookies.includes("pp_sandbox_widget_disabled=true")) {
-      setVisible(false);
-      return;
-    }
-
-    setVisible(true);
-
-    const bMatch = cookies.match(/pp_sandbox_brand_key=([^;]+)/);
-    const initialBrand = bMatch ? bMatch[1].toLowerCase().trim() : "basaltsurge";
-    setSelectedBrand(initialBrand);
-
-    const mMatch = cookies.match(/pp_sandbox_merchant_wallet=([^;]+)/);
-    if (mMatch) {
-      setSelectedMerchant(mMatch[1].toLowerCase().trim());
-    }
-
-    (async () => {
-      try {
-        const r = await fetch("/api/platform/brands", { cache: "no-store" });
-        const j = await r.json().catch(() => ({}));
-        const arr = Array.isArray(j?.brands) ? j.brands : [];
-        const normalized = arr.map((k: any) => String(k || "").toLowerCase()).filter(Boolean);
-        if (!normalized.includes("basaltsurge")) {
-          normalized.unshift("basaltsurge");
-        }
-        setBrandsList(normalized);
-      } catch (e) {
-        console.error("Failed to load brands:", e);
-        setBrandsList(["basaltsurge", "aipowerpay", "paynex", "xoinpay", "icunow-store"]);
-      }
-    })();
-  }, []);
-
-  // Fetch configs and merchants when brand key changes
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (typeof window === "undefined" || !selectedBrand) return;
-      try {
-        setIsConfigLoading(true);
-        
-        // Fetch brand config from Cosmos DB to set locked configs
-        const r = await fetch(`/api/platform/brands/${encodeURIComponent(selectedBrand)}/config`, { cache: "no-store" });
-        const j = await r.json().catch(() => ({}));
-        if (!active) return;
-
-        const brandData = j?.brand || {};
-        setBrandConfig(brandData);
-        
-        // Fee Mode configuration resolution
-        const targetFeeMode = brandData.feeMinusEnabled ? "fee_minus" : "fee_plus";
-        setFeeMode(targetFeeMode);
-
-        // Split Strategy resolution
-        const hasAgents = Array.isArray(brandData.agents) && brandData.agents.length > 0;
-        const isAipowerpay = selectedBrand.toLowerCase() === "aipowerpay";
-        const targetSplitMode = (hasAgents || isAipowerpay || brandData.primaryAgentWallet) ? "dual" : "single";
-        setSplitMode(targetSplitMode);
-
-        // Load merchants under this brand
-        const rm = await fetch(`/api/admin/users?brandKey=${encodeURIComponent(selectedBrand)}`, { cache: "no-store" });
-        const jm = await rm.json().catch(() => ({}));
-        if (!active) return;
-
-        const items = Array.isArray(jm?.items) ? jm.items : [];
-        const mappedMerchants = items.map((it: any) => ({
-          merchant: String(it.merchant || "").toLowerCase(),
-          displayName: it.displayName || "",
-          splitAddress: it.splitAddress,
-          splitAddressCredit: it.splitAddressCredit
-        }));
-        setMerchantsList(mappedMerchants);
-
-        // Reconcile selected merchant override
-        const cookies = window.document.cookie || "";
-        const mMatch = cookies.match(/pp_sandbox_merchant_wallet=([^;]+)/);
-        const currentOverride = mMatch ? mMatch[1].toLowerCase().trim() : "";
-        if (currentOverride && mappedMerchants.some((m: any) => m.merchant === currentOverride)) {
-          setSelectedMerchant(currentOverride);
-        } else {
-          setSelectedMerchant("");
-        }
-
-      } catch (err) {
-        console.error("Failed to load sandbox brand config/merchants inside widget:", err);
-      } finally {
-        if (active) setIsConfigLoading(false);
-      }
-    })();
-    return () => { active = false; };
   }, [selectedBrand]);
+
+  const fetchBrandConfig = async (brandKey: string) => {
+    setIsConfigLoading(true);
+    try {
+      const res = await fetch(`/api/admin/system/brand-config?brand=${brandKey}`);
+      if (res.ok) {
+        const data = await res.json();
+        setBrandConfig(data);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch brand config:", e);
+    } finally {
+      setIsConfigLoading(false);
+    }
+  };
+
+  const updateCookie = (name: string, val: string) => {
+    const isSecure = typeof window !== "undefined" && window.location.protocol === "https:";
+    const host = typeof window !== "undefined" ? window.location.hostname : "";
+    let domainAttr = "";
+    
+    if (host.includes("basalthq.com") || host.includes("surge-sand.")) {
+      domainAttr = "; domain=.basalthq.com";
+    } else if (host.includes("portalpay.ai")) {
+      domainAttr = "; domain=.portalpay.ai";
+    }
+
+    const secureAttr = isSecure ? "; Secure; SameSite=None" : "; SameSite=Lax";
+    window.document.cookie = `${name}=${val}; path=/${domainAttr}; max-age=31536000${secureAttr}`;
+  };
+
+  const applyPreset = (preset: "fast_pass" | "link_otp" | "l1_stepup" | "l2_identity" | "card_decline" | "ach_bank" | "eu_mica_base" | "eu_l2_identity" | "eu_travel_rule" | "insufficient_funds" | "kyc_rejection" | "address_error") => {
+    setSimEnabled(true);
+    updateCookie("pp_sandbox_sim_enabled", "true");
+
+    if (preset === "fast_pass") {
+      setSimTier("l0");
+      setSimStatus("verified");
+      setSimError("none");
+      setSimPaymentMethod("card");
+      setSimCountry("US");
+      updateCookie("pp_sandbox_sim_tier", "l0");
+      updateCookie("pp_sandbox_sim_status", "verified");
+      updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
+    } else if (preset === "link_otp") {
+      setSimTier("l0");
+      setSimStatus("otp");
+      setSimError("none");
+      setSimPaymentMethod("card");
+      setSimCountry("US");
+      updateCookie("pp_sandbox_sim_tier", "l0");
+      updateCookie("pp_sandbox_sim_status", "otp");
+      updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
+    } else if (preset === "l1_stepup") {
+      setSimTier("l1");
+      setSimStatus("step_up");
+      setSimError("none");
+      setSimPaymentMethod("card");
+      setSimCountry("US");
+      updateCookie("pp_sandbox_sim_tier", "l1");
+      updateCookie("pp_sandbox_sim_status", "step_up");
+      updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
+    } else if (preset === "l2_identity") {
+      setSimTier("l2");
+      setSimStatus("doc_verify");
+      setSimError("none");
+      setSimPaymentMethod("card");
+      setSimCountry("US");
+      updateCookie("pp_sandbox_sim_tier", "l2");
+      updateCookie("pp_sandbox_sim_status", "doc_verify");
+      updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
+    } else if (preset === "card_decline") {
+      setSimTier("l0");
+      setSimStatus("verified");
+      setSimError("payment_decline");
+      setSimPaymentMethod("card");
+      setSimCountry("US");
+      updateCookie("pp_sandbox_sim_tier", "l0");
+      updateCookie("pp_sandbox_sim_status", "verified");
+      updateCookie("pp_sandbox_sim_error", "payment_decline");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
+    } else if (preset === "ach_bank") {
+      setSimTier("l0");
+      setSimStatus("verified");
+      setSimError("none");
+      setSimPaymentMethod("bank");
+      setSimCountry("US");
+      updateCookie("pp_sandbox_sim_tier", "l0");
+      updateCookie("pp_sandbox_sim_status", "verified");
+      updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "bank");
+      updateCookie("pp_sandbox_sim_country", "US");
+    } else if (preset === "eu_mica_base") {
+      setSimTier("l0");
+      setSimStatus("normal");
+      setSimError("none");
+      setSimPaymentMethod("card");
+      setSimCountry("AT");
+      updateCookie("pp_sandbox_sim_tier", "l0");
+      updateCookie("pp_sandbox_sim_status", "normal");
+      updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "AT");
+    } else if (preset === "eu_l2_identity") {
+      setSimTier("l2");
+      setSimStatus("doc_verify");
+      setSimError("none");
+      setSimPaymentMethod("card");
+      setSimCountry("AT");
+      updateCookie("pp_sandbox_sim_tier", "l2");
+      updateCookie("pp_sandbox_sim_status", "doc_verify");
+      updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "AT");
+    } else if (preset === "eu_travel_rule") {
+      setSimTier("l2");
+      setSimStatus("wallet_challenge");
+      setSimError("none");
+      setSimPaymentMethod("card");
+      setSimCountry("AT");
+      updateCookie("pp_sandbox_sim_tier", "l2");
+      updateCookie("pp_sandbox_sim_status", "wallet_challenge");
+      updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "AT");
+    } else if (preset === "insufficient_funds") {
+      setSimTier("l0");
+      setSimStatus("verified");
+      setSimError("insufficient_funds");
+      setSimPaymentMethod("card");
+      setSimCountry("US");
+      updateCookie("pp_sandbox_sim_tier", "l0");
+      updateCookie("pp_sandbox_sim_status", "verified");
+      updateCookie("pp_sandbox_sim_error", "insufficient_funds");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
+    } else if (preset === "kyc_rejection") {
+      setSimTier("l2");
+      setSimStatus("doc_verify");
+      setSimError("kyc_rejection");
+      setSimPaymentMethod("card");
+      setSimCountry("US");
+      updateCookie("pp_sandbox_sim_tier", "l2");
+      updateCookie("pp_sandbox_sim_status", "doc_verify");
+      updateCookie("pp_sandbox_sim_error", "kyc_rejection");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
+    } else if (preset === "address_error") {
+      setSimTier("l0");
+      setSimStatus("normal");
+      setSimError("address_error");
+      setSimPaymentMethod("card");
+      setSimCountry("US");
+      updateCookie("pp_sandbox_sim_tier", "l0");
+      updateCookie("pp_sandbox_sim_status", "normal");
+      updateCookie("pp_sandbox_sim_error", "address_error");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
+    }
+
+    setStatusMessage("Applied Preset! Reloading...");
+    setTimeout(() => {
+      window.location.reload();
+    }, 400);
+  };
 
   const handleApply = () => {
     // Write fee mode
@@ -195,40 +349,42 @@ export function SandboxWidget() {
     // Write split mode
     updateCookie("pp_sandbox_split_mode", splitMode);
 
-    // Write or clear brand override
-    if (selectedBrand && selectedBrand !== "basaltsurge") {
-      updateCookie("pp_sandbox_brand_key", selectedBrand);
-    } else {
-      document.cookie = `pp_sandbox_brand_key=; path=/; max-age=0; SameSite=Lax`;
+    // Write checkout engine
+    updateCookie("pp_sandbox_stripe_v2", String(stripeV2));
+
+    // Write simulation cookies
+    updateCookie("pp_sandbox_sim_enabled", String(simEnabled));
+    updateCookie("pp_sandbox_sim_country", simCountry);
+    updateCookie("pp_sandbox_sim_tier", simTier);
+    updateCookie("pp_sandbox_sim_status", simStatus);
+    updateCookie("pp_sandbox_sim_error", simError);
+    updateCookie("pp_sandbox_sim_pm", simPaymentMethod);
+
+    // Write brand key
+    if (selectedBrand) {
+      updateCookie("pp_sandbox_brand_key", selectedBrand.toLowerCase().trim());
     }
 
-    // Write or clear merchant override
+    // Write merchant wallet
     if (selectedMerchant) {
-      updateCookie("pp_sandbox_merchant_wallet", selectedMerchant);
-    } else {
-      document.cookie = `pp_sandbox_merchant_wallet=; path=/; max-age=0; SameSite=Lax`;
+      updateCookie("pp_sandbox_merchant_wallet", selectedMerchant.toLowerCase().trim());
     }
 
-    setStatusMessage("Applying & Reloading...");
+    setStatusMessage("Applied! Reloading...");
     setTimeout(() => {
       window.location.reload();
-    }, 800);
+    }, 500);
   };
 
   const getDiagnostics = () => {
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    if (!selectedMerchant) {
-      warnings.push("No merchant override set.");
-      return { errors, warnings };
-    }
+    const merchantInfo = merchantsList.find(
+      (m) => m.merchant.toLowerCase() === selectedMerchant.toLowerCase()
+    );
 
-    const merchantInfo = merchantsList.find(m => m.merchant === selectedMerchant);
-
-    if (!merchantInfo) {
-      errors.push("Merchant details not found in current brand.");
-    } else {
+    if (merchantInfo) {
       if (!merchantInfo.splitAddress) {
         errors.push("Active split contract not deployed.");
       }
@@ -254,246 +410,575 @@ export function SandboxWidget() {
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-[9999] font-sans antialiased">
+    <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[10005] font-sans antialiased flex flex-col items-end pointer-events-none">
+      <style>{`
+        .sandbox-custom-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(245, 158, 11, 0.45) rgba(255, 255, 255, 0.05);
+        }
+        .sandbox-custom-scrollbar::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        .sandbox-custom-scrollbar::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.04);
+          border-radius: 6px;
+        }
+        .sandbox-custom-scrollbar::-webkit-scrollbar-thumb {
+          background: rgba(245, 158, 11, 0.45);
+          border-radius: 6px;
+        }
+        .sandbox-custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: rgba(245, 158, 11, 0.8);
+        }
+      `}</style>
+
       {/* Floating Gear/Slider Trigger Button */}
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          className="group relative flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 text-black shadow-2xl hover:scale-105 transition-all duration-300 ring-2 ring-amber-400/50 hover:ring-amber-300"
+          className="pointer-events-auto group relative flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 text-black shadow-2xl hover:scale-105 transition-all duration-300 ring-2 ring-amber-400/50 hover:ring-amber-300 cursor-pointer"
           title="Sandbox Quick Controls"
         >
           <Sliders className="w-6 h-6 animate-pulse" />
           <span className="absolute -top-2 -right-2 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider bg-black border border-amber-500/50 text-amber-400 rounded-full">
-            SAND
+            {simEnabled ? "SIM ⚡" : "SAND"}
           </span>
         </button>
       )}
 
       {/* Expanded Sandbox Panel */}
       {isOpen && (
-        <div className="w-80 rounded-2xl border border-white/10 bg-black/85 backdrop-blur-xl p-5 shadow-2xl transition-all duration-300 animate-in fade-in slide-in-from-bottom-4">
-          {/* Header */}
-          <div className="flex items-center justify-between pb-3 border-b border-white/5 mb-4">
+        <div 
+          className={`pointer-events-auto flex flex-col rounded-3xl border border-white/15 bg-black/95 backdrop-blur-2xl shadow-2xl transition-all duration-200 text-left overflow-hidden ${
+            widgetSize === "compact"
+              ? "w-[360px]"
+              : widgetSize === "medium"
+              ? "w-[480px]"
+              : widgetSize === "large"
+              ? "w-[720px]"
+              : "w-[min(960px,calc(100vw-2rem))]"
+          } ${
+            widgetSize === "full"
+              ? "h-[calc(100dvh-6.5rem)]"
+              : "max-h-[calc(100dvh-6.5rem)]"
+          } max-w-[calc(100vw-2rem)]`}
+        >
+          {/* Header - Fixed & Sticky, Safe from Top Navbar */}
+          <div className="shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-white/10 bg-zinc-950/90 backdrop-blur-md">
             <div className="flex items-center gap-2 text-amber-400">
-              <Sparkles className="w-4 h-4" />
-              <span className="text-xs font-bold uppercase tracking-wider">Sandbox Engine overrides</span>
+              <Sparkles className="w-4 h-4 shrink-0" />
+              <span className="text-xs font-bold uppercase tracking-wider truncate">Sandbox Engine Overrides</span>
+              <span className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase border ${
+                simEnabled
+                  ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                  : "bg-white/5 border-white/10 text-zinc-400"
+              }`}>
+                {simEnabled ? "SIM ⚡" : "LIVE"}
+              </span>
             </div>
-            <button
-              onClick={() => setIsOpen(false)}
-              className="p-1 rounded-md text-zinc-500 hover:text-white hover:bg-white/5 transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            
+            {/* Header Controls: Size Switcher + Maximize + Close */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center bg-zinc-900 border border-white/10 rounded-lg p-0.5">
+                {(["compact", "medium", "large"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => updateSize(s)}
+                    className={`px-1.5 py-0.5 text-[9px] font-bold uppercase rounded transition cursor-pointer ${
+                      widgetSize === s
+                        ? "bg-amber-500 text-black shadow-sm font-black"
+                        : "text-zinc-400 hover:text-white"
+                    }`}
+                    title={`Set width to ${s.toUpperCase()}`}
+                  >
+                    {s === "compact" ? "S" : s === "medium" ? "M" : "L"}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => updateSize(widgetSize === "full" ? "medium" : "full")}
+                className={`p-1 rounded-md transition-colors cursor-pointer ${
+                  widgetSize === "full"
+                    ? "text-amber-400 bg-amber-500/15"
+                    : "text-zinc-400 hover:text-white hover:bg-white/10"
+                }`}
+                title={widgetSize === "full" ? "Restore standard size" : "Maximize widget"}
+              >
+                {widgetSize === "full" ? (
+                  <Minimize2 className="w-3.5 h-3.5" />
+                ) : (
+                  <Maximize2 className="w-3.5 h-3.5" />
+                )}
+              </button>
+
+              <button
+                onClick={() => setIsOpen(false)}
+                className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
-          {/* Controls list */}
-          <div className="space-y-4">
-            {hideExtraSandboxControls && (
-              <div className="p-3 rounded-xl border border-amber-500/25 bg-amber-500/5 text-amber-400 text-[10px] flex items-start gap-2 leading-relaxed">
-                <Lock className="w-4 h-4 shrink-0 mt-0.5" />
-                <span>To simulate custom merchant themes, test split strategies, or view system diagnostics, please connect your wallet first.</span>
-              </div>
-            )}
-
-            {/* Fee Mode */}
-            {!hideExtraSandboxControls && (
-              <div className="space-y-1.5 relative opacity-60 select-none">
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
-                  <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
-                    <Lock className="w-2.5 h-2.5 text-amber-400" />
-                    Locked: Brand Config
-                  </span>
-                </div>
-                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                  <DollarSign className="w-3 h-3 text-emerald-400" />
-                  Fee Mode
-                </label>
-                <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
-                  <div
-                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                      feeMode === "fee_plus"
-                        ? "bg-amber-500 text-black shadow-md"
-                        : "text-zinc-600"
-                    }`}
-                  >
-                    Fee on Top (Fee+)
+          {/* Controls Body - Dedicated Scroll Area with Multi-column support */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sandbox-custom-scrollbar">
+            <div className={widgetSize === "large" || widgetSize === "full" ? "grid grid-cols-1 md:grid-cols-2 gap-4 items-start" : "space-y-4"}>
+              
+              {/* Column 1: Stripe & Link Accordion Simulation Suite */}
+              <div className="space-y-4">
+                {hideExtraSandboxControls && (
+                  <div className="p-2.5 rounded-xl border border-amber-500/25 bg-amber-500/5 text-amber-400 text-[10px] flex items-start gap-2 leading-relaxed">
+                    <Lock className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>Connect your wallet to simulate merchant partition targets or view split diagnostics.</span>
                   </div>
-                  <div
-                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                      feeMode === "fee_minus"
-                        ? "bg-amber-500 text-black shadow-md"
-                        : "text-zinc-600"
-                    }`}
-                  >
-                    Deducted (Fee-)
+                )}
+
+                {/* ─── STRIPE & LINK SIMULATION SUITE ─── */}
+                <div className="p-3.5 rounded-2xl bg-amber-500/5 border border-amber-500/30 space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-amber-500/15">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400">
+                      <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>Stripe Accordion Simulations</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSimEnabled(!simEnabled)}
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase transition cursor-pointer flex items-center gap-1 ${
+                        simEnabled
+                          ? "bg-amber-500 text-black shadow-md"
+                          : "bg-white/10 text-zinc-300 hover:text-white hover:bg-white/20"
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${simEnabled ? "bg-black" : "bg-zinc-500"}`} />
+                      {simEnabled ? "Active" : "Disabled"}
+                    </button>
+                  </div>
+
+                  {/* 1-Click Simulation Presets (Always Available) */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold text-zinc-300 uppercase tracking-wider">
+                        1-Click Checkout Presets:
+                      </label>
+                      <span className="text-[8.5px] text-amber-400/80 font-mono">
+                        Instant apply & reload
+                      </span>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("fast_pass")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-amber-500/15 border border-white/10 hover:border-amber-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 1 & 2: Pre-verified customer, instant 1-click pass"
+                      >
+                        <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">⚡ Fast Pass</div>
+                          <div className="text-[8px] text-zinc-400">Pre-Verified Instant</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("link_otp")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-emerald-500/15 border border-white/10 hover:border-emerald-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 1: Prompt 6-digit Link SMS OTP authentication"
+                      >
+                        <Smartphone className="w-3.5 h-3.5 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">📲 Link OTP</div>
+                          <div className="text-[8px] text-zinc-400">6-Digit SMS Code</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("l1_stepup")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-sky-500/15 border border-white/10 hover:border-sky-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 2: Prompt L1 KYC collection (DOB Picker + Last 4 SSN)"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5 text-sky-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">🛡️ L1 Step-Up</div>
+                          <div className="text-[8px] text-zinc-400">DOB + Last 4 SSN</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("l2_identity")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-purple-500/15 border border-white/10 hover:border-purple-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 2: Prompt L2 Stripe Identity document & selfie verification"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-purple-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">📸 L2 ID Scan</div>
+                          <div className="text-[8px] text-zinc-400">Doc & Selfie Upload</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("card_decline")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-rose-500/15 border border-white/10 hover:border-rose-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 3: Simulate card authorization decline failure"
+                      >
+                        <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">❌ Card Decline</div>
+                          <div className="text-[8px] text-zinc-400">Auth Failed / Error</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("ach_bank")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-emerald-500/15 border border-white/10 hover:border-emerald-500/40 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Step 3: Simulate ACH Direct Debit bank settlement flow"
+                      >
+                        <CreditCard className="w-3.5 h-3.5 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-white leading-tight">🏦 ACH Direct</div>
+                          <div className="text-[8px] text-zinc-400">Bank Transfer Flow</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("eu_mica_base")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Simulate EU Austria checkout (Alexander Mayr / Wien / Date of Birth required)"
+                      >
+                        <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-emerald-400 leading-tight">🇦🇹 EU MiCA (AT)</div>
+                          <div className="text-[8px] text-zinc-400">Austria + DOB Form</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("eu_l2_identity")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-purple-500/15 border border-purple-500/30 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Simulate EU L2 Document & Selfie upload"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-purple-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-purple-400 leading-tight">🇪🇺 EU L2 ID Scan</div>
+                          <div className="text-[8px] text-zinc-400">Austria L2 ID Verify</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("eu_travel_rule")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-amber-500/15 border border-amber-500/30 text-[10px] font-semibold text-amber-300 flex items-center gap-2 transition text-left cursor-pointer col-span-2 group"
+                        title="Step 4: Prompt cryptographic wallet ownership challenge signature for orders ≥€1,000"
+                      >
+                        <KeyRound className="w-4 h-4 text-amber-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div className="flex-1">
+                          <div className="font-bold text-amber-300 leading-tight">🇪🇺 EU Travel Rule (≥€1,000 Challenge)</div>
+                          <div className="text-[8.5px] text-zinc-400">Simulate wallet signature ownership verification</div>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Granular Accordion Simulation Controls */}
+                  <div className="pt-2 border-t border-amber-500/15 space-y-2.5">
+                    {/* Simulated Jurisdiction / Country */}
+                    <div className="space-y-1">
+                      <label className="text-[9.5px] font-semibold text-emerald-400 uppercase tracking-wider block">
+                        🌍 Jurisdiction / Country:
+                      </label>
+                      <select
+                        value={simCountry}
+                        onChange={(e) => {
+                          setSimEnabled(true);
+                          setSimCountry(e.target.value);
+                        }}
+                        className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-emerald-500/40 text-emerald-300 font-semibold focus:outline-none focus:border-emerald-400 cursor-pointer"
+                      >
+                        <option value="US">🇺🇸 United States (US - Pure L0 / Step-Up)</option>
+                        <option value="AT">🇦🇹 Austria (AT - EU MiCA / Vienna)</option>
+                        <option value="DE">🇩🇪 Germany (DE - EU MiCA)</option>
+                        <option value="FR">🇫🇷 France (FR - EU MiCA)</option>
+                        <option value="ES">🇪🇸 Spain (ES - EU MiCA NIF)</option>
+                        <option value="IT">🇮🇹 Italy (IT - EU MiCA CF)</option>
+                      </select>
+                    </div>
+
+                    {/* Target KYC Tier */}
+                    <div className="space-y-1">
+                      <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                        Accordion KYC Tier:
+                      </label>
+                      <div className="grid grid-cols-3 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
+                        {(["l0", "l1", "l2"] as const).map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => {
+                              setSimEnabled(true);
+                              setSimTier(t);
+                            }}
+                            className={`py-1 text-[10px] font-bold uppercase rounded transition cursor-pointer ${
+                              simTier === t && simEnabled
+                                ? "bg-amber-500 text-black shadow font-black"
+                                : "text-zinc-400 hover:text-white"
+                            }`}
+                          >
+                            {t.toUpperCase()} {t === "l0" ? "(Base)" : t === "l1" ? "(SSN)" : "(ID)"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Flow Mode / Link Status */}
+                    <div className="space-y-1">
+                      <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">
+                        Step Challenge Flow:
+                      </label>
+                      <select
+                        value={simStatus}
+                        onChange={(e) => {
+                          setSimEnabled(true);
+                          setSimStatus(e.target.value as any);
+                        }}
+                        className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-white/10 text-white font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
+                      >
+                        <option value="normal">Normal Step-by-Step</option>
+                        <option value="otp">Prompt 6-Digit Link OTP</option>
+                        <option value="step_up">Prompt L1 Step-Up (DOB + SSN)</option>
+                        <option value="doc_verify">Prompt L2 Document & Selfie</option>
+                        <option value="wallet_challenge">EU Travel Rule Wallet Challenge</option>
+                        <option value="verified">Pre-Verified (Instant Pass)</option>
+                      </select>
+                    </div>
+
+                    {/* Injected Error Scenario */}
+                    <div className="space-y-1">
+                      <label className="text-[9.5px] font-semibold text-amber-400 uppercase tracking-wider block">
+                        Injected Error Scenario:
+                      </label>
+                      <select
+                        value={simError}
+                        onChange={(e) => {
+                          setSimEnabled(true);
+                          setSimError(e.target.value as any);
+                        }}
+                        className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-amber-500/40 text-amber-300 font-semibold focus:outline-none focus:border-amber-400 cursor-pointer"
+                      >
+                        <option value="none">✓ None (Success Path)</option>
+                        <option value="address_error">⚠️ Address Restriction (NY/HI)</option>
+                        <option value="payment_decline">❌ Card Authorization Declined</option>
+                        <option value="insufficient_funds">⚠ Card Insufficient Funds</option>
+                        <option value="kyc_rejection">🚫 Stripe Identity Rejection</option>
+                        <option value="invalid_signature">🔑 Invalid Wallet Signature</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
               </div>
-            )}
 
-            {/* Split Mode */}
-            {!hideExtraSandboxControls && (
-              <div className="space-y-1.5 relative opacity-60 select-none">
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
-                  <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
-                    <Lock className="w-2.5 h-2.5 text-amber-400" />
-                    Locked: Brand Config
-                  </span>
-                </div>
-                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                  <GitMerge className="w-3 h-3 text-purple-400" />
-                  Split Strategy
-                </label>
-                <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
-                  <div
-                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                      splitMode === "single"
-                        ? "bg-amber-500 text-black shadow-md"
-                        : "text-zinc-600"
-                    }`}
-                  >
-                    Single Split
+              {/* Column 2: Engine, Brand, Partition, Mode, Diagnostics */}
+              <div className="space-y-4">
+                {/* ─── SECTION 2: CHECKOUT ENGINE ─── */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide flex items-center justify-between">
+                    <span className="flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                      Checkout Engine
+                    </span>
+                    <span className="text-[9px] text-zinc-400 font-mono">
+                      {stripeV2 ? "v2-accordion" : "v1-modal"}
+                    </span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStripeV2(false);
+                        updateCookie("pp_sandbox_stripe_v2", "false");
+                      }}
+                      className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                        !stripeV2
+                          ? "bg-amber-500 text-black shadow-md font-black"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      v1 Modal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStripeV2(true);
+                        updateCookie("pp_sandbox_stripe_v2", "true");
+                      }}
+                      className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                        stripeV2
+                          ? "bg-amber-500 text-black shadow-md font-black"
+                          : "text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      v2 Accordion
+                    </button>
                   </div>
-                  <div
-                    className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                      splitMode === "dual"
-                        ? "bg-amber-500 text-black shadow-md"
-                        : "text-zinc-600"
-                    }`}
-                  >
-                    Dual Split
+                </div>
+
+                {/* ─── SECTION 3: BRAND CONTAINER ─── */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                    <Globe className="w-3 h-3 text-sky-400" />
+                    Brand Container Key
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={selectedBrand}
+                      onChange={(e) => setSelectedBrand(e.target.value.toLowerCase().trim())}
+                      className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400 transition cursor-pointer font-mono"
+                    >
+                      {brandsList.length > 0 ? (
+                        brandsList.map((b) => (
+                          <option key={b} value={b}>
+                            {b}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="basaltsurge">basaltsurge</option>
+                      )}
+                    </select>
                   </div>
                 </div>
-              </div>
-            )}
 
-            {/* Stripe V2 Accordion Checkout Engine Toggle */}
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide flex items-center justify-between">
-                <span className="flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-amber-400" />
-                  Checkout Engine (STRIPEV2)
-                </span>
-                <span className="text-[9px] text-zinc-400 font-mono">
-                  {stripeV2 ? "v2-accordion" : "v1-modal"}
-                </span>
-              </label>
-              <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStripeV2(false);
-                    updateCookie("pp_sandbox_stripe_v2", "false");
-                  }}
-                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                    !stripeV2
-                      ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  V1 Modal
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStripeV2(true);
-                    updateCookie("pp_sandbox_stripe_v2", "true");
-                  }}
-                  className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
-                    stripeV2
-                      ? "bg-amber-500 text-black shadow-md"
-                      : "text-zinc-400 hover:text-white"
-                  }`}
-                >
-                  V2 Accordion ⚡
-                </button>
-              </div>
-            </div>
+                {/* ─── SECTION 4: MERCHANT WALLET ─── */}
+                {!hideExtraSandboxControls && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                      <User className="w-3 h-3 text-emerald-400" />
+                      Merchant Partition Target
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={selectedMerchant}
+                        onChange={(e) => setSelectedMerchant(e.target.value.toLowerCase().trim())}
+                        className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400 transition cursor-pointer font-mono truncate"
+                      >
+                        <option value="">-- Active Portal Merchant --</option>
+                        {merchantsList.map((m) => (
+                          <option key={m.merchant} value={m.merchant.toLowerCase()}>
+                            {m.displayName ? `${m.displayName} (${m.merchant.slice(0, 6)}...)` : m.merchant}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
 
-            {/* Brand Key Selector */}
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                <Globe className="w-3 h-3 text-sky-400" />
-                Brand Container Override
-              </label>
-              <div className="relative">
-                <select
-                  value={selectedBrand}
-                  onChange={(e) => setSelectedBrand(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-[10px] rounded-lg border border-white/10 bg-zinc-950 text-white focus:outline-none focus:border-amber-500/50 appearance-none font-mono"
-                >
-                  {brandsList.map((bk) => (
-                    <option key={bk} value={bk} className="bg-zinc-950">
-                      {bk === "basaltsurge" ? "basaltsurge (Default)" : bk}
-                    </option>
-                  ))}
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-zinc-400">
-                  <svg className="fill-current h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                    <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
-                  </svg>
-                </div>
-              </div>
-            </div>
+                {/* Fee Mode */}
+                {!hideExtraSandboxControls && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                      <DollarSign className="w-3 h-3 text-emerald-400" />
+                      Fee Calculation Mode
+                    </label>
+                    <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/10">
+                      <button
+                        onClick={() => setFeeMode("fee_plus")}
+                        className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                          feeMode === "fee_plus"
+                            ? "bg-amber-500 text-black shadow-md font-black"
+                            : "text-zinc-400 hover:text-white"
+                        }`}
+                      >
+                        Fee Plus (Buyer)
+                      </button>
+                      <button
+                        onClick={() => setFeeMode("fee_minus")}
+                        className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                          feeMode === "fee_minus"
+                            ? "bg-amber-500 text-black shadow-md font-black"
+                            : "text-zinc-400 hover:text-white"
+                        }`}
+                      >
+                        Fee Minus (Merchant)
+                      </button>
+                    </div>
+                  </div>
+                )}
 
-            {/* Merchant Wallet Selector */}
-            {!hideExtraSandboxControls && (
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
-                  <User className="w-3 h-3 text-emerald-400" />
-                  Merchant Wallet Override
-                </label>
-                <div className="relative">
-                  <select
-                    value={selectedMerchant}
-                    onChange={(e) => setSelectedMerchant(e.target.value)}
-                    className="w-full px-2.5 py-1.5 text-[10px] rounded-lg border border-white/10 bg-zinc-950 text-white focus:outline-none focus:border-amber-500/50 appearance-none font-mono"
-                    disabled={merchantsList.length === 0}
-                  >
-                    <option value="" className="bg-zinc-950">None (Clear Override)</option>
-                    {merchantsList.map((m) => (
-                      <option key={m.merchant} value={m.merchant} className="bg-zinc-950">
-                        {m.displayName ? `${m.displayName} (${m.merchant.slice(0, 8)}...)` : m.merchant}
-                      </option>
+                {/* Split Mode */}
+                {!hideExtraSandboxControls && (
+                  <div className="space-y-1.5 relative opacity-60 select-none">
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 rounded-lg">
+                      <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase bg-zinc-950 text-amber-400 border border-white/10 rounded flex items-center gap-1">
+                        <Lock className="w-2.5 h-2.5 text-amber-400" />
+                        Locked: Brand Config
+                      </span>
+                    </div>
+                    <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide flex items-center gap-1">
+                      <GitMerge className="w-3 h-3 text-purple-400" />
+                      Split Strategy
+                    </label>
+                    <div className="grid grid-cols-2 gap-1 bg-zinc-950 p-0.5 rounded-lg border border-white/5 pointer-events-none">
+                      <div
+                        className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
+                          splitMode === "single"
+                            ? "bg-amber-500 text-black shadow-md"
+                            : "text-zinc-600"
+                        }`}
+                      >
+                        Single Split
+                      </div>
+                      <div
+                        className={`py-1.5 text-center text-[10px] font-bold rounded-md transition-all ${
+                          splitMode === "dual"
+                            ? "bg-amber-500 text-black shadow-md"
+                            : "text-zinc-600"
+                        }`}
+                      >
+                        Dual Split
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Diagnostics feedback */}
+                {!hideExtraSandboxControls && (diag.errors.length > 0 || diag.warnings.length > 0) && (
+                  <div className="p-3 rounded-xl border border-red-500/20 bg-red-500/5 space-y-1.5 text-[10px]">
+                    {diag.errors.map((err, i) => (
+                      <div key={i} className="flex items-center gap-1.5 text-red-400 font-medium">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{err}</span>
+                      </div>
                     ))}
-                  </select>
-                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-zinc-400">
-                    <svg className="fill-current h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                      <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
-                    </svg>
+                    {diag.warnings.map((warn, i) => (
+                      <div key={i} className="flex items-center gap-1.5 text-amber-400 font-medium">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{warn}</span>
+                      </div>
+                    ))}
                   </div>
-                </div>
+                )}
               </div>
-            )}
 
-            {/* Diagnostics List */}
-            {!hideExtraSandboxControls && selectedMerchant && (diag.errors.length > 0 || diag.warnings.length > 0) && (
-              <div className="p-2.5 rounded-lg border border-white/5 bg-zinc-950 space-y-1.5 max-h-28 overflow-y-auto font-mono text-[9px]">
-                <span className="text-[8px] font-bold uppercase tracking-wider text-amber-500 block font-sans">Diagnostics Checklist</span>
-                {diag.errors.map((err, i) => (
-                  <div key={`we-${i}`} className="flex items-start gap-1.5 text-rose-400">
-                    <XCircle className="w-2.5 h-2.5 shrink-0 mt-0.5" />
-                    <span>{err}</span>
-                  </div>
-                ))}
-                {diag.warnings.map((warn, i) => (
-                  <div key={`ww-${i}`} className="flex items-start gap-1.5 text-amber-400">
-                    <AlertTriangle className="w-2.5 h-2.5 shrink-0 mt-0.5" />
-                    <span>{warn}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            </div>
           </div>
 
-          {/* Action buttons */}
-          <div className="mt-5 pt-3 border-t border-white/5 flex items-center justify-between">
-            <span className="text-[9px] text-zinc-500 font-medium italic">
+          {/* Action buttons - Fixed & Sticky Footer */}
+          <div className="shrink-0 px-4 py-2.5 border-t border-white/10 bg-zinc-950/90 backdrop-blur-md flex items-center justify-between">
+            <span className="text-[9px] text-zinc-400 font-medium italic truncate max-w-[200px]">
               {statusMessage || (isConfigLoading ? "Loading config..." : (hasChanges ? "Unsaved changes" : "Config active"))}
             </span>
             <button
               onClick={handleApply}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-br from-amber-500 to-orange-600 text-black font-bold text-[10px] rounded-lg shadow-md hover:brightness-110 active:scale-95 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-br from-amber-500 to-orange-600 text-black font-bold text-[10px] rounded-lg shadow-md hover:brightness-110 active:scale-95 transition-all cursor-pointer"
             >
               <RefreshCw className="w-3 h-3" />
               Apply & Reload
@@ -504,3 +989,5 @@ export function SandboxWidget() {
     </div>
   );
 }
+
+

@@ -124,7 +124,6 @@ export async function POST(req: NextRequest) {
     params.append("destination_currencies[]", destinationCurrency);
     params.append("destination_network", destinationNetwork);
     params.append("destination_networks[]", destinationNetwork);
-    params.append("customer_ip_address", customerIp);
 
     if (sourceAmount) {
       params.append("source_amount", sourceAmount);
@@ -134,6 +133,9 @@ export async function POST(req: NextRequest) {
 
     if (walletAddress) {
       params.append("wallet_address", walletAddress);
+    }
+    if (customerIp) {
+      params.append("customer_ip_address", customerIp);
     }
 
     const settlementSpeed = String(body.settlementSpeed || "standard").trim().toLowerCase();

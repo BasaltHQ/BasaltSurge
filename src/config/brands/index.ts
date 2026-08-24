@@ -59,8 +59,9 @@ export type BrandConfig = {
   unifiedFeeEnabled?: boolean;
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
+  dualSplitEnabled?: boolean;
 
-   stripeOnrampEnabled?: boolean;
+  stripeOnrampEnabled?: boolean;
   stripeOnrampV2Enabled?: boolean;
   v2CheckoutEnabled?: boolean;
   coinbaseOnrampEnabled?: boolean;

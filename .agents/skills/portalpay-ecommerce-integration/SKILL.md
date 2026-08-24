@@ -80,7 +80,7 @@ If polling is needed as a fallback to check if a payment succeeded:
 * **Endpoint**: `/api/receipts/status?receiptId=rec_883a042bc1`
 * **Headers**:
   `x-api-key: sk_live_...`
-* **Response**:
+* **Response (Success)**:
   ```json
   {
     "id": "rec_883a042bc1",
@@ -88,10 +88,21 @@ If polling is needed as a fallback to check if a payment succeeded:
     "transactionHash": "0x..."
   }
   ```
+* **Response (Failed)**:
+  ```json
+  {
+    "id": "rec_883a042bc1",
+    "status": "failed",
+    "failureCode": "PORTAL_PAY_INSUFFICIENT_FUNDS",
+    "failureCategory": "card_decline",
+    "failureReason": "The payment method was declined due to insufficient available funds.",
+    "failureAction": "Ask the customer to retry with another card or use an alternate payment method."
+  }
+  ```
 
 ### D. Webhook Verification (`POST /api/webhooks`)
-PortalPay sends a POST event `receipt.status_updated` (or `receipt.paid`) to the merchant's configured webhook URL when payment completes.
-* **Payload Fields**:
+PortalPay sends a signed POST event `receipt.status_updated` to the merchant's configured webhook URL when payment status changes.
+* **Payload Fields (Success)**:
   ```json
   {
     "event": "receipt.status_updated",
@@ -100,6 +111,22 @@ PortalPay sends a POST event `receipt.status_updated` (or `receipt.paid`) to the
     "transactionHash": "0x...",
     "stripeSessionId": "cos_8a7a48c2-6bae-4b08-9d36-35670b42dc8d",
     "isStripeSessionUnique": true,
+    "timestamp": 1785626400000
+  }
+  ```
+* **Payload Fields (Failed)**:
+  ```json
+  {
+    "event": "receipt.status_updated",
+    "receiptId": "rec_883a042bc1",
+    "status": "failed",
+    "previousStatus": "pending",
+    "failureCode": "PORTAL_PAY_INSUFFICIENT_FUNDS",
+    "failureCategory": "card_decline",
+    "failureReason": "The payment method was declined due to insufficient available funds.",
+    "failureAction": "Ask the customer to retry with another card or use an alternate payment method.",
+    "merchantWallet": "0x...",
+    "totalUsd": 45.99,
     "timestamp": 1785626400000
   }
   ```

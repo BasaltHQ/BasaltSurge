@@ -31,7 +31,10 @@ export async function findLeg2OnChainTx(
     const currentBlock = blockNumData.result ? parseInt(blockNumData.result, 16) : 0;
     const fromBlockHex = currentBlock > 10000 ? "0x" + (currentBlock - 10000).toString(16) : "0x0";
 
-    const response = await fetch(rpcUrl, {
+    const usdcTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+    // Attempt 1: Specific query with splitAddress topic if provided
+    let response = await fetch(rpcUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -43,7 +46,7 @@ export async function findLeg2OnChainTx(
           fromBlock: fromBlockHex,
           toBlock: "latest",
           topics: [
-            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            usdcTopic,
             paddedUserWallet,
             ...(paddedSplit ? [paddedSplit] : [])
           ]
@@ -51,12 +54,44 @@ export async function findLeg2OnChainTx(
       })
     });
 
-    if (!response.ok) return null;
-    const data = await response.json();
-    const logs = data.result || [];
-    if (logs.length > 0) {
-      const latestLog = logs[logs.length - 1];
-      return latestLog.transactionHash || null;
+    if (response.ok) {
+      const data = await response.json();
+      const logs = data.result || [];
+      if (logs.length > 0) {
+        const latestLog = logs[logs.length - 1];
+        return latestLog.transactionHash || null;
+      }
+    }
+
+    // Attempt 2: Fallback query for any outbound transfer from userWallet (matching reconcile-stuck)
+    if (paddedSplit) {
+      response = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 3,
+          method: "eth_getLogs",
+          params: [{
+            address: BASE_USDC_ADDRESS,
+            fromBlock: fromBlockHex,
+            toBlock: "latest",
+            topics: [
+              usdcTopic,
+              paddedUserWallet
+            ]
+          }]
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const logs = data.result || [];
+        if (logs.length > 0) {
+          const latestLog = logs[logs.length - 1];
+          return latestLog.transactionHash || null;
+        }
+      }
     }
   } catch (err) {
     console.warn("[BACKGROUND POLL] Error querying Base on-chain Leg 2 logs:", err);
@@ -216,10 +251,16 @@ export async function executeGaslessTransferServer(
 
     if (balance === BigInt(0)) {
       console.log(`[BACKGROUND POLL] Wallet ${account.address} has 0 USDC balance on-chain. Checking for existing completed Leg 2 transfer on Base...`);
-      const existingLeg2Tx = await findLeg2OnChainTx(account.address, toAddress);
-      if (existingLeg2Tx) {
-        console.log(`🎉 [BACKGROUND POLL] Found completed Leg 2 transaction on Base: ${existingLeg2Tx}`);
-        return existingLeg2Tx;
+      // Retry up to 3 times with a short 2-second delay to account for Base RPC block indexing latency
+      for (let retry = 0; retry < 3; retry++) {
+        if (retry > 0) {
+          await new Promise(r => setTimeout(r, 2000));
+        }
+        const existingLeg2Tx = await findLeg2OnChainTx(account.address, toAddress);
+        if (existingLeg2Tx) {
+          console.log(`🎉 [BACKGROUND POLL] Found completed Leg 2 transaction on Base (attempt ${retry + 1}): ${existingLeg2Tx}`);
+          return existingLeg2Tx;
+        }
       }
       console.log(`[BACKGROUND POLL] Wallet ${account.address} has 0 USDC balance and no prior Leg 2 transfer found. Skipping.`);
       return null;
@@ -262,6 +303,7 @@ async function runBackgroundPoll(params: {
   brandKey: string;
   detectedCardFunding?: string;
   kycOccurred?: boolean;
+  kycLevel?: string;
 }) {
   const {
     sessionId,
@@ -274,6 +316,7 @@ async function runBackgroundPoll(params: {
     brandKey,
     detectedCardFunding,
     kycOccurred,
+    kycLevel: initialKycLevel,
   } = params;
 
   const stripeKey = process.env.STRIPE_API_KEY;
@@ -384,7 +427,7 @@ async function runBackgroundPoll(params: {
   if (resolvedStatus === "success") {
     console.log(`[BACKGROUND POLL] Stripe onramp fulfilled. Executing EIP-7702 transfer...`);
 
-    const incomingKycLevel = body.kycLevel ? String(body.kycLevel).trim() : undefined;
+    const incomingKycLevel = initialKycLevel ? String(initialKycLevel).trim() : undefined;
     let kycLevel = (incomingKycLevel === "L2" || incomingKycLevel === "L1") ? incomingKycLevel : "L0";
     const resolvedFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
     const isAch = resolvedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account";
@@ -726,6 +769,7 @@ export async function POST(req: NextRequest) {
     const brandKey = String(body.brandKey || "").trim();
     const detectedCardFunding = String(body.detectedCardFunding || "").trim();
     const kycOccurred = typeof body.kycOccurred === "boolean" ? body.kycOccurred : undefined;
+    const kycLevel = body.kycLevel ? String(body.kycLevel).trim() : undefined;
 
     if (!sessionId || !receiptId || !merchantWallet || !email || !amount || !splitAddress) {
       return NextResponse.json(
@@ -755,6 +799,9 @@ export async function POST(req: NextRequest) {
         if (typeof kycOccurred === "boolean") {
           receipt.kycOccurred = kycOccurred;
         }
+        if (kycLevel) {
+          receipt.kycLevel = kycLevel;
+        }
         receipt.lastUpdatedAt = Date.now();
         await container.items.upsert(receipt);
         console.log(`[BACKGROUND POLL] Immediately saved Stripe metadata to receipt ${receiptId}`);
@@ -779,6 +826,7 @@ export async function POST(req: NextRequest) {
           brandKey,
           detectedCardFunding,
           kycOccurred,
+          kycLevel,
         });
       } catch (err) {
         console.error("[BACKGROUND POLL] Unhandled error in background poll execution task:", err);

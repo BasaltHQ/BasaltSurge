@@ -287,7 +287,7 @@ export async function GET(req: NextRequest) {
     try {
       const cfg = await getSiteConfigForWallet(wallet, docBrandKey);
       const isCreditQuery = url.searchParams.get("isCredit") === "true";
-      const isDual = isDualSplitEnabled() || isCreditQuery;
+      const isDual = (typeof (cfg as any)?.dualSplitEnabled === "boolean" ? (cfg as any).dualSplitEnabled : isDualSplitEnabled()) || isCreditQuery;
 
       let splitAddr = isCreditQuery && isDual
         ? (cfg as any)?.splitAddressCredit || (cfg as any)?.splitCredit?.address
@@ -371,7 +371,7 @@ export async function GET(req: NextRequest) {
       }
 
       const isCreditQuery = url.searchParams.get("isCredit") === "true";
-      const isDual = isDualSplitEnabled() || isCreditQuery;
+      const isDual = (typeof brand?.dualSplitEnabled === "boolean" ? brand.dualSplitEnabled : isDualSplitEnabled()) || isCreditQuery;
 
       let platformRecipient = String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || process.env.NEXT_PUBLIC_PLATFORM_WALLET || process.env.PLATFORM_WALLET || "").toLowerCase();
       let platformSharesBps = resolvePlatformBpsFromBrand(resolvedBrand, brand, overrides);
@@ -651,7 +651,7 @@ export async function POST(req: NextRequest) {
     // Partner recipient present when brandKey !== 'portalpay' and partner is configured
 
     const isCredit = body.isCredit === true;
-    const isDual = isDualSplitEnabled() || isCredit;
+    const isDual = (typeof brand?.dualSplitEnabled === "boolean" ? brand.dualSplitEnabled : isDualSplitEnabled()) || isCredit;
 
     // Prepare container and read existing site config to allow partner fallback
     const c = await getContainer();

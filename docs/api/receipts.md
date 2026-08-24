@@ -420,7 +420,7 @@ curl -X GET "https://api.pay.ledger1.ai/portalpay/api/receipts/status?receiptId=
 
 ### Response
 
-Success (200 OK):
+Success (200 OK - Paid):
 
 ```json
 {
@@ -429,6 +429,24 @@ Success (200 OK):
   "transactionHash": "0xabc123...",
   "currency": "USDC",
   "amount": 27.0
+}
+```
+
+Failed (200 OK - Failed Transaction):
+
+When a transaction fails (e.g. card decline, KYC requirement, limit threshold), the endpoint returns structured diagnostic fields:
+
+```json
+{
+  "id": "rcpt_12345",
+  "status": "failed",
+  "failureCode": "PORTAL_PAY_INSUFFICIENT_FUNDS",
+  "failureCategory": "card_decline",
+  "failureReason": "The payment method was declined due to insufficient available funds.",
+  "failureAction": "Ask the customer to retry with another card or use an alternate payment method.",
+  "currency": "USDC",
+  "amount": 27.0,
+  "transactionHash": null
 }
 ```
 
@@ -443,6 +461,15 @@ Status values:
 
 - `generated`, `pending`, `completed`, `failed`, `refunded`,
 - `tx_mined`, `recipient_validated`, `tx_mismatch`
+
+Failure Categories:
+
+- `card_decline`: Card issuer declines, incorrect CVC, insufficient funds, expired cards
+- `compliance`: Identity verification requirements, unreadable documents, sanctions
+- `limits`: Purchase amount exceeding tier limits or system bounds
+- `blockchain`: Insufficient gas/tokens, user cancelled wallet prompt, slippage
+- `session`: User abandoned or closed checkout window
+- `system`: Payment network timeout or processing error
 
 Response Headers (when enabled at gateway):
 

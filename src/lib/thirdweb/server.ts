@@ -8,7 +8,7 @@ import {
   sepolia,
 } from "thirdweb/chains";
 
-const DEFAULT_CHAIN = baseSepolia;
+const DEFAULT_CHAIN = base;
 
 /**
  * Resolve chain from environment with a Base Sepolia default.

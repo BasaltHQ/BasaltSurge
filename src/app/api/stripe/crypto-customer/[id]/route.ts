@@ -151,6 +151,7 @@ export async function GET(
       ok: true,
       customerId: customer.id,
       providedFields: customer.provided_fields ?? [],
+      kycRegion: customer.kyc_region ?? null,
       kycStatus: kycVerified?.status ?? "not_started",
       idDocStatus: derivedIdDocStatus,
       kycTiers: kycTiers,

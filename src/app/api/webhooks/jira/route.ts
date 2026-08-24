@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { findTicketByJiraKey, getJiraIssueFields, getJiraConfig } from "@/lib/jira";
+import { notifyAdminReply } from "@/lib/notifications/support-dispatcher";
 import * as crypto from "node:crypto";
 
 export const dynamic = "force-dynamic";
@@ -86,6 +87,11 @@ export async function POST(req: NextRequest) {
 
             const partitionKey = ticket.wallet || ticket.user;
             await container.item(ticket.id, partitionKey).replace(updatedTicket);
+
+            // Dispatch SES email notification to customer (fire-and-forget, non-blocking)
+            notifyAdminReply(updatedTicket, commentText, comment.author?.displayName || "Support Specialist").catch((e) => {
+                console.error("[Support Dispatcher] Jira sync customer notification failed:", e);
+            });
 
             console.log(`[Jira Webhook] Comment synced to Surge ticket ${ticket.id}`);
             return NextResponse.json({ ok: true, synced: ticket.id });

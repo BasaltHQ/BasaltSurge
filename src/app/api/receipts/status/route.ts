@@ -8,6 +8,7 @@ import { requireApimOrJwt } from "@/lib/gateway-auth";
 import * as crypto from "crypto";
 import { getBrandKey } from "@/config/brands";
 import { dispatchWebhookAsync, type WebhookPayload } from "@/lib/webhook-dispatch";
+import { resolveMerchantErrorInfo } from "@/lib/errors/merchant-error-taxonomy";
 
 /**
  * POST /api/receipts/status
@@ -49,8 +50,12 @@ export async function GET(req: NextRequest) {
           id: receiptId,
           status: String(resource.status || "generated"),
           transactionHash: typeof resource.transactionHash === "string" ? resource.transactionHash : null,
-          currency: null,
-          amount: null,
+          currency: resource.expectedToken || null,
+          amount: typeof resource.totalUsd === "number" ? resource.totalUsd : null,
+          ...(resource.failureCode ? { failureCode: resource.failureCode } : {}),
+          ...(resource.failureReason ? { failureReason: resource.failureReason } : {}),
+          ...(resource.failureCategory ? { failureCategory: resource.failureCategory } : {}),
+          ...(resource.failureAction ? { failureAction: resource.failureAction } : {}),
         };
         return NextResponse.json(payload, { headers: { "x-correlation-id": correlationId } });
       }
@@ -66,8 +71,12 @@ export async function GET(req: NextRequest) {
           id: receiptId,
           status: String(found.status || "generated"),
           transactionHash: typeof found.transactionHash === "string" ? found.transactionHash : null,
-          currency: null,
-          amount: null,
+          currency: found.expectedToken || null,
+          amount: typeof found.totalUsd === "number" ? found.totalUsd : null,
+          ...(found.failureCode ? { failureCode: found.failureCode } : {}),
+          ...(found.failureReason ? { failureReason: found.failureReason } : {}),
+          ...(found.failureCategory ? { failureCategory: found.failureCategory } : {}),
+          ...(found.failureAction ? { failureAction: found.failureAction } : {}),
         };
         return NextResponse.json(payload, { headers: { "x-correlation-id": correlationId } });
       }
@@ -124,7 +133,23 @@ export async function POST(req: NextRequest) {
       detectedCardFunding = "us_bank_account";
       isCreditCard = false;
     }
-    const failureReason = typeof body.error === "string" ? String(body.error).trim() : undefined;
+    const rawFailureInput = typeof body.failureCode === "string" && body.failureCode.trim()
+      ? String(body.failureCode).trim()
+      : (typeof body.error === "string" && body.error.trim()
+        ? String(body.error).trim()
+        : (typeof body.failureReason === "string" && body.failureReason.trim()
+          ? String(body.failureReason).trim()
+          : undefined));
+
+    const failureInfo = rawFailureInput || status === "failed" || status === "rejected" || status === "abandoned"
+      ? resolveMerchantErrorInfo(rawFailureInput || status)
+      : undefined;
+
+    const failureReason = failureInfo ? failureInfo.description : (typeof body.error === "string" ? String(body.error).trim() : undefined);
+    const failureCode = failureInfo ? failureInfo.code : (typeof body.failureCode === "string" ? String(body.failureCode).trim() : undefined);
+    const failureCategory = failureInfo ? failureInfo.category : undefined;
+    const failureAction = failureInfo ? failureInfo.suggestedAction : undefined;
+
     const paymentMethodDetails = typeof body.paymentMethodDetails === "object" ? body.paymentMethodDetails : undefined;
     const parentUrl = typeof body.parentUrl === "string" ? String(body.parentUrl).trim() : undefined;
     const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "127.0.0.1";
@@ -164,7 +189,7 @@ export async function POST(req: NextRequest) {
     // AuthZ: Allow unauthenticated status updates for tracking (link_opened, buyer_logged_in, checkout_initialized, receipt_claimed, checkout_success, paid)
     // Require JWT auth only for sensitive status updates (refund, etc.)
     const trackingStatuses = ["link_opened", "buyer_logged_in", "checkout_initialized", "receipt_claimed", "checkout_success", "paid", "paid - ach pending", "ach_pending", "error", "failed", "pending", "onramp_completed", "fulfillment_processing", "onramp_session_created", "checkout_ready"];
-    const isTrackingStatus = trackingStatuses.includes(status);
+    const isTrackingStatus = trackingStatuses.includes(status) || status.startsWith("onramp_");
 
     let caller: any = null;
     if (!isTrackingStatus) {
@@ -309,6 +334,9 @@ export async function POST(req: NextRequest) {
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
           ...(failureReason ? { failureReason } : {}),
+          ...(failureCode ? { failureCode } : {}),
+          ...(failureCategory ? { failureCategory } : {}),
+          ...(failureAction ? { failureAction } : {}),
           ...(mergedKycLevel ? { kycLevel: mergedKycLevel } : {}),
           ...(typeof body.kycOccurred === "boolean" ? { kycOccurred: body.kycOccurred } : resource?.kycOccurred ? { kycOccurred: true } : {}),
           // Persist Thirdweb transaction and bridge metadata for platform analytics
@@ -363,6 +391,9 @@ export async function POST(req: NextRequest) {
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
           ...(failureReason ? { failureReason } : {}),
+          ...(failureCode ? { failureCode } : {}),
+          ...(failureCategory ? { failureCategory } : {}),
+          ...(failureAction ? { failureAction } : {}),
           ...(mergedKycLevel ? { kycLevel: mergedKycLevel } : {}),
           ...(typeof body.kycOccurred === "boolean" ? { kycOccurred: body.kycOccurred } : {}),
           // Persist Thirdweb transaction and bridge metadata for platform analytics
@@ -496,6 +527,10 @@ export async function POST(req: NextRequest) {
           stripeSessionId: activeStripeSessionId,
           transactionId: activeTxId,
           metadata: activeMeta,
+          failureCode: next?.failureCode || resource?.failureCode || failureCode || null,
+          failureReason: next?.failureReason || resource?.failureReason || failureReason || null,
+          failureCategory: next?.failureCategory || resource?.failureCategory || failureCategory || null,
+          failureAction: next?.failureAction || resource?.failureAction || failureAction || null,
         } as WebhookPayload, signingSecret);
       }
 

@@ -113,6 +113,8 @@ export async function triggerNotification(
       contract_upgraded: true,
       node_error: true,
       system_status: true,
+      support_ticket_created: true,
+      support_ticket_reply: true,
     };
 
     const isEventEnabled = settingsDoc?.settings

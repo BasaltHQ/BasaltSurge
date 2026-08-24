@@ -33,6 +33,9 @@ export default function GetSupportPanel({ brandKey }: { brandKey?: string }) {
     const [message, setMessage] = useState("");
     const [priority, setPriority] = useState("medium");
     const [role, setRole] = useState<string>(brandKey ? "partner" : "merchant");
+    const [contactEmail, setContactEmail] = useState("");
+    const [hasDiscoveredEmail, setHasDiscoveredEmail] = useState(false);
+    const [emailError, setEmailError] = useState("");
     const [attachments, setAttachments] = useState<string[]>([]);
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState("");
@@ -59,6 +62,31 @@ export default function GetSupportPanel({ brandKey }: { brandKey?: string }) {
             fetchTickets();
         }
     }, [brandKey, account?.address]);
+
+    // Discover existing email for connected wallet
+    useEffect(() => {
+        async function fetchUserEmail() {
+            if (!account?.address) return;
+            try {
+                const res = await fetch(`/api/notifications/settings?level=${role}`);
+                const data = await res.json();
+                if (data?.email && data.email.includes("@")) {
+                    setContactEmail(data.email);
+                    setHasDiscoveredEmail(true);
+                    return;
+                }
+            } catch {}
+            try {
+                const res = await fetch(`/api/shop/lookup?wallet=${encodeURIComponent(account.address)}`);
+                const data = await res.json();
+                if (data?.email && data.email.includes("@")) {
+                    setContactEmail(data.email);
+                    setHasDiscoveredEmail(true);
+                }
+            } catch {}
+        }
+        fetchUserEmail();
+    }, [account?.address, role]);
 
     useEffect(() => {
         if (view === 'detail') {
@@ -106,6 +134,18 @@ export default function GetSupportPanel({ brandKey }: { brandKey?: string }) {
 
     async function createTicket() {
         if (!subject || !message) return;
+
+        const trimmedEmail = contactEmail.trim();
+        if (!trimmedEmail) {
+            setEmailError("Please provide an email address so our support team can reply to you.");
+            return;
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+            setEmailError("Please enter a valid email address.");
+            return;
+        }
+        setEmailError("");
+
         setCreating(true);
         try {
             const fullSubject = getSubjectPrefix(requestType) + subject;
@@ -115,6 +155,7 @@ export default function GetSupportPanel({ brandKey }: { brandKey?: string }) {
                 body: JSON.stringify({
                     brandKey: brandKey || "platform",
                     user: account?.address || "anonymous",
+                    email: trimmedEmail,
                     source: role,
                     requestType,
                     subject: fullSubject,
@@ -396,6 +437,50 @@ export default function GetSupportPanel({ brandKey }: { brandKey?: string }) {
                                 placeholder="Brief summary of the issue"
                                 autoFocus
                             />
+                        </div>
+
+                        {/* Contact Email */}
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                                <label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1.5">
+                                    <span>Contact Email for Updates & Replies</span>
+                                    {!hasDiscoveredEmail && !contactEmail && (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                                            Required
+                                        </span>
+                                    )}
+                                </label>
+                                {hasDiscoveredEmail && (
+                                    <span className="text-[10px] text-emerald-500 font-semibold flex items-center gap-1">
+                                        <CheckCircle2 className="w-3 h-3" /> Linked to Wallet
+                                    </span>
+                                )}
+                            </div>
+                            <input
+                                type="email"
+                                className={`w-full h-10 px-3 rounded-lg border bg-foreground/[0.03] focus:bg-foreground/[0.05] transition-all outline-none focus:ring-1 text-sm font-medium ${
+                                    emailError
+                                        ? "border-red-500/50 focus:ring-red-500/30"
+                                        : "border-foreground/10 focus:ring-foreground/20"
+                                }`}
+                                value={contactEmail}
+                                onChange={(e) => {
+                                    setContactEmail(e.target.value);
+                                    if (emailError) setEmailError("");
+                                }}
+                                placeholder="name@company.com"
+                            />
+                            {emailError ? (
+                                <p className="text-xs text-red-500 flex items-center gap-1">
+                                    <AlertCircle className="w-3 h-3 shrink-0" /> {emailError}
+                                </p>
+                            ) : (
+                                <p className="text-[11px] text-muted-foreground">
+                                    {hasDiscoveredEmail
+                                        ? "Our support responses and updates will be delivered to this email address."
+                                        : "Please enter your email so our team can send you updates and reply directly."}
+                                </p>
+                            )}
                         </div>
 
                         <div className="space-y-2">

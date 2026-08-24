@@ -11,17 +11,22 @@ const DEFAULT_SETTINGS: Record<string, Record<string, boolean>> = {
     split_released: true,
     low_stock: false,
     team_pin_changed: true,
+    support_ticket_reply: true,
   },
   partner: {
     merchant_signup: true,
     split_deployed: true,
     device_offline: true,
+    support_ticket_created: true,
+    support_ticket_reply: true,
   },
   platform: {
     partner_signup: true,
     contract_upgraded: true,
     node_error: true,
     system_status: true,
+    support_ticket_created: true,
+    support_ticket_reply: true,
   },
 };
 
