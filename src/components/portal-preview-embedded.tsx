@@ -11,6 +11,7 @@ import { SUPPORTED_CURRENCIES, convertFromUsd, formatCurrency, getCurrencyFlag, 
 import { useBrand } from "@/contexts/BrandContext";
 import { cachedFetch } from "@/lib/client-api-cache";
 import { useStripeOnrampInterceptor } from "@/hooks/useStripeOnrampInterceptor";
+import { extractThirdwebTxHash } from "@/lib/thirdweb/tx-extractor";
 import { getDefaultBrandSymbol, resolveBrandAppLogo, resolveBrandSymbol, getDefaultBrandName } from "@/lib/branding";
 
 type SiteTheme = {
@@ -1160,7 +1161,7 @@ export function PortalPreviewEmbedded({
                 // Onramp Tracking: Capture success and link txHash immediately
                 onSuccess={(result: any) => {
                   console.log("[CHECKOUT] Success:", result);
-                  const txHash = result?.transactionHash || result?.hash;
+                  const txHash = extractThirdwebTxHash(result);
                   if (txHash && demoReceipt) {
                     // Link txHash to receipt immediately
                     const payload = {

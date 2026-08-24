@@ -21,6 +21,7 @@ import { useStripeOnrampInterceptor } from "@/hooks/useStripeOnrampInterceptor";
 import { useStripeEmbeddedOnramp } from "@/hooks/useStripeEmbeddedOnramp";
 import { PortalPayAccordionCheckoutV2 } from "@/components/checkout/PortalPayAccordionCheckoutV2";
 import { usePortalLogger } from "@/hooks/usePortalLogger";
+import { extractThirdwebTxHash, extractThirdwebTransactionMetadata } from "@/lib/thirdweb/tx-extractor";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
 // Embedded mode (embedded=1 or iframe) removes page background to fit seamlessly in host modals.
@@ -3608,7 +3609,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     let active = true;
     let timer: NodeJS.Timeout;
 
-    const activeAmount = Number(stripeWidgetAmount) > 0 ? Number(stripeWidgetAmount) : Number(widgetAmount);
+    const activeAmount = Number(widgetAmount) > 0 ? Number(widgetAmount) : Number(stripeWidgetAmount);
     if (!receipt || paymentConfirmed || isSettled(receipt.status) || loadingReceipt || !merchantWallet || !receiptId || !token || isNaN(activeAmount) || activeAmount <= 0) return;
 
     const checkPayment = async () => {
@@ -7470,9 +7471,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                               className="w-full"
                                               name={`Total (${currency})`}
                                               client={client}
-                                              chain={chain}
-                                              currency={widgetCurrency as any}
-                                              amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                              chain={chain || base}
+                                              currency={widgetCurrency as any || (currency as any)}
+                                              amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                               seller={sellerAddress || merchantWallet || recipient}
                                               tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                               showThirdwebBranding={false}
@@ -7487,7 +7488,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                               connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                               purchaseData={{
                                                 productId: `portal:${receiptId}`,
+                                                receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
                                                 meta: {
+                                                  receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
                                                   token,
                                                   currency,
                                                   usd: totalUsd,
@@ -7503,52 +7506,70 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                                   }
                                                 },
                                               }}
-                                              onSuccess={(result: any) => {
-                                                console.log("[CHECKOUT] Success:", result);
-                                                const txHash = (
-                                                  result?.transactionHash ||
-                                                  result?.hash ||
-                                                  result?.receipt?.transactionHash ||
-                                                  result?.receipt?.hash ||
-                                                  result?.transaction?.transactionHash ||
-                                                  result?.transaction?.hash ||
-                                                  result?.transactionResult?.transactionHash ||
-                                                  result?.txHash ||
-                                                  result?.onChainTxHash ||
-                                                  (typeof result === "string" && result.startsWith("0x") ? result : undefined) ||
-                                                  (typeof result?.id === "string" && result.id.startsWith("0x") ? result.id : undefined)
-                                                );
-                                                const detectedProvider = (
-                                                  result?.provider ||
-                                                  result?.onRampProvider ||
-                                                  result?.quote?.provider ||
-                                                  result?.paymentMethod ||
-                                                  (typeof window !== "undefined" ? (window as any).__lastSelectedOnramp : undefined) ||
-                                                  "crypto"
-                                                );
-                                                const buyer = (account?.address || "").toLowerCase();
-                                                setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
-                                                if (txHash && receiptId) {
-                                                  postStatus("paid", { buyerWallet: buyer, txHash: txHash || undefined, detectedCardFunding: detectedProvider, provider: detectedProvider }).catch(e => console.error("[CHECKOUT] Failed:", e));
-                                                } else {
-                                                  postStatus("checkout_success", { buyer });
-                                                }
+                                              onSuccess={async (result: any) => {
                                                 try {
-                                                  fetch("/api/billing/purchase", {
-                                                    method: "POST",
-                                                    headers: { "Content-Type": "application/json", "x-wallet": buyer, "x-recipient": merchantWallet || recipient },
-                                                    body: JSON.stringify({ seconds: 1, usd: Number(totalUsd.toFixed(2)), token, wallet: buyer, receiptId, recipient: merchantWallet || recipient, idempotencyKey: `portal:${receiptId}:${buyer}:${Date.now()}` }),
-                                                  }).catch(() => { });
-                                                  try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
+                                                  console.log("[CHECKOUT] Success callback:", result);
+                                                  const buyer = (account?.address || "").toLowerCase();
+                                                  const txHash = extractThirdwebTxHash(result) || "";
+                                                  const meta = extractThirdwebTransactionMetadata(result);
+                                                  const detectedProvider = (
+                                                    result?.provider ||
+                                                    result?.onRampProvider ||
+                                                    result?.quote?.provider ||
+                                                    result?.paymentMethod ||
+                                                    (typeof window !== "undefined" ? (window as any).__lastSelectedOnramp : undefined) ||
+                                                    "crypto"
+                                                  );
+
+                                                  setPaymentConfirmed({ txHash, amount: totalUsd, token: currency || token });
+                                                  await postStatus("paid", {
+                                                    buyerWallet: buyer,
+                                                    txHash: txHash || undefined,
+                                                    status: "paid",
+                                                    detectedCardFunding: detectedProvider,
+                                                    provider: detectedProvider,
+                                                    isCrypto: true,
+                                                    thirdwebMetadata: meta,
+                                                    paymentId: meta.paymentId,
+                                                    transactions: meta.transactions,
+                                                    originChainId: meta.originChainId,
+                                                    destinationChainId: meta.destinationChainId,
+                                                    originToken: meta.originToken,
+                                                    destinationToken: meta.destinationToken,
+                                                    originAmount: meta.originAmount,
+                                                    destinationAmount: meta.destinationAmount,
+                                                    quoteSummary: meta.quoteSummary,
+                                                  }).catch(e => console.error("[CHECKOUT] Failed to post paid status:", e));
+
                                                   try {
-                                                    if (typeof window !== "undefined" && window.parent && window.parent !== window) {
-                                                      const confirmToken = `ppc_${receiptId}_${Date.now()}`;
-                                                      window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                                      window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                                    }
+                                                    await fetch("/api/billing/purchase", {
+                                                      method: "POST",
+                                                      headers: { "Content-Type": "application/json", "x-wallet": buyer, "x-recipient": merchantWallet || recipient },
+                                                      body: JSON.stringify({
+                                                        seconds: 1,
+                                                        usd: Number(totalUsd.toFixed(2)),
+                                                        token,
+                                                        wallet: buyer,
+                                                        receiptId,
+                                                        recipient: merchantWallet || recipient,
+                                                        txHash: txHash || undefined,
+                                                        idempotencyKey: `portal:${receiptId}:${buyer || "guest"}:${Date.now()}`
+                                                      }),
+                                                    });
+                                                    try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
+                                                    try {
+                                                      if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+                                                        const confirmToken = `ppc_${receiptId}_${Date.now()}`;
+                                                        window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
+                                                        window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
+                                                      }
+                                                    } catch { }
                                                   } catch { }
-                                                } catch { }
+                                                } catch (err) {
+                                                  console.error("Checkout success handler error", err);
+                                                }
                                               }}
+                                              onError={(error) => { console.error("CheckoutWidget Error:", error); postStatus("checkout_error", { error: error.message }); }}
                                             />
                                           )}
                                         </div>
@@ -7565,9 +7586,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         className="w-full"
                                         name={`Total (${currency})`}
                                         client={client}
-                                        chain={chain}
-                                        currency={widgetCurrency as any}
-                                        amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                        chain={chain || base}
+                                        currency={widgetCurrency as any || (currency as any)}
+                                        amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                         seller={sellerAddress || merchantWallet || recipient}
                                         tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                         showThirdwebBranding={false}
@@ -7582,7 +7603,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                         purchaseData={{
                                           productId: `portal:${receiptId}`,
+                                          receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
                                           meta: {
+                                            receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
                                             token,
                                             currency,
                                             usd: totalUsd,
@@ -7593,40 +7616,70 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                             feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
                                           },
                                         }}
-                                        onSuccess={(result: any) => {
-                                          console.log("[CHECKOUT] Success:", result);
-                                          const txHash = (
-                                            result?.transactionHash ||
-                                            result?.hash ||
-                                            result?.receipt?.transactionHash ||
-                                            result?.receipt?.hash ||
-                                            result?.transaction?.transactionHash ||
-                                            result?.transaction?.hash ||
-                                            result?.transactionResult?.transactionHash ||
-                                            result?.txHash ||
-                                            result?.onChainTxHash ||
-                                            (typeof result === "string" && result.startsWith("0x") ? result : undefined) ||
-                                            (typeof result?.id === "string" && result.id.startsWith("0x") ? result.id : undefined)
-                                          );
-                                          const buyer = (account?.address || "").toLowerCase();
-                                          setPaymentConfirmed({ txHash: txHash || "", amount: totalUsd, token });
-                                          postStatus("paid", { buyerWallet: buyer, txHash: txHash || undefined, status: "paid", detectedCardFunding: "crypto" }).catch(e => console.error("[CHECKOUT] Failed:", e));
+                                        onSuccess={async (result: any) => {
                                           try {
-                                            fetch("/api/billing/purchase", {
-                                              method: "POST",
-                                              headers: { "Content-Type": "application/json", "x-wallet": buyer, "x-recipient": merchantWallet || recipient },
-                                              body: JSON.stringify({ seconds: 1, usd: Number(totalUsd.toFixed(2)), token, wallet: buyer, receiptId, recipient: merchantWallet || recipient, idempotencyKey: `portal:${receiptId}:${buyer}:${Date.now()}` }),
-                                            }).catch(() => { });
-                                            try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
+                                            console.log("[CHECKOUT] Success callback:", result);
+                                            const buyer = (account?.address || "").toLowerCase();
+                                            const txHash = extractThirdwebTxHash(result) || "";
+                                            const meta = extractThirdwebTransactionMetadata(result);
+                                            const detectedProvider = (
+                                              result?.provider ||
+                                              result?.onRampProvider ||
+                                              result?.quote?.provider ||
+                                              result?.paymentMethod ||
+                                              (typeof window !== "undefined" ? (window as any).__lastSelectedOnramp : undefined) ||
+                                              "crypto"
+                                            );
+
+                                            setPaymentConfirmed({ txHash, amount: totalUsd, token: currency || token });
+                                            await postStatus("paid", {
+                                              buyerWallet: buyer,
+                                              txHash: txHash || undefined,
+                                              status: "paid",
+                                              detectedCardFunding: detectedProvider,
+                                              provider: detectedProvider,
+                                              isCrypto: true,
+                                              thirdwebMetadata: meta,
+                                              paymentId: meta.paymentId,
+                                              transactions: meta.transactions,
+                                              originChainId: meta.originChainId,
+                                              destinationChainId: meta.destinationChainId,
+                                              originToken: meta.originToken,
+                                              destinationToken: meta.destinationToken,
+                                              originAmount: meta.originAmount,
+                                              destinationAmount: meta.destinationAmount,
+                                              quoteSummary: meta.quoteSummary,
+                                            }).catch(e => console.error("[CHECKOUT] Failed to post paid status:", e));
+
                                             try {
-                                              if (typeof window !== "undefined" && window.parent && window.parent !== window) {
-                                                const confirmToken = `ppc_${receiptId}_${Date.now()}`;
-                                                window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                                window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                              }
+                                              await fetch("/api/billing/purchase", {
+                                                method: "POST",
+                                                headers: { "Content-Type": "application/json", "x-wallet": buyer, "x-recipient": merchantWallet || recipient },
+                                                body: JSON.stringify({
+                                                  seconds: 1,
+                                                  usd: Number(totalUsd.toFixed(2)),
+                                                  token,
+                                                  wallet: buyer,
+                                                  receiptId,
+                                                  recipient: merchantWallet || recipient,
+                                                  txHash: txHash || undefined,
+                                                  idempotencyKey: `portal:${receiptId}:${buyer || "guest"}:${Date.now()}`
+                                                }),
+                                              });
+                                              try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
+                                              try {
+                                                if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+                                                  const confirmToken = `ppc_${receiptId}_${Date.now()}`;
+                                                  window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
+                                                  window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
+                                                }
+                                              } catch { }
                                             } catch { }
-                                          } catch { }
+                                          } catch (err) {
+                                            console.error("Checkout success handler error", err);
+                                          }
                                         }}
+                                        onError={(error) => { console.error("CheckoutWidget Error:", error); postStatus("checkout_error", { error: error.message }); }}
                                       />
                                     )}
                                   </>
@@ -8185,9 +8238,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           className="w-full"
                                           name={`Total (${currency})`}
                                           client={client}
-                                          chain={base}
-                                          currency={currency as any}
-                                          amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                          chain={chain || base}
+                                          currency={widgetCurrency as any || (currency as any)}
+                                          amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                           seller={sellerAddress || merchantWallet || recipient}
                                           tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                           showThirdwebBranding={false}
@@ -8196,31 +8249,81 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                           purchaseData={{
                                             productId: `portal:${receiptId}`,
-                                            meta: { token, currency, usd: totalUsd, tipUsd, itemsSubtotalUsd, taxUsd, processingFeeUsd, feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)) },
+                                            receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
+                                            meta: {
+                                              receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
+                                              token,
+                                              currency,
+                                              usd: totalUsd,
+                                              tipUsd,
+                                              itemsSubtotalUsd,
+                                              taxUsd,
+                                              processingFeeUsd,
+                                              feePct: (effectiveBasePlatformFeePct + Number(processingFeePct || 0)),
+                                              shipping: {
+                                                name: shipName,
+                                                method: shipMethod,
+                                                costUsd: shippingCostUsd,
+                                              }
+                                            },
                                           }}
                                           onSuccess={async (data: any) => {
                                             try {
+                                              console.log("[CHECKOUT DESKTOP] Success callback:", data);
                                               const wallet = (account?.address || "").toLowerCase();
-                                              let txHash = "";
-                                              const statuses = data?.status || [];
-                                              const txStatus = statuses.find((s: any) => s.transactionHash);
-                                              if (txStatus) txHash = txStatus.transactionHash;
-                                              if (!txHash && data?.transactionHash) txHash = data.transactionHash;
-                                              if (!txHash) txHash = "";
-                                              setPaymentConfirmed({ txHash, amount: totalUsd, token: currency });
-                                              await postStatus("paid", { buyerWallet: wallet, txHash });
-                                              await fetch("/api/billing/purchase", {
-                                                method: "POST",
-                                                headers: { "Content-Type": "application/json", "x-wallet": wallet, "x-recipient": merchantWallet || recipient },
-                                                body: JSON.stringify({ seconds: 1, usd: Number(totalUsd.toFixed(2)), token, wallet, receiptId, recipient: merchantWallet || recipient, idempotencyKey: `portal:${receiptId}:${wallet}:${Date.now()}` }),
-                                              });
-                                              try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
+                                              const txHash = extractThirdwebTxHash(data) || "";
+                                              const meta = extractThirdwebTransactionMetadata(data);
+                                              const detectedProvider = (
+                                                data?.provider ||
+                                                data?.onRampProvider ||
+                                                data?.quote?.provider ||
+                                                data?.paymentMethod ||
+                                                "crypto"
+                                              );
+
+                                              setPaymentConfirmed({ txHash, amount: totalUsd, token: currency || token });
+                                              await postStatus("paid", {
+                                                buyerWallet: wallet,
+                                                txHash: txHash || undefined,
+                                                status: "paid",
+                                                detectedCardFunding: detectedProvider,
+                                                provider: detectedProvider,
+                                                isCrypto: true,
+                                                thirdwebMetadata: meta,
+                                                paymentId: meta.paymentId,
+                                                transactions: meta.transactions,
+                                                originChainId: meta.originChainId,
+                                                destinationChainId: meta.destinationChainId,
+                                                originToken: meta.originToken,
+                                                destinationToken: meta.destinationToken,
+                                                originAmount: meta.originAmount,
+                                                destinationAmount: meta.destinationAmount,
+                                                quoteSummary: meta.quoteSummary,
+                                              }).catch(e => console.error("[CHECKOUT] Failed to post paid status:", e));
+
                                               try {
-                                                if (typeof window !== "undefined" && window.parent && window.parent !== window) {
-                                                  const confirmToken = `ppc_${receiptId}_${Date.now()}`;
-                                                  window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
-                                                  window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                                }
+                                                await fetch("/api/billing/purchase", {
+                                                  method: "POST",
+                                                  headers: { "Content-Type": "application/json", "x-wallet": wallet, "x-recipient": merchantWallet || recipient },
+                                                  body: JSON.stringify({
+                                                    seconds: 1,
+                                                    usd: Number(totalUsd.toFixed(2)),
+                                                    token,
+                                                    wallet,
+                                                    receiptId,
+                                                    recipient: merchantWallet || recipient,
+                                                    txHash: txHash || undefined,
+                                                    idempotencyKey: `portal:${receiptId}:${wallet || "guest"}:${Date.now()}`
+                                                  }),
+                                                });
+                                                try { window.postMessage({ type: "billing:refresh" }, "*"); } catch { }
+                                                try {
+                                                  if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+                                                    const confirmToken = `ppc_${receiptId}_${Date.now()}`;
+                                                    window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
+                                                    window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
+                                                  }
+                                                } catch { }
                                               } catch { }
                                             } catch (err) { console.error("Checkout success handler error", err); }
                                           }}
@@ -8241,9 +8344,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     className="w-full"
                                     name={`Total (${currency})`}
                                     client={client}
-                                    chain={base}
-                                    currency={currency as any}
-                                    amount={(isFiatFlow && stripeWidgetFiatAmount) ? (stripeWidgetFiatAmount as any) : stripeWidgetAmount}
+                                    chain={chain || base}
+                                    currency={widgetCurrency as any || (currency as any)}
+                                    amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                     seller={sellerAddress || merchantWallet || recipient}
                                     tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                     showThirdwebBranding={false}
@@ -8251,16 +8354,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     style={{
                                       width: "100%",
                                       maxWidth: "100%",
-
                                       background: "transparent",
                                       border: "none",
                                       borderRadius: 0,
                                     }}
                                     connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
-
                                     purchaseData={{
                                       productId: `portal:${receiptId}`,
+                                      receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
                                       meta: {
+                                        receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
                                         token,
                                         currency,
                                         usd: totalUsd,
@@ -8275,58 +8378,72 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     }}
                                     onSuccess={async (data: any) => {
                                       try {
+                                        console.log("[CHECKOUT DESKTOP] Success callback:", data);
                                         const wallet = (account?.address || "").toLowerCase();
-
-                                        // Robust txHash extraction from Thirdweb SDK response
-                                        // data: { quote: BridgePrepareResult; statuses: Array<CompletedStatusResult>; }
-                                        let txHash = "";
-                                        const statuses = Array.isArray(data?.statuses) ? data.statuses : [];
-
-                                        // 1. Try to find a transaction hash in statuses
-                                        const txStatus = statuses.find((s: any) => s.transactionHash);
-                                        if (txStatus) txHash = txStatus.transactionHash;
-
-                                        // 2. Fallback to top-level property (older SDK versions)
-                                        if (!txHash && data?.transactionHash) txHash = data.transactionHash;
-
-                                        // 3. Last resort fallback
-                                        if (!txHash) txHash = "";
+                                        const txHash = extractThirdwebTxHash(data) || "";
+                                        const meta = extractThirdwebTransactionMetadata(data);
+                                        const detectedProvider = (
+                                          data?.provider ||
+                                          data?.onRampProvider ||
+                                          data?.quote?.provider ||
+                                          data?.paymentMethod ||
+                                          "crypto"
+                                        );
 
                                         setPaymentConfirmed({
                                           txHash,
                                           amount: totalUsd,
-                                          token: currency
+                                          token: currency || token
                                         });
 
-                                        await postStatus("paid", { buyerWallet: wallet, txHash });
-                                        await fetch("/api/billing/purchase", {
-                                          method: "POST",
-                                          headers: {
-                                            "Content-Type": "application/json",
-                                            "x-wallet": wallet,
-                                            "x-recipient": merchantWallet || recipient,
-                                          },
-                                          body: JSON.stringify({
-                                            seconds: 1,
-                                            usd: Number(totalUsd.toFixed(2)),
-                                            token,
-                                            wallet,
-                                            receiptId,
-                                            recipient: merchantWallet || recipient,
-                                            idempotencyKey: `portal:${receiptId}:${wallet}:${Date.now()}`,
-                                          }),
-                                        });
+                                        await postStatus("paid", {
+                                          buyerWallet: wallet,
+                                          txHash: txHash || undefined,
+                                          status: "paid",
+                                          detectedCardFunding: detectedProvider,
+                                          provider: detectedProvider,
+                                          isCrypto: true,
+                                          thirdwebMetadata: meta,
+                                          paymentId: meta.paymentId,
+                                          transactions: meta.transactions,
+                                          originChainId: meta.originChainId,
+                                          destinationChainId: meta.destinationChainId,
+                                          originToken: meta.originToken,
+                                          destinationToken: meta.destinationToken,
+                                          originAmount: meta.originAmount,
+                                          destinationAmount: meta.destinationAmount,
+                                          quoteSummary: meta.quoteSummary,
+                                        }).catch(e => console.error("[CHECKOUT] Failed to post paid status:", e));
+
                                         try {
-                                          window.postMessage({ type: "billing:refresh" }, "*");
-                                        } catch { }
-                                        try {
-                                          if (typeof window !== "undefined" && window.parent && window.parent !== window) {
-                                            const confirmToken = `ppc_${receiptId}_${Date.now()}`;
-                                            // New event name (primary)
-                                            window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
-                                            // DEPRECATED: Remove after 2026-04-30 - kept for backwards compatibility
-                                            window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient }, targetOrigin);
-                                          }
+                                          await fetch("/api/billing/purchase", {
+                                            method: "POST",
+                                            headers: {
+                                              "Content-Type": "application/json",
+                                              "x-wallet": wallet,
+                                              "x-recipient": merchantWallet || recipient,
+                                            },
+                                            body: JSON.stringify({
+                                              seconds: 1,
+                                              usd: Number(totalUsd.toFixed(2)),
+                                              token,
+                                              wallet,
+                                              receiptId,
+                                              recipient: merchantWallet || recipient,
+                                              txHash: txHash || undefined,
+                                              idempotencyKey: `portal:${receiptId}:${wallet || "guest"}:${Date.now()}`
+                                            }),
+                                          });
+                                          try {
+                                            window.postMessage({ type: "billing:refresh" }, "*");
+                                          } catch { }
+                                          try {
+                                            if (typeof window !== "undefined" && window.parent && window.parent !== window) {
+                                              const confirmToken = `ppc_${receiptId}_${Date.now()}`;
+                                              window.parent.postMessage({ type: "gateway-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
+                                              window.parent.postMessage({ type: "portalpay-card-success", token: confirmToken, correlationId, receiptId, recipient: merchantWallet || recipient, txHash }, targetOrigin);
+                                            }
+                                          } catch { }
                                         } catch { }
                                       } catch (err) {
                                         console.error("Checkout success handler error", err);
