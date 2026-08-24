@@ -83,6 +83,58 @@ function getPacificComponents(date: Date) {
   };
 }
 
+// ─── Shared Brand Color Engine with Strong Perceptual Contrast ───
+export const BRAND_COLOR_MAP: Record<string, string> = {
+  aggregate: "#c084fc",   // Vibrant Purple / Orchid (Platform Aggregate)
+  aipowerpay: "#38bdf8",  // Clear Sky Blue
+  basaltsurge: "#f43f5e", // Crimson Rose
+  lucky13: "#eab308",     // Warm Amber Gold
+  "data-opt": "#10b981",  // Vivid Emerald Green
+  dataopt: "#10b981",     // Vivid Emerald Green
+  xoinpay: "#ec4899",     // Hot Magenta / Fuchsia
+  lumina: "#06b6d4",      // Cyan / Teal
+  luminapms: "#06b6d4",   // Cyan / Teal
+  chickenbones: "#f97316",// Deep Orange
+  varuna: "#14b8a6",      // Aquamarine Teal
+  osiris: "#8b5cf6",      // Deep Lavender Violet
+  skynetpod: "#6366f1",   // Indigo
+  portalpay: "#a855f7",   // Violet Orchid
+};
+
+export const DISTINCT_BRAND_PALETTE: string[] = [
+  "#10b981", // Emerald Green
+  "#f59e0b", // Golden Amber
+  "#ec4899", // Hot Magenta
+  "#06b6d4", // Bright Cyan
+  "#f97316", // Deep Orange
+  "#8b5cf6", // Rich Violet
+  "#84cc16", // Lime Chartreuse
+  "#f43f5e", // Crimson Rose
+  "#3b82f6", // Royal Blue
+  "#14b8a6", // Aquamarine
+  "#d946ef", // Fuchsia
+  "#eab308", // Warm Gold
+  "#6366f1", // Indigo
+  "#059669", // Dark Mint
+  "#fb7185", // Soft Rose
+  "#0284c7", // Deep Sky Blue
+];
+
+export function getDistinctBrandColor(key?: string, idx?: number): string {
+  if (!key) return DISTINCT_BRAND_PALETTE[0];
+  const normalized = key.toLowerCase().trim();
+  if (BRAND_COLOR_MAP[normalized]) {
+    return BRAND_COLOR_MAP[normalized];
+  }
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    hash = (hash << 5) - hash + normalized.charCodeAt(i);
+    hash |= 0;
+  }
+  const colorIndex = Math.abs(hash + (idx !== undefined ? idx : 0)) % DISTINCT_BRAND_PALETTE.length;
+  return DISTINCT_BRAND_PALETTE[colorIndex];
+}
+
 function getBlockExplorerTxUrl(chainId?: number | string | null, txHash?: string | null): string {
   if (!txHash) return "";
   const num = Number(chainId);
@@ -1255,18 +1307,10 @@ export default function PlatformAnalyticsPanel() {
       .map(([status, count]) => ({ status, count }));
   }, [recentReceipts]);
 
-  // Shared brand colors matching the Line Chart
-  const brandColors: Record<string, string> = useMemo(() => ({
-    aggregate: "#c084fc", // vibrant purple/indigo for overall platform success rate
-    aipowerpay: "#38bdf8", // clear sky blue
-    basaltsurge: "#fb7185", // soft rose
-  }), []);
-
-  const getBrandColor = useCallback((key: string, idx: number) => {
-    if (brandColors[key]) return brandColors[key];
-    const colors = ["#34d399", "#fbbf24", "#a78bfa", "#22d3ee", "#f472b6", "#fb923c"];
-    return colors[idx % colors.length];
-  }, [brandColors]);
+  // Shared brand colors matching all analytics views
+  const getBrandColor = useCallback((key: string, idx?: number) => {
+    return getDistinctBrandColor(key, idx);
+  }, []);
 
   // Helper to resolve Monday-to-Sunday date range for a given week offset in System Time (Pacific)
   const getWeekRange = useCallback((offset: number) => {
@@ -6503,16 +6547,8 @@ function CustomInteractiveLineChart({
     return path;
   };
 
-  const brandColors: Record<string, string> = {
-    aggregate: "#c084fc",
-    aipowerpay: "#38bdf8",
-    basaltsurge: "#fb7185",
-  };
-
-  const getBrandColor = (key: string, idx: number) => {
-    if (brandColors[key]) return brandColors[key];
-    const colors = ["#34d399", "#fbbf24", "#a78bfa", "#22d3ee", "#f472b6", "#fb923c"];
-    return colors[idx % colors.length];
+  const getBrandColor = (key: string, idx?: number) => {
+    return getDistinctBrandColor(key, idx);
   };
 
   // Tooltip state
@@ -6983,16 +7019,8 @@ function CustomInteractiveBarChart({
     }
   }, [scaleType, maxAxisVal]);
 
-  const brandColors: Record<string, string> = {
-    aggregate: "#c084fc",
-    aipowerpay: "#38bdf8",
-    basaltsurge: "#fb7185",
-  };
-
-  const getBrandColor = (key: string, idx: number) => {
-    if (brandColors[key]) return brandColors[key];
-    const colors = ["#34d399", "#fbbf24", "#a78bfa", "#22d3ee", "#f472b6", "#fb923c"];
-    return colors[idx % colors.length];
+  const getBrandColor = (key: string, idx?: number) => {
+    return getDistinctBrandColor(key, idx);
   };
 
   const [hoveredNode, setHoveredNode] = useState<{

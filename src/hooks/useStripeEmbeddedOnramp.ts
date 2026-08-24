@@ -846,10 +846,9 @@ export function useStripeEmbeddedOnramp({
         setSessionId(storedSessionId || null);
         if (storedFunding) sessionFundingRef.current = storedFunding;
 
-        // Restore coordinator authenticated state if we have a valid customer session
+        // Note: Keep customer session details restored but let coordinator instance authenticate properly
         if (storedCustId && storedToken && storedWallet) {
-          isCoordinatorAuthedRef.current = true;
-          console.log("[EMBEDDED ONRAMP] Restored active authenticated session for customer:", storedCustId);
+          console.log("[EMBEDDED ONRAMP] Restored active session details for customer:", storedCustId);
         }
       }
 
@@ -1442,26 +1441,42 @@ export function useStripeEmbeddedOnramp({
         },
       });
 
-      // Connect using auth_endpoint — sends payload to our /api/auth/thirdweb-verify
-      const account = await wallet.connect({
-        client: twClient,
-        chain: base,
-        strategy: "auth_endpoint" as any,
-        payload: JSON.stringify({
-          email: buyerEmail,
-          verificationToken: verificationTokenRef.current || "",
-          brandKey: brandKey || "",
-        }),
-      });
+      const maxAttempts = 3;
+      let lastErr: any = null;
 
-      const address = account.address;
-      console.log("[EMBEDDED ONRAMP] Guest EOA created/retrieved:", address?.slice(0, 10) + "...");
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const account = await wallet.connect({
+            client: twClient,
+            chain: base,
+            strategy: "auth_endpoint" as any,
+            payload: JSON.stringify({
+              email: buyerEmail,
+              verificationToken: verificationTokenRef.current || "",
+              brandKey: brandKey || "",
+            }),
+          });
 
-      buyerAccountRef.current = account;
+          const address = account.address;
+          console.log(`[EMBEDDED ONRAMP] Guest EOA created/retrieved (attempt ${attempt}):`, address?.slice(0, 10) + "...");
 
-      return address || null;
+          buyerAccountRef.current = account;
+
+          return address || null;
+        } catch (err: any) {
+          lastErr = err;
+          console.warn(`[EMBEDDED ONRAMP] Wallet connect attempt ${attempt}/${maxAttempts} failed:`, err?.message || err);
+          if (attempt < maxAttempts) {
+            // Exponential backoff: 350ms, 700ms
+            await new Promise((r) => setTimeout(r, attempt * 350));
+          }
+        }
+      }
+
+      console.error("[EMBEDDED ONRAMP] All wallet creation attempts failed:", lastErr);
+      return null;
     } catch (err: any) {
-      console.error("[EMBEDDED ONRAMP] Wallet creation failed:", err);
+      console.error("[EMBEDDED ONRAMP] Wallet client setup failed:", err);
       return null;
     }
   }, []);
@@ -1509,17 +1524,37 @@ export function useStripeEmbeddedOnramp({
           },
         });
 
-        account = await wallet.connect({
-          client: twClient,
-          chain: base,
-          strategy: "auth_endpoint" as any,
-          payload: JSON.stringify({
-            email: fromWalletEmail,
-            verificationToken: verificationTokenRef.current || "",
-            brandKey: brandKey || "",
-          }),
-        });
-        console.log("[EMBEDDED ONRAMP] Guest EOA re-connected:", account.address);
+        const maxReconnAttempts = 3;
+        let lastReconnErr: any = null;
+
+        for (let a = 1; a <= maxReconnAttempts; a++) {
+          try {
+            account = await wallet.connect({
+              client: twClient,
+              chain: base,
+              strategy: "auth_endpoint" as any,
+              payload: JSON.stringify({
+                email: fromWalletEmail,
+                verificationToken: verificationTokenRef.current || "",
+                brandKey: brandKey || "",
+              }),
+            });
+            console.log(`[EMBEDDED ONRAMP] Guest EOA re-connected (attempt ${a}):`, account.address);
+            buyerAccountRef.current = account;
+            break;
+          } catch (rErr: any) {
+            lastReconnErr = rErr;
+            console.warn(`[EMBEDDED ONRAMP] Guest EOA reconnect attempt ${a}/${maxReconnAttempts} failed:`, rErr?.message || rErr);
+            if (a < maxReconnAttempts) {
+              await new Promise((r) => setTimeout(r, a * 350));
+            }
+          }
+        }
+
+        if (!account) {
+          console.error("[EMBEDDED ONRAMP] Failed to reconnect guest wallet after retries:", lastReconnErr);
+          return null;
+        }
       }
 
       // Prepare ERC-20 transfer: USDC has 6 decimals
@@ -2799,6 +2834,23 @@ export function useStripeEmbeddedOnramp({
         return;
       }
 
+      if (rawMsg.includes("not authenticated") || rawMsg.includes("authentication required") || rawMsg.includes("unauthenticated")) {
+        console.warn("[EMBEDDED ONRAMP] Coordinator unauthenticated on submitKycInfo. Purging stale auth and re-authenticating...");
+        oauthTokenRef.current = null;
+        isCoordinatorAuthedRef.current = false;
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem("stripe_onramp_oauth_token");
+        }
+        if (onrampRef.current) {
+          try { onrampRef.current.destroy(); } catch {}
+          onrampRef.current = null;
+        }
+        if (startOnrampRef.current && activeEmailRef.current) {
+          startOnrampRef.current(activeEmailRef.current, undefined, undefined, true);
+        }
+        return;
+      }
+
       handleError(err?.message || "KYC submission failed");
     }
   }, [pollKycStatus, runCheckoutLoop, handleError, detectedCardFunding]);
@@ -2874,6 +2926,23 @@ export function useStripeEmbeddedOnramp({
         }
         return true;
       }
+      if (errMsg.includes("not authenticated") || errMsg.includes("authentication required") || errMsg.includes("unauthenticated")) {
+        console.warn("[EMBEDDED ONRAMP] Coordinator unauthenticated on verifyDocuments. Purging stale auth and re-authenticating...");
+        oauthTokenRef.current = null;
+        isCoordinatorAuthedRef.current = false;
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem("stripe_onramp_oauth_token");
+        }
+        if (onrampRef.current) {
+          try { onrampRef.current.destroy(); } catch {}
+          onrampRef.current = null;
+        }
+        if (startOnrampRef.current && activeEmailRef.current) {
+          startOnrampRef.current(activeEmailRef.current, undefined, undefined, true);
+        }
+        return false;
+      }
+
       handleError(err?.message || "Identity verification failed", err);
       return false;
     }
@@ -3699,6 +3768,23 @@ export function useStripeEmbeddedOnramp({
           collectedLast4 = result.last4;
         } catch (paymentErr: any) {
           console.warn("[EMBEDDED ONRAMP] Payment method collection rejected:", paymentErr);
+          const pErrMsg = String(paymentErr?.message || paymentErr || "").toLowerCase();
+          if (pErrMsg.includes("not authenticated") || pErrMsg.includes("authentication required") || pErrMsg.includes("unauthenticated")) {
+            console.warn("[EMBEDDED ONRAMP] Coordinator unauthenticated during collectPaymentMethod. Refreshing Link session...");
+            oauthTokenRef.current = null;
+            isCoordinatorAuthedRef.current = false;
+            if (typeof window !== "undefined") {
+              sessionStorage.removeItem("stripe_onramp_oauth_token");
+            }
+            if (onrampRef.current) {
+              try { onrampRef.current.destroy(); } catch {}
+              onrampRef.current = null;
+            }
+            if (startOnrampRef.current && activeEmailRef.current) {
+              startOnrampRef.current(activeEmailRef.current, undefined, undefined, true);
+            }
+            return;
+          }
           setError(paymentErr?.message || "Payment method selection was not completed. Please try again.");
           isRunningRef.current = false;
           return;
