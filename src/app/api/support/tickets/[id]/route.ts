@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { addJiraComment } from "@/lib/jira";
+import { notifyCustomerReply } from "@/lib/notifications/support-dispatcher";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
 
         await container.item(existingTicket.id, partitionKey).replace(updatedTicket);
+
+        // Dispatch SES email notification to admins/support team (fire-and-forget, non-blocking)
+        notifyCustomerReply(updatedTicket, response || (attachments?.length ? `[${attachments.length} attachment(s)]` : "New correspondence"), user).catch((e) => {
+            console.error("[Support Dispatcher] Customer reply email notification failed:", e);
+        });
 
         // Sync user reply to Jira (non-blocking)
         if (existingTicket.jiraIssueKey) {
