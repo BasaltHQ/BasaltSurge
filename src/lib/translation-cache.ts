@@ -24,7 +24,7 @@ let translationsContainer: Container | null = null;
 async function getContainer(): Promise<Container | null> {
   if (translationsContainer) return translationsContainer;
   try {
-    translationsContainer = await getSharedContainer(TRANSLATIONS_DB, TRANSLATIONS_COLLECTION);
+    translationsContainer = await getSharedContainer(TRANSLATIONS_DB, TRANSLATIONS_COLLECTION, { profile: "cache" });
     return translationsContainer;
   } catch (err) {
     console.warn('[translation-cache] Container unavailable:', (err as Error)?.message || err);
@@ -50,7 +50,8 @@ export interface CachedTranslation {
 }
 
 /**
- * Get cached translations for multiple texts using a single $in query.
+ * Get multiple cached translations in a single batch query.
+ * Uses a raw MongoDB $in query when available for sub-100ms batch reads.
  * Falls back to individual lookups if the container doesn't expose getCollection().
  */
 export async function getCachedTranslations(
@@ -74,11 +75,11 @@ export async function getCachedTranslations(
     }
     const allIds = Array.from(keyToText.keys());
 
-    // ── Fast path: batch $in query via raw MongoDB collection ──────
-    const rawCollection = (container as any).getCollection?.();
+    // ── Fast path: batch $in query via raw MongoDB collection (routed to nearest replica) ──────
+    const rawCollection = (container as any).getCollection?.("nearest") || (container as any).getCollection?.();
     if (rawCollection && typeof rawCollection.find === 'function') {
       const docs = await rawCollection
-        .find({ id: { $in: allIds } })
+        .find({ id: { $in: allIds } }, { readPreference: "nearest" })
         .project({ id: 1, translatedText: 1 })
         .toArray();
 

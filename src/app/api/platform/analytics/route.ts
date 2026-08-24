@@ -126,7 +126,12 @@ export async function GET(req: NextRequest) {
             merchantName: 1,
             ipAddress: 1,
             buyerWallet: 1,
-            stripeSessionId: 1
+            stripeSessionId: 1,
+            transactionHash: 1,
+            txHash: 1,
+            leg2TxHash: 1,
+            leg1TxHash: 1,
+            onrampTxHash: 1
           },
           readPreference: "secondaryPreferred"
         }
@@ -182,6 +187,10 @@ export async function GET(req: NextRequest) {
             kyc: 1,
             kycOccurred: 1,
             transactionHash: 1,
+            txHash: 1,
+            leg2TxHash: 1,
+            leg1TxHash: 1,
+            onrampTxHash: 1,
             stripeSessionId: 1,
             statusHistory: 1,
             customerEmail: 1,
@@ -236,7 +245,7 @@ export async function GET(req: NextRequest) {
     } else {
       // Fallback for Cosmos DB
       const querySpec = {
-        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.effectiveProcessingFeeBps, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet, c.shopSlug, c.parentUrl, c.merchantName, c.presentedFeeBps, c.creditPresentedFeeBps, c.splitConfig, c.splitConfigCredit, c.partnerBps, c.platformBps, c.feeMinusEnabled, c.ipAddress, c.buyerWallet, c.stripeSessionId FROM c WHERE c.type = 'receipt'"
+        query: "SELECT c.id, c.receiptId, c.brandKey, c.brandName, c.status, c.totalUsd, c.createdAt, c.amountPlatformMinor, c.effectiveProcessingFeeBps, c.detectedCardFunding, c.isCreditCard, c.statusHistory, c.customerEmail, c.stripeEmail, c.wallet, c.shopSlug, c.parentUrl, c.merchantName, c.presentedFeeBps, c.creditPresentedFeeBps, c.splitConfig, c.splitConfigCredit, c.partnerBps, c.platformBps, c.feeMinusEnabled, c.ipAddress, c.buyerWallet, c.stripeSessionId, c.transactionHash, c.txHash, c.leg2TxHash, c.leg1TxHash, c.onrampTxHash FROM c WHERE c.type = 'receipt'"
       };
       const { resources } = await container.items.query(querySpec).fetchAll();
       allReceiptsLight = resources || [];
@@ -637,7 +646,7 @@ export async function GET(req: NextRequest) {
         createdAt: r.createdAt,
         email: r.customerEmail || r.stripeEmail || "anonymous",
         stripeSessionId: r.stripeSessionId || null,
-        transactionHash: r.transactionHash || null,
+        transactionHash: r.transactionHash || r.txHash || r.leg2TxHash || r.leg1TxHash || r.onrampTxHash || null,
         cardFunding: r.detectedCardFunding || (r.isCreditCard ? "credit" : null),
         failureReason: status === "failed" ? getFailureReason(r, rLogs) : null,
         kycLevel: getKycLevel(r, rLogs),

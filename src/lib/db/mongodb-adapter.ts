@@ -5,11 +5,21 @@
  * The adapter translates Cosmos SDK calls into MongoDB driver calls at runtime.
  */
 
-import { MongoClient, Collection, Db, Document, ObjectId } from "mongodb";
+import { MongoClient, Collection, Db, Document, ObjectId, ReadPreference, ReadPreferenceMode, ClientSession, ReadConcernLevel } from "mongodb";
 import { parseCosmosSql } from "./sql-parser";
 import { isDebug } from "@/lib/logger";
 
 const _isDebug = isDebug();
+
+// ── Query & Workload Options ───────────────────────────────────────────
+
+export interface MongoQueryOptions {
+    readPreference?: ReadPreferenceMode | ReadPreference;
+    readConcern?: ReadConcernLevel;
+    session?: ClientSession;
+    maxStalenessSeconds?: number;
+    profile?: "operational" | "critical" | "analytics" | "cache";
+}
 
 // ── Connection pool (cached on globalThis to survive Next.js hot-reloads) ──
 
@@ -19,7 +29,7 @@ const globalForMongo = globalThis as unknown as {
     _registeredShutdown?: boolean;
 };
 
-async function getMongoClient(uri: string): Promise<MongoClient> {
+export async function getMongoClient(uri: string): Promise<MongoClient> {
     if (globalForMongo._mongoClient && globalForMongo._mongoClientPromise) {
         try {
             // Verify connection pool is open
@@ -33,8 +43,15 @@ async function getMongoClient(uri: string): Promise<MongoClient> {
     }
 
     const extraOptions: any = {
+        readPreference: (process.env.MONGO_READ_PREFERENCE as ReadPreferenceMode) || "secondaryPreferred",
+        maxStalenessSeconds: parseInt(process.env.MONGO_MAX_STALENESS_SECONDS || "90", 10),
         retryWrites: true,
         retryReads: true,
+        maxIdleTimeMS: 60000,
+        serverSelectionTimeoutMS: 5000,
+        heartbeatFrequencyMS: 10000,
+        socketTimeoutMS: 45000,
+        connectTimeoutMS: 10000,
     };
 
     const urlLower = uri.toLowerCase();
@@ -42,7 +59,7 @@ async function getMongoClient(uri: string): Promise<MongoClient> {
         extraOptions.maxPoolSize = parseInt(process.env.MONGO_MAX_POOL_SIZE || "20", 10);
     }
     if (!urlLower.includes("minpoolsize=")) {
-        extraOptions.minPoolSize = parseInt(process.env.MONGO_MIN_POOL_SIZE || "2", 10);
+        extraOptions.minPoolSize = parseInt(process.env.MONGO_MIN_POOL_SIZE || "4", 10);
     }
 
     const client = new MongoClient(uri, extraOptions);
@@ -73,6 +90,23 @@ async function getMongoClient(uri: string): Promise<MongoClient> {
     }
 
     return promise;
+}
+
+/**
+ * Execute a unit of work within a Causally Consistent Client Session.
+ * Guarantees read-your-writes consistency across replica set members.
+ */
+export async function withCausalSession<T>(
+    uri: string,
+    callback: (session: ClientSession) => Promise<T>
+): Promise<T> {
+    const client = await getMongoClient(uri);
+    const session = client.startSession({ causalConsistency: true });
+    try {
+        return await callback(session);
+    } finally {
+        await session.endSession().catch(() => {});
+    }
 }
 
 // ── Types matching Cosmos SDK shapes ────────────────────────────────────
@@ -106,7 +140,8 @@ class MongoItemReference {
     constructor(
         private collection: Collection<Document>,
         private id: string,
-        private _partitionKey?: string
+        private _partitionKey?: string,
+        private _options?: MongoQueryOptions
     ) { }
 
     /** Build the filter that mirrors Cosmos item(id, partitionKey) semantics */
@@ -121,12 +156,21 @@ class MongoItemReference {
         return filter;
     }
 
-    async read<T = any>(): Promise<ItemResponse<T>> {
+    async read<T = any>(readOptions?: MongoQueryOptions): Promise<ItemResponse<T>> {
         const filter = this.buildFilter();
+        const opts = { ...this._options, ...readOptions };
+        // Point lookups prefer PRIMARY_PREFERRED or active causal session for fresh state,
+        // with automatic transparent fallback to secondaries.
+        const readPref = opts.readPreference || ReadPreference.PRIMARY_PREFERRED;
+        
         // Sort by updatedAt descending to prefer the most recently updated document.
         // After Cosmos→MongoDB migration, duplicate documents with the same {id, wallet}
         // can exist; this ensures we always get the freshest one.
-        const doc = await this.collection.find(filter).sort({ updatedAt: -1 }).limit(1).next();
+        const doc = await this.collection.find(filter, {
+            session: opts.session,
+            readPreference: readPref
+        }).sort({ updatedAt: -1 }).limit(1).next();
+        
         if (!doc) {
             return { resource: undefined, statusCode: 404, requestCharge: 0 };
         }
@@ -137,20 +181,29 @@ class MongoItemReference {
         };
     }
 
-    async replace<T = any>(body: T): Promise<ItemResponse<T>> {
+    async replace<T = any>(body: T, replaceOptions?: MongoQueryOptions): Promise<ItemResponse<T>> {
         const doc = cosmosDocToMongo(body as any);
         const filter = this.buildFilter();
-        await this.collection.replaceOne(filter, doc, { upsert: false });
+        const opts = { ...this._options, ...replaceOptions };
+        await this.collection.replaceOne(filter, doc, {
+            upsert: false,
+            session: opts.session,
+            writeConcern: { w: "majority", wtimeoutMS: 5000 }
+        });
         return { resource: body, statusCode: 200, requestCharge: 0 };
     }
 
-    async delete(): Promise<ItemResponse<any>> {
+    async delete(deleteOptions?: MongoQueryOptions): Promise<ItemResponse<any>> {
         const filter = this.buildFilter();
-        await this.collection.deleteOne(filter);
+        const opts = { ...this._options, ...deleteOptions };
+        await this.collection.deleteOne(filter, {
+            session: opts.session,
+            writeConcern: { w: "majority", wtimeoutMS: 5000 }
+        });
         return { resource: undefined, statusCode: 204, requestCharge: 0 };
     }
 
-    async patch<T = any>(operations: CosmosPatchOperation[]): Promise<ItemResponse<T>> {
+    async patch<T = any>(operations: CosmosPatchOperation[], patchOptions?: MongoQueryOptions): Promise<ItemResponse<T>> {
         const update: Document = {};
         const setOps: Document = {};
         const unsetOps: Document = {};
@@ -179,8 +232,11 @@ class MongoItemReference {
         if (Object.keys(incOps).length) update.$inc = incOps;
 
         const filter = this.buildFilter();
+        const opts = { ...this._options, ...patchOptions };
         const result = await this.collection.findOneAndUpdate(filter, update, {
             returnDocument: "after",
+            session: opts.session,
+            writeConcern: { w: "majority", wtimeoutMS: 5000 }
         });
         return {
             resource: result ? mongoDocToCosmos(result) as T : undefined,
@@ -193,10 +249,14 @@ class MongoItemReference {
 // ── Items interface (container.items) ───────────────────────────────────
 
 class MongoItemsReference {
-    constructor(private collection: Collection<Document>) { }
+    constructor(
+        private collection: Collection<Document>,
+        private _defaultOptions?: MongoQueryOptions
+    ) { }
 
     query<T = any>(
-        querySpec: CosmosQuerySpec | string
+        querySpec: CosmosQuerySpec | string,
+        queryOptions?: MongoQueryOptions
     ): {
         fetchAll: () => Promise<FeedResponse<T>>;
         fetchNext: () => Promise<FeedResponse<T>>;
@@ -206,14 +266,34 @@ class MongoItemsReference {
                 ? { query: querySpec, parameters: [] }
                 : querySpec;
 
+        const opts = { ...this._defaultOptions, ...queryOptions };
+
         return {
             fetchAll: async (): Promise<FeedResponse<T>> => {
                 const parsed = parseCosmosSql(spec.query, spec.parameters);
                 convertFilterTimestamps(parsed.filter);
 
+                // Automatic Query Intent Classifier:
+                // - Explicit option takes precedence
+                // - Aggregations (COUNT, SUM, group) and large queries route to secondaryPreferred
+                // - High-throughput queries automatically offload to secondaries
+                let resolvedReadPref = opts.readPreference;
+                if (!resolvedReadPref) {
+                    if (opts.profile === "critical") {
+                        resolvedReadPref = ReadPreference.PRIMARY;
+                    } else if (opts.profile === "analytics" || parsed.isAggregate) {
+                        resolvedReadPref = ReadPreference.SECONDARY_PREFERRED;
+                    } else if (opts.profile === "cache") {
+                        resolvedReadPref = ReadPreference.NEAREST;
+                    } else {
+                        resolvedReadPref = ReadPreference.SECONDARY_PREFERRED;
+                    }
+                }
+
                 // Debug logging (only when DEBUG=true)
                 if (_isDebug && spec.query.includes("type='receipt'")) {
                     console.log("[MONGO-DEBUG] SQL:", spec.query.substring(0, 120));
+                    console.log("[MONGO-DEBUG] readPreference:", resolvedReadPref);
                     console.log("[MONGO-DEBUG] filter:", JSON.stringify(parsed.filter));
                     console.log("[MONGO-DEBUG] projection:", JSON.stringify(parsed.projection));
                     console.log("[MONGO-DEBUG] sort:", JSON.stringify(parsed.sort));
@@ -222,7 +302,10 @@ class MongoItemsReference {
 
                 if (parsed.isAggregate && parsed.pipeline.length > 0) {
                     const results = await this.collection
-                        .aggregate(parsed.pipeline)
+                        .aggregate(parsed.pipeline, {
+                            readPreference: resolvedReadPref,
+                            session: opts.session
+                        })
                         .toArray();
                     // COUNT → return as single number; SUM → return as single number
                     // Object agg → return the object
@@ -241,7 +324,10 @@ class MongoItemsReference {
                     };
                 }
 
-                let cursor = this.collection.find(parsed.filter);
+                let cursor = this.collection.find(parsed.filter, {
+                    readPreference: resolvedReadPref,
+                    session: opts.session
+                });
 
                 if (parsed.projection) {
                     cursor = cursor.project(parsed.projection);
@@ -287,7 +373,7 @@ class MongoItemsReference {
         };
     }
 
-    async upsert<T = any>(body: T & { id?: string }): Promise<ItemResponse<T>> {
+    async upsert<T = any>(body: T & { id?: string }, upsertOptions?: MongoQueryOptions): Promise<ItemResponse<T>> {
         const doc = cosmosDocToMongo(body as any);
         const id = body.id || (doc as any).id || (doc as any)._id;
 
@@ -303,10 +389,16 @@ class MongoItemsReference {
             filter.wallet = wallet;
         }
 
+        const opts = { ...this._defaultOptions, ...upsertOptions };
+
         const res = await this.collection.updateOne(
             filter,
             { $set: doc },
-            { upsert: true }
+            {
+                upsert: true,
+                session: opts.session,
+                writeConcern: { w: "majority", wtimeoutMS: 5000 }
+            }
         );
         return {
             resource: { ...body } as T,
@@ -315,9 +407,13 @@ class MongoItemsReference {
         };
     }
 
-    async create<T = any>(body: T & { id?: string }): Promise<ItemResponse<T>> {
+    async create<T = any>(body: T & { id?: string }, createOptions?: MongoQueryOptions): Promise<ItemResponse<T>> {
         const doc = cosmosDocToMongo(body as any);
-        await this.collection.insertOne(doc as any);
+        const opts = { ...this._defaultOptions, ...createOptions };
+        await this.collection.insertOne(doc as any, {
+            session: opts.session,
+            writeConcern: { w: "majority", wtimeoutMS: 5000 }
+        });
         return {
             resource: { ...body } as T,
             statusCode: 201,
@@ -329,13 +425,13 @@ class MongoItemsReference {
      * Batch operations — Cosmos uses this for transactional batches.
      * We simulate with individual operations (MongoDB transactions optional).
      */
-    async batch(operations: any[]): Promise<any> {
+    async batch(operations: any[], batchOptions?: MongoQueryOptions): Promise<any> {
         const results: any[] = [];
         for (const op of operations) {
             if (op.operationType === "Upsert") {
-                results.push(await this.upsert(op.resourceBody));
+                results.push(await this.upsert(op.resourceBody, batchOptions));
             } else if (op.operationType === "Create") {
-                results.push(await this.create(op.resourceBody));
+                results.push(await this.create(op.resourceBody, batchOptions));
             }
         }
         return { result: results };
@@ -350,21 +446,39 @@ export class MongoDBContainerAdapter {
 
     constructor(
         private db: Db,
-        public readonly id: string
+        public readonly id: string,
+        private options?: MongoQueryOptions
     ) {
         this.collection = db.collection(id);
-        this.items = new MongoItemsReference(this.collection);
+        this.items = new MongoItemsReference(this.collection, options);
     }
 
-    item(id: string, _partitionKey?: string): MongoItemReference {
-        return new MongoItemReference(this.collection, id, _partitionKey);
+    item(id: string, _partitionKey?: string, itemOptions?: MongoQueryOptions): MongoItemReference {
+        return new MongoItemReference(this.collection, id, _partitionKey, { ...this.options, ...itemOptions });
+    }
+
+    /**
+     * Fluent builder to bind this container instance to a specific ReadPreference.
+     */
+    withReadPreference(pref: ReadPreferenceMode | ReadPreference): MongoDBContainerAdapter {
+        return new MongoDBContainerAdapter(this.db, this.id, { ...this.options, readPreference: pref });
+    }
+
+    /**
+     * Fluent builder to bind this container instance to a ClientSession.
+     */
+    withSession(session: ClientSession): MongoDBContainerAdapter {
+        return new MongoDBContainerAdapter(this.db, this.id, { ...this.options, session });
     }
 
     /**
      * Expose the raw MongoDB collection for performance-critical batch operations
      * (e.g. $in queries for translation cache lookups).
      */
-    getCollection(): Collection<Document> {
+    getCollection(readPreference?: ReadPreferenceMode | ReadPreference): Collection<Document> {
+        if (readPreference) {
+            return this.db.collection(this.id, { readPreference });
+        }
         return this.collection;
     }
 }
@@ -376,10 +490,11 @@ const containerCache: Record<string, MongoDBContainerAdapter> = {};
 export async function getMongoContainer(
     uri: string,
     dbName: string,
-    collectionName: string
+    collectionName: string,
+    options?: MongoQueryOptions
 ): Promise<MongoDBContainerAdapter> {
-    const cacheKey = `${dbName}/${collectionName}`;
-    if (containerCache[cacheKey]) return containerCache[cacheKey];
+    const cacheKey = `${dbName}/${collectionName}/${options?.profile || "default"}/${options?.readPreference || "default"}`;
+    if (!options?.session && containerCache[cacheKey]) return containerCache[cacheKey];
 
     const client = await getMongoClient(uri);
     const db = client.db(dbName);
@@ -390,8 +505,10 @@ export async function getMongoContainer(
         await db.createCollection(collectionName);
     }
 
-    const adapter = new MongoDBContainerAdapter(db, collectionName);
-    containerCache[cacheKey] = adapter;
+    const adapter = new MongoDBContainerAdapter(db, collectionName, options);
+    if (!options?.session) {
+        containerCache[cacheKey] = adapter;
+    }
     return adapter;
 }
 

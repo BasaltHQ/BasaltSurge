@@ -163,7 +163,7 @@ export async function POST(req: NextRequest) {
       }
     } catch {}
 
-    if (isLocked) {
+    if (isLocked && !isForce) {
       console.warn(`[cron/autoclose] Skipped: Daily close execution lock is active.`);
       return NextResponse.json(
         { success: true, message: "another_run_in_progress", processed: 0 },
@@ -204,10 +204,10 @@ export async function POST(req: NextRequest) {
 
     console.log(`[cron/autoclose] Container Context: type=${containerType}, brand=${currentBrandKey || 'none'} (isPlatform=${isPlatformContainer})`);
 
-    // 2. Fetch all unique split addresses from Cosmos DB
+    // 2. Fetch all unique split addresses from Cosmos DB / MongoDB
     const container = await getContainer();
     const querySpec = {
-      query: "SELECT c.id, c.brandKey, c.config, c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitHistory FROM c WHERE c.type = 'site_config'",
+      query: "SELECT c.id, c.brandKey, c.config, c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.splitHistory FROM c WHERE c.type = 'site_config' OR c.type = 'wallet_config' OR c.type = 'client_request'",
     };
     const { resources: allSiteConfigs } = await container.items.query(querySpec).fetchAll();
     const splitAddresses = new Set<string>();
@@ -297,7 +297,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Connect to the Thirdweb Smart Wallet (SCA)
-    const adminPrivateKey = process.env.THIRDWEB_ADMIN_PRIVATE_KEY;
+    const adminPrivateKey = process.env.THIRDWEB_ADMIN_PRIVATE_KEY || process.env.ADMIN_PRIVATE_KEY || process.env.SERVER_PRIVATE_KEY;
     if (!adminPrivateKey) {
       throw new Error("THIRDWEB_ADMIN_PRIVATE_KEY is not configured.");
     }
@@ -546,6 +546,7 @@ export async function POST(req: NextRequest) {
       await runsContainer.items.create({
         id: runDocId,
         wallet: sAccount.address, // Partition Key
+        brandKey: runBrandKey,
         type: "autoclose_run",
         date: runDate,
         timestamp: startTime,

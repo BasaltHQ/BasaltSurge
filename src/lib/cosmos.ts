@@ -25,10 +25,17 @@ type Cached = {
   container?: Container | any; // any to allow MongoDBContainerAdapter
   containerId?: string;
   dbId?: string;
+  profile?: string;
   isMongo?: boolean;
 };
 
 const cache: Cached = {};
+
+export type ContainerOptions = {
+  profile?: "operational" | "critical" | "analytics" | "cache";
+  readPreference?: any;
+  session?: any;
+};
 
 /**
  * Get a database container. Automatically routes to MongoDB or Cosmos DB
@@ -37,8 +44,15 @@ const cache: Cached = {};
  * - mongodb:// or mongodb+srv:// → MongoDBContainerAdapter
  * - Otherwise → Cosmos DB SDK Container
  */
-export async function getContainer(dbId = defaultDbId, containerId = defaultContainerId): Promise<Container> {
-  if (cache.container && cache.dbId === dbId && cache.containerId === containerId) return cache.container;
+export async function getContainer(
+  dbId = defaultDbId,
+  containerId = defaultContainerId,
+  options?: ContainerOptions
+): Promise<Container> {
+  const profileKey = options?.profile || "default";
+  if (!options?.session && cache.container && cache.dbId === dbId && cache.containerId === containerId && cache.profile === profileKey) {
+    return cache.container;
+  }
 
   // Accept multiple env var names to reduce deployment misconfig risk
   let source = "none";
@@ -81,14 +95,17 @@ export async function getContainer(dbId = defaultDbId, containerId = defaultCont
     if (dbId === "payportal") resolvedDbId = defaultDbId;
     if (containerId === "payportal_events") resolvedContainerId = defaultContainerId;
 
-    const adapter = await getMongoContainer(conn, resolvedDbId, resolvedContainerId);
+    const adapter = await getMongoContainer(conn, resolvedDbId, resolvedContainerId, options as any);
     // Cast to any so existing code that expects Cosmos Container type still compiles.
     // The adapter implements the same runtime interface.
-    cache.container = adapter as any;
-    cache.dbId = dbId;
-    cache.containerId = containerId;
-    cache.isMongo = true;
-    return cache.container;
+    if (!options?.session) {
+      cache.container = adapter as any;
+      cache.dbId = dbId;
+      cache.containerId = containerId;
+      cache.profile = profileKey;
+      cache.isMongo = true;
+    }
+    return adapter as any;
   }
 
   console.log(`[cosmos] Cosmos DB Path: connPrefix=${conn.substring(0, 20)}..., dbId=${dbId}, containerId=${containerId}`);
@@ -121,6 +138,7 @@ export async function getContainer(dbId = defaultDbId, containerId = defaultCont
   cache.container = container;
   cache.dbId = dbId;
   cache.containerId = containerId;
+  cache.profile = profileKey;
   cache.isMongo = false;
   return container;
 }
