@@ -35,6 +35,10 @@ export type WebhookPayload = {
   isStripeSessionUnique?: boolean;
   transactionId?: string | null;
   metadata?: Record<string, any> | null;
+  failureCode?: string | null;
+  failureReason?: string | null;
+  failureCategory?: string | null;
+  failureAction?: string | null;
 };
 
 /**

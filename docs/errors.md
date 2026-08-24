@@ -325,6 +325,65 @@ setInterval(() => console.log('API Metrics:', metrics), 60_000);
 
 ---
 
+## Payment & Checkout Failure Codes (`PORTAL_*`)
+
+When inspecting receipt status (`GET /api/receipts/status`) or receiving status webhooks (`receipt.status_updated`), failed transactions include structured, branded failure codes (`failureCode`), categories (`failureCategory`), human-readable descriptions (`failureReason`), and merchant remediation actions (`failureAction`).
+
+### 1. Card & Bank Declines (`category: "card_decline"`)
+
+| Custom Error Code | Description | Suggested Merchant Action |
+| :--- | :--- | :--- |
+| `PORTAL_PAY_INSUFFICIENT_FUNDS` | The card/account was declined due to insufficient available funds. | Ask the customer to retry with another card or alternate payment method. |
+| `PORTAL_PAY_CARD_DECLINED` | The payment card was declined by the card issuer. | Ask the customer to contact their issuing bank to approve the transaction. |
+| `PORTAL_PAY_EXPIRED_CARD` | The payment card has expired. | Customer must enter an active card with a valid expiration date. |
+| `PORTAL_PAY_INCORRECT_CVC` | The 3- or 4-digit security code (CVC/CVV) is incorrect. | Customer must re-enter the correct security code from the card. |
+| `PORTAL_PAY_INCORRECT_NUMBER` | The card number is invalid or failed checksum validation. | Customer must re-enter a valid 16-digit card number. |
+| `PORTAL_PAY_DO_NOT_HONOR` | The bank declined with a generic "Do Not Honor" code. | Customer must authorize crypto/online debit charges with their bank. |
+| `PORTAL_PAY_FRAUD_BLOCKED` | The charge was blocked by automated risk screening algorithms. | Advise customer to use a verified payment method or complete ID verification. |
+| `PORTAL_PAY_3DS_FAILED` | 3D Secure verification (OTP/bank challenge) failed or cancelled. | Customer should retry and approve the SMS/banking app prompt promptly. |
+| `PORTAL_PAY_BANK_INSTITUTION_BLOCK` | Banking institution policy restricts digital asset purchases. | Customer should switch to a crypto-friendly financial institution. |
+
+### 2. Compliance & Identity Verification (`category: "compliance"`)
+
+| Custom Error Code | Description | Suggested Merchant Action |
+| :--- | :--- | :--- |
+| `PORTAL_KYC_REQUIRED` | Basic identity verification (Level 0 Name & Address) is required. | Customer must submit their legal name and residential address. |
+| `PORTAL_KYC_STEP_UP_REQUIRED` | Level 1 identity step-up (Date of Birth & SSN/Tax ID) is required. | Customer must provide DOB and SSN/Tax ID to proceed. |
+| `PORTAL_KYC_DOC_REQUIRED` | Level 2 document verification (Photo ID & Selfie) is required. | Customer must complete document scan via Stripe verification modal. |
+| `PORTAL_KYC_DOC_UNREADABLE` | Uploaded identity document photo was blurry, expired, or unreadable. | Prompt customer to re-scan their ID in good lighting. |
+| `PORTAL_KYC_DOB_MISMATCH` | Submitted date of birth does not match verified identity records. | Customer must ensure DOB matches official government ID. |
+| `PORTAL_KYC_SANCTIONS_BLOCKED` | Customer or IP matched restricted sanctions/AML lists. | Transaction cannot be processed under international compliance laws. |
+| `PORTAL_KYC_UNDERAGE` | Customer does not meet the legal minimum age of 18. | User is ineligible to transact. |
+| `PORTAL_REGION_UNSUPPORTED` | Customer is located in an unsupported jurisdiction (e.g. NY, HI). | Region is restricted under state licensing requirements. |
+
+### 3. Purchase Limits (`category: "limits"`)
+
+| Custom Error Code | Description | Suggested Merchant Action |
+| :--- | :--- | :--- |
+| `PORTAL_LIMIT_EXCEEDED` | Order total exceeds customer's current KYC tier limit. | Direct customer to complete identity verification to increase limit. |
+| `PORTAL_LIMIT_AMOUNT_ABOVE_MAX` | Order total exceeds single-transaction maximum. | Customer should split the order or pay via bank transfer (ACH). |
+| `PORTAL_LIMIT_AMOUNT_BELOW_MIN` | Order total is below minimum processing threshold. | Order total must meet the minimum checkout amount. |
+
+### 4. Blockchain & Web3 (`category: "blockchain"`)
+
+| Custom Error Code | Description | Suggested Merchant Action |
+| :--- | :--- | :--- |
+| `PORTAL_CHAIN_INSUFFICIENT_BALANCE` | Customer wallet lacks required crypto or gas tokens. | Customer should top up wallet balance or switch to card. |
+| `PORTAL_CHAIN_USER_REJECTED` | Customer rejected signature prompt in Web3 wallet. | Customer may retry and approve the transaction in wallet. |
+| `PORTAL_CHAIN_SLIPPAGE_EXCEEDED` | Token exchange rate moved beyond slippage tolerance. | Refresh quote to obtain updated conversion rates. |
+| `PORTAL_CHAIN_TX_REVERTED` | Smart contract execution reverted on-chain. | Review transaction parameters or contact technical support. |
+| `PORTAL_CHAIN_WALLET_MISMATCH` | Travel Rule wallet ownership challenge signature failed. | Customer must sign challenge with the exact destination wallet. |
+
+### 5. Session & Abandonment (`category: "session"`)
+
+| Custom Error Code | Description | Suggested Merchant Action |
+| :--- | :--- | :--- |
+| `PORTAL_SESSION_ABANDONED` | Customer closed portal before completing checkout. | Send an abandoned checkout recovery email to customer. |
+| `PORTAL_SESSION_EXPIRED` | Checkout session expired after remaining inactive. | Generate a new checkout session link. |
+| `PORTAL_SESSION_CANCELLED` | Customer clicked cancel on the payment modal. | Customer may restart checkout when ready. |
+
+---
+
 ## Getting Help
 
 If you encounter persistent errors:
@@ -341,5 +400,8 @@ If you encounter persistent errors:
 
 Next Steps:
 - [API Reference](./api/README.md)
+- [Webhooks Guide](./api/webhooks.md)
+- [Receipts API](./api/receipts.md)
 - [Rate Limits](./limits.md)
 - [Quick Start](./quickstart.md)
+

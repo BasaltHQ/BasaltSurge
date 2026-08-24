@@ -56,6 +56,10 @@ export type Receipt = {
   customerSessions?: any[];
   kycLevel?: string;
   kycOccurred?: boolean;
+  failureCode?: string;
+  failureReason?: string;
+  failureCategory?: string;
+  failureAction?: string;
 };
 
 function toCents(n: number) {
@@ -142,7 +146,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     const spec = {
       query:
-        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
+        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
       parameters: [
         { name: "@id", value: id },
         { name: "@wallet", value: wallet }
@@ -181,6 +185,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         lastPolledAt: Number.isFinite(Number((row as any)?.lastPolledAt)) ? Number((row as any).lastPolledAt) : undefined,
         stripeSessionStatus: typeof (row as any)?.stripeSessionStatus === "string" ? (row as any).stripeSessionStatus : undefined,
         customerSessions: Array.isArray((row as any)?.customerSessions) ? (row as any).customerSessions : undefined,
+        failureCode: typeof (row as any)?.failureCode === "string" ? (row as any).failureCode : undefined,
+        failureReason: typeof (row as any)?.failureReason === "string" ? (row as any).failureReason : undefined,
+        failureCategory: typeof (row as any)?.failureCategory === "string" ? (row as any).failureCategory : undefined,
+        failureAction: typeof (row as any)?.failureAction === "string" ? (row as any).failureAction : undefined,
       };
       if (!(rec.totalUsd > 0)) {
         const candidate = sumLineItems(rec.lineItems || []);

@@ -55,7 +55,7 @@ X-PortalPay-Timestamp: <unix_ms>
 User-Agent: PortalPay-Webhook/1.0
 ```
 
-### Body
+### Body (Success / Paid)
 
 ```json
 {
@@ -80,14 +80,40 @@ User-Agent: PortalPay-Webhook/1.0
 }
 ```
 
+### Body (Failed / Declined)
+
+```json
+{
+  "event": "receipt.status_updated",
+  "receiptId": "order_abc",
+  "status": "failed",
+  "previousStatus": "pending",
+  "failureCode": "PORTAL_PAY_INSUFFICIENT_FUNDS",
+  "failureCategory": "card_decline",
+  "failureReason": "The payment method was declined due to insufficient available funds.",
+  "failureAction": "Ask the customer to retry with another card or use an alternate payment method.",
+  "merchantWallet": "0x5678...efgh",
+  "totalUsd": 25.00,
+  "token": "USDC",
+  "timestamp": 1713200000000,
+  "brandKey": "myshop",
+  "stripeSessionId": "cos_8a7a48c2-6bae-4b08-9d36-35670b42dc8d",
+  "isStripeSessionUnique": true
+}
+```
+
 ### Payload Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `event` | string | Webhook event name (`receipt.status_updated`) |
 | `receiptId` | string | Unique receipt ID |
-| `status` | string | Current payment status |
+| `status` | string | Current payment status (`paid`, `failed`, etc.) |
 | `previousStatus` | string | Status prior to this update |
+| `failureCode` | string \| null | Custom PortalPay error code (e.g. `PORTAL_PAY_INSUFFICIENT_FUNDS`, `PORTAL_KYC_DOC_UNREADABLE`) |
+| `failureCategory` | string \| null | High-level failure category (`card_decline`, `compliance`, `limits`, `blockchain`, `session`, `system`) |
+| `failureReason` | string \| null | Human-readable explanation of why the payment failed |
+| `failureAction` | string \| null | Recommended remediation advice for the merchant |
 | `transactionHash` | string \| null | On-chain transaction hash (when completed) |
 | `buyerWallet` | string \| null | Buyer's wallet address |
 | `merchantWallet` | string | Merchant recipient wallet address |
@@ -110,6 +136,7 @@ The `status` field will contain one of the following values:
 | `checkout_success` | Payment submitted through the widget |
 | `paid` | Payment confirmed on-chain |
 | `reconciled` | Funds verified and split distribution executed |
+| `failed` | Payment failed or declined (see `failureCode` and `failureReason`) |
 | `refund_requested` | Refund has been requested |
 | `refunded` | Refund has been processed |
 
