@@ -6,6 +6,7 @@ export * from "./errorTaxonomy";
 export * from "./kycTierEngine";
 export * from "./useStepProgressionGuard";
 export * from "./DobPicker";
+export * from "./AddressAutocomplete";
 export * from "./AccordionCard";
 export * from "./AccordionStepHeader";
 export * from "./CheckoutHeader";

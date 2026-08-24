@@ -555,6 +555,7 @@ export function useAccordionCheckoutState(
       }
     }
     setIsAddressParsed(true);
+    setManualEditAddress(true);
   };
 
   // Missing fields list for Step 2
@@ -768,19 +769,27 @@ export function useAccordionCheckoutState(
       const targetCountry = (country || "US").toUpperCase();
       const isEU = targetCountry !== "US" && targetCountry !== "CA";
 
-      // Compliance Invariant: Always submit the complete demographic payload to avoid Stripe parameter validation errors
+      // Stripe KYC Tier Invariant:
+      // - If US customer is already L0-verified (Address verified) and performing reactive L1 step-up, Stripe specifies uploading only DOB + SSN (attachKYCInfo partial upload).
+      // - For new registrations or full KYC updates (showFullForm / manualEditAddress), submit the complete demographic payload including address.
+      const isStepUpOnly = isUS && showStepUpForm && isL0Approved && !manualEditAddress;
+
       if (onSubmitKycInfo && !isSimulationMode) {
         await onSubmitKycInfo({
           given_name: firstName.trim(),
           surname: lastName.trim(),
-          address: {
-            line1: line1.trim(),
-            ...(line2 ? { line2: line2.trim() } : {}),
-            city: city.trim(),
-            ...(stateCode ? { state: stateCode.trim() } : {}),
-            postal_code: zipCode.trim(),
-            country: targetCountry,
-          },
+          ...(!isStepUpOnly && line1.trim()
+            ? {
+                address: {
+                  line1: line1.trim(),
+                  ...(line2 ? { line2: line2.trim() } : {}),
+                  city: city.trim(),
+                  ...(stateCode ? { state: stateCode.trim() } : {}),
+                  postal_code: zipCode.trim(),
+                  country: targetCountry,
+                },
+              }
+            : {}),
           ...(parsedDob ? { date_of_birth: parsedDob } : {}),
           ...(isUS && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
           ...(isEU
