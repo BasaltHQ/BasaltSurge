@@ -650,6 +650,9 @@ export default async function RootLayout({
     // Use cached function to deduplicate brand config fetches within the same render
     const b = await getBrandConfigDirect(effectiveBrandKeyForFetch);
     if (b && typeof b === "object") {
+      if (!sMatch && typeof (b as any).dualSplitEnabled === "boolean") {
+        serverDualSplit = (b as any).dualSplitEnabled;
+      }
       const isPartnerLayout = String(envLayout.CONTAINER_TYPE || "").toLowerCase() === "partner";
       runtimeBrand = {
         ...baseBrand,

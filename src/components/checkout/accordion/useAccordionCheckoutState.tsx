@@ -590,9 +590,9 @@ export function useAccordionCheckoutState(
 
   // Step 2 satisfaction check: KYC / Demographics are verified and no further step-up / doc verification is required
   const isStep2Satisfied = Boolean(
-    (isIdentityComplete || isL0Approved || isAllKycCompleted || effectiveStatus === "verified") &&
+    (isIdentityComplete || isL0Approved || isAllKycCompleted || effectiveStatus === "verified" || isL2Approved || docVerificationSuccess) &&
     !showStepUpForm &&
-    !showVerifyDocs
+    (!showVerifyDocs || isL2Approved || docVerificationSuccess)
   );
 
   // Dedicated Modular Reactive Step Controller Hook
@@ -694,6 +694,25 @@ export function useAccordionCheckoutState(
     }
   };
 
+  // Level 2 Document Verification Action Handler
+  const handleVerifyDocuments = async () => {
+    if (!onVerifyDocuments) return;
+    try {
+      setIsSubmittingIdentity(true);
+      setLocalError(null);
+      const res = await onVerifyDocuments();
+      if (res || res === undefined) {
+        setDocVerificationSuccess(true);
+        setActiveStep(3);
+      }
+    } catch (vErr: any) {
+      console.warn("[ACCORDION] Document verification error:", vErr);
+      setLocalError(vErr?.message || "Document verification was not completed.");
+    } finally {
+      setIsSubmittingIdentity(false);
+    }
+  };
+
   // Step 2 Submit
   const handleIdentitySubmit = async (e?: React.FormEvent) => {
     if (e && typeof e.preventDefault === "function") {
@@ -715,18 +734,7 @@ export function useAccordionCheckoutState(
 
     if (isL2Requirement && !isL2Approved && !showStepUpForm && !showFullForm) {
       if (onVerifyDocuments) {
-        try {
-          setIsSubmittingIdentity(true);
-          const res = await onVerifyDocuments();
-          if (res) {
-            setDocVerificationSuccess(true);
-            setActiveStep(3);
-          }
-        } catch (vErr: any) {
-          setLocalError(vErr?.message || "Document verification was not completed.");
-        } finally {
-          setIsSubmittingIdentity(false);
-        }
+        await handleVerifyDocuments();
         return;
       }
       setLocalError("Government ID / Document upload is required for Level 2 verification. Please complete document upload.");
@@ -1009,6 +1017,7 @@ export function useAccordionCheckoutState(
       isL2Approved,
       isAllKycCompleted,
       effectiveStatus,
+      headlessStep: effectiveHeadlessStep,
       showStepUpForm,
       showFullForm,
       showVerifyDocs,
@@ -1020,7 +1029,7 @@ export function useAccordionCheckoutState(
       onFetchSuggestions: handleFetchSuggestions,
       onSelectSuggestion: handleSelectSuggestion,
       onSubmit: handleIdentitySubmit,
-      onVerifyDocuments,
+      onVerifyDocuments: handleVerifyDocuments,
       onHeaderClick: () => handleStepChange(2),
       onContinueToStep3: () => handleIdentitySubmit(),
     },

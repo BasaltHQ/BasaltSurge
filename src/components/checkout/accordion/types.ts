@@ -200,6 +200,7 @@ export interface Step2Props {
   isL2Approved: boolean;
   isAllKycCompleted?: boolean;
   effectiveStatus?: string;
+  headlessStep?: string;
   showStepUpForm: boolean;
   showFullForm: boolean;
   showVerifyDocs?: boolean;

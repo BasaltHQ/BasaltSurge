@@ -2810,6 +2810,7 @@ export function useStripeEmbeddedOnramp({
     }
     console.log("[EMBEDDED ONRAMP] verifyDocuments triggered directly...");
     isVerifyingRef.current = true;
+    isRunningRef.current = true;
     kycOccurredRef.current = true;
     updateStep("verifying_identity");
     setKycTierRequired("l2");
@@ -2825,6 +2826,7 @@ export function useStripeEmbeddedOnramp({
       if (!res || res.result === "abandoned") {
         console.warn("[EMBEDDED ONRAMP] Identity verification abandoned by user");
         updateStep("collecting_kyc");
+        isRunningRef.current = false;
         return false;
       }
 
@@ -2848,6 +2850,7 @@ export function useStripeEmbeddedOnramp({
       kycOccurredRef.current = true;
       setPaymentElement(null);
       isRunningRef.current = false;
+      updateStep("collecting_payment");
 
       if (startOnrampRef.current) {
         setTimeout(() => {
@@ -2858,6 +2861,7 @@ export function useStripeEmbeddedOnramp({
     } catch (err: any) {
       console.error("[EMBEDDED ONRAMP] verifyDocuments failed:", err);
       isVerifyingRef.current = false;
+      isRunningRef.current = false;
       const errMsg = String(err?.message || err || "").toLowerCase();
       if (errMsg.includes("invalid request") || errMsg.includes("already_verified") || errMsg.includes("cannot be updated")) {
         console.log("[EMBEDDED ONRAMP] Document verification not pending or already approved in Stripe. Advancing to payment collection...");

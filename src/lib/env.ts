@@ -208,13 +208,12 @@ export const isDualSplitEnabled = (): boolean => {
     if (cookies.includes("pp_sandbox_split_mode=dual")) return true;
     if (cookies.includes("pp_sandbox_split_mode=single")) return false;
   }
-  const isPartner = typeof window === 'undefined' ? isPartnerContext() : isPartnerContextClient();
-  return isPartner && !!getEnv().DUAL_SPLIT_CONFIG;
+  return !!getEnv().DUAL_SPLIT_CONFIG;
 };
 
 export function getSanitizedCreditSplitBps(): { platform: number; agent: number } | undefined {
   const env = getEnv();
-  const p = clampBps(env.PLATFORM_BPS ?? env.CREDIT_SPLIT_PLATFORM_BPS ?? 150); // prioritize PLATFORM_BPS
+  const p = clampBps(env.CREDIT_SPLIT_PLATFORM_BPS ?? env.PLATFORM_BPS ?? 150);
   const q = clampBps(env.CREDIT_SPLIT_AGENT_BPS ?? 0);
   const sum = Math.max(0, (p ?? 0)) + Math.max(0, (q ?? 0));
   if (sum > 10000) return undefined;

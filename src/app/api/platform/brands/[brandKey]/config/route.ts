@@ -41,6 +41,7 @@ type BrandConfigDoc = {
   unifiedFeeEnabled?: boolean;
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
+  dualSplitEnabled?: boolean;
   stripeOnrampEnabled?: boolean;
   stripeOnrampV2Enabled?: boolean;
   v2CheckoutEnabled?: boolean;
@@ -103,6 +104,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     partnerWallet: "",
     apimCatalog: [],
     unifiedFeeEnabled: false,
+    dualSplitEnabled: false,
     creditPlatformFeeBps: undefined,
     agentFeeBps: undefined,
     creditAgentFeeBps: undefined,
@@ -156,6 +158,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     agents: Array.isArray(overrides.agents) ? overrides.agents : withDefaults.agents || [],
     apimCatalog: Array.isArray(overrides.apimCatalog) ? overrides.apimCatalog : withDefaults.apimCatalog,
     unifiedFeeEnabled: typeof overrides.unifiedFeeEnabled === "boolean" ? overrides.unifiedFeeEnabled : withDefaults.unifiedFeeEnabled,
+    dualSplitEnabled: typeof overrides.dualSplitEnabled === "boolean" ? overrides.dualSplitEnabled : withDefaults.dualSplitEnabled,
     creditPlatformFeeBps: typeof overrides.creditPlatformFeeBps === "number" ? overrides.creditPlatformFeeBps : withDefaults.creditPlatformFeeBps,
     agentFeeBps: typeof overrides.agentFeeBps === "number" ? overrides.agentFeeBps : withDefaults.agentFeeBps,
     creditAgentFeeBps: typeof overrides.creditAgentFeeBps === "number" ? overrides.creditAgentFeeBps : withDefaults.creditAgentFeeBps,
@@ -317,6 +320,9 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
 
   if (typeof raw?.unifiedFeeEnabled === "boolean") {
     out.unifiedFeeEnabled = raw.unifiedFeeEnabled;
+  }
+  if (typeof raw?.dualSplitEnabled === "boolean") {
+    out.dualSplitEnabled = raw.dualSplitEnabled;
   }
 
   if (typeof raw?.stripeOnrampEnabled === "boolean") {

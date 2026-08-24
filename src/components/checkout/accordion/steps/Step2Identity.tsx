@@ -73,6 +73,7 @@ export function Step2Identity({
   isL2Approved,
   isAllKycCompleted,
   effectiveStatus,
+  headlessStep,
   showStepUpForm,
   showFullForm,
   showVerifyDocs,
@@ -207,32 +208,55 @@ export function Step2Identity({
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={async () => {
-                if (onVerifyDocuments) {
-                  await onVerifyDocuments();
-                }
-              }}
-              disabled={isSubmittingIdentity}
-              className="w-full h-11 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer text-white disabled:opacity-60"
-              style={{
-                backgroundColor: "#00b8d4",
-              }}
-            >
-              {isSubmittingIdentity ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-white" />
-                  <span>Launching Stripe Identity Camera...</span>
-                </>
-              ) : (
-                <>
-                  <Shield className="w-4 h-4 text-white" />
-                  <span>Verify ID Documents</span>
-                  <ArrowRight className="w-4 h-4 text-white" />
-                </>
-              )}
-            </button>
+            {isSubmittingIdentity || headlessStep === "checking_kyc" || headlessStep === "verifying_identity" ? (
+              <div className="p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/20 space-y-3.5 animate-in fade-in duration-300">
+                <div className="flex items-center gap-3">
+                  <div className="relative flex items-center justify-center w-10 h-10 rounded-full bg-cyan-500/20 text-cyan-400">
+                    <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-cyan-400/20 animate-ping" />
+                  </div>
+                  <div className="space-y-0.5">
+                    <h5 className="text-sm font-bold text-cyan-300">
+                      {headlessStep === "checking_kyc" ? "Verifying Identification Documents..." : "Launching Stripe Identity..."}
+                    </h5>
+                    <p className="text-xs text-cyan-200/80">
+                      {headlessStep === "checking_kyc"
+                        ? "Stripe is analyzing your ID document. You will advance automatically once approved."
+                        : "Preparing secure camera verification with Stripe..."}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-black/30 border border-white/5 text-xs text-cyan-300">
+                  <span className="flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500" />
+                    </span>
+                    Polling Stripe verification engine...
+                  </span>
+                  <span className="font-mono text-[11px] opacity-70">L2 Check</span>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (onVerifyDocuments) {
+                    await onVerifyDocuments();
+                  }
+                }}
+                disabled={isSubmittingIdentity}
+                className="w-full h-11 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer text-white disabled:opacity-60"
+                style={{
+                  backgroundColor: "#00b8d4",
+                }}
+              >
+                <Shield className="w-4 h-4 text-white" />
+                <span>Verify ID Documents</span>
+                <ArrowRight className="w-4 h-4 text-white" />
+              </button>
+            )}
           </div>
         ) : isAlreadyVerifiedCard ? (
           /* Already Verified Locked Summary Card */
