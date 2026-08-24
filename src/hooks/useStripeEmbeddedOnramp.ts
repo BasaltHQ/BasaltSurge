@@ -96,7 +96,39 @@ type OnrampCoordinator = {
     }) => void
   ) => Promise<HTMLElement | null>;
   submitKycInfo: (params: any) => Promise<void>;
+  getMissingIdentifiers?: () => Promise<{
+    carf_tin_required?: boolean;
+    identifiers?: Array<{ type: string; regulation: string }>;
+    alternatives?: Array<{ original_missing_identifiers: string[]; alternative_missing_identifiers: string[] }>;
+  }>;
+  updateKycInfo?: (
+    identifiers: Array<{ type: string; value: string }>
+  ) => Promise<{
+    completed: boolean;
+    carf_tin_required?: boolean;
+    identifiers?: Array<{ type: string; regulation: string }>;
+    alternatives?: Array<any>;
+    invalid_identifiers?: string[];
+  }>;
+  promptUserAttestation?: (
+    regulation: string,
+    onCompletion: (result: { result: "confirmed" | "abandoned" }) => void
+  ) => Promise<HTMLElement>;
   verifyDocuments: () => Promise<{ result: "success" | "abandoned" }>;
+  getWalletOwnershipChallenge?: (params: {
+    walletAddress: string;
+    network: string;
+  }) => Promise<{
+    challengeId: string;
+    walletAddress: string;
+    network: string;
+    message: string;
+    expiresAt: string;
+  }>;
+  submitWalletOwnershipSignature?: (params: {
+    challengeId: string;
+    signature: string;
+  }) => Promise<any>;
   registerWalletAddress: (
     walletAddress: string,
     network: string
@@ -140,23 +172,24 @@ const STRIPE_ONRAMP_SUPPORTED_COUNTRIES = new Set([
   "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"
 ]);
 
-function normalizeCountryCode(country: any): string {
+function normalizeCountryCode(country?: string): string {
   if (!country) return "US";
-  let c = String(country).trim().toUpperCase();
-  if (!c || c === "UNDEFINED" || c === "NULL") return "US";
-  if (c === "USA" || c === "UNITED STATES" || c === "UNITED STATES OF AMERICA") return "US";
-  if (c === "CAN" || c === "CANADA") return "CA";
-  if (c === "GBR" || c === "UK" || c === "UNITED KINGDOM" || c === "GREAT BRITAIN") return "GB";
-  if (c === "DEU" || c === "GERMANY") return "DE";
-  if (c === "FRA" || c === "FRANCE") return "FR";
-  if (c === "ESP" || c === "SPAIN") return "ES";
-  if (c === "ITA" || c === "ITALY") return "IT";
-  if (c === "NLD" || c === "NETHERLANDS") return "NL";
-  if (c === "IRL" || c === "IRELAND") return "IE";
-  if (c === "AUS" || c === "AUSTRALIA") return "AU";
-  if (c === "MEX" || c === "MEXICO") return "MX";
-
-  return VALID_ISO_COUNTRY_CODES.has(c) ? c : "US";
+  const trimmed = country.trim().toUpperCase();
+  if (VALID_ISO_COUNTRY_CODES.has(trimmed)) {
+    return trimmed;
+  }
+  const NAME_TO_CODE: Record<string, string> = {
+    "UNITED STATES": "US", "USA": "US", "UNITED STATES OF AMERICA": "US",
+    "UNITED KINGDOM": "GB", "UK": "GB", "GREAT BRITAIN": "GB",
+    "GERMANY": "DE", "FRANCE": "FR", "SPAIN": "ES", "ITALY": "IT",
+    "NETHERLANDS": "NL", "IRELAND": "IE", "AUSTRIA": "AT", "BELGIUM": "BE",
+    "SWITZERLAND": "CH", "SWEDEN": "SE", "NORWAY": "NO", "DENMARK": "DK",
+    "FINLAND": "FI", "POLAND": "PL", "PORTUGAL": "PT", "GREECE": "GR",
+    "CANADA": "CA", "AUSTRALIA": "AU", "NEW ZEALAND": "NZ", "JAPAN": "JP",
+    "SINGAPORE": "SG", "HONG KONG": "HK", "BRAZIL": "BR", "MEXICO": "MX",
+    "INDIA": "IN", "SOUTH AFRICA": "ZA",
+  };
+  return NAME_TO_CODE[trimmed] || "US";
 }
 
 const EU_EEA_COUNTRIES = new Set([
@@ -198,6 +231,10 @@ async function submitKycInfoWithTimeout(coordinator: OnrampCoordinator, kycInfo:
       }
       if (!Array.isArray(kycInfo.nationalities) || kycInfo.nationalities.length === 0) {
         kycInfo.nationalities = [addrCountry];
+      }
+      // Stripe EU KYC docs: State is not required for EU addresses except Ireland (IE)
+      if (addrCountry !== "IE" && kycInfo.address?.state) {
+        delete kycInfo.address.state;
       }
     }
   }
@@ -2520,7 +2557,7 @@ export function useStripeEmbeddedOnramp({
         }
         payload.address = cleanAddr;
 
-        // Auto-inject required EU KYC fields (nationalities, birth_country) if not already provided
+        // Auto-inject required EU KYC fields (nationalities, birth_country, birth_city) if not already provided
         const countryCode = (cleanAddr.country || activeCountryRef.current || "US").toUpperCase();
         if (countryCode !== "US" && countryCode !== "CA") {
           if (!payload.nationalities) {
@@ -2529,37 +2566,87 @@ export function useStripeEmbeddedOnramp({
           if (!payload.birth_country) {
             payload.birth_country = countryCode;
           }
+          if (!payload.birth_city && cleanAddr.city) {
+            payload.birth_city = cleanAddr.city;
+          }
           if (!payload.nationality) {
             payload.nationality = countryCode;
           }
         }
       }
       await submitKycInfoWithTimeout(onrampRef.current, payload);
-      // Determine which tier was just submitted based on the payload fields (DOB/SSN defines L1)
-      const submittedTier = (payload.date_of_birth || payload.id_number) ? "l1" : "l0";
 
-      updateStep("checking_kyc");
-      const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
-      if (!kycApproved) {
-        if (submittedTier === "l0") {
-          console.log("[EMBEDDED ONRAMP] L0 verification requires step up. Transitioning to L1...");
-          setKycTierRequired("l1");
-          setKycLevel("L0");
-          updateStep("collecting_kyc");
-          isRunningRef.current = false;
-          return;
+      const targetCountryCode = (payload.address?.country || activeCountryRef.current || "US").toUpperCase();
+      const isEuUser = isEuEeaCountry(targetCountryCode);
+
+      if (isEuUser) {
+        console.log("[EMBEDDED ONRAMP] EU KYC basic info submitted. Checking for MiCA identifiers & L2 document verification...");
+        
+        // 1. Check for missing MiCA identifiers if supported
+        if (typeof onrampRef.current.getMissingIdentifiers === "function") {
+          try {
+            const missing = await onrampRef.current.getMissingIdentifiers();
+            console.log("[EMBEDDED ONRAMP] MiCA missing identifiers check:", missing);
+          } catch (mErr) {
+            console.warn("[EMBEDDED ONRAMP] getMissingIdentifiers check (non-fatal):", mErr);
+          }
         }
-        throw new Error(`KYC ${submittedTier.toUpperCase()} verification was not approved.`);
-      }
 
-      console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
-      setIsAllKycCompleted(true);
-      const resolvedLvl = submittedTier === "l1" ? "L1" : "L0";
-      setKycLevel(resolvedLvl);
-      kycLevelRef.current = resolvedLvl;
-      setKycTierRequired(submittedTier);
-      kycTierRequiredRef.current = submittedTier;
-      kycOccurredRef.current = true;
+        // 2. Launch mandatory EU L2 verifyDocuments
+        updateStep("verifying_identity");
+        console.log("[EMBEDDED ONRAMP] Launching mandatory EU L2 verifyDocuments...");
+        try {
+          const verifyResult = await onrampRef.current.verifyDocuments();
+          if (verifyResult?.result === "abandoned") {
+            throw new Error("Identity verification was abandoned");
+          }
+        } catch (vErr: any) {
+          console.warn("[EMBEDDED ONRAMP] EU verifyDocuments result:", vErr);
+          if (vErr?.message && !vErr.message.includes("already") && !vErr.message.includes("completed")) {
+            throw vErr;
+          }
+        }
+
+        updateStep("checking_kyc");
+        const l2Approved = await pollKycStatus(customerIdRef.current || "", "l2");
+        if (!l2Approved) {
+          throw new Error("EU Identity verification is pending or requires review.");
+        }
+
+        console.log("[EMBEDDED ONRAMP] EU L2 verification complete & approved!");
+        setIsAllKycCompleted(true);
+        setKycLevel("L2");
+        kycLevelRef.current = "L2";
+        setKycTierRequired("l2");
+        kycTierRequiredRef.current = "l2";
+        kycOccurredRef.current = true;
+      } else {
+        // Standard US / non-EU KYC verification (100% UNTOUCHED)
+        const submittedTier = (payload.date_of_birth || payload.id_number) ? "l1" : "l0";
+
+        updateStep("checking_kyc");
+        const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
+        if (!kycApproved) {
+          if (submittedTier === "l0") {
+            console.log("[EMBEDDED ONRAMP] L0 verification requires step up. Transitioning to L1...");
+            setKycTierRequired("l1");
+            setKycLevel("L0");
+            updateStep("collecting_kyc");
+            isRunningRef.current = false;
+            return;
+          }
+          throw new Error(`KYC ${submittedTier.toUpperCase()} verification was not approved.`);
+        }
+
+        console.log(`[EMBEDDED ONRAMP] KYC ${submittedTier.toUpperCase()} approved! Resuming checkout loop...`);
+        setIsAllKycCompleted(true);
+        const resolvedLvl = submittedTier === "l1" ? "L1" : "L0";
+        setKycLevel(resolvedLvl);
+        kycLevelRef.current = resolvedLvl;
+        setKycTierRequired(submittedTier);
+        kycTierRequiredRef.current = submittedTier;
+        kycOccurredRef.current = true;
+      }
 
       if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
         if (paymentTokenRef.current) {
@@ -3205,10 +3292,14 @@ export function useStripeEmbeddedOnramp({
           kycOccurredRef.current = true;
         }
 
-        // If ACH payment is chosen, we strictly enforce verification through L2.
-        const isCustomerVerified = isAchEnforcedRef.current 
-          ? isL2Verified 
-          : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected") || isAllKycCompleted || computedLevel === "L1" || computedLevel === "L0");
+        const isEuCustomer = kycData.kycRegion === "eu" || (activeCountryRef.current && isEuEeaCountry(activeCountryRef.current));
+
+        // If ACH payment is chosen or EU resident, enforce verification through L2.
+        const isCustomerVerified = isEuCustomer
+          ? isL2Verified
+          : (isAchEnforcedRef.current 
+              ? isL2Verified 
+              : (isL2Verified || isL1Verified || (isL0Verified && l0Tier?.verification_status !== "rejected") || isAllKycCompleted || computedLevel === "L1" || computedLevel === "L0"));
 
         setIsAllKycCompleted(Boolean(isCustomerVerified));
 
@@ -3273,14 +3364,22 @@ export function useStripeEmbeddedOnramp({
               ? freshL2.verification_status === "verified"
               : isFreshOverallIdVerified;
 
-            const isFreshVerified = isAchEnforcedRef.current
+            const isFreshVerified = isEuCustomer
               ? isFreshL2Verified
-              : (isFreshL2Verified || isFreshL1Verified || (isFreshL0Verified && freshL0?.verification_status !== "rejected"));
+              : (isAchEnforcedRef.current
+                  ? isFreshL2Verified
+                  : (isFreshL2Verified || isFreshL1Verified || (isFreshL0Verified && freshL0?.verification_status !== "rejected")));
 
             setIsAllKycCompleted(Boolean(isFreshVerified));
 
             if (!isFreshVerified) {
-              if (isAchEnforcedRef.current) {
+              if (isEuCustomer) {
+                if (freshL2?.verification_status === "rejected") {
+                  setKycTierRequired("l2");
+                } else {
+                  setKycTierRequired("l0");
+                }
+              } else if (isAchEnforcedRef.current) {
                 if (isFreshL1Verified) {
                   setKycTierRequired("l2");
                 } else if (isFreshL0Verified) {
@@ -3355,12 +3454,23 @@ export function useStripeEmbeddedOnramp({
             }
           } else {
             // Standard card/loose KYC flow
-            if (l0Tier?.verification_status === "rejected") {
-              console.log("[EMBEDDED ONRAMP] L0 KYC was rejected. Customer must complete L1 verification to proceed.");
-              setKycTierRequired("l1");
+            if (isEuCustomer) {
+              if (l2Tier?.verification_status === "rejected") {
+                console.log("[EMBEDDED ONRAMP] EU L2 KYC was rejected. Customer must retry L2 document verification.");
+                setKycTierRequired("l2");
+              } else {
+                console.log("[EMBEDDED ONRAMP] EU KYC required. Transitioning to collecting basic EU KYC.");
+                setKycTierRequired("l0");
+              }
             } else {
-              console.log("[EMBEDDED ONRAMP] No active KYC verification found. Transitioning to collecting L0 KYC.");
-              setKycTierRequired("l0");
+              // Standard US / non-EU card flow (100% UNTOUCHED)
+              if (l0Tier?.verification_status === "rejected") {
+                console.log("[EMBEDDED ONRAMP] L0 KYC was rejected. Customer must complete L1 verification to proceed.");
+                setKycTierRequired("l1");
+              } else {
+                console.log("[EMBEDDED ONRAMP] No active KYC verification found. Transitioning to collecting L0 KYC.");
+                setKycTierRequired("l0");
+              }
             }
             updateStep("collecting_kyc");
           }

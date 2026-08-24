@@ -192,8 +192,8 @@ export default function SampleFormsPage() {
                 className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-white/10 text-white font-semibold focus:outline-none focus:border-amber-400"
               >
                 <option value="normal">Normal Entry</option>
-                <option value="step_up">Step-Up Required</option>
-                <option value="doc_verify">Doc Upload Required</option>
+                <option value="step_up">Step-Up Required (SSN/DOB)</option>
+                <option value="doc_verify">Doc Upload Required (L2)</option>
                 <option value="verified">Fully Verified (Auto-Advance)</option>
               </select>
             </div>
@@ -211,6 +211,76 @@ export default function SampleFormsPage() {
                 <option value="kyc_rejection">🚫 KYC Identity Rejection</option>
               </select>
             </div>
+          </div>
+
+          {/* Region / Jurisdiction Selector */}
+          <div className="pt-1 border-t border-white/5">
+            <label className="block text-[10px] font-semibold text-emerald-400 mb-1">🌍 Simulation Jurisdiction / Region</label>
+            <select
+              value={kycCountry}
+              onChange={(e) => {
+                const c = e.target.value;
+                setKycCountry(c);
+                if (c === "AT") {
+                  setKycFirstName("Alexander");
+                  setKycLastName("Mayr");
+                  setKycLine1("Augasse 9");
+                  setKycLine2("9a");
+                  setKycCity("Wien");
+                  setKycState("W");
+                  setKycZip("1090");
+                  setShipEmail("alexander.mayr@example.com");
+                  setHeadlessPhoneInput("+43 660 1234567");
+                } else if (c === "DE") {
+                  setKycFirstName("Maximilian");
+                  setKycLastName("Müller");
+                  setKycLine1("Friedrichstraße 43");
+                  setKycLine2("");
+                  setKycCity("Berlin");
+                  setKycState("");
+                  setKycZip("10117");
+                  setShipEmail("max.mueller@example.de");
+                  setHeadlessPhoneInput("+49 151 23456789");
+                } else if (c === "FR") {
+                  setKycFirstName("Camille");
+                  setKycLastName("Dupont");
+                  setKycLine1("12 Rue de Rivoli");
+                  setKycLine2("");
+                  setKycCity("Paris");
+                  setKycState("");
+                  setKycZip("75001");
+                  setShipEmail("camille.dupont@example.fr");
+                  setHeadlessPhoneInput("+33 6 12 34 56 78");
+                } else if (c === "ES") {
+                  setKycFirstName("Carlos");
+                  setKycLastName("García");
+                  setKycLine1("Gran Vía 28");
+                  setKycLine2("");
+                  setKycCity("Madrid");
+                  setKycState("M");
+                  setKycZip("28013");
+                  setShipEmail("carlos.garcia@example.es");
+                  setHeadlessPhoneInput("+34 612 345678");
+                } else {
+                  setKycFirstName("Jane");
+                  setKycLastName("Doe");
+                  setKycLine1("742 Evergreen Terrace");
+                  setKycLine2("Apt 4B");
+                  setKycCity("Springfield");
+                  setKycState("OR");
+                  setKycZip("97477");
+                  setShipEmail("jane.doe@example.com");
+                  setHeadlessPhoneInput("+1 555-019-2834");
+                }
+              }}
+              className="w-full h-8 px-2.5 text-[11px] rounded-lg bg-zinc-950 border border-emerald-500/40 text-emerald-300 font-bold focus:outline-none focus:border-emerald-400"
+            >
+              <option value="US">🇺🇸 United States (US - Pure L0 / Step-Up SSN)</option>
+              <option value="AT">🇦🇹 Austria (AT - EU MiCA / Alexander Mayr Wien)</option>
+              <option value="DE">🇩🇪 Germany (DE - EU MiCA KYC + L2)</option>
+              <option value="FR">🇫🇷 France (FR - EU MiCA KYC + L2)</option>
+              <option value="ES">🇪🇸 Spain (ES - EU MiCA NIF + L2)</option>
+            </select>
           </div>
         </div>
       )}
@@ -258,6 +328,14 @@ export default function SampleFormsPage() {
             email={shipEmail}
             phone={headlessPhoneInput}
             fullName={`${kycFirstName} ${kycLastName}`}
+            firstName={kycFirstName}
+            lastName={kycLastName}
+            line1={kycLine1}
+            line2={kycLine2}
+            city={kycCity}
+            stateCode={kycState}
+            zipCode={kycZip}
+            country={kycCountry}
             amountUsd={25.00}
             receiptId="REC-SAMPLE-99"
             kycTierRequired={simulatedTier}

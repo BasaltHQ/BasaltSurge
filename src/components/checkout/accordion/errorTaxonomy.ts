@@ -522,8 +522,18 @@ function formatFallbackErrorMessage(lower: string): string {
   if (lower.includes("declined") || lower.includes("card")) {
     return "Your card was declined by your issuing bank. Please try another payment method or contact your bank.";
   }
-  if (lower.includes("address") || lower.includes("state")) {
+  if (
+    lower.includes("unsupported_region") ||
+    lower.includes("unsupported_state") ||
+    lower.includes("unsupported_country") ||
+    lower.includes("unsupported for headless mode") ||
+    lower.includes("regional regulation") ||
+    lower.includes("e.g., ny, hi")
+  ) {
     return "Instant card checkout is currently unavailable for this address or state (e.g., NY, HI) due to regional regulations. Please verify your address or use an alternative payment method.";
+  }
+  if (lower.includes("address") || lower.includes("postal") || lower.includes("zip") || lower.includes("city") || lower.includes("state")) {
+    return "Please verify your residential street address, city, and postal code to continue.";
   }
   if (lower.includes("kyc") || lower.includes("identity")) {
     return "Additional identity verification is required to complete this order.";

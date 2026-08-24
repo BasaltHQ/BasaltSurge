@@ -100,6 +100,43 @@ export function useAccordionCheckoutState(
     if (eMatch) setCookieSimError(eMatch[1]);
     const pMatch = cookies.match(/pp_sandbox_sim_pm=([^;]+)/);
     if (pMatch) setCookieSimPm(pMatch[1]);
+    const cMatch = cookies.match(/pp_sandbox_sim_country=([^;]+)/);
+    if (cMatch) {
+      const c = cMatch[1].toUpperCase();
+      setCountry(c);
+      if (c === "AT") {
+        setFirstName(prev => prev || "Alexander");
+        setLastName(prev => prev || "Mayr");
+        setLine1(prev => prev || "Augasse 9");
+        setLine2(prev => prev || "9a");
+        setCity(prev => prev || "Wien");
+        setStateCode(prev => prev || "W");
+        setZipCode(prev => prev || "1090");
+        setDob(prev => prev || "1990-05-14");
+      } else if (c === "DE") {
+        setFirstName(prev => prev || "Maximilian");
+        setLastName(prev => prev || "Müller");
+        setLine1(prev => prev || "Friedrichstraße 43");
+        setCity(prev => prev || "Berlin");
+        setZipCode(prev => prev || "10117");
+        setDob(prev => prev || "1988-11-20");
+      } else if (c === "FR") {
+        setFirstName(prev => prev || "Camille");
+        setLastName(prev => prev || "Dupont");
+        setLine1(prev => prev || "12 Rue de Rivoli");
+        setCity(prev => prev || "Paris");
+        setZipCode(prev => prev || "75001");
+        setDob(prev => prev || "1995-03-12");
+      } else if (c === "ES") {
+        setFirstName(prev => prev || "Carlos");
+        setLastName(prev => prev || "García");
+        setLine1(prev => prev || "Gran Vía 28");
+        setCity(prev => prev || "Madrid");
+        setStateCode(prev => prev || "M");
+        setZipCode(prev => prev || "28013");
+        setDob(prev => prev || "1991-07-25");
+      }
+    }
   }, []);
 
   // Strict separation of simulation demo mode vs live production checkout
@@ -298,48 +335,6 @@ export function useAccordionCheckoutState(
     setTouchedFields((prev) => ({ ...prev, [field]: true }));
   };
 
-  const ssnDigits = (ssn || "").replace(/\D/g, "");
-  const dobStatus = validateDob(dob);
-  const countryConfig = getCountryAddressConfig(country);
-  const isUS = countryConfig.isUS;
-
-  const fieldValidation = {
-    firstName: (firstName || "").trim().length >= 1,
-    lastName: (lastName || "").trim().length >= 1,
-    line1: (line1 || "").trim().length >= 3,
-    city: (city || "").trim().length >= 2,
-    stateCode: countryConfig.requiresState ? (stateCode || "").trim().length >= 2 : true,
-    zipCode: (zipCode || "").trim().length >= 2,
-    dob: dobStatus.valid,
-    ssn: isUS ? ssnDigits.length === 9 : true,
-  };
-
-  // Step 3: Payment State
-  const [selectedPaymentType, setSelectedPaymentType] = useState<"applePay" | "googlePay" | "card" | "bank">("card");
-  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
-
-  // Step 4: Fulfillment Stage ("idle" | "processing" | "confirming" | "complete")
-  const [fulfillmentStage, setFulfillmentStage] = useState<"idle" | "processing" | "confirming" | "complete">("idle");
-
-  const effectiveHeadlessStep = isSimulationMode ? (simulatedHeadlessStep || headlessStep) : headlessStep;
-  const effectiveHeadlessStatus = isSimulationMode ? (simulatedHeadlessStatus || headlessStatus) : headlessStatus;
-
-  // Canonical payment completion status
-  const effectivePaymentConfirmed = propPaymentConfirmed || simulatedPaymentConfirmed;
-  const isPaid = isLiveMode
-    ? Boolean(isReceiptPaid || effectivePaymentConfirmed || headlessStep === "completed")
-    : Boolean(fulfillmentStage === "complete" && simulatedPaymentConfirmed);
-
-  // In live production mode, order confirmation strictly requires verifiable payment confirmation or completed onramp state
-  // In simulation mode, fulfillmentStage must be "complete" and simulatedPaymentConfirmed must be present
-  const isOrderConfirmed = isLiveMode
-    ? isPaid
-    : Boolean(fulfillmentStage === "complete" && effectivePaymentConfirmed);
-
-  // DOM Container Refs for Stripe Embedded Elements
-  const authContainerRef = useRef<HTMLDivElement | null>(null);
-  const paymentContainerRef = useRef<HTMLDivElement | null>(null);
-
   // Canonical Stripe Onramp KYC tier resolution via modular engine
   const kyc = useMemo(() => {
     return resolveCustomerKycTier(kycTiers as KycTierEntry[], kycLevel);
@@ -378,6 +373,51 @@ export function useAccordionCheckoutState(
       headlessStep === "verifying_identity");
 
   const isL2Requirement = showVerifyDocs;
+
+  const ssnDigits = (ssn || "").replace(/\D/g, "");
+  const dobStatus = validateDob(dob);
+  const countryConfig = getCountryAddressConfig(country);
+  const isUS = countryConfig.isUS;
+  const isEU = countryConfig.isEU;
+  const showDobField = showStepUpForm || isL2Requirement || isEU;
+  const showSsnField = isUS && (showStepUpForm || isL2Requirement);
+
+  const fieldValidation = {
+    firstName: (firstName || "").trim().length >= 1,
+    lastName: (lastName || "").trim().length >= 1,
+    line1: (line1 || "").trim().length >= 3,
+    city: (city || "").trim().length >= 2,
+    stateCode: countryConfig.requiresState ? (stateCode || "").trim().length >= 2 : true,
+    zipCode: (zipCode || "").trim().length >= 2,
+    dob: showDobField ? dobStatus.valid : true,
+    ssn: showSsnField ? ssnDigits.length === 9 : true,
+  };
+
+  // Step 3: Payment State
+  const [selectedPaymentType, setSelectedPaymentType] = useState<"applePay" | "googlePay" | "card" | "bank">("card");
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+
+  // Step 4: Fulfillment Stage ("idle" | "processing" | "confirming" | "complete")
+  const [fulfillmentStage, setFulfillmentStage] = useState<"idle" | "processing" | "confirming" | "complete">("idle");
+
+  const effectiveHeadlessStep = isSimulationMode ? (simulatedHeadlessStep || headlessStep) : headlessStep;
+  const effectiveHeadlessStatus = isSimulationMode ? (simulatedHeadlessStatus || headlessStatus) : headlessStatus;
+
+  // Canonical payment completion status
+  const effectivePaymentConfirmed = propPaymentConfirmed || simulatedPaymentConfirmed;
+  const isPaid = isLiveMode
+    ? Boolean(isReceiptPaid || effectivePaymentConfirmed || headlessStep === "completed")
+    : Boolean(fulfillmentStage === "complete" && simulatedPaymentConfirmed);
+
+  // In live production mode, order confirmation strictly requires verifiable payment confirmation or completed onramp state
+  // In simulation mode, fulfillmentStage must be "complete" and simulatedPaymentConfirmed must be present
+  const isOrderConfirmed = isLiveMode
+    ? isPaid
+    : Boolean(fulfillmentStage === "complete" && effectivePaymentConfirmed);
+
+  // DOM Container Refs for Stripe Embedded Elements
+  const authContainerRef = useRef<HTMLDivElement | null>(null);
+  const paymentContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Sync props when initial values change
   useEffect(() => {
@@ -542,6 +582,7 @@ export function useAccordionCheckoutState(
     if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: countryConfig.cityLabel });
     if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
     if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
+    if (isEU && !fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
   }
 
   const isIdentityComplete = missingIdentityFields.length === 0;
@@ -745,6 +786,7 @@ export function useAccordionCheckoutState(
           ...(isEU
             ? {
                 nationalities: [targetCountry],
+                birth_city: city.trim(),
                 birth_country: targetCountry,
                 nationality: targetCountry,
               }

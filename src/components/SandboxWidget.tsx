@@ -67,6 +67,7 @@ export function SandboxWidget() {
 
   // Simulation controls state
   const [simEnabled, setSimEnabled] = useState<boolean>(false);
+  const [simCountry, setSimCountry] = useState<string>("US");
   const [simTier, setSimTier] = useState<"l0" | "l1" | "l2">("l0");
   const [simStatus, setSimStatus] = useState<"normal" | "otp" | "step_up" | "doc_verify" | "wallet_challenge" | "verified">("normal");
   const [simError, setSimError] = useState<"none" | "address_error" | "payment_decline" | "insufficient_funds" | "kyc_rejection" | "invalid_signature">("none");
@@ -95,6 +96,9 @@ export function SandboxWidget() {
     const simEnabledMatch = cookies.match(/pp_sandbox_sim_enabled=([^;]+)/);
     const initialSimEnabled = simEnabledMatch ? simEnabledMatch[1] === "true" : false;
     setSimEnabled(initialSimEnabled);
+
+    const simCountryMatch = cookies.match(/pp_sandbox_sim_country=([^;]+)/);
+    if (simCountryMatch) setSimCountry(simCountryMatch[1]);
 
     const simTierMatch = cookies.match(/pp_sandbox_sim_tier=([^;]+)/);
     if (simTierMatch) setSimTier(simTierMatch[1] as any);
@@ -194,7 +198,7 @@ export function SandboxWidget() {
     window.document.cookie = `${name}=${val}; path=/${domainAttr}; max-age=31536000${secureAttr}`;
   };
 
-  const applyPreset = (preset: "fast_pass" | "link_otp" | "l1_stepup" | "l2_identity" | "card_decline" | "ach_bank" | "eu_travel_rule" | "insufficient_funds" | "kyc_rejection" | "address_error") => {
+  const applyPreset = (preset: "fast_pass" | "link_otp" | "l1_stepup" | "l2_identity" | "card_decline" | "ach_bank" | "eu_mica_base" | "eu_l2_identity" | "eu_travel_rule" | "insufficient_funds" | "kyc_rejection" | "address_error") => {
     setSimEnabled(true);
     updateCookie("pp_sandbox_sim_enabled", "true");
 
@@ -203,91 +207,133 @@ export function SandboxWidget() {
       setSimStatus("verified");
       setSimError("none");
       setSimPaymentMethod("card");
+      setSimCountry("US");
       updateCookie("pp_sandbox_sim_tier", "l0");
       updateCookie("pp_sandbox_sim_status", "verified");
       updateCookie("pp_sandbox_sim_error", "none");
       updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
     } else if (preset === "link_otp") {
       setSimTier("l0");
       setSimStatus("otp");
       setSimError("none");
       setSimPaymentMethod("card");
+      setSimCountry("US");
       updateCookie("pp_sandbox_sim_tier", "l0");
       updateCookie("pp_sandbox_sim_status", "otp");
       updateCookie("pp_sandbox_sim_error", "none");
       updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
     } else if (preset === "l1_stepup") {
       setSimTier("l1");
       setSimStatus("step_up");
       setSimError("none");
       setSimPaymentMethod("card");
+      setSimCountry("US");
       updateCookie("pp_sandbox_sim_tier", "l1");
       updateCookie("pp_sandbox_sim_status", "step_up");
       updateCookie("pp_sandbox_sim_error", "none");
       updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
     } else if (preset === "l2_identity") {
       setSimTier("l2");
       setSimStatus("doc_verify");
       setSimError("none");
       setSimPaymentMethod("card");
+      setSimCountry("US");
       updateCookie("pp_sandbox_sim_tier", "l2");
       updateCookie("pp_sandbox_sim_status", "doc_verify");
       updateCookie("pp_sandbox_sim_error", "none");
       updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
     } else if (preset === "card_decline") {
       setSimTier("l0");
       setSimStatus("verified");
       setSimError("payment_decline");
       setSimPaymentMethod("card");
+      setSimCountry("US");
       updateCookie("pp_sandbox_sim_tier", "l0");
       updateCookie("pp_sandbox_sim_status", "verified");
       updateCookie("pp_sandbox_sim_error", "payment_decline");
       updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
     } else if (preset === "ach_bank") {
       setSimTier("l0");
       setSimStatus("verified");
       setSimError("none");
       setSimPaymentMethod("bank");
+      setSimCountry("US");
       updateCookie("pp_sandbox_sim_tier", "l0");
       updateCookie("pp_sandbox_sim_status", "verified");
       updateCookie("pp_sandbox_sim_error", "none");
       updateCookie("pp_sandbox_sim_pm", "bank");
+      updateCookie("pp_sandbox_sim_country", "US");
+    } else if (preset === "eu_mica_base") {
+      setSimTier("l0");
+      setSimStatus("normal");
+      setSimError("none");
+      setSimPaymentMethod("card");
+      setSimCountry("AT");
+      updateCookie("pp_sandbox_sim_tier", "l0");
+      updateCookie("pp_sandbox_sim_status", "normal");
+      updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "AT");
+    } else if (preset === "eu_l2_identity") {
+      setSimTier("l2");
+      setSimStatus("doc_verify");
+      setSimError("none");
+      setSimPaymentMethod("card");
+      setSimCountry("AT");
+      updateCookie("pp_sandbox_sim_tier", "l2");
+      updateCookie("pp_sandbox_sim_status", "doc_verify");
+      updateCookie("pp_sandbox_sim_error", "none");
+      updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "AT");
     } else if (preset === "eu_travel_rule") {
       setSimTier("l2");
       setSimStatus("wallet_challenge");
       setSimError("none");
       setSimPaymentMethod("card");
+      setSimCountry("AT");
       updateCookie("pp_sandbox_sim_tier", "l2");
       updateCookie("pp_sandbox_sim_status", "wallet_challenge");
       updateCookie("pp_sandbox_sim_error", "none");
       updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "AT");
     } else if (preset === "insufficient_funds") {
       setSimTier("l0");
       setSimStatus("verified");
       setSimError("insufficient_funds");
       setSimPaymentMethod("card");
+      setSimCountry("US");
       updateCookie("pp_sandbox_sim_tier", "l0");
       updateCookie("pp_sandbox_sim_status", "verified");
       updateCookie("pp_sandbox_sim_error", "insufficient_funds");
       updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
     } else if (preset === "kyc_rejection") {
       setSimTier("l2");
       setSimStatus("doc_verify");
       setSimError("kyc_rejection");
       setSimPaymentMethod("card");
+      setSimCountry("US");
       updateCookie("pp_sandbox_sim_tier", "l2");
       updateCookie("pp_sandbox_sim_status", "doc_verify");
       updateCookie("pp_sandbox_sim_error", "kyc_rejection");
       updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
     } else if (preset === "address_error") {
       setSimTier("l0");
       setSimStatus("normal");
       setSimError("address_error");
       setSimPaymentMethod("card");
+      setSimCountry("US");
       updateCookie("pp_sandbox_sim_tier", "l0");
       updateCookie("pp_sandbox_sim_status", "normal");
       updateCookie("pp_sandbox_sim_error", "address_error");
       updateCookie("pp_sandbox_sim_pm", "card");
+      updateCookie("pp_sandbox_sim_country", "US");
     }
 
     setStatusMessage("Applied Preset! Reloading...");
@@ -308,6 +354,7 @@ export function SandboxWidget() {
 
     // Write simulation cookies
     updateCookie("pp_sandbox_sim_enabled", String(simEnabled));
+    updateCookie("pp_sandbox_sim_country", simCountry);
     updateCookie("pp_sandbox_sim_tier", simTier);
     updateCookie("pp_sandbox_sim_status", simStatus);
     updateCookie("pp_sandbox_sim_error", simError);
@@ -604,6 +651,32 @@ export function SandboxWidget() {
 
                       <button
                         type="button"
+                        onClick={() => applyPreset("eu_mica_base")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Simulate EU Austria checkout (Alexander Mayr / Wien / Date of Birth required)"
+                      >
+                        <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-emerald-400 leading-tight">🇦🇹 EU MiCA (AT)</div>
+                          <div className="text-[8px] text-zinc-400">Austria + DOB Form</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => applyPreset("eu_l2_identity")}
+                        className="p-2 rounded-xl bg-white/5 hover:bg-purple-500/15 border border-purple-500/30 text-[10px] font-semibold text-white flex items-center gap-1.5 transition text-left cursor-pointer group"
+                        title="Simulate EU L2 Document & Selfie upload"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-purple-400 shrink-0 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-purple-400 leading-tight">🇪🇺 EU L2 ID Scan</div>
+                          <div className="text-[8px] text-zinc-400">Austria L2 ID Verify</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => applyPreset("eu_travel_rule")}
                         className="p-2 rounded-xl bg-white/5 hover:bg-amber-500/15 border border-amber-500/30 text-[10px] font-semibold text-amber-300 flex items-center gap-2 transition text-left cursor-pointer col-span-2 group"
                         title="Step 4: Prompt cryptographic wallet ownership challenge signature for orders ≥€1,000"
@@ -619,6 +692,28 @@ export function SandboxWidget() {
 
                   {/* Granular Accordion Simulation Controls */}
                   <div className="pt-2 border-t border-amber-500/15 space-y-2.5">
+                    {/* Simulated Jurisdiction / Country */}
+                    <div className="space-y-1">
+                      <label className="text-[9.5px] font-semibold text-emerald-400 uppercase tracking-wider block">
+                        🌍 Jurisdiction / Country:
+                      </label>
+                      <select
+                        value={simCountry}
+                        onChange={(e) => {
+                          setSimEnabled(true);
+                          setSimCountry(e.target.value);
+                        }}
+                        className="w-full h-7 px-2 text-[10px] rounded-lg bg-zinc-950 border border-emerald-500/40 text-emerald-300 font-semibold focus:outline-none focus:border-emerald-400 cursor-pointer"
+                      >
+                        <option value="US">🇺🇸 United States (US - Pure L0 / Step-Up)</option>
+                        <option value="AT">🇦🇹 Austria (AT - EU MiCA / Vienna)</option>
+                        <option value="DE">🇩🇪 Germany (DE - EU MiCA)</option>
+                        <option value="FR">🇫🇷 France (FR - EU MiCA)</option>
+                        <option value="ES">🇪🇸 Spain (ES - EU MiCA NIF)</option>
+                        <option value="IT">🇮🇹 Italy (IT - EU MiCA CF)</option>
+                      </select>
+                    </div>
+
                     {/* Target KYC Tier */}
                     <div className="space-y-1">
                       <label className="text-[9.5px] font-semibold text-zinc-400 uppercase tracking-wider block">

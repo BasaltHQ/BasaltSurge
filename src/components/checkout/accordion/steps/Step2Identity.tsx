@@ -91,8 +91,11 @@ export function Step2Identity({
   const subdivisions = getSubdivisionsForCountry(country);
   const hasSubdivisions = subdivisions.length > 0;
   const isUS = countryConfig.isUS;
+  const isEU = countryConfig.isEU;
   const ssnDigits = (ssn || "").replace(/\D/g, "");
   const buttonTextColor = getContrastingTextColor(primaryColor);
+  const showDobField = showStepUpForm || isL2Requirement || isEU;
+  const showSsnField = isUS && (showStepUpForm || isL2Requirement);
 
   const isFieldValid = (field: string): boolean => {
     switch (field) {
@@ -109,9 +112,9 @@ export function Step2Identity({
       case "zipCode":
         return (zipCode || "").trim().length >= 2;
       case "dob":
-        return dobStatus.valid;
+        return showDobField ? dobStatus.valid : true;
       case "ssn":
-        return isUS ? ssnDigits.length === 9 : true;
+        return showSsnField ? ssnDigits.length === 9 : true;
       default:
         return true;
     }
@@ -523,35 +526,37 @@ export function Step2Identity({
               </div>
             )}
 
-            {/* Step-Up Fields: Date of Birth & SSN */}
-            {(showStepUpForm || isL2Requirement) && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-3 border-t border-dashed border-white/10 text-left">
+            {/* Step-Up Fields / EU DOB & US SSN */}
+            {(showDobField || showSsnField) && (
+              <div className={`grid gap-3.5 pt-3 border-t border-dashed border-white/10 text-left ${showDobField && showSsnField ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
                 {/* DOB Picker */}
-                <div className="w-full min-w-0">
-                  <label className={`flex items-center justify-between text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
-                    <span className="flex items-center gap-1.5 truncate">
-                      <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" /> Date of Birth
-                    </span>
-                    {dobStatus.valid && dobStatus.age && (
-                      <span className="text-emerald-400 text-xs shrink-0 font-mono">Age: {dobStatus.age} yrs</span>
-                    )}
-                  </label>
-                  <DobPicker
-                    value={dob}
-                    onChange={(val) => {
-                      setDob(val);
-                      markFieldTouched("dob");
-                    }}
-                    onOpenStateChange={setIsCalendarOpen}
-                    hasError={isFieldInvalid("dob")}
-                    isValid={isFieldValid("dob")}
-                    isLightText={isLightText}
-                    primaryColor={primaryColor}
-                  />
-                </div>
+                {showDobField && (
+                  <div className="w-full min-w-0">
+                    <label className={`flex items-center justify-between text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+                      <span className="flex items-center gap-1.5 truncate">
+                        <Calendar className="w-3.5 h-3.5 text-amber-400 shrink-0" /> Date of Birth
+                      </span>
+                      {dobStatus.valid && dobStatus.age && (
+                        <span className="text-emerald-400 text-xs shrink-0 font-mono">Age: {dobStatus.age} yrs</span>
+                      )}
+                    </label>
+                    <DobPicker
+                      value={dob}
+                      onChange={(val) => {
+                        setDob(val);
+                        markFieldTouched("dob");
+                      }}
+                      onOpenStateChange={setIsCalendarOpen}
+                      hasError={isFieldInvalid("dob")}
+                      isValid={isFieldValid("dob")}
+                      isLightText={isLightText}
+                      primaryColor={primaryColor}
+                    />
+                  </div>
+                )}
 
-                {/* SSN Input (US Only) */}
-                {isUS && (
+                {/* SSN Input (US Step-Up Only) */}
+                {showSsnField && (
                   <div className="w-full min-w-0">
                     <label className={`flex items-center justify-between text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
                       <span className="flex items-center gap-1.5 truncate">
