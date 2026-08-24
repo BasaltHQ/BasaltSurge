@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { PortalPayAccordionCheckoutV2 } from "@/components/checkout/PortalPayAccordionCheckoutV2";
+import { SimulatedStripePaymentElement } from "@/components/checkout/accordion/simulations";
 
 export default function SampleFormsPage() {
   const [checkoutVersion, setCheckoutVersion] = useState<"v1" | "v2">("v2");
@@ -92,6 +93,7 @@ export default function SampleFormsPage() {
   const [kycDobYear, setKycDobYear] = useState("1992");
   const [kycSsn, setKycSsn] = useState("123456789");
   const [showSsn, setShowSsn] = useState(false);
+  const [samplePaymentConfirmed, setSamplePaymentConfirmed] = useState<any>(null);
 
   return (
     <div className={`min-h-screen p-4 sm:p-8 flex flex-col items-center justify-start transition-colors duration-300 ${isLightText ? "bg-neutral-950 text-white" : "bg-gray-100 text-black"}`}>
@@ -344,6 +346,43 @@ export default function SampleFormsPage() {
             simulatedError={simulatedError}
             simulatedPath={simulatedPath}
             isAllKycCompleted={simulatedStatus === "verified"}
+            paymentConfirmed={samplePaymentConfirmed}
+            paymentElement={
+              <SimulatedStripePaymentElement
+                amountUsd={25.00}
+                isLightText={isLightText}
+                primaryColor={primaryColor}
+                simulatedError={simulatedError}
+                onSuccess={(details) => {
+                  console.log("[SAMPLE FORMS] Payment success:", details);
+                  setSamplePaymentConfirmed({
+                    txHash: `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")}`,
+                    amount: 25.00,
+                    token: "USD",
+                    funding: details.funding,
+                  });
+                }}
+                onError={(err) => {
+                  console.warn("[SAMPLE FORMS] Payment error:", err);
+                }}
+              />
+            }
+            onSubmitKycInfo={async (info) => {
+              console.log("[SAMPLE FORMS] KYC Info Submitted:", info);
+              await new Promise((r) => setTimeout(r, 600));
+              if (simulatedTier === "l2" || simulatedStatus === "doc_verify" || simulatedPath === "doc_verify") {
+                setSimulatedStatus("doc_verify");
+              } else {
+                setSimulatedStatus("verified");
+              }
+            }}
+            onVerifyDocuments={async () => {
+              console.log("[SAMPLE FORMS] Simulated L2 verification started...");
+              await new Promise((r) => setTimeout(r, 1400));
+              console.log("[SAMPLE FORMS] Simulated L2 verification approved!");
+              setSimulatedStatus("verified");
+              return true;
+            }}
           />
         ) : (
         
