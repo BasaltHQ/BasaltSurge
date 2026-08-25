@@ -209,13 +209,13 @@ function AgentUniversity({ brandName }: { brandName: string }) {
             copy: `Hi [Name], I'm [Your Name] with ${brandName}. I'm reviewing your current merchant setup at [Shop Name] and noticed you're heavily absorbing standard 2.9% wholesale processing costs.\n\nWe provide an alternative settlement infrastructure based on blockchain routing. Our Point-of-Sale terminals dynamically append the transaction network cost directly to the client subtotal (standard dual-pricing architecture). Because we bypass legacy banking clearinghouses entirely, there are zero batch-out delays and zero monthly terminal rents.\n\nUltimately, this ensures you retain exactly 100% of your listed product margins. Are you open to a 5-minute technical review next week to see exactly how much overhead this infrastructure eliminates?`,
             qa: [
                 { q: "Is dual pricing actually legal?", a: "Absolutely. Dual pricing and cash-discount routing programs are federally compliant and standard industry practice across all 50 states, largely protected under the Durbin Amendment." },
-                { q: "Will my customers push back on dynamic pricing?", a: "Consumer psychology has entirely shifted regarding dynamic service pricing due to modern delivery apps and ticket aggregators. Retaining thousands of dollars a month in interchange costs vastly outweighs the micro-friction of a 1% appended routing adjustment." },
+                { q: "Will my customers push back on dynamic pricing?", a: "Consumer psychology has entirely shifted regarding dynamic service pricing due to modern delivery apps and ticket aggregators. Retaining thousands of dollars a month in interchange costs vastly outweighs the micro-friction of a nominal appended routing adjustment." },
                 { q: "Does my business have to hold volatile crypto?", a: "No. Your business does not interact with volatile assets. You settle directly into USDC (a pegged, auditable stablecoin) which can immediately offramp 1:1 to fiat USD in your corporate checking account." }
             ]
         },
         ecommerce: {
             title: "E-Commerce / Direct-to-Consumer",
-            copy: `Hi [Name], I'm [Your Name] from the acceleration unit at ${brandName}. We're helping high-volume DTC brands like yours permanently eliminate the API processing toll exacted by Stripe and Shopify.\n\nOur checkout SDK operates natively on decentralized stablecoin rails. When a shopper converts, the routing rate is dynamically embedded into the aggregate subtotal as a baseline network cost. Because we aren't relying on traditional payment gateways, funds settle into your corporate treasury address instantly—and you retain 100% of your gross margin on every swipe.\n\nIf you're interested in permanently restoring your profit margins without sacrificing your current conversion rates, let me know if you have a brief window on Tuesday.`,
+            copy: `Hi [Name], I'm [Your Name] from the acceleration unit at ${brandName}. We're helping high-volume DTC brands like yours permanently eliminate the API processing toll exacted by Stripe and Shopify.\n\nOur checkout SDK operates natively on decentralized stablecoin rails. When a shopper converts, the routing rate is dynamically embedded into the aggregate subtotal as an automated network cost. Because we aren't relying on traditional payment gateways, funds settle into your corporate treasury address instantly—and you retain 100% of your gross margin on every swipe.\n\nIf you're interested in permanently restoring your profit margins without sacrificing your current conversion rates, let me know if you have a brief window on Tuesday.`,
             qa: [
                 { q: "How complex is the development integration?", a: "Extremely lightweight. You simply drop in our provided React UI components or REST endpoints. Implementing the SDK is architecturally identical to swapping out your Stripe publishable API keys." },
                 { q: "Can buyers still use Apple Pay and Credit Cards?", a: "Yes. Our integrated onramps securely proxy standard fiat instruments (Credit, Debit, Apple Pay) into the requisite stablecoin asset mid-flight. The consumer checkout experience remains entirely unchanged." },
@@ -357,13 +357,13 @@ function AgentUniversity({ brandName }: { brandName: string }) {
                         <div className={`relative z-10 overflow-hidden transition-all duration-500 ${expandedStep === 2 ? 'max-h-[500px] opacity-100 mt-6 pt-6 border-t border-white/10' : 'max-h-0 opacity-0'}`}>
                             <div className="prose prose-sm prose-invert max-w-none text-muted-foreground space-y-4">
                                 <p>
-                                    As an agent, your profit mechanism relies on <strong>Basis Points (BPS)</strong>. One basis point is equal to 0.01%. The platform hardcodes a strict baseline of exactly <strong>1% (100 BPS)</strong>.
+                                    As an agent, your profit mechanism relies on <strong>Basis Points (BPS)</strong>. One basis point is equal to 0.01% (e.g. 50 BPS = 0.50%, 100 BPS = 1.00%).
                                 </p>
                                 <p>
-                                    You control exactly what to charge on top of this. If you assign a merchant <strong>50 BPS</strong> via your link, the merchant's final transaction rate is exactly 1.5%. You keep the full 50 BPS in perpetuity. 
+                                    You control your custom commission BPS on every referral link you generate. When your referred merchant processes transactions, your negotiated BPS is automatically routed directly to your wallet in perpetuity.
                                 </p>
                                 <ul className="list-disc list-inside mt-2 space-y-1">
-                                    <li><strong>The Stripe Comparison:</strong> Traditional processors charge 2.9% + 30¢. If you set your merchant rate at 2.0% total (100 BPS Base + 100 BPS Agent), you are still heavily undercutting legacy rails, while immediately earning 1% of the merchant's total revenue.</li>
+                                    <li><strong>The Stripe Comparison:</strong> Traditional processors charge 2.9% + 30¢. Setting a competitive agent margin still heavily undercuts legacy credit rails while delivering perpetual recurring revenue to you.</li>
                                     <li><strong>Volume &gt; Margin:</strong> 25 BPS on a merchant doing $10M/year nets you $25,000 annually. 100 BPS on a merchant doing $100k/year nets you $1,000. Price competitively to secure volume.</li>
                                 </ul>
                             </div>
@@ -1434,7 +1434,7 @@ export default function AgentDashboard() {
                                 Custom Referral Link Generator
                             </h3>
                             <p className="text-xs text-muted-foreground mb-4">
-                                Generate a unique link to onboard merchants. When a merchant signs up using this link, they will be automatically assigned to you with the commission rate you specify below. <strong className="text-foreground">Note:</strong> The final transaction rate is 1% (platform baseline) <span className="text-primary font-bold">PLUS</span> your negotiated BPS.
+                                Generate a unique link to onboard merchants. When a merchant signs up using this link, they will be automatically assigned to you with the custom commission rate (BPS) you specify below.
                             </p>
                             <div className="flex flex-col sm:flex-row items-end gap-4">
                                 <div className="space-y-1.5 w-full sm:w-48 flex-shrink-0">

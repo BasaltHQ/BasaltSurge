@@ -741,7 +741,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             </div>
                                             <div className="text-right">
                                                 <div className="font-mono font-bold text-sm text-emerald-300">{referralBps} BPS</div>
-                                                <div className="opacity-80 text-[10px] uppercase tracking-wider">Total Est. Fee: {(1 + (referralBps / 100)).toFixed(2)}%</div>
+                                                <div className="opacity-80 text-[10px] uppercase tracking-wider">Agent Commission ({(referralBps / 100).toFixed(2)}%)</div>
                                             </div>
                                         </div>
                                     )}

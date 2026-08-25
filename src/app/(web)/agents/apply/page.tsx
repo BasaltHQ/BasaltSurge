@@ -107,9 +107,9 @@ export default function AgentSignUp() {
         finally { setSubmitting(false); }
     }
 
-    let brandName = brand?.name || "The Platform";
+    let brandName = brand?.name || "BasaltSurge";
     if (brandName.toLowerCase() === "basaltsurge") brandName = "BasaltSurge";
-    const brandLogo = (brand as any)?.logoUrl || "";
+    const brandLogo = brand?.logos?.symbol || brand?.logos?.app || brand?.logos?.favicon || (brand as any)?.logoUrl || "/Surge.png";
 
     const annualEarnings = (calcVolume * (calcBps / 10000));
     const monthlyEarnings = annualEarnings / 12;
@@ -220,12 +220,16 @@ export default function AgentSignUp() {
 
             {/* ──── Nav ──── */}
             <header className="relative z-10 p-6 flex items-center justify-between anim-up">
-                <div className="flex items-center gap-3">
-                    {brandLogo ? <img src={brandLogo} alt="" className="h-8 w-8 object-contain rounded-md" /> : <Building2 className="h-6 w-6 text-muted-foreground" />}
-                    <span className="font-bold tracking-tight">{brandName}</span>
-                </div>
+                <a href="/" className="flex items-center gap-3 hover:opacity-90 transition group">
+                    {brandLogo ? (
+                        <img src={brandLogo} alt={brandName} className="h-8 w-8 object-contain rounded-md" />
+                    ) : (
+                        <Building2 className="h-6 w-6 text-muted-foreground" />
+                    )}
+                    <span className="font-bold tracking-tight text-lg">{brandName}</span>
+                </a>
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border bg-card/50 backdrop-blur text-xs font-medium text-muted-foreground shadow-sm">
-                    <UserPlus className="h-3 w-3" /> Agent Portal
+                    <UserPlus className="h-3 w-3 text-primary" /> Agent Portal
                 </div>
             </header>
 
@@ -241,7 +245,7 @@ export default function AgentSignUp() {
                             <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-blue-400">payment empire.</span>
                         </h1>
                         <p className="text-lg text-muted-foreground leading-relaxed max-w-xl">
-                            Join our elite network of agents. Negotiate your own basis points on top of our strict 1% platform baseline, and earn uninterrupted revenue from every single transaction your referred merchants process — forever.
+                            Join our elite network of agents. Set your own custom commission margins, and earn uninterrupted revenue from every single transaction your referred merchants process — forever.
                         </p>
                         <div className="flex flex-wrap gap-3 pt-2">
                             <a href="#apply-form" className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-primary text-primary-foreground font-bold hover:brightness-110 shadow-lg shadow-primary/25 transition group">
@@ -282,7 +286,7 @@ export default function AgentSignUp() {
                     {[
                         { label: "Settlement Network", value: "Base L2", icon: Layers, color: "text-blue-400" },
                         { label: "Settlement Asset", value: "USDC", icon: DollarSign, color: "text-green-400" },
-                        { label: "Platform Baseline", value: "1% Flat", icon: Shield, color: "text-indigo-400" },
+                        { label: "Custody Architecture", value: "Non-Custodial", icon: Shield, color: "text-indigo-400" },
                         { label: "Withdrawal Gas", value: "Subsidized", icon: Zap, color: "text-amber-400" },
                     ].map((s, i) => (
                         <div key={i} className="text-center space-y-2 group">
@@ -378,7 +382,7 @@ export default function AgentSignUp() {
     </div>
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {[
-            { title: "Set Your Own Margins", desc: "Full control over your BPS. Add your custom margin to the 1% platform baseline and scale revenue exactly as you see fit.", icon: Zap, color: "amber-500" },
+            { title: "Set Your Own Margins", desc: "Full control over your BPS. Configure your custom commission rate per merchant and scale revenue exactly as you see fit.", icon: Zap, color: "amber-500" },
             { title: "Frictionless Referral Links", desc: "Create instant referral links with your margin embedded. When merchants sign up via your link, attribution is locked forever.", icon: LinkIcon, color: "blue-500" },
             { title: "Real-time Analytics", desc: "A dedicated dashboard tracks your merchant pipeline, approval status, transaction volume, and aggregate earnings live.", icon: LineChart, color: "green-500" },
             { title: "Trustless Settlement", desc: "Smart contract splits guarantee you are paid out in the same atomic block as the merchant. No IOUs or manual accounting.", icon: ShieldCheck, color: "indigo-500" },
