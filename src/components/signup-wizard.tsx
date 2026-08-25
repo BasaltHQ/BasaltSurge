@@ -491,7 +491,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                     legalBusinessName: legalName,
                     businessType,
                     ein,
-                    website,
+                    website: website.trim() ? (website.trim().startsWith("http://") || website.trim().startsWith("https://") ? website.trim() : `https://${website.trim()}`) : undefined,
                     phone,
                     businessAddress: address,
                     logoUrl,

@@ -204,7 +204,12 @@ function TerminalPanel() {
 
   const [processingFeePct, setProcessingFeePct] = useState<number>(0);
   const [basePlatformFeePct, setBasePlatformFeePct] = useState<number>(0.5);
+  const [presentedFeeBps, setPresentedFeeBps] = useState<number | undefined>(undefined);
+  const [platformBps, setPlatformBps] = useState<number>(50);
+  const [partnerBps, setPartnerBps] = useState<number>(0);
+  const [agentBps, setAgentBps] = useState<number>(0);
   const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
+  const [brandKey, setBrandKey] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     fetch("/api/site/config", { cache: "no-store", credentials: "omit", headers: { "x-theme-caller": "terminal_panel" } })
@@ -219,22 +224,29 @@ function TerminalPanel() {
         if (typeof cfg.processingFeePct === "number") setProcessingFeePct(cfg.processingFeePct);
 
         // basePlatformFeePct (presentedFeeBps > splitConfig platform + partner + agent fees)
-        const splitCfg = (cfg as any)?.splitConfig;
-        const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
-        const presentedFeeBps = (cfg as any).presentedFeeBps;
+        const splitCfg = (cfg as any)?.splitConfigCredit || (cfg as any)?.splitConfig;
+        const partBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+        const platBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
+        const agents = Array.isArray(splitCfg?.agents) ? splitCfg.agents : [];
+        const agBps = agents.reduce((sum: number, a: any) => sum + (Number(a.bps) || 0), 0);
+        const presBps = typeof (cfg as any)?.presentedFeeBps === "number"
+          ? (cfg as any).presentedFeeBps
+          : (typeof (cfg as any)?.creditPresentedFeeBps === "number" ? (cfg as any).creditPresentedFeeBps : undefined);
 
-        if (presentedFeeBps !== undefined) {
-          setBasePlatformFeePct((presentedFeeBps + partnerBps) / 100);
+        setPresentedFeeBps(presBps);
+        setPlatformBps(platBps);
+        setPartnerBps(partBps);
+        setAgentBps(agBps);
+        setBrandKey(cfg?.theme?.brandKey || cfg?.brandKey);
+
+        if (presBps !== undefined) {
+          setBasePlatformFeePct((presBps + partBps) / 100);
         } else if (splitCfg && typeof splitCfg.platformBps === "number") {
-          const platformBps = splitCfg.platformBps;
-          const agentBps = Array.isArray(splitCfg.agents)
-            ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-            : 0;
-          setBasePlatformFeePct((partnerBps + platformBps + agentBps) / 100);
+          setBasePlatformFeePct((partBps + platBps + agBps) / 100);
         } else if (typeof (cfg as any).basePlatformFeePct === "number") {
           setBasePlatformFeePct((cfg as any).basePlatformFeePct);
         } else {
-          setBasePlatformFeePct((50 + partnerBps) / 100);
+          setBasePlatformFeePct((50 + partBps) / 100);
         }
 
         const sc = String(cfg?.storeCurrency || "");
@@ -310,6 +322,69 @@ function TerminalPanel() {
     totalUsd = +((baseUsd + taxUsd + processingFeeUsd)).toFixed(2);
   }
 
+  // Split & presented fee breakdown calculation (in USD)
+  const basePreFeeUsd = feeMinusEnabled ? displayBaseUsd : (baseUsd + taxUsd);
+
+  const presentedFeeUsd = presentedFeeBps !== undefined
+    ? +(basePreFeeUsd * (presentedFeeBps / 10000)).toFixed(2)
+    : 0;
+
+  const platformFeeUsd = presentedFeeBps === undefined
+    ? +(basePreFeeUsd * ((platformBps ?? 50) / 10000)).toFixed(2)
+    : 0;
+
+  const partnerFeeUsd = (partnerBps || 0) > 0
+    ? +(basePreFeeUsd * ((partnerBps || 0) / 10000)).toFixed(2)
+    : 0;
+
+  const agentFeeUsd = (agentBps || 0) > 0
+    ? +(basePreFeeUsd * ((agentBps || 0) / 10000)).toFixed(2)
+    : 0;
+
+  const processingAddonUsd = (processingFeePct || 0) > 0
+    ? +(basePreFeeUsd * ((processingFeePct || 0) / 100)).toFixed(2)
+    : 0;
+
+  const presentedFeeConverted = React.useMemo(() => {
+    if (terminalCurrency === "USD") return presentedFeeUsd;
+    const usdRate = Number(usdRates[terminalCurrency] || 0);
+    if (usdRate > 0) return roundForCurrency(presentedFeeUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(presentedFeeUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : presentedFeeUsd;
+  }, [presentedFeeUsd, terminalCurrency, usdRates, rates]);
+
+  const platformFeeConverted = React.useMemo(() => {
+    if (terminalCurrency === "USD") return platformFeeUsd;
+    const usdRate = Number(usdRates[terminalCurrency] || 0);
+    if (usdRate > 0) return roundForCurrency(platformFeeUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(platformFeeUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : platformFeeUsd;
+  }, [platformFeeUsd, terminalCurrency, usdRates, rates]);
+
+  const partnerFeeConverted = React.useMemo(() => {
+    if (terminalCurrency === "USD") return partnerFeeUsd;
+    const usdRate = Number(usdRates[terminalCurrency] || 0);
+    if (usdRate > 0) return roundForCurrency(partnerFeeUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(partnerFeeUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : partnerFeeUsd;
+  }, [partnerFeeUsd, terminalCurrency, usdRates, rates]);
+
+  const agentFeeConverted = React.useMemo(() => {
+    if (terminalCurrency === "USD") return agentFeeUsd;
+    const usdRate = Number(usdRates[terminalCurrency] || 0);
+    if (usdRate > 0) return roundForCurrency(agentFeeUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(agentFeeUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : agentFeeUsd;
+  }, [agentFeeUsd, terminalCurrency, usdRates, rates]);
+
+  const processingAddonConverted = React.useMemo(() => {
+    if (terminalCurrency === "USD") return processingAddonUsd;
+    const usdRate = Number(usdRates[terminalCurrency] || 0);
+    if (usdRate > 0) return roundForCurrency(processingAddonUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(processingAddonUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : processingAddonUsd;
+  }, [processingAddonUsd, terminalCurrency, usdRates, rates]);
+
   const baseConverted = React.useMemo(() => {
     if (terminalCurrency === "USD") return displayBaseUsd;
     const usdRate = Number(usdRates[terminalCurrency] || 0);
@@ -364,12 +439,17 @@ function TerminalPanel() {
   async function startPolling(receiptId: string) {
     stopPolling();
     setPolling(true);
+    const effectiveOperator = (operatorWallet && /^0x[a-f0-9]{40}$/i.test(operatorWallet)) ? operatorWallet : ENV_RECIPIENT;
     pollRef.current = window.setInterval(async () => {
       try {
-        const r = await fetch(`/api/receipts/${encodeURIComponent(receiptId)}`, { cache: "no-store", credentials: "include" });
+        const r = await fetch(`/api/receipts/${encodeURIComponent(receiptId)}?wallet=${encodeURIComponent(effectiveOperator)}`, { 
+          cache: "no-store", 
+          credentials: "include",
+          headers: { "x-wallet": effectiveOperator }
+        });
         const j = await r.json().catch(() => ({}));
         const rec = j?.receipt;
-        if (rec) {
+        if (rec && rec.receiptId === receiptId && Number(rec.totalUsd) > 0) {
           setSelected(rec);
           if (terminalIsSettled(rec.status)) {
             stopPolling();
@@ -412,6 +492,7 @@ function TerminalPanel() {
         label: (itemLabel || "").trim() || "Terminal Payment",
         currency: terminalCurrency,
         brandName: theme.brandName,
+        brandKey,
       };
       const r = await fetch("/api/receipts/terminal", {
         method: "POST",
@@ -549,10 +630,42 @@ function TerminalPanel() {
               <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">Tax {siteMeta.hasDefault ? `(${(Math.round(taxRate * 10000) / 100).toFixed(2)}%)` : ""}</span>
               <span className="text-sm font-medium">{formatCurrency(taxConverted, terminalCurrency)}</span>
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">Processing Fee</span>
-              <span className="text-sm font-medium">{formatCurrency(processingFeeConverted, terminalCurrency)}</span>
-            </div>
+            {/* Presented Fee or Platform Fee */}
+            {presentedFeeBps !== undefined ? (
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">Presented Fee ({(presentedFeeBps / 100).toFixed(2)}%)</span>
+                <span className="text-sm font-medium">{formatCurrency(presentedFeeConverted, terminalCurrency)}</span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">Platform ({((platformBps ?? 50) / 100).toFixed(2)}%)</span>
+                <span className="text-sm font-medium">{formatCurrency(platformFeeConverted, terminalCurrency)}</span>
+              </div>
+            )}
+
+            {/* Partner Fee component */}
+            {(partnerBps || 0) > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">Partner ({((partnerBps || 0) / 100).toFixed(2)}%)</span>
+                <span className="text-sm font-medium">{formatCurrency(partnerFeeConverted, terminalCurrency)}</span>
+              </div>
+            )}
+
+            {/* Agent Fee component */}
+            {(agentBps || 0) > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">Agent ({((agentBps || 0) / 100).toFixed(2)}%)</span>
+                <span className="text-sm font-medium">{formatCurrency(agentFeeConverted, terminalCurrency)}</span>
+              </div>
+            )}
+
+            {/* Processing Fee add-on */}
+            {(processingFeePct || 0) > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">Processing Fee ({(processingFeePct || 0).toFixed(2)}%)</span>
+                <span className="text-sm font-medium">{formatCurrency(processingAddonConverted, terminalCurrency)}</span>
+              </div>
+            )}
             <div className="h-px bg-border my-2" />
             <div className="flex items-center justify-between">
               <span className="text-sm font-bold uppercase tracking-wider">Total</span>

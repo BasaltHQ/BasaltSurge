@@ -87,6 +87,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     defaultMerchantFeeBps: 0,
     unifiedFeeEnabled: false,
     feeMinusEnabled: false,
+    microsoftClarityId: "w0lt4j6fw3",
     apimCatalog: [], // original platform may expose full catalog elsewhere
   },
   basaltsurge: {
@@ -100,6 +101,7 @@ export const BRANDS: Record<string, BrandConfig> = {
     defaultMerchantFeeBps: 0,
     unifiedFeeEnabled: false,
     feeMinusEnabled: false,
+    microsoftClarityId: "w0lt4j6fw3",
     apimCatalog: [],
   },
   // Example second brand - provide assets under /public/brands/paynex/*
@@ -343,6 +345,8 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     transakOnrampEnabled: typeof raw.transakOnrampEnabled === "boolean" ? raw.transakOnrampEnabled : false,
     rampnowOnrampEnabled: typeof raw.rampnowOnrampEnabled === "boolean" ? raw.rampnowOnrampEnabled : false,
     achEnabled: typeof raw.achEnabled === "boolean" ? raw.achEnabled : (!raw.key || raw.key === "portalpay" || raw.key === "basaltsurge"),
+    thirdwebClientId: typeof raw.thirdwebClientId === "string" ? raw.thirdwebClientId.trim() : undefined,
+    microsoftClarityId: typeof raw.microsoftClarityId === "string" ? raw.microsoftClarityId.trim() : undefined,
   };
 }
 

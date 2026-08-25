@@ -242,6 +242,7 @@ export async function POST(req: NextRequest) {
     } catch { }
 
     // Processing fee add-on (above base platform fee)
+    // Processing fee add-on (above base platform fee)
     // basePlatformFeePct: combined platform + partner + agent fee from splitConfig (merchant-specific)
     let basePlatformFeePct: number | undefined = undefined;
 
@@ -256,57 +257,56 @@ export async function POST(req: NextRequest) {
       effectiveBrandKey,
       envBrandKey: process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY
     });
-    if (splitCfg && typeof splitCfg === "object") {
-      const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
-      const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
-      const agentBps = Array.isArray(splitCfg.agents)
-        ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-        : 0;
-      basePlatformFeePct = (partnerBps + platformBps + agentBps) / 100;
-      console.log("[Terminal Receipt] Using splitConfig fees:", { partnerBps, platformBps, agentBps, basePlatformFeePct });
+
+    // Check if brand / site config has presentedFeeBps
+    let presentedFeeBps: number | undefined = undefined;
+    if (typeof (cfg as any)?.presentedFeeBps === "number") {
+      presentedFeeBps = (cfg as any).presentedFeeBps;
+    } else if (typeof (cfg as any)?.creditPresentedFeeBps === "number") {
+      presentedFeeBps = (cfg as any).creditPresentedFeeBps;
     }
 
-    // Priority 2: Use basePlatformFeePct if explicitly set in config
-    if (typeof basePlatformFeePct !== "number") {
-      basePlatformFeePct = typeof (cfg as any)?.basePlatformFeePct === "number"
-        ? Math.max(0, Number((cfg as any).basePlatformFeePct))
-        : undefined;
-    }
-
-    // Priority 3: Fall back to brand overrides
-    if (typeof basePlatformFeePct !== "number") {
+    // If not found in cfg, check container/brand overrides
+    if (presentedFeeBps === undefined) {
       try {
         const xfHost = req.headers.get("x-forwarded-host");
         const host = req.headers.get("host");
         const u = new URL(req.url);
         const hostname = (xfHost || host || u.hostname || "").toLowerCase();
         const { brandKey: bk } = await getContainerIdentity(hostname);
-        let brandKeyForFees = bk;
+        let brandKeyForFees = effectiveBrandKey || bk;
         if (!brandKeyForFees) {
           try { brandKeyForFees = getBrandKey(); } catch { brandKeyForFees = ""; }
         }
         if (brandKeyForFees) {
-          const clampBps = (v: any) => {
-            const n = Number(v);
-            return Number.isFinite(n) ? Math.max(0, Math.min(10000, Math.floor(n))) : 0;
-          };
           const { brand: fetchedBrand, overrides: fetchedOverrides } = await getBrandConfigFromCosmos(brandKeyForFees);
           const ov = (typeof fetchedOverrides === "object" && fetchedOverrides) ? fetchedOverrides : ({} as any);
           const fb = (typeof fetchedBrand === "object" && fetchedBrand) ? fetchedBrand : null;
-          const platformBps = typeof ov?.platformFeeBps === "number" ? ov.platformFeeBps
-            : (typeof (fb as any)?.platformFeeBps === "number" ? (fb as any).platformFeeBps : 50);
-          const partnerBps = typeof ov?.partnerFeeBps === "number" ? ov.partnerFeeBps
-            : (typeof (fb as any)?.partnerFeeBps === "number" ? (fb as any).partnerFeeBps : 0);
-          const agentsList = Array.isArray(ov?.agents) ? ov.agents
-            : (Array.isArray((fb as any)?.agents) ? (fb as any).agents : []);
-          const agentBps = agentsList.reduce((sum: number, a: any) => sum + clampBps(a?.bps || 0), 0);
-          basePlatformFeePct = (platformBps + partnerBps + agentBps) / 100;
-        } else {
-          basePlatformFeePct = 0.5; // 0.5% default
+          if (typeof ov?.presentedFeeBps === "number") {
+            presentedFeeBps = ov.presentedFeeBps;
+          } else if (typeof (fb as any)?.presentedFeeBps === "number") {
+            presentedFeeBps = (fb as any).presentedFeeBps;
+          }
         }
-      } catch {
-        basePlatformFeePct = 0.5; // 0.5% default
-      }
+      } catch { }
+    }
+
+    if (presentedFeeBps !== undefined) {
+      const partnerBps = typeof splitCfg?.partnerBps === "number" ? splitCfg.partnerBps : 0;
+      basePlatformFeePct = (presentedFeeBps + partnerBps) / 100;
+      console.log("[Terminal Receipt] Using presentedFeeBps fee:", { presentedFeeBps, partnerBps, basePlatformFeePct });
+    } else if (splitCfg && typeof splitCfg === "object") {
+      const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
+      const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
+      const agentBps = Array.isArray(splitCfg.agents)
+        ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+        : 0;
+      basePlatformFeePct = (partnerBps + platformBps + agentBps) / 100;
+      console.log("[Terminal Receipt] Using splitConfig fees:", { partnerBps, platformBps, agentBps, basePlatformFeePct });
+    } else if (typeof (cfg as any)?.basePlatformFeePct === "number") {
+      basePlatformFeePct = Math.max(0, Number((cfg as any).basePlatformFeePct));
+    } else {
+      basePlatformFeePct = 0.5; // 0.5% default
     }
 
     const processingFeePct =
@@ -383,6 +383,9 @@ export async function POST(req: NextRequest) {
       taxRate: Math.max(0, Math.min(1, taxRate)),
       taxComponents: appliedTaxComponents,
       status: "generated",
+      splitConfig: splitCfg || undefined,
+      presentedFeeBps: presentedFeeBps !== undefined ? presentedFeeBps : undefined,
+      basePlatformFeePct,
       // Employee attribution with aliases for cross-module compatibility
       employeeId,
       staffId,

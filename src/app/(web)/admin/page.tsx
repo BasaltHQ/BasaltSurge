@@ -10097,12 +10097,17 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
   const [siteMeta, setSiteMeta] = useState<{
     processingFeePct: number;
     basePlatformFeePct: number;
+    presentedFeeBps?: number;
+    platformBps?: number;
+    partnerBps?: number;
+    agentBps?: number;
     taxRate: number;
     hasDefault: boolean;
     storeCurrency?: string;
     feeMinusEnabled?: boolean;
     customDomain?: string;
     customDomainVerified?: boolean;
+    brandKey?: string;
   }>({
     processingFeePct: 0,
     basePlatformFeePct: 0.5,
@@ -10125,12 +10130,17 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
   async function fetchSiteMeta(): Promise<{
     processingFeePct: number;
     basePlatformFeePct: number;
+    presentedFeeBps?: number;
+    platformBps?: number;
+    partnerBps?: number;
+    agentBps?: number;
     taxRate: number;
     hasDefault: boolean;
     storeCurrency?: string;
     feeMinusEnabled?: boolean;
     customDomain?: string;
     customDomainVerified?: boolean;
+    brandKey?: string;
   }> {
     try {
       const r = await fetch(`/api/site/config?wallet=${encodeURIComponent(operatorWallet)}`, { 
@@ -10157,18 +10167,19 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
       }
       const storeCurrency = typeof cfg?.storeCurrency === "string" ? cfg.storeCurrency : undefined;
 
-      const splitCfg = (cfg as any)?.splitConfig;
+      const splitCfg = (cfg as any)?.splitConfigCredit || (cfg as any)?.splitConfig;
       const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
-      const presentedFeeBps = (cfg as any).presentedFeeBps;
+      const platformBps = splitCfg && typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 50;
+      const agents = Array.isArray(splitCfg?.agents) ? splitCfg.agents : [];
+      const agentBps = agents.reduce((sum: number, a: any) => sum + (Number(a.bps) || 0), 0);
+      const presentedFeeBps = typeof (cfg as any).presentedFeeBps === "number"
+        ? (cfg as any).presentedFeeBps
+        : (typeof (cfg as any).creditPresentedFeeBps === "number" ? (cfg as any).creditPresentedFeeBps : undefined);
 
       let basePlatformFeePct = 0.5;
       if (presentedFeeBps !== undefined) {
         basePlatformFeePct = (presentedFeeBps + partnerBps) / 100;
       } else if (splitCfg && typeof splitCfg.platformBps === "number") {
-        const platformBps = splitCfg.platformBps;
-        const agentBps = Array.isArray(splitCfg.agents)
-          ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-          : 0;
         basePlatformFeePct = (partnerBps + platformBps + agentBps) / 100;
       } else if (typeof (cfg as any).basePlatformFeePct === "number") {
         basePlatformFeePct = (cfg as any).basePlatformFeePct;
@@ -10182,7 +10193,22 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
       const feeMinusEnabled = !!cfg?.feeMinusEnabled;
       const customDomain = cfg?.customDomain;
       const customDomainVerified = !!cfg?.customDomainVerified;
-      return { processingFeePct, basePlatformFeePct, taxRate: rate, hasDefault, storeCurrency, feeMinusEnabled, customDomain, customDomainVerified };
+      const brandKey = cfg?.theme?.brandKey || cfg?.brandKey;
+      return { 
+        processingFeePct, 
+        basePlatformFeePct, 
+        presentedFeeBps,
+        platformBps,
+        partnerBps,
+        agentBps,
+        taxRate: rate, 
+        hasDefault, 
+        storeCurrency, 
+        feeMinusEnabled, 
+        customDomain, 
+        customDomainVerified,
+        brandKey 
+      };
     } catch {
       return { processingFeePct: 0, basePlatformFeePct: 0.5, taxRate: 0, hasDefault: false, feeMinusEnabled: false };
     }
@@ -10270,6 +10296,29 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
     totalUsd = +((baseUsd + taxUsd + processingFeeUsd)).toFixed(2);
   }
 
+  // Split & presented fee breakdown calculation (in USD)
+  const basePreFeeUsd = feeMinusEnabled ? displayBaseUsd : (baseUsd + taxUsd);
+
+  const presentedFeeUsd = siteMeta.presentedFeeBps !== undefined
+    ? +(basePreFeeUsd * (siteMeta.presentedFeeBps / 10000)).toFixed(2)
+    : 0;
+
+  const platformFeeUsd = siteMeta.presentedFeeBps === undefined
+    ? +(basePreFeeUsd * ((siteMeta.platformBps ?? 50) / 10000)).toFixed(2)
+    : 0;
+
+  const partnerFeeUsd = (siteMeta.partnerBps || 0) > 0
+    ? +(basePreFeeUsd * ((siteMeta.partnerBps || 0) / 10000)).toFixed(2)
+    : 0;
+
+  const agentFeeUsd = (siteMeta.agentBps || 0) > 0
+    ? +(basePreFeeUsd * ((siteMeta.agentBps || 0) / 10000)).toFixed(2)
+    : 0;
+
+  const processingAddonUsd = (siteMeta.processingFeePct || 0) > 0
+    ? +(basePreFeeUsd * ((siteMeta.processingFeePct || 0) / 100)).toFixed(2)
+    : 0;
+
   // Convert to display currency
   const baseConverted = React.useMemo(() => {
     if (terminalCurrency === "USD") return displayBaseUsd;
@@ -10287,13 +10336,45 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
     return converted > 0 ? roundForCurrency(converted, terminalCurrency) : taxUsd;
   }, [taxUsd, terminalCurrency, usdRates, rates]);
 
-  const processingFeeConverted = React.useMemo(() => {
-    if (terminalCurrency === "USD") return processingFeeUsd;
+  const presentedFeeConverted = React.useMemo(() => {
+    if (terminalCurrency === "USD") return presentedFeeUsd;
     const usdRate = Number(usdRates[terminalCurrency] || 0);
-    if (usdRate > 0) return roundForCurrency(processingFeeUsd * usdRate, terminalCurrency);
-    const converted = convertFromUsd(processingFeeUsd, terminalCurrency, rates);
-    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : processingFeeUsd;
-  }, [processingFeeUsd, terminalCurrency, usdRates, rates]);
+    if (usdRate > 0) return roundForCurrency(presentedFeeUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(presentedFeeUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : presentedFeeUsd;
+  }, [presentedFeeUsd, terminalCurrency, usdRates, rates]);
+
+  const platformFeeConverted = React.useMemo(() => {
+    if (terminalCurrency === "USD") return platformFeeUsd;
+    const usdRate = Number(usdRates[terminalCurrency] || 0);
+    if (usdRate > 0) return roundForCurrency(platformFeeUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(platformFeeUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : platformFeeUsd;
+  }, [platformFeeUsd, terminalCurrency, usdRates, rates]);
+
+  const partnerFeeConverted = React.useMemo(() => {
+    if (terminalCurrency === "USD") return partnerFeeUsd;
+    const usdRate = Number(usdRates[terminalCurrency] || 0);
+    if (usdRate > 0) return roundForCurrency(partnerFeeUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(partnerFeeUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : partnerFeeUsd;
+  }, [partnerFeeUsd, terminalCurrency, usdRates, rates]);
+
+  const agentFeeConverted = React.useMemo(() => {
+    if (terminalCurrency === "USD") return agentFeeUsd;
+    const usdRate = Number(usdRates[terminalCurrency] || 0);
+    if (usdRate > 0) return roundForCurrency(agentFeeUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(agentFeeUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : agentFeeUsd;
+  }, [agentFeeUsd, terminalCurrency, usdRates, rates]);
+
+  const processingAddonConverted = React.useMemo(() => {
+    if (terminalCurrency === "USD") return processingAddonUsd;
+    const usdRate = Number(usdRates[terminalCurrency] || 0);
+    if (usdRate > 0) return roundForCurrency(processingAddonUsd * usdRate, terminalCurrency);
+    const converted = convertFromUsd(processingAddonUsd, terminalCurrency, rates);
+    return converted > 0 ? roundForCurrency(converted, terminalCurrency) : processingAddonUsd;
+  }, [processingAddonUsd, terminalCurrency, usdRates, rates]);
 
   const totalConverted = React.useMemo(() => {
     if (terminalCurrency === "USD") return totalUsd;
@@ -10333,10 +10414,14 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
     setPolling(true);
     pollRef.current = window.setInterval(async () => {
       try {
-        const r = await fetch(`/api/receipts/${encodeURIComponent(receiptId)}`, { cache: "no-store", credentials: "include" });
+        const r = await fetch(`/api/receipts/${encodeURIComponent(receiptId)}?wallet=${encodeURIComponent(operatorWallet)}`, { 
+          cache: "no-store", 
+          credentials: "include",
+          headers: { "x-wallet": operatorWallet }
+        });
         const j = await r.json().catch(() => ({}));
         const rec = j?.receipt;
-        if (rec) {
+        if (rec && rec.receiptId === receiptId && Number(rec.totalUsd) > 0) {
           setSelected(rec);
           if (terminalIsSettled(rec.status)) {
             stopPolling();
@@ -10373,6 +10458,7 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
         amountUsd: +amt.toFixed(2),
         label: (itemLabel || "").trim() || "Terminal Payment",
         currency: terminalCurrency,
+        brandKey: siteMeta.brandKey,
       };
       const r = await fetch("/api/receipts/terminal", {
         method: "POST",
@@ -10629,10 +10715,42 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
                 <span className="text-[8px] md:text-sm uppercase font-bold tracking-wider text-muted-foreground">Tax {siteMeta.hasDefault ? `(${(Math.round(taxRate * 10000) / 100).toFixed(2)}%)` : ""}</span>
                 <span className="text-[10px] md:text-2xl font-medium">{formatCurrency(taxConverted, terminalCurrency)}</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[8px] md:text-sm uppercase font-bold tracking-wider text-muted-foreground">Platform ({(Number(siteMeta.basePlatformFeePct || 0.5) + Number(siteMeta.processingFeePct || 0)).toFixed(2)}%)</span>
-                <span className="text-[10px] md:text-2xl font-medium">{formatCurrency(processingFeeConverted, terminalCurrency)}</span>
-              </div>
+              {/* Presented Fee or Platform Fee */}
+              {siteMeta.presentedFeeBps !== undefined ? (
+                <div className="flex items-center justify-between">
+                  <span className="text-[8px] md:text-sm uppercase font-bold tracking-wider text-muted-foreground">Presented Fee ({(siteMeta.presentedFeeBps / 100).toFixed(2)}%)</span>
+                  <span className="text-[10px] md:text-2xl font-medium">{formatCurrency(presentedFeeConverted, terminalCurrency)}</span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <span className="text-[8px] md:text-sm uppercase font-bold tracking-wider text-muted-foreground">Platform ({((siteMeta.platformBps ?? 50) / 100).toFixed(2)}%)</span>
+                  <span className="text-[10px] md:text-2xl font-medium">{formatCurrency(platformFeeConverted, terminalCurrency)}</span>
+                </div>
+              )}
+
+              {/* Partner Fee component */}
+              {(siteMeta.partnerBps || 0) > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[8px] md:text-sm uppercase font-bold tracking-wider text-muted-foreground">Partner ({((siteMeta.partnerBps || 0) / 100).toFixed(2)}%)</span>
+                  <span className="text-[10px] md:text-2xl font-medium">{formatCurrency(partnerFeeConverted, terminalCurrency)}</span>
+                </div>
+              )}
+
+              {/* Agent Fee component */}
+              {(siteMeta.agentBps || 0) > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[8px] md:text-sm uppercase font-bold tracking-wider text-muted-foreground">Agent ({((siteMeta.agentBps || 0) / 100).toFixed(2)}%)</span>
+                  <span className="text-[10px] md:text-2xl font-medium">{formatCurrency(agentFeeConverted, terminalCurrency)}</span>
+                </div>
+              )}
+
+              {/* Processing Fee add-on */}
+              {(siteMeta.processingFeePct || 0) > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-[8px] md:text-sm uppercase font-bold tracking-wider text-muted-foreground">Processing Fee ({(siteMeta.processingFeePct || 0).toFixed(2)}%)</span>
+                  <span className="text-[10px] md:text-2xl font-medium">{formatCurrency(processingAddonConverted, terminalCurrency)}</span>
+                </div>
+              )}
               <div className="h-px bg-foreground/5 my-1 md:my-6" />
               <div className="flex items-center justify-between gap-4 min-w-0">
                 <span className="text-[9px] md:text-lg font-extrabold uppercase tracking-[0.2em] text-foreground shrink-0">Total</span>

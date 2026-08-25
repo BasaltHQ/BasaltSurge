@@ -592,6 +592,7 @@ export default async function RootLayout({
   // Derive brand key from hostname (e.g., paynex.azurewebsites.net -> paynex)
   let brandKeyFromHost: string | undefined;
   let serverDualSplit = false;
+  let sMatch: RegExpMatchArray | null = null;
   try {
     let host = "";
     let cookieHeader = "";
@@ -616,7 +617,7 @@ export default async function RootLayout({
     }
 
     // Read split mode override from cookies asynchronously on the server
-    const sMatch = cookieHeader.match(/pp_sandbox_split_mode=([^;]+)/);
+    sMatch = cookieHeader.match(/pp_sandbox_split_mode=([^;]+)/);
     if (sMatch && sMatch[1]) {
       serverDualSplit = sMatch[1] === "dual";
     } else {
@@ -826,10 +827,15 @@ export default async function RootLayout({
   const brandSpecificClientId = (!brandIsPlatform && brandNormalizedKey) ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${brandNormalizedKey}`] : undefined;
   // Prioritize DB-configured thirdwebClientId, then brandSpecificClientId, then the env default (which is partner client ID in partner containers, and platform client ID in platform containers)
   const layoutTwClientId = brand.thirdwebClientId || brandSpecificClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
+  const brandSpecificClarityId = (!brandIsPlatform && brandNormalizedKey)
+    ? (process.env[`NEXT_PUBLIC_MICROSOFT_CLARITY_ID_${brandNormalizedKey}`] || process.env[`MICROSOFT_CLARITY_ID_${brandNormalizedKey}`])
+    : undefined;
+  const isPartnerContainer = containerIdentity.containerType === "partner" || !brandIsPlatform;
   const layoutClarityId = brand.microsoftClarityId ||
-    process.env.NEXT_PUBLIC_MICROSOFT_CLARITY_ID ||
-    process.env.MICROSOFT_CLARITY_ID ||
-    (containerIdentity.containerType === 'platform' ? "w0lt4j6fw3" : "");
+    brandSpecificClarityId ||
+    (isPartnerContainer
+      ? (containerIdentity.containerType === "partner" ? (process.env.NEXT_PUBLIC_MICROSOFT_CLARITY_ID || process.env.MICROSOFT_CLARITY_ID || "") : "")
+      : (process.env.NEXT_PUBLIC_MICROSOFT_CLARITY_ID || process.env.MICROSOFT_CLARITY_ID || "w0lt4j6fw3"));
 
   return (
     <html

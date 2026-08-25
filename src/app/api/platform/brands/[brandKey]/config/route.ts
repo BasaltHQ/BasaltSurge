@@ -174,7 +174,14 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     feeMinusEnabled: typeof overrides.feeMinusEnabled === "boolean" ? overrides.feeMinusEnabled : withDefaults.feeMinusEnabled,
     achEnabled: typeof overrides.achEnabled === "boolean" ? overrides.achEnabled : withDefaults.achEnabled,
     thirdwebClientId: typeof overrides.thirdwebClientId === "string" ? overrides.thirdwebClientId.trim() : undefined,
+    microsoftClarityId: typeof overrides.microsoftClarityId === "string" ? overrides.microsoftClarityId.trim() : undefined,
   });
+
+  if (key === "basaltsurge" || key === "portalpay") {
+    if (!overrides?.microsoftClarityId) {
+      merged.microsoftClarityId = process.env.MICROSOFT_CLARITY_ID || process.env.NEXT_PUBLIC_MICROSOFT_CLARITY_ID || "w0lt4j6fw3";
+    }
+  }
 
   return merged;
 }
@@ -370,18 +377,33 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
 }
 
 async function readBrandOverrides(brandKey: string): Promise<BrandConfigDoc | null> {
+  const key = String(brandKey || "").toLowerCase().trim();
+  if (!key) return null;
+
   try {
     const c = await getContainer();
-    const { resource } = await c.item("brand:config", brandKey).read<BrandConfigDoc>();
+    const { resource } = await c.item("brand:config", key).read<BrandConfigDoc>();
     if (resource) return resource;
 
     // Fallback: try the legacy platform alias (basaltsurge ↔ portalpay share the same brand config)
-    const PLATFORM_ALIASES: Record<string, string> = { basaltsurge: "portalpay", portalpay: "basaltsurge" };
-    const fallbackKey = PLATFORM_ALIASES[brandKey];
+    const PLATFORM_ALIASES: Record<string, string> = { basaltsurge: "portalpay", portalpay: "basaltsurge", "lucky13-marketing": "lucky13" };
+    const fallbackKey = PLATFORM_ALIASES[key];
     if (fallbackKey) {
       const { resource: fb } = await c.item("brand:config", fallbackKey).read<BrandConfigDoc>();
-      return fb || null;
+      if (fb) return fb;
     }
+
+    // Secondary fallback: query by case-insensitive wallet/brandKey in case of partition key casing or id variance
+    try {
+      const query = {
+        query: "SELECT * FROM c WHERE (c.id = 'brand:config' OR c.type = 'brand_config') AND (LOWER(c.wallet) = @k OR LOWER(c.brandKey) = @k)",
+        parameters: [{ name: "@k", value: key }],
+      };
+      const { resources } = await c.items.query<BrandConfigDoc>(query).fetchAll();
+      if (resources && resources.length > 0) {
+        return resources[0] || null;
+      }
+    } catch {}
 
     return null;
   } catch {

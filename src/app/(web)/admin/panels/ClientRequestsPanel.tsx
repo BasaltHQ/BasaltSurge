@@ -83,6 +83,17 @@ type ClientRequest = {
     customDomainVerified?: boolean;
 };
 
+// Helper to ensure https:// is prepended to merchant website URLs
+function formatWebsiteUrl(url?: string): string {
+    if (!url) return "";
+    const trimmed = url.trim();
+    if (!trimmed) return "";
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        return trimmed;
+    }
+    return `https://${trimmed}`;
+}
+
 // Helper to safely extract a numeric timestamp from Cosmos DB dates which may be numbers, strings, or {$date: string} objects
 function extractDateTs(val: any, fallbackTs?: number): number {
     if (!val) return fallbackTs || 0;
@@ -1933,9 +1944,9 @@ export default function ClientRequestsPanel() {
                                                                         </div>
                                                                         <div className="grid grid-cols-[80px_1fr] gap-2 text-sm">
                                                                             <span className="text-muted-foreground">Website</span>
-                                                                            {req.website ? (
-                                                                                <a href={req.website} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">
-                                                                                    {req.website}
+                                                                            {req.website && formatWebsiteUrl(req.website) ? (
+                                                                                <a href={formatWebsiteUrl(req.website)} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">
+                                                                                    {formatWebsiteUrl(req.website)}
                                                                                 </a>
                                                                             ) : "—"}
                                                                         </div>

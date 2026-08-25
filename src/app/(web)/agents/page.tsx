@@ -206,16 +206,16 @@ function AgentUniversity({ brandName }: { brandName: string }) {
     const scripts = {
         retail: {
             title: "Brick & Mortar / Retail Sales",
-            copy: `Hi [Name], I'm [Your Name] with ${brandName}. I'm reviewing your current merchant setup at [Shop Name] and noticed you're heavily absorbing standard 2.9% wholesale processing fees.\n\nWe provide an alternative settlement infrastructure based on blockchain routing. Our Point-of-Sale terminals dynamically append the transaction network cost directly to the client subtotal (standard dual-pricing architecture). Because we bypass legacy banking clearinghouses entirely, there are zero batch-out delays and zero monthly terminal rents.\n\nUltimately, this ensures you retain exactly 100% of your listed product margins. Are you open to a 5-minute technical review next week to see exactly how much overhead this infrastructure eliminates?`,
+            copy: `Hi [Name], I'm [Your Name] with ${brandName}. I'm reviewing your current merchant setup at [Shop Name] and noticed you're heavily absorbing standard 2.9% wholesale processing costs.\n\nWe provide an alternative settlement infrastructure based on blockchain routing. Our Point-of-Sale terminals dynamically append the transaction network cost directly to the client subtotal (standard dual-pricing architecture). Because we bypass legacy banking clearinghouses entirely, there are zero batch-out delays and zero monthly terminal rents.\n\nUltimately, this ensures you retain exactly 100% of your listed product margins. Are you open to a 5-minute technical review next week to see exactly how much overhead this infrastructure eliminates?`,
             qa: [
                 { q: "Is dual pricing actually legal?", a: "Absolutely. Dual pricing and cash-discount routing programs are federally compliant and standard industry practice across all 50 states, largely protected under the Durbin Amendment." },
-                { q: "Will my customers hate the appended fee?", a: "Consumer psychology has entirely shifted regarding dynamic service fees due to modern delivery apps and ticket aggregators. Retaining thousands of dollars a month in interchange fees vastly outweighs the micro-friction of a 1% appended routing fee." },
+                { q: "Will my customers push back on dynamic pricing?", a: "Consumer psychology has entirely shifted regarding dynamic service pricing due to modern delivery apps and ticket aggregators. Retaining thousands of dollars a month in interchange costs vastly outweighs the micro-friction of a 1% appended routing adjustment." },
                 { q: "Does my business have to hold volatile crypto?", a: "No. Your business does not interact with volatile assets. You settle directly into USDC (a pegged, auditable stablecoin) which can immediately offramp 1:1 to fiat USD in your corporate checking account." }
             ]
         },
         ecommerce: {
             title: "E-Commerce / Direct-to-Consumer",
-            copy: `Hi [Name], I'm [Your Name] from the acceleration unit at ${brandName}. We're helping high-volume DTC brands like yours permanently eliminate the API processing toll exacted by Stripe and Shopify.\n\nOur checkout SDK operates natively on decentralized stablecoin rails. When a shopper converts, the routing fee is dynamically embedded into the aggregate subtotal as a baseline network cost. Because we aren't relying on traditional payment gateways, funds settle into your corporate treasury address instantly—and you retain 100% of your gross margin on every swipe.\n\nIf you're interested in permanently restoring your profit margins without sacrificing your current conversion rates, let me know if you have a brief window on Tuesday.`,
+            copy: `Hi [Name], I'm [Your Name] from the acceleration unit at ${brandName}. We're helping high-volume DTC brands like yours permanently eliminate the API processing toll exacted by Stripe and Shopify.\n\nOur checkout SDK operates natively on decentralized stablecoin rails. When a shopper converts, the routing rate is dynamically embedded into the aggregate subtotal as a baseline network cost. Because we aren't relying on traditional payment gateways, funds settle into your corporate treasury address instantly—and you retain 100% of your gross margin on every swipe.\n\nIf you're interested in permanently restoring your profit margins without sacrificing your current conversion rates, let me know if you have a brief window on Tuesday.`,
             qa: [
                 { q: "How complex is the development integration?", a: "Extremely lightweight. You simply drop in our provided React UI components or REST endpoints. Implementing the SDK is architecturally identical to swapping out your Stripe publishable API keys." },
                 { q: "Can buyers still use Apple Pay and Credit Cards?", a: "Yes. Our integrated onramps securely proxy standard fiat instruments (Credit, Debit, Apple Pay) into the requisite stablecoin asset mid-flight. The consumer checkout experience remains entirely unchanged." },
@@ -224,7 +224,7 @@ function AgentUniversity({ brandName }: { brandName: string }) {
         },
         highrisk: {
             title: "Regulated / High-Risk (CBD, Cannabis)",
-            copy: `Hi [Name], my name is [Your Name]. I work exclusively with heavily regulated operators who are bleeding capital to sudden account freezes, rolling reserves, and exorbitant 6%+ 'high-risk' processing rates.\n\n${brandName} is an entirely decentralized payment protocol. Because we route stablecoins peer-to-peer into immutable smart contracts, your capital can never be frozen by an overzealous underwriting bank. Furthermore, the transaction network fee is appended securely to the consumer subtotal—so you retain 100% of your net earnings on every single sale.\n\nWe provide absolute censorship-resistance and flat deterministic pricing. Can we schedule a brief operational audit of your current merchant setup?`,
+            copy: `Hi [Name], my name is [Your Name]. I work exclusively with heavily regulated operators who are bleeding capital to sudden account freezes, rolling reserves, and exorbitant 6%+ 'high-risk' processing rates.\n\n${brandName} is an entirely decentralized payment protocol. Because we route stablecoins peer-to-peer into immutable smart contracts, your capital can never be frozen by an overzealous underwriting bank. Furthermore, the transaction network cost is appended securely to the consumer subtotal—so you retain 100% of your net earnings on every single sale.\n\nWe provide absolute censorship-resistance and flat deterministic pricing. Can we schedule a brief operational audit of your current merchant setup?`,
             qa: [
                 { q: "How do I move the money to my local bank?", a: "All protocol settlements arrive instantly as USDC on the Base L2 network. You can route these stablecoins directly to an institutional Coinbase account to instantly mint 1:1 USD directly to your local operating bank account." },
                 { q: "Is this compliant with state tracking software?", a: "Yes. We maintain enterprise-grade compliance layers with complete Webhook coverage that integrates natively with inventory trackers like METRC and BioTrack." },
@@ -233,7 +233,7 @@ function AgentUniversity({ brandName }: { brandName: string }) {
         },
         saas: {
             title: "Software / B2B SaaS",
-            copy: `Hi [Name], I'm [Your Name] from ${brandName}. We're actively upgrading the subscription and invoice infrastructure for B2B SaaS platforms to operate without capital lockups.\n\nUnlike legacy processors that throttle your capital for days, our infrastructure utilizes native account abstraction to settle recurring payments directly to your company's stablecoin treasury. The processing overhead is absorbed by the client subtotal so you keep 100% of your invoice value, bypassing traditional banking delays and exorbitant international wire fees.\n\nI'd love to show you how our developer SDK can drop into your current stack and physically accelerate your cash conversion cycle. Are you free for a high-level tech run-through this week?`,
+            copy: `Hi [Name], I'm [Your Name] from ${brandName}. We're actively upgrading the subscription and invoice infrastructure for B2B SaaS platforms to operate without capital lockups.\n\nUnlike legacy processors that throttle your capital for days, our infrastructure utilizes native account abstraction to settle recurring payments directly to your company's stablecoin treasury. The processing overhead is absorbed by the client subtotal so you keep 100% of your invoice value, bypassing traditional banking delays and exorbitant international wire costs.\n\nI'd love to show you how our developer SDK can drop into your current stack and physically accelerate your cash conversion cycle. Are you free for a high-level tech run-through this week?`,
             qa: [
                 { q: "Does the client need a web3 wallet?", a: "No. The client interface heavily utilizes 'Account Abstraction' (ERC-4337) to generate invisible embedded wallets, allowing them to pay via standard corporate credit cards while you receive instant blockchain settlement." },
                 { q: "Does this support complex recurring billing?", a: "Yes. The backend registry supports multi-tiered pricing matrices, metered usage billing, and customized prorating identically to platforms like Chargebee." }
@@ -357,7 +357,7 @@ function AgentUniversity({ brandName }: { brandName: string }) {
                         <div className={`relative z-10 overflow-hidden transition-all duration-500 ${expandedStep === 2 ? 'max-h-[500px] opacity-100 mt-6 pt-6 border-t border-white/10' : 'max-h-0 opacity-0'}`}>
                             <div className="prose prose-sm prose-invert max-w-none text-muted-foreground space-y-4">
                                 <p>
-                                    As an agent, your profit mechanism relies on <strong>Basis Points (BPS)</strong>. One basis point is equal to 0.01%. The PortalPay platform hardcodes a strict base fee of exactly <strong>1% (100 BPS)</strong>.
+                                    As an agent, your profit mechanism relies on <strong>Basis Points (BPS)</strong>. One basis point is equal to 0.01%. The platform hardcodes a strict baseline of exactly <strong>1% (100 BPS)</strong>.
                                 </p>
                                 <p>
                                     You control exactly what to charge on top of this. If you assign a merchant <strong>50 BPS</strong> via your link, the merchant's final transaction rate is exactly 1.5%. You keep the full 50 BPS in perpetuity. 
@@ -452,7 +452,7 @@ function AgentUniversity({ brandName }: { brandName: string }) {
                                     As customers pay, funds (such as USDC) pool in the contract. To claim your earnings, navigate to your Dashboard and click <strong>Withdraw</strong>.
                                 </p>
                                 <p>
-                                    Because you connect using Smart Accounts integrated with Thirdweb Paymaster pipelines, <strong>you do not need any ETH or MATIC to pay for network gas fees</strong>. The platform strictly subsidizes all withdrawal gas out of the base 1% platform fee.
+                                    Because you connect using Smart Accounts integrated with Thirdweb Paymaster pipelines, <strong>you do not need any ETH or MATIC to pay for network gas</strong>. The platform strictly subsidizes all withdrawal gas directly on the network.
                                 </p>
                                 <p>
                                     Selecting "Withdraw" invokes the <code className="bg-black/50 px-1 py-0.5 rounded">distribute()</code> function, which simultaneously disperses all pooled funds proportionally to all partners on the split in a single block execution. Your settled USDC immediately arrives in your connected wallet for off-ramping or spending.
@@ -1434,7 +1434,7 @@ export default function AgentDashboard() {
                                 Custom Referral Link Generator
                             </h3>
                             <p className="text-xs text-muted-foreground mb-4">
-                                Generate a unique link to onboard merchants. When a merchant signs up using this link, they will be automatically assigned to you with the commission rate you specify below. <strong className="text-foreground">Note:</strong> The final transaction fee is 1% (platform cost) <span className="text-primary font-bold">PLUS</span> your negotiated BPS.
+                                Generate a unique link to onboard merchants. When a merchant signs up using this link, they will be automatically assigned to you with the commission rate you specify below. <strong className="text-foreground">Note:</strong> The final transaction rate is 1% (platform baseline) <span className="text-primary font-bold">PLUS</span> your negotiated BPS.
                             </p>
                             <div className="flex flex-col sm:flex-row items-end gap-4">
                                 <div className="space-y-1.5 w-full sm:w-48 flex-shrink-0">
@@ -1949,7 +1949,7 @@ export default function AgentDashboard() {
                                 <div className="rounded-xl border p-5 bg-gradient-to-br from-green-500/5 to-transparent border-green-500/20">
                                     <div className="text-xs font-bold text-green-400 uppercase tracking-wider">Gas is Covered</div>
                                     <div className="text-sm text-muted-foreground mt-2">
-                                        Smart account wallets have gas sponsored. You don't need ETH in your wallet to withdraw — the platform covers transaction fees.
+                                        Smart account wallets have gas sponsored. You don't need ETH in your wallet to withdraw — the platform covers network transaction gas.
                                     </div>
                                 </div>
                                 <div className="rounded-xl border p-5 bg-gradient-to-br from-amber-500/5 to-transparent border-amber-500/20">

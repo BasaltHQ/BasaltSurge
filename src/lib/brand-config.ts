@@ -389,9 +389,12 @@ export async function getContainerIdentity(host?: string): Promise<ContainerIden
  * platform brand. Migrated data may use either key as the partition (wallet field).
  */
 export async function readBrandOverridesFromCosmos(brandKey: string): Promise<BrandConfigDoc | null> {
+  const key = String(brandKey || "").toLowerCase().trim();
+  if (!key) return null;
+
   try {
     const c = await getContainer();
-    const { resource } = await c.item("brand:config", brandKey).read<BrandConfigDoc>();
+    const { resource } = await c.item("brand:config", key).read<BrandConfigDoc>();
     if (resource) return resource;
 
     // Fallback: try the legacy platform alias if the primary lookup returned nothing.
@@ -401,11 +404,23 @@ export async function readBrandOverridesFromCosmos(brandKey: string): Promise<Br
       portalpay: "basaltsurge",
       "lucky13-marketing": "lucky13",
     };
-    const fallbackKey = PLATFORM_ALIASES[brandKey];
+    const fallbackKey = PLATFORM_ALIASES[key];
     if (fallbackKey) {
       const { resource: fallbackResource } = await c.item("brand:config", fallbackKey).read<BrandConfigDoc>();
-      return fallbackResource || null;
+      if (fallbackResource) return fallbackResource;
     }
+
+    // Secondary fallback: query by case-insensitive wallet/brandKey in case of partition key casing or id variance
+    try {
+      const query = {
+        query: "SELECT * FROM c WHERE (c.id = 'brand:config' OR c.type = 'brand_config') AND (LOWER(c.wallet) = @k OR LOWER(c.brandKey) = @k)",
+        parameters: [{ name: "@k", value: key }],
+      };
+      const { resources } = await c.items.query<BrandConfigDoc>(query).fetchAll();
+      if (resources && resources.length > 0) {
+        return resources[0] || null;
+      }
+    } catch {}
 
     return null;
   } catch {
@@ -540,17 +555,20 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     microsoftClarityId: typeof overrides.microsoftClarityId === "string" ? overrides.microsoftClarityId.trim() : undefined,
   });
 
-  // BasaltSurge defaults: only apply when the DB doesn't have explicit values.
+  // BasaltSurge / PortalPay defaults: only apply when the DB doesn't have explicit values.
   // After the MongoDB migration, the DB is the source of truth for brand config.
-  if (key === "basaltsurge") {
-    if (!overrides?.colors?.primary) merged.colors.primary = "#35ff7c";
-    if (!overrides?.colors?.accent) merged.colors.accent = "#FF6B35";
-    if (!overrides?.logos?.app) merged.logos.app = "/BasaltSurgeWideD.png";
-    if (!overrides?.logos?.symbol) merged.logos.symbol = "/BasaltSurgeD.png";
-    if (!overrides?.logos?.og) merged.logos.og = "/BasaltSurgeD.png";
-    if (!overrides?.logos?.twitter) merged.logos.twitter = "/BasaltSurgeD.png";
-    if (!(overrides?.logos as any)?.navbarMode) (merged.logos as any).navbarMode = "logo";
-    if (!overrides?.name) merged.name = "BasaltSurge";
+  if (key === "basaltsurge" || key === "portalpay") {
+    if (!overrides?.colors?.primary) merged.colors.primary = key === "portalpay" ? "#0EA5E9" : "#35ff7c";
+    if (!overrides?.colors?.accent) merged.colors.accent = key === "portalpay" ? "#22C55E" : "#FF6B35";
+    if (!overrides?.logos?.app) merged.logos.app = key === "portalpay" ? "/ppsymbol.png" : "/BasaltSurgeWideD.png";
+    if (!overrides?.logos?.symbol) merged.logos.symbol = key === "portalpay" ? "/ppsymbol.png" : "/BasaltSurgeD.png";
+    if (!overrides?.logos?.og) merged.logos.og = key === "portalpay" ? "/PortalPay.png" : "/BasaltSurgeD.png";
+    if (!overrides?.logos?.twitter) merged.logos.twitter = key === "portalpay" ? "/PortalPay.png" : "/BasaltSurgeD.png";
+    if (!(overrides?.logos as any)?.navbarMode) (merged.logos as any).navbarMode = key === "portalpay" ? "symbol" : "logo";
+    if (!overrides?.name) merged.name = key === "portalpay" ? "PortalPay" : "BasaltSurge";
+    if (!overrides?.microsoftClarityId) {
+      merged.microsoftClarityId = process.env.MICROSOFT_CLARITY_ID || process.env.NEXT_PUBLIC_MICROSOFT_CLARITY_ID || "w0lt4j6fw3";
+    }
   }
 
   return merged;
