@@ -153,8 +153,21 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       ],
     } as { query: string; parameters: { name: string; value: any }[] };
 
-    const { resources } = await container.items.query(spec).fetchAll();
-    const row = Array.isArray(resources) && resources[0] ? resources[0] : null;
+    let { resources } = await container.items.query(spec).fetchAll();
+    let row = Array.isArray(resources) && resources[0] ? resources[0] : null;
+
+    if (!row) {
+      // Cross-partition query fallback by receiptId (when wallet parameter was omitted, different partition key, or operator/merchant wallet mismatch)
+      try {
+        const specCrossPartition = {
+          query:
+            "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
+          parameters: [{ name: "@id", value: id }],
+        } as { query: string; parameters: { name: string; value: any }[] };
+        const crossRes = await container.items.query(specCrossPartition).fetchAll();
+        row = Array.isArray(crossRes.resources) && crossRes.resources[0] ? crossRes.resources[0] : null;
+      } catch { }
+    }
 
     if (row) {
       const rec: Receipt = {
@@ -306,18 +319,25 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       return NextResponse.json({ receipt: rec, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
     }
 
-    // Fallback: demo $5 receipt (Chicken Bowl $4 + Tax $1)
-    const brand = wallet ? (await resolveBrandName(container, wallet)) : undefined;
-    const demo: Receipt = {
-      receiptId: id,
-      totalUsd: 5.0,
-      currency: "USD",
-      lineItems: demoItems,
-      createdAt: Date.now(),
-      brandName: brand || "PortalPay",
-      recipientWallet: wallet,
-    };
-    return NextResponse.json({ receipt: demo, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
+    // Only return demo $5 receipt if explicitly TEST receipt
+    if (isTest) {
+      const brand = wallet ? (await resolveBrandName(container, wallet)) : undefined;
+      const demo: Receipt = {
+        receiptId: id,
+        totalUsd: 5.0,
+        currency: "USD",
+        lineItems: demoItems,
+        createdAt: Date.now(),
+        brandName: brand || "PortalPay",
+        recipientWallet: wallet,
+      };
+      return NextResponse.json({ receipt: demo, clientCountry }, { headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } });
+    }
+
+    return NextResponse.json(
+      { error: "receipt_not_found" },
+      { status: 404, headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } }
+    );
   } catch (e: any) {
     // Graceful degrade when Cosmos isn't configured/available — try in-memory store
     const mem = getReceipts();
@@ -358,25 +378,31 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         { status: 200, headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } }
       );
     }
-    let brand: string | undefined = undefined;
-    try {
-      if (wallet) {
-        const cfg = await getSiteConfigForWallet(wallet).catch(() => null as any);
-        brand = (cfg as any)?.theme?.brandName;
-      }
-    } catch { }
-    const demo: Receipt = {
-      receiptId: id,
-      totalUsd: 5.0,
-      currency: "USD",
-      lineItems: demoItems,
-      createdAt: Date.now(),
-      brandName: brand || "PortalPay",
-      recipientWallet: wallet,
-    };
+    if (isTest) {
+      let brand: string | undefined = undefined;
+      try {
+        if (wallet) {
+          const cfg = await getSiteConfigForWallet(wallet).catch(() => null as any);
+          brand = (cfg as any)?.theme?.brandName;
+        }
+      } catch { }
+      const demo: Receipt = {
+        receiptId: id,
+        totalUsd: 5.0,
+        currency: "USD",
+        lineItems: demoItems,
+        createdAt: Date.now(),
+        brandName: brand || "PortalPay",
+        recipientWallet: wallet,
+      };
+      return NextResponse.json(
+        { receipt: demo, clientCountry },
+        { status: 200, headers: { "x-correlation-id": crypto.randomUUID(), "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } }
+      );
+    }
     return NextResponse.json(
-      { receipt: demo, clientCountry },
-      { status: 200, headers: { "x-correlation-id": crypto.randomUUID(), "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } }
+      { error: "receipt_not_found" },
+      { status: 404, headers: { "x-correlation-id": crypto.randomUUID(), "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } }
     );
   }
 }

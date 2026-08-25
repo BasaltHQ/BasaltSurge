@@ -582,7 +582,11 @@ export async function POST(req: NextRequest) {
             businessType: typeof body?.businessType === "string" ? body.businessType : undefined,
             // Encrypt EIN/SSN if present to protect sensitive PII
             ein: typeof body?.ein === "string" && body.ein ? encrypt(body.ein) : undefined,
-            website: typeof body?.website === "string" ? body.website : undefined,
+            website: typeof body?.website === "string" && body.website.trim()
+                ? (body.website.trim().startsWith("http://") || body.website.trim().startsWith("https://")
+                    ? body.website.trim()
+                    : `https://${body.website.trim()}`)
+                : undefined,
             phone: typeof body?.phone === "string" ? body.phone : undefined,
             businessAddress: body?.businessAddress || undefined,
             logoUrl: typeof body?.logoUrl === "string" ? body.logoUrl : undefined,

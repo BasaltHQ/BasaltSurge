@@ -1,6 +1,16 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
 
+function formatWebsiteUrl(url?: string): string {
+    if (!url) return "";
+    const trimmed = url.trim();
+    if (!trimmed) return "";
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        return trimmed;
+    }
+    return `https://${trimmed}`;
+}
+
 // ── Types ──────────────────────────────────────────────────────
 export type KYBClientRequest = {
     id: string;
@@ -634,7 +644,7 @@ export const ClientRequestsKYBPDF: React.FC<ClientRequestsKYBPDFProps> = ({
                                         )}
                                         <View style={s.infoRow}>
                                             <Text style={s.infoLabel}>Website:</Text>
-                                            <Text style={s.infoValue}>{req.website || "—"}</Text>
+                                            <Text style={s.infoValue}>{formatWebsiteUrl(req.website) || "—"}</Text>
                                         </View>
                                     </View>
                                 </View>

@@ -180,7 +180,7 @@ export default function PartnerManagementPanel() {
       }
 
       // If nothing to persist, skip
-      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined && body.presentedFeeBps === undefined && body.creditPresentedFeeBps === undefined && body.feeMinusEnabled === undefined && body.achEnabled === undefined) {
+      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.microsoftClarityId && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined && body.presentedFeeBps === undefined && body.creditPresentedFeeBps === undefined && body.feeMinusEnabled === undefined && body.achEnabled === undefined) {
         return true;
       }
 
@@ -724,6 +724,10 @@ export default function PartnerManagementPanel() {
           // Optional ACR credentials for Azure Container Registry pulls (auto-fill for theutilityco.azurecr.io)
           DOCKER_REGISTRY_SERVER_USERNAME: (acrUsername || (provImage.includes("theutilityco.azurecr.io") ? "theutilityco" : undefined)),
           DOCKER_REGISTRY_SERVER_PASSWORD: (acrPassword || (provImage.includes("theutilityco.azurecr.io") ? "UoiX7HVOI5W/8QQqortfwpKyb5gSSlrpmOKZpo22TD+ACRA1SdXf" : undefined)),
+
+          // Microsoft Clarity Project ID for telemetry & heatmaps
+          MICROSOFT_CLARITY_ID: (config?.microsoftClarityId ? String(config.microsoftClarityId).trim() : undefined),
+          NEXT_PUBLIC_MICROSOFT_CLARITY_ID: (config?.microsoftClarityId ? String(config.microsoftClarityId).trim() : undefined),
 
           // Container type for partner deployments
           CONTAINER_TYPE: "partner",

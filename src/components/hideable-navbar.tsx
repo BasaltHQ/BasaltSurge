@@ -71,6 +71,7 @@ export function HideableNavbar({ isServerCustomDomain = false }: { isServerCusto
     pathname === "/legacy" || pathname.startsWith("/legacy/") ||
     pathname === "/delivers" || pathname.startsWith("/delivers/") ||
     pathname === "/drive" || pathname.startsWith("/drive/") ||
+    pathname === "/agents" || pathname.startsWith("/agents/") ||
     isCandidateSlug(pathname);
 
   // Apply body class for navbar padding

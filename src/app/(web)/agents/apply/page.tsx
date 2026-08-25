@@ -241,7 +241,7 @@ export default function AgentSignUp() {
                             <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-blue-400">payment empire.</span>
                         </h1>
                         <p className="text-lg text-muted-foreground leading-relaxed max-w-xl">
-                            Join our elite network of agents. Negotiate your own basis points on top of our strict 1% platform fee, and earn uninterrupted revenue from every single transaction your referred merchants process — forever.
+                            Join our elite network of agents. Negotiate your own basis points on top of our strict 1% platform baseline, and earn uninterrupted revenue from every single transaction your referred merchants process — forever.
                         </p>
                         <div className="flex flex-wrap gap-3 pt-2">
                             <a href="#apply-form" className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-primary text-primary-foreground font-bold hover:brightness-110 shadow-lg shadow-primary/25 transition group">
@@ -282,7 +282,7 @@ export default function AgentSignUp() {
                     {[
                         { label: "Settlement Network", value: "Base L2", icon: Layers, color: "text-blue-400" },
                         { label: "Settlement Asset", value: "USDC", icon: DollarSign, color: "text-green-400" },
-                        { label: "Platform Fee", value: "1% Flat", icon: Shield, color: "text-indigo-400" },
+                        { label: "Platform Baseline", value: "1% Flat", icon: Shield, color: "text-indigo-400" },
                         { label: "Withdrawal Gas", value: "Subsidized", icon: Zap, color: "text-amber-400" },
                     ].map((s, i) => (
                         <div key={i} className="text-center space-y-2 group">
@@ -444,7 +444,7 @@ export default function AgentSignUp() {
         <img src="/agent_global_network.png" alt="Global Agent Network" className="w-full h-[300px] sm:h-[400px] object-cover opacity-70 group-hover:opacity-90 group-hover:scale-105 transition-all duration-1000" />
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/50 to-transparent pointer-events-none" />
         <div className="absolute bottom-0 left-0 right-0 p-8 grid grid-cols-3 gap-4">
-            {[{ v: "12+", l: "Countries" }, { v: "24/7", l: "Settlement" }, { v: "$0", l: "Cross-Border Fees" }].map((s, i) => (
+            {[{ v: "12+", l: "Countries" }, { v: "24/7", l: "Settlement" }, { v: "$0", l: "Cross-Border Costs" }].map((s, i) => (
                 <div key={i} className="text-center bg-black/40 backdrop-blur-lg rounded-xl p-4 border border-white/10">
                     <p className="text-xl sm:text-2xl font-extrabold text-cyan-400">{s.v}</p>
                     <p className="text-[10px] uppercase tracking-wider text-muted-foreground mt-1">{s.l}</p>
@@ -487,7 +487,7 @@ export default function AgentSignUp() {
         <p className="text-muted-foreground">Everything you need to know about the agent program.</p>
     </div>
     <div className="space-y-3">
-        <FAQItem q="How much does it cost to become an agent?" a="Absolutely nothing. There are no upfront fees, no monthly minimums, and no hidden costs. You apply, get approved, and start earning." />
+        <FAQItem q="How much does it cost to become an agent?" a="Absolutely nothing. There are no upfront costs, no monthly minimums, and no hidden charges. You apply, get approved, and start earning." />
         <FAQItem q="How do I get paid?" a="Your earnings accumulate in PaymentSplitter smart contracts on the Base L2 network as USDC stablecoins. You can withdraw anytime from your dashboard — gas is subsidized by the platform." />
         <FAQItem q="Can someone change my commission rate after deployment?" a="No. Your wallet address and BPS allocation are permanently hardcoded into the smart contract at deployment time. Neither the platform nor the merchant can alter this." />
         <FAQItem q="What happens if a merchant I referred stops using the platform?" a="You stop earning from that specific merchant, but all other merchants in your pipeline continue generating revenue. There's no clawback on previously earned commissions." />

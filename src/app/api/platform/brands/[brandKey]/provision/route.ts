@@ -248,6 +248,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
   const thirdwebSecretKey = String(dbOverrides?.thirdwebSecretKey || "");
   const thirdwebAuthEndpointSecret = String(dbOverrides?.thirdwebAuthEndpointSecret || "");
 
+  // Extract Microsoft Clarity Project ID from DB overrides, brandConfig, or request extras
+  const microsoftClarityId = String(
+    (extras as any)?.MICROSOFT_CLARITY_ID ||
+    (extras as any)?.NEXT_PUBLIC_MICROSOFT_CLARITY_ID ||
+    dbOverrides?.microsoftClarityId ||
+    brandConfig?.microsoftClarityId ||
+    ""
+  ).trim();
+
   // Extract default agent settings
   const agentsList = Array.isArray(brandConfig?.agents) ? brandConfig.agents : [];
   const firstAgent = agentsList[0];
@@ -263,7 +272,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
       "NEXT_PUBLIC_", "AZURE_", "COSMOS_", "THIRDWEB_", "PORTALPAY_", "MONGODB_",
       "APIM_", "AFD_", "UNISWAP_", "ETHERSCAN_", "BLOCKSCOUT_", "SEVENSHIFTS_",
       "TOAST_", "VARUNI_", "JWT_", "RESERVE_", "DEFAULT_", "PP_BRAND_", "AGENT_",
-      "DB_", "S3_", "CLOUDFLARE_", "STRIPE_", "LINK_", "ELEVENLABS_", "PLESK_"
+      "DB_", "S3_", "CLOUDFLARE_", "STRIPE_", "LINK_", "ELEVENLABS_", "PLESK_",
+      "MICROSOFT_", "CLARITY_"
     ];
     const allowExact = [
       "JWT_SECRET", "NODE_ENV", "PORT", "WEBSITES_PORT", "BRAND_NAME", "BACKOFFICE_NAME",
@@ -334,6 +344,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
     THIRDWEB_WAIT_UNTIL: process.env.THIRDWEB_WAIT_UNTIL || "confirmed",
     THIRDWEB_ENGINE_WALLET: process.env.THIRDWEB_ENGINE_WALLET || "",
     NEXT_PUBLIC_THIRDWEB_ENGINE_WALLET: process.env.NEXT_PUBLIC_THIRDWEB_ENGINE_WALLET || "",
+
+    // Microsoft Clarity Telemetry Keys
+    ...(microsoftClarityId ? {
+      MICROSOFT_CLARITY_ID: microsoftClarityId,
+      NEXT_PUBLIC_MICROSOFT_CLARITY_ID: microsoftClarityId,
+    } : {}),
     // Agent mapping
     ...(agentWallet ? {
       AGENT_WALLET: agentWallet,
