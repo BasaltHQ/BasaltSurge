@@ -539,11 +539,15 @@ function checkIfCardDecline(err: any, lastError?: string): boolean {
   const type = String(err?.type || nestedErrObj?.type || "").toLowerCase();
   const lastErr = String(lastError || "").toLowerCase();
 
-  // 1. Check if the thrown error is a KYC error first
+  // 1. Check if the thrown error is a KYC error or session state error first
   const isThrownKyc = msg.includes("identity") || msg.includes("verification") || msg.includes("kyc") ||
                       code.includes("identity") || code.includes("verification") || code.includes("kyc");
 
-  if (isThrownKyc) {
+  const isInvalidStateError = msg.includes("valid state") ||
+                              msg.includes("purchase confirmation") ||
+                              msg.includes("already confirmed");
+
+  if (isThrownKyc || isInvalidStateError) {
     return false;
   }
 
@@ -560,7 +564,10 @@ function checkIfCardDecline(err: any, lastError?: string): boolean {
     msg.includes("cvc") ||
     msg.includes("zip") ||
     msg.includes("expired") ||
-    msg.includes("invalid") ||
+    msg.includes("invalid card") ||
+    msg.includes("invalid_number") ||
+    msg.includes("invalid_cvc") ||
+    msg.includes("invalid_expiry") ||
     msg.includes("frozen") ||
     msg.includes("freeze") ||
     msg.includes("blocked") ||
@@ -2278,6 +2285,8 @@ export function useStripeEmbeddedOnramp({
                                             errCode === "zerohash_api_error" ||
                                             errMessage.includes("server error") ||
                                             errMessage.includes("timed out") ||
+                                            errMessage.includes("valid state") ||
+                                            errMessage.includes("purchase confirmation") ||
                                             errMessage.includes("try creating a new session");
 
             const isAmountLimitError =
@@ -2440,28 +2449,32 @@ export function useStripeEmbeddedOnramp({
               }
             }
 
-            if (isQuoteExpired) {
-              console.log("[EMBEDDED ONRAMP] Quote expired / rate drifted. Refreshing quote...");
-              updateStep("creating_session");
-              try {
-                const refreshRes = await fetch("/api/stripe/onramp-quote-refresh", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    sessionId: currentSessionId,
-                    oauthToken: oauthTokenRef.current,
-                  }),
-                });
-                if (refreshRes.ok) {
-                  console.log("[EMBEDDED ONRAMP] Quote refreshed successfully, retrying checkout...");
-                  updateStep("checking_out");
-                  continue;
+            const isInvalidState = errMessage.includes("valid state") || errMessage.includes("purchase confirmation");
+
+            if (isQuoteExpired || isInvalidState) {
+              console.log("[EMBEDDED ONRAMP] Quote expired or session state invalid. Recreating fresh session & PaymentIntent...");
+              if (isQuoteExpired && !isInvalidState) {
+                updateStep("creating_session");
+                try {
+                  const refreshRes = await fetch("/api/stripe/onramp-quote-refresh", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      sessionId: currentSessionId,
+                      oauthToken: oauthTokenRef.current,
+                    }),
+                  });
+                  if (refreshRes.ok) {
+                    console.log("[EMBEDDED ONRAMP] Quote refreshed successfully, retrying checkout...");
+                    updateStep("checking_out");
+                    continue;
+                  }
+                } catch (refreshErr) {
+                  console.warn("[EMBEDDED ONRAMP] Quote refresh endpoint failed, recreating fresh session helper...", refreshErr);
                 }
-              } catch (refreshErr) {
-                console.warn("[EMBEDDED ONRAMP] Quote refresh endpoint failed, recreating fresh session helper...", refreshErr);
               }
 
-              // Fallback to fresh session creation on quote drift
+              // Fallback / Invalidation: Create a brand new session with fresh PaymentIntent
               sessionIdRef.current = null;
               setSessionId(null);
               const targetAmount = getOnrampAmount(detectedCardFunding);
@@ -2470,7 +2483,7 @@ export function useStripeEmbeddedOnramp({
               currentSessionId = sessionResult.sessionId;
               sessionIdRef.current = currentSessionId;
               setSessionId(currentSessionId);
-              console.log("[EMBEDDED ONRAMP] New session created with fresh quote. Retrying checkout...");
+              console.log("[EMBEDDED ONRAMP] New session created with fresh PaymentIntent. Retrying checkout...");
               updateStep("checking_out");
               continue;
             }
