@@ -4123,9 +4123,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       console.error("[STRIPE HEADLESS] Error:", error);
 
       if (
-        errMsg.includes("support.link.com") ||
         errMsg.includes("can't support your link account") ||
         errMsg.includes("unsupportable_customer") ||
+        errMsg.includes("crypto_onramp_unsupportable_customer") ||
         errMsg.includes("unsupported link account")
       ) {
         setShowUnsupportedLinkModal(true);
