@@ -968,15 +968,16 @@ export function useStripeEmbeddedOnramp({
       const err = event.reason;
       const errMessage = String(err?.message || err || "").toLowerCase();
 
-      // Check for Stripe Link unsupported account error
+      // Check for Stripe Link unsupported account error (match explicit error codes/messages, not generic help URLs)
       const isUnsupportedLink = errMessage.includes("can't support your link account") || 
-                                 errMessage.includes("support.link.com") || 
-                                 errMessage.includes("unsupportable_customer");
+                                 errMessage.includes("unsupportable_customer") ||
+                                 errMessage.includes("crypto_onramp_unsupportable_customer") ||
+                                 errMessage.includes("unsupported link account");
       
       if (isUnsupportedLink) {
         event.preventDefault(); // Stop default browser console logging
         console.warn("[EMBEDDED ONRAMP] Intercepted unsupported Link account error. Resetting...");
-        handleError("We can't support your Link account at this time. Questions? Contact support.link.com.", err);
+        handleError("We can't support your Link account at this time.", err);
         return;
       }
 
@@ -1703,11 +1704,40 @@ export function useStripeEmbeddedOnramp({
                 console.log("[EMBEDDED ONRAMP] Pre-verification customer status:", kycData);
                 
                 const kycTiers = kycData.kycTiers || [];
+                const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
                 const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+
+                const isOverallKycVerified = kycData.kycStatus === "approved" ||
+                                             kycData.kycStatus === "verified" ||
+                                             kycData.kycStatus === "completed";
+
+                const isL0Verified = l0Tier 
+                  ? l0Tier.verification_status === "verified"
+                  : isOverallKycVerified;
+
                 isL1Verified = l1Tier 
                   ? l1Tier.verification_status === "verified"
-                  : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified" || kycData.kycStatus === "completed");
+                  : isOverallKycVerified;
                 
+                // If L0 demographics are pending, poll and wait for L0 approval
+                if (!isL0Verified && l0Tier?.verification_status === "pending") {
+                  console.log("[EMBEDDED ONRAMP] L0 demographics pending. Polling for L0 approval...");
+                  updateStep("checking_kyc");
+                  const l0Approved = await pollKycStatus(customerId, "l0");
+                  if (!l0Approved) {
+                    setKycTierRequired("l0");
+                    updateStep("collecting_kyc");
+                    isRunningRef.current = false;
+                    return null;
+                  }
+                } else if (!isL0Verified) {
+                  console.log("[EMBEDDED ONRAMP] L0 demographics unverified. Directing to L0 input first.");
+                  setKycTierRequired("l0");
+                  updateStep("collecting_kyc");
+                  isRunningRef.current = false;
+                  return null;
+                }
+
                 // If L1 demographics are pending, poll and wait for L1 approval before L2
                 if (!isL1Verified && l1Tier?.verification_status === "pending") {
                   console.log("[EMBEDDED ONRAMP] L1 demographics pending. Polling for L1 approval before checking L2...");
@@ -2010,9 +2040,7 @@ export function useStripeEmbeddedOnramp({
       console.log(`[EMBEDDED ONRAMP] Creating/Re-creating session. Reason: !sessionId=${!currentSessionId}, fundingChanged=${sessionFunding} -> ${resolvedFunding}`);
       const initialAmount = getOnrampAmount(resolvedFunding || null);
       const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount, resolvedFunding);
-      if (!sessionResult) {
-        throw new Error("Failed to initialize onramp session");
-      }
+      if (!sessionResult) return;
       currentSessionId = sessionResult.sessionId;
       sessionIdRef.current = currentSessionId;
       setSessionId(currentSessionId);

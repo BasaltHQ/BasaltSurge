@@ -17,6 +17,7 @@ import { AccordionCard } from "../AccordionCard";
 import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step1ContactProps } from "../types";
 import { StripeEmbedContainer } from "../StripeEmbedContainer";
+import { parseOnrampError } from "../errorTaxonomy";
 
 export function Step1Contact({
   isOpen,
@@ -237,18 +238,22 @@ export function Step1Contact({
           </div>
         )}
 
-        {/* Inline Step 1 Error Notice */}
-        {activeError && (
-          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex items-start gap-2.5 animate-in fade-in duration-200">
-            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-            <div className="space-y-1">
-              <div className="font-bold text-amber-200">Account Notice:</div>
-              <div className="text-xs leading-relaxed text-amber-300">
-                {activeError}
+        {/* Inline Step 1 Error Notice (only for errors specifically targeting Step 1) */}
+        {activeError && (() => {
+          const parsed = parseOnrampError(activeError);
+          if (parsed && parsed.targetStep !== 1) return null;
+          return (
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex items-start gap-2.5 animate-in fade-in duration-200">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-bold text-amber-200">Account Notice:</div>
+                <div className="text-xs leading-relaxed text-amber-300">
+                  {activeError}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {!authElement && (() => {
           const isLoadingLink = isSubmittingContact || (

@@ -4123,9 +4123,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       console.error("[STRIPE HEADLESS] Error:", error);
 
       if (
-        errMsg.includes("support.link.com") ||
         errMsg.includes("can't support your link account") ||
         errMsg.includes("unsupportable_customer") ||
+        errMsg.includes("crypto_onramp_unsupportable_customer") ||
         errMsg.includes("unsupported link account")
       ) {
         setShowUnsupportedLinkModal(true);
@@ -6274,7 +6274,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <span>⚖️ Regulatory Compliant</span>
                 </div>
               </div>
-            ) : headlessAuthElement || headlessPaymentElement ? (
+            ) : (!isV2Active && (headlessAuthElement || headlessPaymentElement)) ? (
               <div className="w-full h-full flex flex-col items-stretch stripe-embedded-container animate-in fade-in duration-300 relative">
                 {headlessError && (
                   <div className="mx-4 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-xs font-semibold flex items-center gap-2 mb-2 animate-in slide-in-from-top duration-300">
