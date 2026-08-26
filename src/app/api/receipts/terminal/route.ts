@@ -325,23 +325,11 @@ export async function POST(req: NextRequest) {
     let totalUsd: number;
 
     if (isFeeMinus) {
-      const originalSubtotalCents = baseCents;
-      const originalTaxCents = taxCents;
-      const originalBaseWithoutFeeCents = baseWithoutFeeCents; // Customer total
-
-      const adjustedBaseWithoutFeeCents = Math.round(originalBaseWithoutFeeCents / (1 + feePctFraction));
-      const finalProcessingFeeCents = originalBaseWithoutFeeCents - adjustedBaseWithoutFeeCents;
-
-      const scaleFactor = originalBaseWithoutFeeCents > 0 ? (adjustedBaseWithoutFeeCents / originalBaseWithoutFeeCents) : 1;
-      const adjustedSubtotalCents = Math.round(originalSubtotalCents * scaleFactor);
-      const adjustedTaxCents = adjustedBaseWithoutFeeCents - adjustedSubtotalCents;
-
       lineItems = [
-        { label: baseLabel, priceUsd: fromCents(adjustedSubtotalCents) },
-        ...(adjustedTaxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(adjustedTaxCents) }] : []),
-        ...(finalProcessingFeeCents > 0 ? [{ label: "Processing Fee", priceUsd: fromCents(finalProcessingFeeCents) }] : []),
+        { label: baseLabel, priceUsd: fromCents(baseCents) },
+        ...(taxCents > 0 ? [{ label: "Tax", priceUsd: fromCents(taxCents) }] : []),
       ];
-      totalUsd = fromCents(originalBaseWithoutFeeCents);
+      totalUsd = fromCents(baseWithoutFeeCents);
     } else {
       lineItems = [
         { label: baseLabel, priceUsd: fromCents(baseCents) },
