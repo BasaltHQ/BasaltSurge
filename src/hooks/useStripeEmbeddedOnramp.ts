@@ -577,6 +577,8 @@ function checkIfCardDecline(err: any, lastError?: string): boolean {
     msg.includes("refused") ||
     msg.includes("rejected") ||
     msg.includes("checkout_unsuccessful") ||
+    msg.includes("authenticate") ||
+    msg.includes("authentication") ||
     code.includes("decline") ||
     code.includes("card") ||
     code.includes("payment_method") ||
