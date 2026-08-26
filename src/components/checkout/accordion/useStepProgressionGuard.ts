@@ -186,7 +186,7 @@ export function useStepProgressionGuard({
       headlessStep === "confirming_fees";
 
     const needsKycStep =
-      (headlessStep === "collecting_kyc" && !isPaymentReady) ||
+      (!isStep2Satisfied && headlessStep === "collecting_kyc" && !isPaymentReady) ||
       (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
       (showStepUpForm && !kyc.isL1Verified) ||
       (isL2Requirement && !kyc.isL2Verified) ||
@@ -245,7 +245,7 @@ export function useStepProgressionGuard({
 
     // Case B: Explicit KYC or Document Verification step from Onramp
     if (
-      (headlessStep === "collecting_kyc" && !isPaymentReady) ||
+      (!isStep2Satisfied && headlessStep === "collecting_kyc" && !isPaymentReady) ||
       (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
       showStepUpForm ||
       (isL2Requirement && !kyc.isL2Verified)

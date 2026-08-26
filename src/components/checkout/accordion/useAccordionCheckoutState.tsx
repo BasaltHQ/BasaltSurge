@@ -361,7 +361,9 @@ export function useAccordionCheckoutState(
     (kycLevel === "L0" ||
       effectiveTier === "l1" ||
       effectiveStatus === "step_up" ||
-      (kycTierRequired as string) === "l1");
+      (kycTierRequired as string) === "l1" ||
+      (headlessStep === "collecting_kyc" && !l1Verified) ||
+      headlessStep === "submitting_kyc");
 
   // Document verification button (Photo ID/Selfie): user is at L1 and needs L2 (or retry L2 on rejection)
   const showVerifyDocs =
@@ -370,7 +372,9 @@ export function useAccordionCheckoutState(
     (effectiveTier === "l2" ||
       effectiveStatus === "doc_verify" ||
       (kycTierRequired as string) === "l2" ||
-      headlessStep === "verifying_identity");
+      headlessStep === "verifying_identity" ||
+      (headlessStep === "collecting_kyc" && l1Verified) ||
+      headlessStep === "checking_kyc");
 
   const isL2Requirement = showVerifyDocs;
 
