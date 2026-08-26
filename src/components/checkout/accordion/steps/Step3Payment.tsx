@@ -90,7 +90,7 @@ export function Step3Payment({
       />
 
       {/* Step 3 Expanded Body */}
-      <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
+      <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${isOpen ? "" : "h-0 opacity-0 overflow-visible pointer-events-none p-0 border-0"}`}>
         {/* Top Error Alert Banner & Decline Recovery Panel */}
         {activeError && !isWalletOwnershipRequired && (
           <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 animate-in fade-in my-1 space-y-2 text-left">
