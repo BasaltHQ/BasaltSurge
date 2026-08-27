@@ -156,10 +156,10 @@ function buildCsp(req: NextRequest): string {
         `base-uri ${self}`,
         `form-action ${self}`,
         `media-src ${https} ${self}`,
-        `child-src ${self} blob: https://*.clarity.ms https://*.stripe.com https://stripe.com https://*.js.stripe.com https://js.stripe.com`,
+        `child-src ${self} blob: ${https} https://*.clarity.ms https://*.stripe.com https://stripe.com https://*.js.stripe.com https://js.stripe.com`,
         `worker-src ${self} blob:`,
-        // Allow Thirdweb wallet iframes and Adobe Sign
-        `frame-src ${self} https://embedded-wallet.thirdweb.com https://*.thirdweb.com https://na2.documents.adobe.com https://*.documents.adobe.com https://*.adobesign.com https://js.stripe.com https://crypto-js.stripe.com https://*.stripe.com https://stripe.com https://*.stripe.network https://*.js.stripe.com https://hooks.stripe.com https://*.clarity.ms`,
+        // Allow Thirdweb wallet iframes, Adobe Sign, and all bank 3DS ACS frames (https)
+        `frame-src ${self} ${https} https://embedded-wallet.thirdweb.com https://*.thirdweb.com https://na2.documents.adobe.com https://*.documents.adobe.com https://*.adobesign.com https://js.stripe.com https://crypto-js.stripe.com https://*.stripe.com https://stripe.com https://*.stripe.network https://*.js.stripe.com https://hooks.stripe.com https://*.cardinalcommerce.com https://*.mastercard.com https://*.visa.com https://*.clarity.ms`,
         // Disallow object/embed entirely
         `object-src 'none'`,
     ].join("; ");
