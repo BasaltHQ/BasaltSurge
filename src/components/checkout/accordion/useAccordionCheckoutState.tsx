@@ -383,6 +383,12 @@ export function useAccordionCheckoutState(
     !l2Verified
   );
 
+  const ssnDigits = (ssn || "").replace(/\D/g, "");
+  const dobStatus = validateDob(dob);
+  const countryConfig = getCountryAddressConfig(country);
+  const isUS = countryConfig.isUS;
+  const isEU = countryConfig.isEU;
+
   // Step-up (DOB + SSN required): user is at L0 (name & address verified, needs L1)
   const showStepUpForm =
     !l1Verified &&
@@ -397,27 +403,22 @@ export function useAccordionCheckoutState(
       (headlessStep === "collecting_kyc" && !l1Verified) ||
       headlessStep === "submitting_kyc");
 
-  // Document verification button (Photo ID/Selfie): user is at L1 and needs L2 (or retry L2 on rejection)
+  // Document verification button (Photo ID/Selfie): user needs L2 (EU region, explicit L2 tier requirement, amount limit, or retry L2 on rejection)
   const showVerifyDocs =
-    l1Verified &&
     !l2Verified &&
-    (effectiveTier === "l2" ||
+    (isEU ||
+      effectiveTier === "l2" ||
       effectiveStatus === "doc_verify" ||
       (kycTierRequired as string) === "l2" ||
       isProactiveL2StepUp ||
       parsedActiveError?.kycTargetTier === "l2" ||
-      Boolean(parsedActiveError?.isAmountLimit && l1Verified && !l2Verified) ||
+      Boolean(parsedActiveError?.isAmountLimit && !l2Verified) ||
       headlessStep === "verifying_identity" ||
-      (headlessStep === "collecting_kyc" && l1Verified) ||
+      (headlessStep === "collecting_kyc" && (l1Verified || isEU)) ||
       headlessStep === "checking_kyc");
 
   const isL2Requirement = showVerifyDocs;
 
-  const ssnDigits = (ssn || "").replace(/\D/g, "");
-  const dobStatus = validateDob(dob);
-  const countryConfig = getCountryAddressConfig(country);
-  const isUS = countryConfig.isUS;
-  const isEU = countryConfig.isEU;
   const showDobField = showStepUpForm || isL2Requirement || isEU;
   const showSsnField = isUS && (showStepUpForm || isL2Requirement);
 

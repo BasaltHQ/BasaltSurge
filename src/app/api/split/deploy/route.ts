@@ -129,22 +129,28 @@ function resolvePlatformBpsFromBrand(bKey: string | undefined, brand: any, overr
 /**
  * Helper to add CORS headers to a response
  */
-function cors(res: NextResponse) {
-  res.headers.set("Access-Control-Allow-Origin", "*");
+function cors(res: NextResponse, req?: NextRequest) {
+  const reqOrigin = req?.headers.get("origin");
+  if (reqOrigin) {
+    res.headers.set("Access-Control-Allow-Origin", reqOrigin);
+    res.headers.set("Access-Control-Allow-Credentials", "true");
+  } else {
+    res.headers.set("Access-Control-Allow-Origin", "*");
+  }
   res.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-wallet, x-caller-wallet, x-forwarded-host, x-forwarded-proto");
+  res.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-wallet, x-caller-wallet, x-forwarded-host, x-forwarded-proto, x-api-key, x-container-type");
   return res;
 }
 
 /**
  * Handle CORS preflight requests
  */
-export async function OPTIONS() {
-  return cors(new NextResponse(null, { status: 204 }));
+export async function OPTIONS(req: NextRequest) {
+  return cors(new NextResponse(null, { status: 204 }), req);
 }
 
-function jsonResponse(body: any, init?: any): NextResponse {
-  return cors(NextResponse.json(body, init));
+function jsonResponse(body: any, init?: any, req?: NextRequest): NextResponse {
+  return cors(NextResponse.json(body, init), req);
 }
 
 export async function GET(req: NextRequest) {
