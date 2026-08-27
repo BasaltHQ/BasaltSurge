@@ -4845,35 +4845,9 @@ export default function PlatformAnalyticsPanel() {
                                             </div>
                                           </div>
 
-                                          {/* Stepper progress track */}
-                                          <div className="relative z-10 overflow-x-auto scrollbar-none py-3">
-                                            <div className="flex items-center justify-between min-w-[640px] w-full relative px-8">
-                                              {/* Track Background Bar (Aligned to circle centers) */}
-                                              <div className="absolute left-[88px] right-[88px] top-[16px] h-2 bg-zinc-900/90 rounded-full border border-white/10 shadow-inner -z-0" />
-
-                                              {/* Track Active Progress Line with Neon Glow */}
-                                              {(() => {
-                                                const progressPct = settlementSuccess ? 100 :
-                                                  paymentMethodSelected ? 66 :
-                                                    (kycCompleted || r.kycLevel === "L1" || r.kycLevel === "L2") ? 33 : 0;
-
-                                                return (
-                                                  <div
-                                                    className={`absolute left-[88px] top-[16px] h-2 rounded-full transition-all duration-700 ease-out -z-0 shadow-[0_0_20px_rgba(16,185,129,0.5)] ${
-                                                      settlementFailed ? "bg-gradient-to-r from-rose-600 via-rose-500 to-rose-400 shadow-rose-500/50" :
-                                                      "bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-300"
-                                                    }`}
-                                                    style={{
-                                                      width: `calc((100% - 176px) * ${progressPct / 100})`,
-                                                    }}
-                                                  >
-                                                    {progressPct > 0 && progressPct < 100 && (
-                                                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-[0_0_12px_#ffffff] animate-pulse" />
-                                                    )}
-                                                  </div>
-                                                );
-                                              })()}
-
+                                          {/* Stepper progress track with Responsive Forward Connectors & Orthogonal Return Loops */}
+                                          <div className="relative z-10 overflow-x-auto scrollbar-none py-6">
+                                            <div className="flex items-center justify-between min-w-[760px] w-full relative px-10">
                                               {steps.map((step, idx) => {
                                                 let nodeStyle = "bg-zinc-900 text-zinc-500 border-white/10 shadow-inner";
                                                 let badgeStyle = "bg-white/[0.04] text-white/50 border-white/5";
@@ -4896,17 +4870,17 @@ export default function PlatformAnalyticsPanel() {
                                                 return (
                                                   <React.Fragment key={step.id}>
                                                     {/* Step Node */}
-                                                    <div className="flex flex-col items-center relative z-10 w-32 group shrink-0">
+                                                    <div className="flex flex-col items-center relative z-10 w-36 group shrink-0">
                                                       <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${nodeStyle} bg-zinc-950`}>
                                                         {icon}
                                                       </div>
                                                       <span className="mt-2.5 text-xs font-extrabold text-white tracking-wide whitespace-nowrap group-hover:text-primary transition-colors">{step.label}</span>
-                                                      <span className={`mt-1 px-2 py-0.5 rounded-full text-[10px] border whitespace-nowrap overflow-hidden text-ellipsis max-w-[125px] text-center ${badgeStyle}`} title={step.description}>
+                                                      <span className={`mt-1 px-2 py-0.5 rounded-full text-[10px] border whitespace-nowrap overflow-hidden text-ellipsis max-w-[130px] text-center ${badgeStyle}`} title={step.description}>
                                                         {step.description}
                                                       </span>
                                                     </div>
 
-                                                    {/* Inter-Node Directional Arrow Connector (Stacked Angular SVG Arrows) */}
+                                                    {/* Inter-Node Forward Connector (Non-stretching Crisp Arrow) */}
                                                     {idx < steps.length - 1 && (() => {
                                                       const isForwardCompleted =
                                                         idx === 0
@@ -4915,110 +4889,19 @@ export default function PlatformAnalyticsPanel() {
                                                           ? paymentMethodSelected
                                                           : settlementSuccess;
 
-                                                      const showStepUpReturn = idx === 1 && (isL1Required || isL2Required || kycTriggered);
-                                                      const showDeclineReturn = idx === 2 && settlementFailed;
-
                                                       return (
-                                                        <div className="flex-1 flex flex-col items-center justify-center px-1 relative z-10 -mt-6 min-w-[90px]">
-                                                          {/* SVG Container for Stacked Angular Arrows */}
-                                                          <div className="w-full relative flex flex-col items-center gap-1">
-                                                            {/* Top Lane: Forward Angular Arrow */}
-                                                            <div
-                                                              className="w-full flex items-center justify-center relative cursor-help"
-                                                              title={`Forward Path: Step ${idx + 1} ➔ Step ${idx + 2}`}
-                                                            >
-                                                              <svg className="w-full h-5 overflow-visible" viewBox="0 0 100 20" preserveAspectRatio="none">
-                                                                <defs>
-                                                                  <marker
-                                                                    id={`arrow-head-fwd-${idx}`}
-                                                                    viewBox="0 0 10 10"
-                                                                    refX="8"
-                                                                    refY="5"
-                                                                    markerWidth="6"
-                                                                    markerHeight="6"
-                                                                    orient="auto-start-reverse"
-                                                                  >
-                                                                    <path d="M 0 1.5 L 8 5 L 0 8.5 L 3 5 Z" fill={isForwardCompleted ? "#10b981" : "#52525b"} />
-                                                                  </marker>
-                                                                </defs>
-                                                                <path
-                                                                  d="M 5 10 H 88"
-                                                                  fill="none"
-                                                                  stroke={isForwardCompleted ? "#10b981" : "#3f3f46"}
-                                                                  strokeWidth="2"
-                                                                  strokeDasharray={isForwardCompleted ? "none" : "3 3"}
-                                                                  markerEnd={`url(#arrow-head-fwd-${idx})`}
-                                                                />
-                                                              </svg>
-                                                            </div>
-
-                                                            {/* Bottom Lane: Stacked Angular Step-Up Return Loop */}
-                                                            {showStepUpReturn && (
-                                                              <div
-                                                                className="w-full flex flex-col items-center relative cursor-help animate-pulse -mt-1"
-                                                                title={`Step 3 ➔ Step 2 Step-Up Return Loop: Order amount ($${receiptAmountUsd.toLocaleString()}) or Stripe API required ${isL2Required ? "L2 Photo ID Scan" : "L1 DOB + SSN"}. User stepped back from Step 3 to Step 2.`}
-                                                              >
-                                                                <svg className="w-full h-5 overflow-visible" viewBox="0 0 100 20" preserveAspectRatio="none">
-                                                                  <defs>
-                                                                    <marker
-                                                                      id={`arrow-head-stepup-${idx}`}
-                                                                      viewBox="0 0 10 10"
-                                                                      refX="8"
-                                                                      refY="5"
-                                                                      markerWidth="6"
-                                                                      markerHeight="6"
-                                                                      orient="auto-start-reverse"
-                                                                    >
-                                                                      <path d="M 0 1.5 L 8 5 L 0 8.5 L 3 5 Z" fill="#f59e0b" />
-                                                                    </marker>
-                                                                  </defs>
-                                                                  <path
-                                                                    d="M 92 4 L 92 14 L 12 14"
-                                                                    fill="none"
-                                                                    stroke="#f59e0b"
-                                                                    strokeWidth="2"
-                                                                    markerEnd={`url(#arrow-head-stepup-${idx})`}
-                                                                  />
-                                                                </svg>
-                                                                <span className="px-2 py-0.5 rounded-md text-[9px] font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-[0_0_10px_rgba(251,191,36,0.3)] whitespace-nowrap -mt-1">
-                                                                  Step 3 ➔ 2 Step-Up
-                                                                </span>
-                                                              </div>
-                                                            )}
-
-                                                            {/* Bottom Lane: Stacked Angular Decline Return Loop */}
-                                                            {showDeclineReturn && (
-                                                              <div
-                                                                className="w-full flex flex-col items-center relative cursor-help animate-pulse -mt-1"
-                                                                title={`Step 4 ➔ Step 3 Decline Return Loop: Payment declined during on-chain settlement. User stepped back from Step 4 to Step 3 to re-select payment method.`}
-                                                              >
-                                                                <svg className="w-full h-5 overflow-visible" viewBox="0 0 100 20" preserveAspectRatio="none">
-                                                                  <defs>
-                                                                    <marker
-                                                                      id={`arrow-head-decline-${idx}`}
-                                                                      viewBox="0 0 10 10"
-                                                                      refX="8"
-                                                                      refY="5"
-                                                                      markerWidth="6"
-                                                                      markerHeight="6"
-                                                                      orient="auto-start-reverse"
-                                                                    >
-                                                                      <path d="M 0 1.5 L 8 5 L 0 8.5 L 3 5 Z" fill="#f43f5e" />
-                                                                    </marker>
-                                                                  </defs>
-                                                                  <path
-                                                                    d="M 92 4 L 92 14 L 12 14"
-                                                                    fill="none"
-                                                                    stroke="#f43f5e"
-                                                                    strokeWidth="2"
-                                                                    markerEnd={`url(#arrow-head-decline-${idx})`}
-                                                                  />
-                                                                </svg>
-                                                                <span className="px-2 py-0.5 rounded-md text-[9px] font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-[0_0_10px_rgba(244,63,94,0.3)] whitespace-nowrap -mt-1">
-                                                                  Step 4 ➔ 3 Decline
-                                                                </span>
-                                                              </div>
-                                                            )}
+                                                        <div className="flex-1 flex items-center justify-center px-2 relative z-10 -mt-6 min-w-[90px]">
+                                                          <div
+                                                            className={`w-full flex items-center justify-center gap-1.5 py-1 px-3 rounded-full border transition-all ${
+                                                              isForwardCompleted
+                                                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]"
+                                                                : "bg-zinc-900 border-white/10 text-zinc-600"
+                                                            }`}
+                                                            title={`Forward Path: Step ${idx + 1} ➔ Step ${idx + 2}`}
+                                                          >
+                                                            <div className={`h-[2px] flex-1 rounded-full ${isForwardCompleted ? "bg-emerald-400" : "bg-zinc-700 border-t border-dashed"}`} />
+                                                            <ArrowRight className="w-4 h-4 shrink-0 text-current" />
+                                                            <div className={`h-[2px] flex-1 rounded-full ${isForwardCompleted ? "bg-emerald-400" : "bg-zinc-700 border-t border-dashed"}`} />
                                                           </div>
                                                         </div>
                                                       );
@@ -5026,6 +4909,77 @@ export default function PlatformAnalyticsPanel() {
                                                   </React.Fragment>
                                                 );
                                               })}
+
+                                              {/* Orthogonal Return Loop Pathways (Shoot Down -> Over -> Up) */}
+                                              {(isL1Required || isL2Required || kycTriggered) && (
+                                                <div
+                                                  className="absolute left-[31%] right-[42%] top-[20px] h-[55px] pointer-events-auto z-0 group/stepup cursor-help"
+                                                  title={`Step 3 ➔ Step 2 Step-Up Return Loop: Order amount ($${receiptAmountUsd.toLocaleString()}) or Stripe API required ${isL2Required ? "L2 Photo ID Scan" : "L1 DOB + SSN"}. Stepped back from Step 3 to Step 2.`}
+                                                >
+                                                  <svg className="w-full h-full overflow-visible">
+                                                    <defs>
+                                                      <marker
+                                                        id="ortho-arrow-up-amber"
+                                                        viewBox="0 0 10 10"
+                                                        refX="5"
+                                                        refY="3"
+                                                        markerWidth="6"
+                                                        markerHeight="6"
+                                                        orient="auto"
+                                                      >
+                                                        <path d="M 0 8 L 5 0 L 10 8 Z" fill="#f59e0b" />
+                                                      </marker>
+                                                    </defs>
+                                                    <path
+                                                      d="M 96% 12 L 96% 46 L 4% 46 L 4% 18"
+                                                      fill="none"
+                                                      stroke="#f59e0b"
+                                                      strokeWidth="2"
+                                                      strokeDasharray="4 3"
+                                                      className="animate-pulse"
+                                                      markerEnd="url(#ortho-arrow-up-amber)"
+                                                    />
+                                                  </svg>
+                                                  <div className="absolute left-1/2 -translate-x-1/2 bottom-[-6px] bg-zinc-950/90 border border-amber-500/50 text-amber-300 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full shadow-[0_0_12px_rgba(251,191,36,0.3)] whitespace-nowrap">
+                                                    Step 3 ➔ 2 Step-Up Loop
+                                                  </div>
+                                                </div>
+                                              )}
+
+                                              {settlementFailed && (
+                                                <div
+                                                  className="absolute left-[64%] right-[9%] top-[20px] h-[55px] pointer-events-auto z-0 group/decline cursor-help"
+                                                  title="Step 4 ➔ Step 3 Decline Loop: Payment failed during settlement. Stepped back from Step 4 to Step 3 to re-select payment method."
+                                                >
+                                                  <svg className="w-full h-full overflow-visible">
+                                                    <defs>
+                                                      <marker
+                                                        id="ortho-arrow-up-rose"
+                                                        viewBox="0 0 10 10"
+                                                        refX="5"
+                                                        refY="3"
+                                                        markerWidth="6"
+                                                        markerHeight="6"
+                                                        orient="auto"
+                                                      >
+                                                        <path d="M 0 8 L 5 0 L 10 8 Z" fill="#f43f5e" />
+                                                      </marker>
+                                                    </defs>
+                                                    <path
+                                                      d="M 96% 12 L 96% 46 L 4% 46 L 4% 18"
+                                                      fill="none"
+                                                      stroke="#f43f5e"
+                                                      strokeWidth="2"
+                                                      strokeDasharray="4 3"
+                                                      className="animate-pulse"
+                                                      markerEnd="url(#ortho-arrow-up-rose)"
+                                                    />
+                                                  </svg>
+                                                  <div className="absolute left-1/2 -translate-x-1/2 bottom-[-6px] bg-zinc-950/90 border border-rose-500/50 text-rose-300 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full shadow-[0_0_12px_rgba(244,63,94,0.3)] whitespace-nowrap">
+                                                    Step 4 ➔ 3 Decline Loop
+                                                  </div>
+                                                </div>
+                                              )}
                                             </div>
                                           </div>
                                         </div>
