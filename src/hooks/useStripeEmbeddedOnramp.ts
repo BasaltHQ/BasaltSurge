@@ -2706,9 +2706,10 @@ export function useStripeEmbeddedOnramp({
         const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
         if (!kycApproved) {
           if (submittedTier === "l0") {
-            console.log("[EMBEDDED ONRAMP] L0 verification requires step up. Transitioning to L1...");
-            setKycTierRequired("l1");
+            console.log("[EMBEDDED ONRAMP] L0 verification not approved. Remaining at L0 for address correction...");
+            setKycTierRequired("l0");
             setKycLevel("L0");
+            setError("Address verification failed. Please verify your address details and try again.");
             updateStep("collecting_kyc");
             isRunningRef.current = false;
             return;
@@ -3105,10 +3106,6 @@ export function useStripeEmbeddedOnramp({
 
         onramp = await loadCryptoOnrampAndInitialize(publishableKey, {
           theme,
-          wallets: {
-            applePay: "always",
-            googlePay: "always",
-          },
         });
 
         if (!mountedRef.current) return;
@@ -3682,7 +3679,7 @@ export function useStripeEmbeddedOnramp({
           onramp.collectPaymentMethod(
             {
               payment_method_types: achEnabled ? ["card", "us_bank_account"] : ["card"],
-              wallets: { applePay: "always", googlePay: "always" },
+              wallets: { applePay: "auto", googlePay: "auto" },
             },
             (result: any) => {
               console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
@@ -3930,10 +3927,14 @@ export function useStripeEmbeddedOnramp({
                 setPaymentElement(null); // Clear element to show demographics forms
                 setKycTierRequired("l1");
                 updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
               } else {
                 setPaymentElement(null); // Clear element to show demographics forms
                 setKycTierRequired("l0");
                 updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
               }
 
               setIsAllKycCompleted(true);

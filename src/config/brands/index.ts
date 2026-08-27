@@ -118,6 +118,20 @@ export const BRANDS: Record<string, BrandConfig> = {
     partnerWallet: "0x2367ae402e06edb2460e51f820c09fc885f87b65", // set via Admin API
     apimCatalog: [],
   },
+  canyapay: {
+    key: "canyapay",
+    name: "CanYaPay",
+    colors: { primary: "#7c3aed", accent: "#a855f7" },
+    logos: { app: "/ppsymbol.png", favicon: "/api/favicon", symbol: "/ppsymbol.png" },
+    meta: { ogTitle: "CanYaPay", ogDescription: "Global payments, instantly settled." },
+    platformFeeBps: 50,
+    partnerFeeBps: 0,
+    defaultMerchantFeeBps: 0,
+    unifiedFeeEnabled: false,
+    feeMinusEnabled: false,
+    appUrl: "https://canyapay.com",
+    apimCatalog: [],
+  },
 };
 
 import { isPlatformContext, isPartnerContext, getSanitizedSplitBps } from "@/lib/env";
@@ -161,6 +175,7 @@ export function getBrandKey(req?: NextRequest): string {
     if (hostLower.includes("xpaypass") || hostLower.includes("xoinpay")) return "xoinpay";
     if (hostLower.includes("icunow")) return "icunow-store";
     if (hostLower.includes("aipowerpay")) return "aipowerpay";
+    if (hostLower.includes("canyapay")) return "canyapay";
     
     // Check localhost subdomains or Azure/PayPortal subdomains
     if (parts.length >= 2) {

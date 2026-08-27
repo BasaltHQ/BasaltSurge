@@ -140,11 +140,13 @@ export async function POST(req: NextRequest) {
     const { isDualSplitEnabled } = await import("@/lib/env");
     const splitModeFromMetadata = String(metadata?.splitMode || "").toLowerCase();
     const isDual = splitModeFromMetadata === "dual" ? true : (splitModeFromMetadata === "single" ? false : isDualSplitEnabled());
-    const paymentDetailsType = String(session?.payment_details?.type || session?.payment_method_details?.type || "").toLowerCase();
+    const paymentDetails = session?.payment_details || session?.payment_method_details || session?.paymentDetails || {};
+    const paymentDetailsType = String(paymentDetails?.type || session?.payment_method || "").toLowerCase();
     const paymentMethod = String(session?.payment_method || "").toLowerCase();
-    const cardFundingDetail = String(session?.payment_details?.card?.funding || "").toLowerCase();
+    const cardFundingDetail = String(paymentDetails?.card?.funding || session?.payment_details?.card?.funding || "").toLowerCase();
+    const hasUsBankAccount = Boolean(paymentDetails?.us_bank_account || session?.payment_details?.us_bank_account || paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach"));
     let cardFunding = "";
-    if (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
+    if (hasUsBankAccount) {
       cardFunding = "us_bank_account";
     } else if (cardFundingDetail) {
       cardFunding = cardFundingDetail;

@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
     params.append("source_currency", sourceCurrency);
     params.append("destination_currencies[]", "usdc");
     params.append("destination_networks[]", "base");
+    params.append("ui_mode", "headless");
 
     let response = await fetch(
       `https://api.stripe.com/v1/crypto/onramp/quotes?${params.toString()}`,

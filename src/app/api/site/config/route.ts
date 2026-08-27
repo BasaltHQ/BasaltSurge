@@ -403,7 +403,7 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
           const theme = cfg.theme || {};
           const p = String(theme.primaryColor || "").toLowerCase();
           const s = String(theme.secondaryColor || "").toLowerCase();
-          const defaultPlatformColors = ['#0a0a0a', '#000000', '#1f2937', '#0d9488', '#14b8a6', '#10b981', '#6b7280', '#f54029', '#2dd4bf', '#22d3ee', '#22c55e', '#16a34a'];
+          const defaultPlatformColors = ['#0a0a0a', '#000000', '#0ea5e9', '#35ff7c', '#3b82f6', '#1f2937', '#0d9488', '#14b8a6', '#10b981', '#6b7280', '#f54029', '#2dd4bf', '#22d3ee', '#22c55e', '#16a34a'];
           return (p && !defaultPlatformColors.includes(p)) || (s && !defaultPlatformColors.includes(s));
         })();
 

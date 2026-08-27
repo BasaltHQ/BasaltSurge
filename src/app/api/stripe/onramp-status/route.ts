@@ -92,12 +92,14 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const paymentDetails = data.payment_details || data.payment_method_details || null;
+
     return NextResponse.json({
       ok: true,
       sessionId: data.id,
       status: data.status,
       transactionDetails: data.transaction_details || null,
-      paymentDetails: data.payment_details || null,
+      paymentDetails,
       paymentMethod: data.payment_method || null,
       metadata: data.metadata || null,
       ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),

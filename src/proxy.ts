@@ -138,13 +138,17 @@ function buildCsp(req: NextRequest): string {
         "https://*.js.stripe.com",
         "https://js.stripe.com",
         "https://*.stripe.net",
+        "https://r.stripe.com",
+        "https://m.stripe.com",
+        "https://*.hcaptcha.com",
+        "https://hcaptcha.com",
         "https://*.clarity.ms",
         "https://c.bing.com"
     ].join(" ");
     // Script-src: Allow unsafe-inline in production for Next.js managed inline scripts; unsafe-eval only in dev for HMR
     const scriptSrc = isDev
-        ? `${self} 'unsafe-inline' 'unsafe-eval' https://static.cloudflareinsights.com https://*.stripe.com https://stripe.com https://*.stripe.network https://*.js.stripe.com https://js.stripe.com https://*.clarity.ms https://c.bing.com`
-        : `${self} 'unsafe-inline' 'wasm-unsafe-eval' https://static.cloudflareinsights.com https://snap.licdn.com https://*.stripe.com https://stripe.com https://*.stripe.network https://*.js.stripe.com https://js.stripe.com https://*.clarity.ms https://c.bing.com`;
+        ? `${self} 'unsafe-inline' 'unsafe-eval' https://static.cloudflareinsights.com https://*.stripe.com https://stripe.com https://*.stripe.network https://*.js.stripe.com https://js.stripe.com https://*.hcaptcha.com https://hcaptcha.com https://*.clarity.ms https://c.bing.com`
+        : `${self} 'unsafe-inline' 'wasm-unsafe-eval' https://static.cloudflareinsights.com https://snap.licdn.com https://*.stripe.com https://stripe.com https://*.stripe.network https://*.js.stripe.com https://js.stripe.com https://*.hcaptcha.com https://hcaptcha.com https://*.clarity.ms https://c.bing.com`;
     const policy = [
         `default-src ${self}`,
         `img-src ${imgSrc} https://px.ads.linkedin.com https://*.clarity.ms https://c.bing.com`,
@@ -156,10 +160,10 @@ function buildCsp(req: NextRequest): string {
         `base-uri ${self}`,
         `form-action ${self}`,
         `media-src ${https} ${self}`,
-        `child-src ${self} blob: ${https} https://*.clarity.ms https://*.stripe.com https://stripe.com https://*.js.stripe.com https://js.stripe.com`,
+        `child-src ${self} blob: ${https} https://*.clarity.ms https://*.stripe.com https://stripe.com https://*.js.stripe.com https://js.stripe.com https://*.hcaptcha.com https://hcaptcha.com`,
         `worker-src ${self} blob:`,
         // Allow Thirdweb wallet iframes, Adobe Sign, and all bank 3DS ACS frames (https)
-        `frame-src ${self} ${https} https://embedded-wallet.thirdweb.com https://*.thirdweb.com https://na2.documents.adobe.com https://*.documents.adobe.com https://*.adobesign.com https://js.stripe.com https://crypto-js.stripe.com https://*.stripe.com https://stripe.com https://*.stripe.network https://*.js.stripe.com https://hooks.stripe.com https://*.cardinalcommerce.com https://*.mastercard.com https://*.visa.com https://*.clarity.ms`,
+        `frame-src ${self} ${https} https://embedded-wallet.thirdweb.com https://*.thirdweb.com https://na2.documents.adobe.com https://*.documents.adobe.com https://*.adobesign.com https://js.stripe.com https://crypto-js.stripe.com https://*.stripe.com https://stripe.com https://*.stripe.network https://*.js.stripe.com https://hooks.stripe.com https://*.cardinalcommerce.com https://*.mastercard.com https://*.visa.com https://*.hcaptcha.com https://hcaptcha.com https://*.clarity.ms`,
         // Disallow object/embed entirely
         `object-src 'none'`,
     ].join("; ");
