@@ -59,7 +59,7 @@ export function PortalPayAccordionCheckoutV2(props: PortalPayAccordionCheckoutV2
       {/* STEP 2: Identity & Residential Verification */}
       <Step2Identity
         isOpen={state.activeStep === 2}
-        isCompleted={state.activeStep > 2 || state.effectiveStatus === "verified" || Boolean(props.isAllKycCompleted)}
+        isCompleted={state.activeStep > 2 && state.isStep2Satisfied}
         isLocked={state.isPaid}
         isLightText={isLightText}
         primaryColor={state.primaryColor}

@@ -383,7 +383,13 @@ export const STRIPE_ONRAMP_ERRORS: Record<string, OnrampErrorDefinition> = {
  */
 export function parseOnrampError(
   rawError: any,
-  kycState?: { isL1Approved: boolean; isL2Approved: boolean; currentTier?: string }
+  kycState?: {
+    isL1Verified?: boolean;
+    isL2Verified?: boolean;
+    isL1Approved?: boolean;
+    isL2Approved?: boolean;
+    currentTier?: string;
+  }
 ): ParsedOnrampError | null {
   if (!rawError) return null;
 
@@ -447,11 +453,14 @@ export function parseOnrampError(
     recoveryAction = "prompt_l2_id_doc";
   } else if (isAmountLimit) {
     // Check if customer can step up KYC to unlock higher purchase limits
-    if (kycState && !kycState.isL1Approved) {
+    const isL1Done = kycState ? Boolean(kycState.isL1Verified || kycState.isL1Approved) : false;
+    const isL2Done = kycState ? Boolean(kycState.isL2Verified || kycState.isL2Approved) : false;
+
+    if (!isL1Done) {
       targetStep = 2;
       kycTargetTier = "l1";
       recoveryAction = "prompt_l1_step_up";
-    } else if (kycState && !kycState.isL2Approved) {
+    } else if (!isL2Done) {
       targetStep = 2;
       kycTargetTier = "l2";
       recoveryAction = "prompt_l2_id_doc";

@@ -170,8 +170,8 @@ export function useStepProgressionGuard({
     if (isPaid || isOrderConfirmed) return;
 
     const parsed = parseOnrampError(activeError || effectiveError, {
-      isL1Approved: kyc.isL1Verified,
-      isL2Approved: kyc.isL2Verified,
+      isL1Verified: kyc.isL1Verified,
+      isL2Verified: kyc.isL2Verified,
       currentTier: kyc.currentTier,
     });
 
@@ -190,6 +190,7 @@ export function useStepProgressionGuard({
       (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
       (showStepUpForm && !kyc.isL1Verified) ||
       (isL2Requirement && !kyc.isL2Verified) ||
+      (showVerifyDocs && !kyc.isL2Verified) ||
       isKycError;
 
     if (needsKycStep && activeStep > 2) {
@@ -236,8 +237,8 @@ export function useStepProgressionGuard({
           logTransition(activeStep, 2, "Payment Ready but KYC Step-Up Required");
           setActiveStep(2);
         }
-      } else if (activeStep < 3) {
-        logTransition(activeStep, 3, "Payment Element Ready");
+      } else if (activeStep < 3 && isStep2Satisfied) {
+        logTransition(activeStep, 3, "Payment Element Ready & Step 2 Satisfied");
         setActiveStep(3);
       }
       return;
@@ -275,8 +276,8 @@ export function useStepProgressionGuard({
       if (isStep2Satisfied) {
         logTransition(1, 3, "Customer Pre-Verified / KYC Satisfied");
         setActiveStep(3);
-      } else if (showStepUpForm || showVerifyDocs || isL2Requirement) {
-        logTransition(1, 2, "Customer Authenticated - Prompting KYC Step-Up");
+      } else {
+        logTransition(1, 2, "Customer Authenticated - Prompting Identity / KYC");
         setActiveStep(2);
       }
     }

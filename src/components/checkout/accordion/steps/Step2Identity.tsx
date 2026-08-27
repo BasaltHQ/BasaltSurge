@@ -192,7 +192,7 @@ export function Step2Identity({
       />
 
       {/* Step 2 Expanded Body */}
-      <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
+      <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${isOpen ? "" : "h-0 opacity-0 overflow-visible pointer-events-none p-0 border-0"}`}>
         {isDocVerifyRequired ? (
           /* Level 2 Document Verification Card */
           <div className="p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/20 space-y-3.5 animate-in fade-in duration-200 mt-2 text-left">

@@ -354,6 +354,35 @@ export function useAccordionCheckoutState(
     manualEditAddress ||
     (!l1Verified && !kyc.isL0Verified && !isL0Approved);
 
+  const parsedActiveError = useMemo(() => {
+    if (!rawActiveError) return null;
+    return parseOnrampError(rawActiveError, {
+      isL1Verified: l1Verified,
+      isL2Verified: l2Verified,
+      currentTier: kyc.currentTier,
+    });
+  }, [rawActiveError, l1Verified, l2Verified, kyc.currentTier]);
+
+  const cardLimitEntry = useMemo(() => {
+    if (!props.onrampLimits || !Array.isArray(props.onrampLimits)) return null;
+    return props.onrampLimits.find((l: any) => l.payment_method_type === "card" || l.payment_method_type === "credit");
+  }, [props.onrampLimits]);
+
+  const cardLimitInUsd = cardLimitEntry && cardLimitEntry.amount > 0 ? cardLimitEntry.amount / 100 : null;
+
+  const isProactiveL1StepUp = Boolean(
+    cardLimitInUsd &&
+    amountUsd > cardLimitInUsd &&
+    !l1Verified
+  );
+
+  const isProactiveL2StepUp = Boolean(
+    cardLimitInUsd &&
+    amountUsd > cardLimitInUsd &&
+    l1Verified &&
+    !l2Verified
+  );
+
   // Step-up (DOB + SSN required): user is at L0 (name & address verified, needs L1)
   const showStepUpForm =
     !l1Verified &&
@@ -362,6 +391,9 @@ export function useAccordionCheckoutState(
       effectiveTier === "l1" ||
       effectiveStatus === "step_up" ||
       (kycTierRequired as string) === "l1" ||
+      isProactiveL1StepUp ||
+      parsedActiveError?.kycTargetTier === "l1" ||
+      Boolean(parsedActiveError?.isAmountLimit && !l1Verified) ||
       (headlessStep === "collecting_kyc" && !l1Verified) ||
       headlessStep === "submitting_kyc");
 
@@ -372,6 +404,9 @@ export function useAccordionCheckoutState(
     (effectiveTier === "l2" ||
       effectiveStatus === "doc_verify" ||
       (kycTierRequired as string) === "l2" ||
+      isProactiveL2StepUp ||
+      parsedActiveError?.kycTargetTier === "l2" ||
+      Boolean(parsedActiveError?.isAmountLimit && l1Verified && !l2Verified) ||
       headlessStep === "verifying_identity" ||
       (headlessStep === "collecting_kyc" && l1Verified) ||
       headlessStep === "checking_kyc");
@@ -959,6 +994,7 @@ export function useAccordionCheckoutState(
     effectiveTier,
     walletOwnershipChallenge,
     isWalletOwnershipVerified,
+    isStep2Satisfied,
     // Step 1 Props Bundle
     step1Props: {
       email,

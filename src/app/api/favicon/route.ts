@@ -78,6 +78,7 @@ export async function GET(req: NextRequest) {
           hostname.includes("azurewebsites.net") ||
           hostname.includes("vercel.app") ||
           hostname.includes("xpaypass.com") ||
+          hostname.includes("canyapay.com") ||
           hostname.includes("vps.ovh.us");
 
         if (!isMainDomain && hostname && hostname.includes(".")) {

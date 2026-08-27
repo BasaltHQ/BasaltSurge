@@ -101,13 +101,13 @@ const nextConfig = {
               "default-src 'self'",
               "img-src 'self' data: blob: https:",
               "media-src 'self' data: blob: https:",
-              // connect-src: Allow API calls to wallets, onramps, payment providers, and tracking (Clarity)
-              "connect-src 'self' https: wss: https://explorer-api.walletconnect.com wss://*.walletconnect.com https://*.walletconnect.com https://auth.privy.io https://*.rpc.privy.systems https://*.thirdweb.com https://*.coinbase.com https://stripe.com https://*.stripe.com https://*.ramp.network https://*.transak.com https://*.moonpay.com https://*.clarity.ms https://c.bing.com",
-              // frame-src: Allow checkout widget iframes from onramp providers and Clarity
-              "frame-src 'self' http: https: https://*.thirdweb.com https://*.coinbase.com https://stripe.com https://*.stripe.com https://*.ramp.network https://*.transak.com https://*.moonpay.com https://*.clarity.ms",
-              "child-src 'self' blob: http: https: https://*.clarity.ms",
+              // connect-src: Allow API calls to wallets, onramps, payment providers, tracking (Clarity), and captchas
+              "connect-src 'self' https: wss: https://explorer-api.walletconnect.com wss://*.walletconnect.com https://*.walletconnect.com https://auth.privy.io https://*.rpc.privy.systems https://*.thirdweb.com https://*.coinbase.com https://stripe.com https://*.stripe.com https://r.stripe.com https://m.stripe.com https://*.hcaptcha.com https://hcaptcha.com https://*.ramp.network https://*.transak.com https://*.moonpay.com https://*.clarity.ms https://c.bing.com",
+              // frame-src: Allow checkout widget iframes from onramp providers, Clarity, and captchas
+              "frame-src 'self' http: https: https://*.thirdweb.com https://*.coinbase.com https://stripe.com https://*.stripe.com https://*.hcaptcha.com https://hcaptcha.com https://*.ramp.network https://*.transak.com https://*.moonpay.com https://*.clarity.ms",
+              "child-src 'self' blob: http: https: https://*.hcaptcha.com https://hcaptcha.com https://*.clarity.ms",
               "worker-src 'self' blob:",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: https://*.clarity.ms https://c.bing.com",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https: https://*.hcaptcha.com https://hcaptcha.com https://*.clarity.ms https://c.bing.com",
               "style-src 'self' 'unsafe-inline' https: https://use.typekit.net https://p.typekit.net https://fonts.googleapis.com",
               "font-src 'self' https: data: https://use.typekit.net https://p.typekit.net https://fonts.gstatic.com",
               "frame-ancestors *",

@@ -15,6 +15,8 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   aipowerpay: "aipowerpay",
   lucky13: "lucky13",
   lucky13marketing: "lucky13",
+  "lucky13-marketing": "lucky13",
+  canyapay: "canyapay",
   // Add more partner brands here as needed
 };
 
@@ -30,7 +32,11 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "bt-checkout.aipowerpay.com": "aipowerpay",
   "www.bt-checkout.aipowerpay.com": "aipowerpay",
   "pay.lucky13marketing.com": "lucky13",
-  "www.pay.lucky13marketing.com": "lucky13"
+  "www.pay.lucky13marketing.com": "lucky13",
+  "canyapay.com": "canyapay",
+  "www.canyapay.com": "canyapay",
+  "canyapay.azurewebsites.net": "canyapay",
+  "canyapay.payportal.co": "canyapay",
 };
 
 // Cache and variables for dynamic partner domains from DB
@@ -105,7 +111,8 @@ function fetchDynamicDomainsInBackground(): Promise<Record<string, string>> {
           }
         }
       }
-      DYNAMIC_PARTNER_DOMAINS = domains;
+      Object.keys(DYNAMIC_PARTNER_DOMAINS).forEach((k) => delete DYNAMIC_PARTNER_DOMAINS[k]);
+      Object.assign(DYNAMIC_PARTNER_DOMAINS, domains);
       lastDynamicDomainsFetch = Date.now();
       return domains;
     } catch (err) {
@@ -207,6 +214,7 @@ export type BrandConfigDoc = {
   // Access Control
   accessMode?: "open" | "request";
   unifiedFeeEnabled?: boolean;
+  dualSplitEnabled?: boolean;
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
 
@@ -344,6 +352,7 @@ export async function deriveContainerIdentityFromHostname(host: string, cookieHe
   if (hostLower.includes("icunow")) return { brandKey: "icunow-store", containerType: "partner" };
   if (hostLower.includes("aipowerpay")) return { brandKey: "aipowerpay", containerType: "partner" };
   if (hostLower.includes("lucky13")) return { brandKey: "lucky13", containerType: "partner" };
+  if (hostLower.includes("canyapay")) return { brandKey: "canyapay", containerType: "partner" };
 
   return null;
 }

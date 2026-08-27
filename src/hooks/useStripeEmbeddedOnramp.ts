@@ -539,11 +539,15 @@ function checkIfCardDecline(err: any, lastError?: string): boolean {
   const type = String(err?.type || nestedErrObj?.type || "").toLowerCase();
   const lastErr = String(lastError || "").toLowerCase();
 
-  // 1. Check if the thrown error is a KYC error first
+  // 1. Check if the thrown error is a KYC error or session state error first
   const isThrownKyc = msg.includes("identity") || msg.includes("verification") || msg.includes("kyc") ||
                       code.includes("identity") || code.includes("verification") || code.includes("kyc");
 
-  if (isThrownKyc) {
+  const isInvalidStateError = msg.includes("valid state") ||
+                              msg.includes("purchase confirmation") ||
+                              msg.includes("already confirmed");
+
+  if (isThrownKyc || isInvalidStateError) {
     return false;
   }
 
@@ -560,7 +564,10 @@ function checkIfCardDecline(err: any, lastError?: string): boolean {
     msg.includes("cvc") ||
     msg.includes("zip") ||
     msg.includes("expired") ||
-    msg.includes("invalid") ||
+    msg.includes("invalid card") ||
+    msg.includes("invalid_number") ||
+    msg.includes("invalid_cvc") ||
+    msg.includes("invalid_expiry") ||
     msg.includes("frozen") ||
     msg.includes("freeze") ||
     msg.includes("blocked") ||
@@ -570,6 +577,8 @@ function checkIfCardDecline(err: any, lastError?: string): boolean {
     msg.includes("refused") ||
     msg.includes("rejected") ||
     msg.includes("checkout_unsuccessful") ||
+    msg.includes("authenticate") ||
+    msg.includes("authentication") ||
     code.includes("decline") ||
     code.includes("card") ||
     code.includes("payment_method") ||
@@ -2278,6 +2287,8 @@ export function useStripeEmbeddedOnramp({
                                             errCode === "zerohash_api_error" ||
                                             errMessage.includes("server error") ||
                                             errMessage.includes("timed out") ||
+                                            errMessage.includes("valid state") ||
+                                            errMessage.includes("purchase confirmation") ||
                                             errMessage.includes("try creating a new session");
 
             const isAmountLimitError =
@@ -2440,28 +2451,32 @@ export function useStripeEmbeddedOnramp({
               }
             }
 
-            if (isQuoteExpired) {
-              console.log("[EMBEDDED ONRAMP] Quote expired / rate drifted. Refreshing quote...");
-              updateStep("creating_session");
-              try {
-                const refreshRes = await fetch("/api/stripe/onramp-quote-refresh", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    sessionId: currentSessionId,
-                    oauthToken: oauthTokenRef.current,
-                  }),
-                });
-                if (refreshRes.ok) {
-                  console.log("[EMBEDDED ONRAMP] Quote refreshed successfully, retrying checkout...");
-                  updateStep("checking_out");
-                  continue;
+            const isInvalidState = errMessage.includes("valid state") || errMessage.includes("purchase confirmation");
+
+            if (isQuoteExpired || isInvalidState) {
+              console.log("[EMBEDDED ONRAMP] Quote expired or session state invalid. Recreating fresh session & PaymentIntent...");
+              if (isQuoteExpired && !isInvalidState) {
+                updateStep("creating_session");
+                try {
+                  const refreshRes = await fetch("/api/stripe/onramp-quote-refresh", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      sessionId: currentSessionId,
+                      oauthToken: oauthTokenRef.current,
+                    }),
+                  });
+                  if (refreshRes.ok) {
+                    console.log("[EMBEDDED ONRAMP] Quote refreshed successfully, retrying checkout...");
+                    updateStep("checking_out");
+                    continue;
+                  }
+                } catch (refreshErr) {
+                  console.warn("[EMBEDDED ONRAMP] Quote refresh endpoint failed, recreating fresh session helper...", refreshErr);
                 }
-              } catch (refreshErr) {
-                console.warn("[EMBEDDED ONRAMP] Quote refresh endpoint failed, recreating fresh session helper...", refreshErr);
               }
 
-              // Fallback to fresh session creation on quote drift
+              // Fallback / Invalidation: Create a brand new session with fresh PaymentIntent
               sessionIdRef.current = null;
               setSessionId(null);
               const targetAmount = getOnrampAmount(detectedCardFunding);
@@ -2470,7 +2485,7 @@ export function useStripeEmbeddedOnramp({
               currentSessionId = sessionResult.sessionId;
               sessionIdRef.current = currentSessionId;
               setSessionId(currentSessionId);
-              console.log("[EMBEDDED ONRAMP] New session created with fresh quote. Retrying checkout...");
+              console.log("[EMBEDDED ONRAMP] New session created with fresh PaymentIntent. Retrying checkout...");
               updateStep("checking_out");
               continue;
             }
@@ -2691,9 +2706,10 @@ export function useStripeEmbeddedOnramp({
         const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
         if (!kycApproved) {
           if (submittedTier === "l0") {
-            console.log("[EMBEDDED ONRAMP] L0 verification requires step up. Transitioning to L1...");
-            setKycTierRequired("l1");
+            console.log("[EMBEDDED ONRAMP] L0 verification not approved. Remaining at L0 for address correction...");
+            setKycTierRequired("l0");
             setKycLevel("L0");
+            setError("Address verification failed. Please verify your address details and try again.");
             updateStep("collecting_kyc");
             isRunningRef.current = false;
             return;
@@ -3090,10 +3106,6 @@ export function useStripeEmbeddedOnramp({
 
         onramp = await loadCryptoOnrampAndInitialize(publishableKey, {
           theme,
-          wallets: {
-            applePay: "always",
-            googlePay: "always",
-          },
         });
 
         if (!mountedRef.current) return;
@@ -3655,6 +3667,24 @@ export function useStripeEmbeddedOnramp({
             const limitsData = await limitsRes.json();
             if (limitsData.ok && limitsData.limits) {
               setOnrampLimits(limitsData.limits);
+
+              // Proactive Step-Up Check: Evaluate transaction size against current tier limits
+              const targetUsd = totalUsd || amount || 0;
+              if (targetUsd > 0 && Array.isArray(limitsData.limits)) {
+                const cardLimitEntry = limitsData.limits.find((l: any) => l.payment_method_type === "card" || l.payment_method_type === "credit");
+                if (cardLimitEntry && cardLimitEntry.amount > 0) {
+                  const limitInUsd = cardLimitEntry.amount / 100;
+                  if (targetUsd > limitInUsd) {
+                    if (kycTierRequiredRef.current === "l0" || kycLevelRef.current === "L0") {
+                      console.log(`[EMBEDDED ONRAMP] Proactive limit check: Order $${targetUsd} > L0 limit $${limitInUsd}. Setting kycTierRequired="l1".`);
+                      setKycTierRequired("l1");
+                    } else if (kycTierRequiredRef.current === "l1" || kycLevelRef.current === "L1") {
+                      console.log(`[EMBEDDED ONRAMP] Proactive limit check: Order $${targetUsd} > L1 limit $${limitInUsd}. Setting kycTierRequired="l2".`);
+                      setKycTierRequired("l2");
+                    }
+                  }
+                }
+              }
             }
           } catch (limitsErr) {
             console.warn("[EMBEDDED ONRAMP] Failed to fetch transaction limits:", limitsErr);
@@ -3667,7 +3697,7 @@ export function useStripeEmbeddedOnramp({
           onramp.collectPaymentMethod(
             {
               payment_method_types: achEnabled ? ["card", "us_bank_account"] : ["card"],
-              wallets: { applePay: "always", googlePay: "always" },
+              wallets: { applePay: "auto", googlePay: "auto" },
             },
             (result: any) => {
               console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
@@ -3915,10 +3945,14 @@ export function useStripeEmbeddedOnramp({
                 setPaymentElement(null); // Clear element to show demographics forms
                 setKycTierRequired("l1");
                 updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
               } else {
                 setPaymentElement(null); // Clear element to show demographics forms
                 setKycTierRequired("l0");
                 updateStep("collecting_kyc");
+                isRunningRef.current = false;
+                return;
               }
 
               setIsAllKycCompleted(true);
@@ -4019,7 +4053,14 @@ export function useStripeEmbeddedOnramp({
                         errMessage.includes("document_verification") ||
                         errMessage.includes("missing_document");
 
-      const isKycError = isL0Error || isL1Error || isL2Error || 
+      const isLimitExceededError = errCode === "crypto_onramp_limit_exceeded" ||
+                                  errCode === "crypto_onramp_amount_above_maximum" ||
+                                  errMessage.includes("limit_exceeded") ||
+                                  errMessage.includes("amount_above_maximum") ||
+                                  errMessage.includes("limit has been reached") ||
+                                  errMessage.includes("exceeds the maximum allowed limit");
+
+      const isKycError = isL0Error || isL1Error || isL2Error || isLimitExceededError ||
                          errMessage.includes("identity verification") || 
                          errMessage.includes("verification_required") || 
                          errMessage.includes("kyc") ||
@@ -4043,7 +4084,8 @@ export function useStripeEmbeddedOnramp({
         }
         
         let isL1Verified = false;
-        console.log("[EMBEDDED ONRAMP] KYC error caught during payment collection. Prechecking customer status...");
+        let isL2Verified = false;
+        console.log("[EMBEDDED ONRAMP] KYC or Limit step-up error caught during payment collection. Prechecking customer status...");
         try {
           const customerId = customerIdRef.current;
           if (!customerId) throw new Error("Customer ID not found");
@@ -4062,10 +4104,12 @@ export function useStripeEmbeddedOnramp({
             const kycTiers = kycData.kycTiers || [];
             const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
             const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
+            const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
 
             const isL0Verified = l0Tier ? l0Tier.verification_status === "verified" : (kycData.kycStatus === "approved" || kycData.kycStatus === "verified");
             isL1Verified = l1Tier ? l1Tier.verification_status === "verified" : false;
-              
+            isL2Verified = l2Tier ? l2Tier.verification_status === "verified" : (kycData.idDocStatus === "approved" || kycData.idDocStatus === "verified");
+
             if (!isL0Verified && l0Tier?.verification_status !== "pending") {
               console.log("[EMBEDDED ONRAMP] L0 unverified. Routing to L0 screen...");
               setKycTierRequired("l0");
@@ -4084,6 +4128,7 @@ export function useStripeEmbeddedOnramp({
                 isRunningRef.current = false;
                 return;
               }
+              isL1Verified = true;
             } else if (!isL1Verified) {
               console.log("[EMBEDDED ONRAMP] L1 demographics not verified. Routing to L1 screen...");
               setKycTierRequired("l1");
@@ -4096,15 +4141,15 @@ export function useStripeEmbeddedOnramp({
           console.warn("[EMBEDDED ONRAMP] Status check failed before document verification:", statusCheckErr);
         }
 
-        if (isL1Verified && !isAchEnforcedRef.current) {
-          console.log("[EMBEDDED ONRAMP] Customer is already L1 verified. Error during payment collection is not an L2 KYC requirement.");
+        if (isL1Verified && isL2Verified) {
+          console.log("[EMBEDDED ONRAMP] Customer is already L1 and L2 verified. Error during payment collection is a payment decline.");
           handleError(err?.message || "Payment collection failed");
           return;
         }
 
-        console.log("[EMBEDDED ONRAMP] L2 KYC document verification required during payment collection. Routing to Step 2 L2 screen...");
+        console.log("[EMBEDDED ONRAMP] L2 KYC document verification required for transaction size or Stripe requirement. Routing to Step 2 L2 screen...");
         setKycTierRequired("l2");
-        updateStep("collecting_kyc");
+        updateStep("verifying_identity");
         isRunningRef.current = false;
         return;
       }
