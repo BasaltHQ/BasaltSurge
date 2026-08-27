@@ -101,6 +101,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   detectedCardFunding?: string | null;
   detectedCardBrand?: string | null;
   detectedCardLast4?: string | null;
+  onrampLimits?: any[] | null;
   onEmailReceipt?: () => void;
 }
 
@@ -286,6 +287,7 @@ export interface UseAccordionCheckoutStateReturn {
   effectiveTier: string;
   walletOwnershipChallenge: WalletOwnershipChallenge | null;
   isWalletOwnershipVerified: boolean;
+  isStep2Satisfied: boolean;
   step1Props: Step1Props;
   step2Props: Step2Props;
   step3Props: Step3Props;

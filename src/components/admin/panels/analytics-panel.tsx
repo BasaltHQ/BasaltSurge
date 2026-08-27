@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useActiveAccount } from 'thirdweb/react';
 import { TransactionHistoryChart } from '@/components/admin/ReportCharts';
+import { CheckoutPathVisualizer } from '@/components/admin/CheckoutPathVisualizer';
 
 type SeriesPoint = { date: string; gmvUsd: number; orders: number };
 type TopItem = { key: string; label: string; units: number; salesUsd: number };
@@ -511,6 +512,11 @@ export function AnalyticsPanel({ overrideWallet }: { overrideWallet?: string } =
           {/* Transaction History Chart */}
           <div className="mb-6">
             <TransactionHistoryChart transactions={filteredTransactions} height={180} />
+          </div>
+
+          {/* Checkout Progression Path & Step-Up Visualizer */}
+          <div className="mb-6">
+            <CheckoutPathVisualizer transactions={filteredTransactions} />
           </div>
 
           {/* Time Series */}

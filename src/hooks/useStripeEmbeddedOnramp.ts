@@ -3676,13 +3676,11 @@ export function useStripeEmbeddedOnramp({
                   const limitInUsd = cardLimitEntry.amount / 100;
                   if (targetUsd > limitInUsd) {
                     if (kycTierRequiredRef.current === "l0" || kycLevelRef.current === "L0") {
-                      console.log(`[EMBEDDED ONRAMP] Proactive limit check: Order $${targetUsd} > L0 limit $${limitInUsd}. Escalating to L1 step-up.`);
+                      console.log(`[EMBEDDED ONRAMP] Proactive limit check: Order $${targetUsd} > L0 limit $${limitInUsd}. Setting kycTierRequired="l1".`);
                       setKycTierRequired("l1");
-                      updateStep("collecting_kyc");
                     } else if (kycTierRequiredRef.current === "l1" || kycLevelRef.current === "L1") {
-                      console.log(`[EMBEDDED ONRAMP] Proactive limit check: Order $${targetUsd} > L1 limit $${limitInUsd}. Escalating to L2 document verification.`);
+                      console.log(`[EMBEDDED ONRAMP] Proactive limit check: Order $${targetUsd} > L1 limit $${limitInUsd}. Setting kycTierRequired="l2".`);
                       setKycTierRequired("l2");
-                      updateStep("verifying_identity");
                     }
                   }
                 }

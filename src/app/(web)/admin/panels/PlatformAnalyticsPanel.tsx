@@ -45,6 +45,8 @@ import {
   Clock,
   Coins,
   ArrowRightLeft,
+  ArrowRight,
+  ArrowLeft,
   Wallet
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
@@ -240,6 +242,8 @@ interface ReceiptInfo {
   splitAddress?: string | null;
   splitAddressCredit?: string | null;
   customerSessions?: any[];
+  kycTierRequired?: string | null;
+  onrampLimits?: any[] | null;
   lastPolledAt?: number | null;
   stripeSessionStatus?: string | null;
   ipAddress?: string | null;
@@ -4722,74 +4726,115 @@ export default function PlatformAnalyticsPanel() {
                                       }
                                     }
 
-                                    const steps = [
-                                      {
-                                        id: "opened",
-                                        label: "Link Opened",
-                                        status: "completed",
-                                        description: "Checkout opened"
-                                      },
-                                      {
-                                        id: "identified",
-                                        label: "Identified",
-                                        status: customerIdentified ? "completed" : "active",
-                                        description: customerIdentified ? (r.customerEmail || r.stripeEmail || "User identified") : "Awaiting user info"
-                                      },
-                                      {
-                                        id: "payment",
-                                        label: "Payment Info",
-                                        status: paymentMethodSelected ? "completed" : (customerIdentified ? "active" : "upcoming"),
-                                        description: paymentMethodSelected ? pmText : "Selecting method"
-                                      },
-                                      {
-                                        id: "kyc",
-                                        label: "KYC Check",
-                                        status: kycFailed ? "failed" : (
-                                          (r.kycLevel === "L1" || r.kycLevel === "L2" || kycCompleted) ? "completed" : (
-                                            kycTriggered ? "active" : (paymentMethodSelected ? "completed" : "upcoming")
-                                          )
-                                        ),
-                                        description: kycFailed ? "KYC Rejected" : (
-                                          r.kycLevel === "L2" ? "L2 Verified" : (
-                                            r.kycLevel === "L1" ? "L1 Verified" : (
-                                              kycCompleted ? "Verified" : (
-                                                kycTriggered ? "Reviewing..." : "L0 (Not Required)"
-                                              )
-                                            )
-                                          )
-                                        )
-                                      },
-                                      {
-                                        id: "settlement",
-                                        label: "Settlement",
-                                        status: settlementSuccess ? "completed" : (settlementAwaiting ? "active" : (settlementFailed && !kycFailed ? "failed" : "upcoming")),
-                                        description: settlementSuccess ? "Funds Delivered" : (settlementAwaiting ? "Clearance Pending" : (settlementFailed && !kycFailed ? "Payment Failed" : "Awaiting checkout"))
-                                      }
-                                    ];
+                                     // Dynamic KYC tier resolution from receipt and sessions (No hardcoded limits)
+                                     const receiptAmountUsd = Number(r.totalUsd || 0);
+                                     const sessionList: any[] = Array.isArray(r.customerSessions) ? r.customerSessions : [];
 
-                                    return (
-                                      <div className="space-y-5 animate-in fade-in duration-200">
-                                        {/* Funnel Progress Stepper Panel */}
-                                        <div className="relative overflow-hidden bg-gradient-to-r from-zinc-950/90 via-zinc-900/80 to-zinc-950/90 border border-white/10 rounded-2xl p-5 sm:p-6 shadow-2xl backdrop-blur-xl">
-                                          {/* Ambient Glow Background */}
-                                          <div className={`absolute inset-0 bg-gradient-to-r ${
-                                            settlementSuccess ? "from-emerald-500/10 via-teal-500/5 to-emerald-500/10" :
-                                            settlementFailed ? "from-rose-500/10 via-rose-500/5 to-rose-500/10" :
-                                            "from-amber-500/10 via-primary/5 to-purple-500/10"
-                                          } pointer-events-none transition-all duration-500`} />
+                                     // Check if any session registered an explicit KYC requirement or tier escalation
+                                     const hasL2SessionReq = sessionList.some((s: any) => String(s?.kycTierRequired || s?.kycTargetTier || "").toLowerCase() === "l2");
+                                     const hasL1SessionReq = sessionList.some((s: any) => String(s?.kycTierRequired || s?.kycTargetTier || "").toLowerCase() === "l1");
 
-                                          <div className="relative z-10 flex items-center justify-between mb-6">
-                                            <div className="flex items-center gap-3">
-                                              <div className="w-8 h-8 rounded-xl bg-white/[0.05] border border-white/10 flex items-center justify-center text-white/80">
-                                                <Route className="w-4 h-4 text-primary" />
-                                              </div>
-                                              <div>
-                                                <span className="text-white/90 text-xs uppercase font-extrabold tracking-wider">User Funnel Trajectory</span>
-                                                <div className="text-[10px] text-muted-foreground">Dynamic Multi-Stage Diagnostic</div>
-                                              </div>
-                                            </div>
+                                     // Determine active level string safely as upper-case string ("L0" | "L1" | "L2")
+                                     const userKycLevel: string = String((r as any).kycLevel || (r as any).kyc || "L0").toUpperCase();
 
-                                            <div className="flex items-center gap-2">
+                                     // Check if L2 or L1 step up is needed
+                                     const isL2Required = String((r as any).kycTierRequired || "").toLowerCase() === "l2" || hasL2SessionReq;
+                                     const isL1Required = String((r as any).kycTierRequired || "").toLowerCase() === "l1" || hasL1SessionReq;
+
+                                     let kycStepDesc = "L0 Name & Address";
+                                     if (kycFailed) {
+                                       kycStepDesc = "KYC Rejected";
+                                     } else if (userKycLevel === "L2") {
+                                       kycStepDesc = "L2 Photo ID Verified";
+                                     } else if (isL2Required && userKycLevel !== "L2") {
+                                       kycStepDesc = "L2 Photo ID Scan Required";
+                                     } else if (userKycLevel === "L1") {
+                                       kycStepDesc = "L1 DOB/SSN Verified";
+                                     } else if (isL1Required && userKycLevel === "L0") {
+                                       kycStepDesc = "L1 DOB + SSN Required";
+                                     } else if (kycCompleted) {
+                                       kycStepDesc = "Identity Verified";
+                                     } else if (kycTriggered) {
+                                       kycStepDesc = "Reviewing KYC...";
+                                     }
+
+                                     const steps = [
+                                       {
+                                         id: "step1",
+                                         label: "1. Contact & Auth",
+                                         status: "completed",
+                                         description: customerIdentified ? (r.customerEmail || r.stripeEmail || "User identified") : "Link Opened"
+                                       },
+                                       {
+                                         id: "step2",
+                                         label: "2. Identity & KYC",
+                                         status: kycFailed
+                                           ? "failed"
+                                           : (userKycLevel === "L2" || (userKycLevel === "L1" && !isL2Required) || kycCompleted)
+                                           ? "completed"
+                                           : (isL1Required || isL2Required || kycTriggered)
+                                           ? "active"
+                                           : "completed",
+                                         description: kycStepDesc
+                                       },
+                                       {
+                                         id: "step3",
+                                         label: "3. Payment Method",
+                                         status: paymentMethodSelected
+                                           ? "completed"
+                                           : (customerIdentified && !kycFailed)
+                                           ? "active"
+                                           : "upcoming",
+                                         description: paymentMethodSelected ? pmText : "Selecting method"
+                                       },
+                                       {
+                                         id: "step4",
+                                         label: "4. Fulfillment",
+                                         status: settlementSuccess
+                                           ? "completed"
+                                           : (settlementAwaiting)
+                                           ? "active"
+                                           : (settlementFailed && !kycFailed)
+                                           ? "failed"
+                                           : "upcoming",
+                                         description: settlementSuccess
+                                           ? "Confirmed & Settled"
+                                           : settlementAwaiting
+                                           ? "Settling On-Chain"
+                                           : settlementFailed
+                                           ? "Declined ➔ Returned to Step 3"
+                                           : "Awaiting checkout"
+                                       }
+                                     ];
+
+                                     return (
+                                       <div className="space-y-5 animate-in fade-in duration-200">
+                                         {/* Funnel Progress Stepper Panel */}
+                                         <div className="relative overflow-hidden bg-gradient-to-r from-zinc-950/90 via-zinc-900/80 to-zinc-950/90 border border-white/10 rounded-2xl p-5 sm:p-6 shadow-2xl backdrop-blur-xl">
+                                           {/* Ambient Glow Background */}
+                                           <div className={`absolute inset-0 bg-gradient-to-r ${
+                                             settlementSuccess ? "from-emerald-500/10 via-teal-500/5 to-emerald-500/10" :
+                                             settlementFailed ? "from-rose-500/10 via-rose-500/5 to-rose-500/10" :
+                                             "from-amber-500/10 via-primary/5 to-purple-500/10"
+                                           } pointer-events-none transition-all duration-500`} />
+
+                                           <div className="relative z-10 flex items-center justify-between mb-6">
+                                             <div className="flex items-center gap-3">
+                                               <div className="w-8 h-8 rounded-xl bg-white/[0.05] border border-white/10 flex items-center justify-center text-white/80">
+                                                 <Route className="w-4 h-4 text-primary" />
+                                               </div>
+                                               <div>
+                                                 <span className="text-white/90 text-xs uppercase font-extrabold tracking-wider">Modular Accordion Trajectory</span>
+                                                 <div className="text-[10px] text-muted-foreground">Live 4-Step Checkout & Dynamic Step-Up Diagnostic</div>
+                                               </div>
+                                             </div>
+
+                                             <div className="flex items-center gap-2">
+                                               {(isL1Required || isL2Required) && (
+                                                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                                   Dynamic Limit Step-Up (${receiptAmountUsd.toLocaleString()})
+                                                 </span>
+                                               )}
                                               <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border shadow-md ${
                                                 intentLevel === "High" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 shadow-emerald-500/10" :
                                                 intentLevel === "Medium" ? "bg-amber-500/15 text-amber-400 border-amber-500/30 shadow-amber-500/10" :
@@ -4809,9 +4854,8 @@ export default function PlatformAnalyticsPanel() {
                                               {/* Track Active Progress Line with Neon Glow */}
                                               {(() => {
                                                 const progressPct = settlementSuccess ? 100 :
-                                                  (kycCompleted || kycFailed) ? 75 :
-                                                    paymentMethodSelected ? 50 :
-                                                      customerIdentified ? 25 : 0;
+                                                  paymentMethodSelected ? 66 :
+                                                    (kycCompleted || r.kycLevel === "L1" || r.kycLevel === "L2") ? 33 : 0;
 
                                                 return (
                                                   <div
@@ -4847,22 +4891,139 @@ export default function PlatformAnalyticsPanel() {
                                                   nodeStyle = "bg-gradient-to-br from-rose-500 to-rose-700 text-white border-rose-400 shadow-[0_0_18px_rgba(244,63,94,0.6)] scale-105";
                                                   badgeStyle = "bg-rose-500/15 text-rose-300 border-rose-500/30 font-bold";
                                                   icon = <XCircle className="w-4 h-4 text-white" />;
-                                                } else if (step.status === "skipped") {
-                                                  nodeStyle = "bg-zinc-900 text-zinc-400 border-dashed border-zinc-700";
-                                                  badgeStyle = "bg-white/[0.02] text-zinc-500 border-white/5";
-                                                  icon = <span className="text-[9px] font-bold font-mono text-zinc-400">N/A</span>;
                                                 }
 
                                                 return (
-                                                  <div key={step.id} className="flex flex-col items-center relative z-10 w-28 group">
-                                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${nodeStyle} bg-zinc-950`}>
-                                                      {icon}
+                                                  <React.Fragment key={step.id}>
+                                                    {/* Step Node */}
+                                                    <div className="flex flex-col items-center relative z-10 w-32 group shrink-0">
+                                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${nodeStyle} bg-zinc-950`}>
+                                                        {icon}
+                                                      </div>
+                                                      <span className="mt-2.5 text-xs font-extrabold text-white tracking-wide whitespace-nowrap group-hover:text-primary transition-colors">{step.label}</span>
+                                                      <span className={`mt-1 px-2 py-0.5 rounded-full text-[10px] border whitespace-nowrap overflow-hidden text-ellipsis max-w-[125px] text-center ${badgeStyle}`} title={step.description}>
+                                                        {step.description}
+                                                      </span>
                                                     </div>
-                                                    <span className="mt-2.5 text-xs font-extrabold text-white tracking-wide whitespace-nowrap group-hover:text-primary transition-colors">{step.label}</span>
-                                                    <span className={`mt-1 px-2 py-0.5 rounded-full text-[10px] border whitespace-nowrap overflow-hidden text-ellipsis max-w-[110px] text-center ${badgeStyle}`} title={step.description}>
-                                                      {step.description}
-                                                    </span>
-                                                  </div>
+
+                                                    {/* Inter-Node Directional Arrow Connector (Stacked Angular SVG Arrows) */}
+                                                    {idx < steps.length - 1 && (() => {
+                                                      const isForwardCompleted =
+                                                        idx === 0
+                                                          ? true
+                                                          : idx === 1
+                                                          ? paymentMethodSelected
+                                                          : settlementSuccess;
+
+                                                      const showStepUpReturn = idx === 1 && (isL1Required || isL2Required || kycTriggered);
+                                                      const showDeclineReturn = idx === 2 && settlementFailed;
+
+                                                      return (
+                                                        <div className="flex-1 flex flex-col items-center justify-center px-1 relative z-10 -mt-6 min-w-[90px]">
+                                                          {/* SVG Container for Stacked Angular Arrows */}
+                                                          <div className="w-full relative flex flex-col items-center gap-1">
+                                                            {/* Top Lane: Forward Angular Arrow */}
+                                                            <div
+                                                              className="w-full flex items-center justify-center relative cursor-help"
+                                                              title={`Forward Path: Step ${idx + 1} ➔ Step ${idx + 2}`}
+                                                            >
+                                                              <svg className="w-full h-5 overflow-visible" viewBox="0 0 100 20" preserveAspectRatio="none">
+                                                                <defs>
+                                                                  <marker
+                                                                    id={`arrow-head-fwd-${idx}`}
+                                                                    viewBox="0 0 10 10"
+                                                                    refX="8"
+                                                                    refY="5"
+                                                                    markerWidth="6"
+                                                                    markerHeight="6"
+                                                                    orient="auto-start-reverse"
+                                                                  >
+                                                                    <path d="M 0 1.5 L 8 5 L 0 8.5 L 3 5 Z" fill={isForwardCompleted ? "#10b981" : "#52525b"} />
+                                                                  </marker>
+                                                                </defs>
+                                                                <path
+                                                                  d="M 5 10 H 88"
+                                                                  fill="none"
+                                                                  stroke={isForwardCompleted ? "#10b981" : "#3f3f46"}
+                                                                  strokeWidth="2"
+                                                                  strokeDasharray={isForwardCompleted ? "none" : "3 3"}
+                                                                  markerEnd={`url(#arrow-head-fwd-${idx})`}
+                                                                />
+                                                              </svg>
+                                                            </div>
+
+                                                            {/* Bottom Lane: Stacked Angular Step-Up Return Loop */}
+                                                            {showStepUpReturn && (
+                                                              <div
+                                                                className="w-full flex flex-col items-center relative cursor-help animate-pulse -mt-1"
+                                                                title={`Step 3 ➔ Step 2 Step-Up Return Loop: Order amount ($${receiptAmountUsd.toLocaleString()}) or Stripe API required ${isL2Required ? "L2 Photo ID Scan" : "L1 DOB + SSN"}. User stepped back from Step 3 to Step 2.`}
+                                                              >
+                                                                <svg className="w-full h-5 overflow-visible" viewBox="0 0 100 20" preserveAspectRatio="none">
+                                                                  <defs>
+                                                                    <marker
+                                                                      id={`arrow-head-stepup-${idx}`}
+                                                                      viewBox="0 0 10 10"
+                                                                      refX="8"
+                                                                      refY="5"
+                                                                      markerWidth="6"
+                                                                      markerHeight="6"
+                                                                      orient="auto-start-reverse"
+                                                                    >
+                                                                      <path d="M 0 1.5 L 8 5 L 0 8.5 L 3 5 Z" fill="#f59e0b" />
+                                                                    </marker>
+                                                                  </defs>
+                                                                  <path
+                                                                    d="M 92 4 L 92 14 L 12 14"
+                                                                    fill="none"
+                                                                    stroke="#f59e0b"
+                                                                    strokeWidth="2"
+                                                                    markerEnd={`url(#arrow-head-stepup-${idx})`}
+                                                                  />
+                                                                </svg>
+                                                                <span className="px-2 py-0.5 rounded-md text-[9px] font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-[0_0_10px_rgba(251,191,36,0.3)] whitespace-nowrap -mt-1">
+                                                                  Step 3 ➔ 2 Step-Up
+                                                                </span>
+                                                              </div>
+                                                            )}
+
+                                                            {/* Bottom Lane: Stacked Angular Decline Return Loop */}
+                                                            {showDeclineReturn && (
+                                                              <div
+                                                                className="w-full flex flex-col items-center relative cursor-help animate-pulse -mt-1"
+                                                                title={`Step 4 ➔ Step 3 Decline Return Loop: Payment declined during on-chain settlement. User stepped back from Step 4 to Step 3 to re-select payment method.`}
+                                                              >
+                                                                <svg className="w-full h-5 overflow-visible" viewBox="0 0 100 20" preserveAspectRatio="none">
+                                                                  <defs>
+                                                                    <marker
+                                                                      id={`arrow-head-decline-${idx}`}
+                                                                      viewBox="0 0 10 10"
+                                                                      refX="8"
+                                                                      refY="5"
+                                                                      markerWidth="6"
+                                                                      markerHeight="6"
+                                                                      orient="auto-start-reverse"
+                                                                    >
+                                                                      <path d="M 0 1.5 L 8 5 L 0 8.5 L 3 5 Z" fill="#f43f5e" />
+                                                                    </marker>
+                                                                  </defs>
+                                                                  <path
+                                                                    d="M 92 4 L 92 14 L 12 14"
+                                                                    fill="none"
+                                                                    stroke="#f43f5e"
+                                                                    strokeWidth="2"
+                                                                    markerEnd={`url(#arrow-head-decline-${idx})`}
+                                                                  />
+                                                                </svg>
+                                                                <span className="px-2 py-0.5 rounded-md text-[9px] font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-[0_0_10px_rgba(244,63,94,0.3)] whitespace-nowrap -mt-1">
+                                                                  Step 4 ➔ 3 Decline
+                                                                </span>
+                                                              </div>
+                                                            )}
+                                                          </div>
+                                                        </div>
+                                                      );
+                                                    })()}
+                                                  </React.Fragment>
                                                 );
                                               })}
                                             </div>
