@@ -354,6 +354,15 @@ export function useAccordionCheckoutState(
     manualEditAddress ||
     (!l1Verified && !kyc.isL0Verified && !isL0Approved);
 
+  const parsedActiveError = useMemo(() => {
+    if (!rawActiveError) return null;
+    return parseOnrampError(rawActiveError, {
+      isL1Verified: l1Verified,
+      isL2Verified: l2Verified,
+      currentTier: kyc.currentTier,
+    });
+  }, [rawActiveError, l1Verified, l2Verified, kyc.currentTier]);
+
   // Step-up (DOB + SSN required): user is at L0 (name & address verified, needs L1)
   const showStepUpForm =
     !l1Verified &&
@@ -362,6 +371,8 @@ export function useAccordionCheckoutState(
       effectiveTier === "l1" ||
       effectiveStatus === "step_up" ||
       (kycTierRequired as string) === "l1" ||
+      parsedActiveError?.kycTargetTier === "l1" ||
+      Boolean(parsedActiveError?.isAmountLimit && !l1Verified) ||
       (headlessStep === "collecting_kyc" && !l1Verified) ||
       headlessStep === "submitting_kyc");
 
@@ -372,6 +383,8 @@ export function useAccordionCheckoutState(
     (effectiveTier === "l2" ||
       effectiveStatus === "doc_verify" ||
       (kycTierRequired as string) === "l2" ||
+      parsedActiveError?.kycTargetTier === "l2" ||
+      Boolean(parsedActiveError?.isAmountLimit && l1Verified && !l2Verified) ||
       headlessStep === "verifying_identity" ||
       (headlessStep === "collecting_kyc" && l1Verified) ||
       headlessStep === "checking_kyc");

@@ -170,8 +170,8 @@ export function useStepProgressionGuard({
     if (isPaid || isOrderConfirmed) return;
 
     const parsed = parseOnrampError(activeError || effectiveError, {
-      isL1Approved: kyc.isL1Verified,
-      isL2Approved: kyc.isL2Verified,
+      isL1Verified: kyc.isL1Verified,
+      isL2Verified: kyc.isL2Verified,
       currentTier: kyc.currentTier,
     });
 
@@ -190,6 +190,7 @@ export function useStepProgressionGuard({
       (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
       (showStepUpForm && !kyc.isL1Verified) ||
       (isL2Requirement && !kyc.isL2Verified) ||
+      (showVerifyDocs && !kyc.isL2Verified) ||
       isKycError;
 
     if (needsKycStep && activeStep > 2) {
