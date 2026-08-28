@@ -71,6 +71,7 @@ function subjectLabelFrom(c: Conversation) {
   if (s?.type === "shop") return `Shop • ${s.id || ""}`;
   if (s?.type === "merchant") return `Merchant • ${truncateWallet(s.id || "")}`;
   if (s?.type === "order") return `Order • ${s.id || ""}`;
+  if (s?.type === "checkout") return `Checkout • ${s.id || ""}`;
   return "General";
 }
 
@@ -81,6 +82,9 @@ function cx(...args: Array<string | false | null | undefined>) {
 export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer' | 'merchant'; overrideWallet?: string }) {
   const account = useActiveAccount();
   const me = (overrideWallet || String((account as any)?.address || "")).toLowerCase();
+  
+  // Conversations state... (preserving structure)
+
 
   // Conversations state
   const [conversations, setConversations] = React.useState<Conversation[]>([]);
@@ -577,13 +581,14 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
           return true;
         }
       } else if (role === 'merchant') {
-        // As a merchant, I ONLY see conversations where customers contacted ME directly
-        // subject.type MUST be 'merchant' AND subject.id MUST be my wallet
-        if (subjectType === 'merchant' && subjectId === me) {
-          // This is a message TO me - show it
+        // As a merchant, I see conversations where customers contacted ME directly or via checkout/order
+        const parts = (Array.isArray(c.participants) ? c.participants : []).map((p) => String(p || "").toLowerCase());
+        if (subjectType === 'merchant') {
+          if (subjectId !== me && !parts.includes(me)) return false;
+        } else if (subjectType === 'checkout' || subjectType === 'order') {
+          if (!parts.includes(me) && subjectId !== me) return false;
         } else {
-          // All other types (order, shop, general, undefined) or messages to other merchants - filter out
-          return false;
+          if (!parts.includes(me)) return false;
         }
       }
 

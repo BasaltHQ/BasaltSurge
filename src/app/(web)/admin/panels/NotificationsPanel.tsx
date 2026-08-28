@@ -20,6 +20,7 @@ const EVENTS_BY_LEVEL: Record<string, NotificationEventDef[]> = {
     { key: "split_released", title: "Funds Released", description: "Receive an alert when on-chain split earnings are transferred to your wallet." },
     { key: "low_stock", title: "Low Stock Alert", description: "Get warned if an inventory item falls below the minimum required quantity." },
     { key: "team_pin_changed", title: "Employee PIN Modified", description: "Security alert when a terminal operator's access PIN is updated." },
+    { key: "live_client_message", title: "Live Customer Message", description: "Receive an email alert when a client messages live during checkout." },
   ],
   partner: [
     { key: "merchant_signup", title: "New Merchant Application", description: "Alert when a merchant requests to onboard onto your whitelabel container." },
@@ -354,6 +355,18 @@ export default function NotificationsPanel({ level }: { level: "merchant" | "par
             { label: "Staff Name", value: "Dominic Reyes" },
             { label: "Authorized By", value: "Store Manager (0x92b...)" },
             { label: "IP Address", value: "192.168.1.144" },
+          ]
+        };
+      case "live_client_message":
+        return {
+          title: "Live Customer Message",
+          subtitle: "Checkout Inquiry #REC-88492-V2",
+          message: "A customer on Payment Gateway V2 sent a live message asking for assistance with their checkout transaction.",
+          details: [
+            { label: "Customer Wallet", value: "0x71C...8492", isCode: true },
+            { label: "Subject", value: "Checkout REC-88492-V2" },
+            { label: "Message Preview", value: "Hi, I have a question regarding payment options." },
+            { label: "Timestamp", value: new Date().toLocaleString() },
           ]
         };
       case "merchant_signup":

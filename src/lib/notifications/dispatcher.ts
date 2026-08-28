@@ -115,6 +115,7 @@ export async function triggerNotification(
       system_status: true,
       support_ticket_created: true,
       support_ticket_reply: true,
+      live_client_message: true,
     };
 
     const isEventEnabled = settingsDoc?.settings

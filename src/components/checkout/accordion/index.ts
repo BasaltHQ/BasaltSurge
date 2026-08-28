@@ -18,4 +18,5 @@ export * from "./steps/Step2Identity";
 export * from "./steps/Step3Payment";
 export * from "./steps/Step4Fulfillment";
 export * from "./simulations";
+export * from "./CheckoutChatWidget";
 
