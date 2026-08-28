@@ -564,7 +564,7 @@ export function useAccordionCheckoutState(
       const timer = setTimeout(() => {
         if (!propPaymentElement) {
           console.log("[ACCORDION STATE] Step 3 active with null paymentElement after 2.5s. Triggering session re-initialization...");
-          onHeadlessSubmitEmailPhone(email.trim(), phone || "", country || "US", `${firstName} ${lastName}`.trim()).catch(() => {});
+          onHeadlessSubmitEmailPhone(email.trim(), phone || "", country || "US", true, `${firstName} ${lastName}`.trim()).catch(() => {});
         }
       }, 2500);
       return () => clearTimeout(timer);
