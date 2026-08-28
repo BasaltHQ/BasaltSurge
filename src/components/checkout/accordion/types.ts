@@ -55,6 +55,8 @@ export interface PortalPayAccordionCheckoutV2Props {
     primaryColor?: string;
     brandKey?: string;
     brandName?: string;
+    logoUrl?: string;
+    brandLogoUrl?: string;
   };
   isLightText?: boolean;
   email?: string;
@@ -103,6 +105,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   detectedCardLast4?: string | null;
   onrampLimits?: any[] | null;
   onEmailReceipt?: () => void;
+  merchantWallet?: string;
 }
 
 export interface AccordionCardProps {

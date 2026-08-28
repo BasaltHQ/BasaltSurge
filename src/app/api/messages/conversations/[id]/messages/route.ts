@@ -60,11 +60,23 @@ function rateLimit(key: string, limit: number, windowMs: number) {
   return { limited: false, retryAfter: 0, resetAt: bucket.resetAt };
 }
 
+async function resolveCallerWallet(req: NextRequest): Promise<string> {
+  try {
+    const caller = await requireThirdwebAuth(req);
+    if (caller?.wallet) return String(caller.wallet).toLowerCase();
+  } catch {}
+  const headerWallet = req.headers.get("x-client-wallet") || req.headers.get("x-guest-wallet") || "";
+  const normalized = String(headerWallet || "").toLowerCase();
+  if (/^0x[a-f0-9]{40}$/i.test(normalized)) {
+    return normalized;
+  }
+  throw new Error("unauthorized");
+}
+
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   const correlationId = crypto.randomUUID();
   try {
-    const caller = await requireThirdwebAuth(req);
-    const me = String(caller.wallet || "").toLowerCase();
+    const me = await resolveCallerWallet(req);
 
     if (!/^0x[a-f0-9]{40}$/i.test(me)) {
       return NextResponse.json(
@@ -179,8 +191,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
 export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   const correlationId = crypto.randomUUID();
   try {
-    const caller = await requireThirdwebAuth(req);
-    const senderWallet = String(caller.wallet || "").toLowerCase();
+    const senderWallet = await resolveCallerWallet(req);
 
     if (!/^0x[a-f0-9]{40}$/i.test(senderWallet)) {
       return NextResponse.json(
@@ -225,7 +236,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     // Read conversation doc
     const convoSpec = {
       query:
-        "SELECT c.id, c.wallet, c.participants, c.brandKey FROM c WHERE c.type='conversation' AND c.id=@id",
+        "SELECT c.id, c.wallet, c.participants, c.brandKey, c.subject FROM c WHERE c.type='conversation' AND c.id=@id",
       parameters: [{ name: "@id", value: conversationId }],
     } as { query: string; parameters: { name: string; value: any }[] };
 
@@ -270,8 +281,6 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
         { status: 403, headers: { "x-correlation-id": correlationId } }
       );
     }
-    // Brand check disabled for simplicity: allow messaging across brands if participants include sender.
-    // This avoids false 404 when host domain brand differs from conversation brand.
 
     const partitionKey = String(convo.wallet || convo.participants?.[0] || senderWallet).toLowerCase();
     const brandKey = String(convo.brandKey || "").toLowerCase();
@@ -299,6 +308,34 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       await container.items.upsert(convoDoc as any);
     } catch { }
 
+    // Asynchronously dispatch email notification if sender is messaging a merchant
+    try {
+      const recipientWallet = (
+        (convo.subject?.type === "merchant" && convo.subject?.id)
+          ? String(convo.subject.id).toLowerCase()
+          : (Array.isArray(convo.participants)
+              ? convo.participants.find((p: string) => String(p || "").toLowerCase() !== senderWallet.toLowerCase())
+              : "")
+      ) || "";
+
+      if (recipientWallet && /^0x[a-f0-9]{40}$/i.test(recipientWallet)) {
+        const { triggerNotification } = await import("@/lib/notifications/dispatcher");
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://surge.basalthq.com";
+        triggerNotification("merchant", recipientWallet, "live_client_message", {
+          title: "Live Customer Message",
+          subtitle: convo.subject?.id ? `Subject: ${convo.subject.id}` : `Conversation #${conversationId.slice(-8)}`,
+          message: textBody || "Sent an attachment",
+          details: [
+            { label: "Customer Wallet", value: senderWallet, isCode: true },
+            { label: "Subject", value: convo.subject?.id || "Checkout Inquiry" },
+            { label: "Received At", value: new Date(ts).toLocaleString() }
+          ],
+          ctaText: "Reply in Admin Console",
+          ctaUrl: `${appUrl}/admin?tab=messages-merchant`
+        }).catch(err => console.error("[Messages API] Notification error:", err));
+      }
+    } catch {}
+
     return NextResponse.json({ ok: true, message: msgDoc }, { headers: { "x-correlation-id": correlationId } });
   } catch (e: any) {
     return NextResponse.json(
@@ -307,3 +344,4 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     );
   }
 }
+

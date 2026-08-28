@@ -65,11 +65,23 @@ function rateLimit(key: string, limit: number, windowMs: number) {
   return { limited: false, retryAfter: 0, resetAt: bucket.resetAt };
 }
 
+async function resolveCallerWallet(req: NextRequest): Promise<string> {
+  try {
+    const caller = await requireThirdwebAuth(req);
+    if (caller?.wallet) return normalizeWallet(caller.wallet);
+  } catch {}
+  const headerWallet = req.headers.get("x-client-wallet") || req.headers.get("x-guest-wallet") || "";
+  const normalized = normalizeWallet(headerWallet);
+  if (/^0x[a-f0-9]{40}$/i.test(normalized)) {
+    return normalized;
+  }
+  throw new Error("unauthorized");
+}
+
 export async function GET(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   try {
-    const caller = await requireThirdwebAuth(req);
-    const me = normalizeWallet(caller.wallet || "");
+    const me = await resolveCallerWallet(req);
     if (!/^0x[a-f0-9]{40}$/i.test(me)) {
       return NextResponse.json(
         { ok: false, error: "invalid_wallet" },
@@ -211,8 +223,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   try {
-    const caller = await requireThirdwebAuth(req);
-    const me = normalizeWallet(caller.wallet || "");
+    const me = await resolveCallerWallet(req);
     if (!/^0x[a-f0-9]{40}$/i.test(me)) {
       return NextResponse.json(
         { ok: false, error: "invalid_wallet" },
