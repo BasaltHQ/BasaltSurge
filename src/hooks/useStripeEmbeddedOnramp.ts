@@ -2761,7 +2761,7 @@ export function useStripeEmbeddedOnramp({
               onCardDetected?.(null);
               isRunningRef.current = false;
               setTimeout(() => {
-                startOnrampRef.current?.(activeEmailRef.current || undefined);
+                startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, undefined, true);
               }, 0);
             } else {
               handleError(err?.message || "Checkout failed after KYC submission", err);
@@ -2771,14 +2771,14 @@ export function useStripeEmbeddedOnramp({
           console.log("[EMBEDDED ONRAMP] KYC info approved. Initializing payment element collection...");
           isRunningRef.current = false;
           setTimeout(() => {
-            startOnrampRef.current?.(activeEmailRef.current || undefined);
+            startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, undefined, true);
           }, 50);
         }
       } else {
         console.log("[EMBEDDED ONRAMP] KYC approved. Initializing payment element collection...");
         isRunningRef.current = false;
         setTimeout(() => {
-          startOnrampRef.current?.(activeEmailRef.current || undefined);
+          startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, undefined, true);
         }, 50);
       }
     } catch (err: any) {
@@ -2830,7 +2830,7 @@ export function useStripeEmbeddedOnramp({
                 onCardDetected?.(null);
                 isRunningRef.current = false;
                 setTimeout(() => {
-                  startOnrampRef.current?.(activeEmailRef.current || undefined);
+                  startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, undefined, true);
                 }, 0);
               } else {
                 handleError(loopErr?.message || "Checkout failed after KYC submission", loopErr);
@@ -2839,13 +2839,13 @@ export function useStripeEmbeddedOnramp({
           } else {
             isRunningRef.current = false;
             setTimeout(() => {
-              startOnrampRef.current?.(activeEmailRef.current || undefined);
+              startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, undefined, true);
             }, 50);
           }
         } else {
           isRunningRef.current = false;
           setTimeout(() => {
-            startOnrampRef.current?.(activeEmailRef.current || undefined);
+            startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, undefined, true);
           }, 50);
         }
         return;
@@ -3025,7 +3025,8 @@ export function useStripeEmbeddedOnramp({
     }
 
     const now = Date.now();
-    if (isRunningRef.current && !isForceRetry) {
+    const hasActiveAuth = Boolean(isCoordinatorAuthedRef.current && oauthTokenRef.current && customerIdRef.current);
+    if (isRunningRef.current && !isForceRetry && !hasActiveAuth) {
       if (now - lastStartOnrampTimeRef.current > 45000) {
         console.warn("[EMBEDDED ONRAMP] Onramp flow lock exceeded 45s timeout. Auto-resetting lock for re-trigger.");
         isRunningRef.current = false;
@@ -3041,9 +3042,10 @@ export function useStripeEmbeddedOnramp({
       setError(null);
     }
     if (isForceRetry && onrampRef.current) {
-      try { onrampRef.current.destroy(); } catch {}
-      onrampRef.current = null;
-      isCoordinatorAuthedRef.current = false;
+      if (!isCoordinatorAuthedRef.current && !oauthTokenRef.current) {
+        try { onrampRef.current.destroy(); } catch (_e) {}
+        onrampRef.current = null;
+      }
       setPaymentElement(null);
     }
     console.log("[EMBEDDED ONRAMP] startOnramp triggered. isEcommerceMode prop:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
@@ -3228,22 +3230,42 @@ export function useStripeEmbeddedOnramp({
       updateStep("authenticating");
 
       const authPromise = new Promise<string>((resolve, reject) => {
-        onramp.authenticate(authIntentId, (result: any) => {
-          if (result.result === "success" && result.crypto_customer_id) {
-            isCoordinatorAuthedRef.current = true;
-            resolve(result.crypto_customer_id);
-          } else if (result.result === "abandoned") {
-            reject(new Error("Authentication cancelled"));
-          } else if (result.result === "declined") {
-            reject(new Error("OAuth consent declined"));
-          } else {
-            reject(new Error("Authentication failed"));
+        const authTimeout = setTimeout(() => {
+          console.warn("[EMBEDDED ONRAMP] Link auth element creation timeout (10s).");
+        }, 10000);
+
+        try {
+          const authResult = onramp.authenticate(authIntentId, (result: any) => {
+            clearTimeout(authTimeout);
+            if (result.result === "success" && result.crypto_customer_id) {
+              isCoordinatorAuthedRef.current = true;
+              resolve(result.crypto_customer_id);
+            } else if (result.result === "abandoned") {
+              reject(new Error("Authentication cancelled by user"));
+            } else if (result.result === "declined") {
+              reject(new Error("OAuth consent declined"));
+            } else {
+              reject(new Error("Link authentication failed. Please try again."));
+            }
+          });
+
+          if (authResult && typeof authResult.then === "function") {
+            authResult.then((element: HTMLElement | null) => {
+              clearTimeout(authTimeout);
+              if (element && mountedRef.current) {
+                console.log("[EMBEDDED ONRAMP] Link auth element generated successfully.");
+                setAuthElement(element);
+              }
+            }).catch((elemErr: any) => {
+              clearTimeout(authTimeout);
+              console.warn("[EMBEDDED ONRAMP] Failed to generate Link auth element:", elemErr);
+              reject(elemErr);
+            });
           }
-        }).then((element: HTMLElement | null) => {
-          if (element && mountedRef.current) {
-            setAuthElement(element);
-          }
-        });
+        } catch (err: any) {
+          clearTimeout(authTimeout);
+          reject(err);
+        }
       });
 
       customerId = await authPromise;

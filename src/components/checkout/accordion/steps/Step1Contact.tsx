@@ -225,6 +225,21 @@ export function Step1Contact({
           </div>
         )}
 
+        {/* Inline OTP Element loading indicator */}
+        {headlessStep === "authenticating" && !authElement && (
+          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-3 animate-in fade-in duration-200 text-left my-2">
+            <div className="flex items-center gap-3 text-amber-300">
+              <Loader2 className="w-5 h-5 animate-spin text-amber-400 shrink-0" />
+              <div className="space-y-0.5">
+                <h5 className="text-sm font-bold text-amber-200">Connecting to Stripe Link...</h5>
+                <p className="text-xs text-amber-300/80 leading-relaxed">
+                  Initializing secure OTP verification. Please enter your 6-digit verification code below when prompted.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Inline OTP Element if triggered by Stripe Link */}
         {authElement && (
           <div className={`my-2 ${headlessStep && !["authenticating", "collecting_phone"].includes(headlessStep) ? "hidden" : ""}`}>

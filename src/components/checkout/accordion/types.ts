@@ -89,7 +89,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   simulatedPath?: "normal" | "skip_kyc" | "step_up" | "doc_verify" | "wallet_challenge" | string;
   isAllKycCompleted?: boolean;
   isEmailLocked?: boolean;
-  onHeadlessSubmitEmailPhone?: (email: string, phone: string, country?: string, fullName?: string) => Promise<void>;
+  onHeadlessSubmitEmailPhone?: (email: string, phone: string, country?: string, isForceRetryOrName?: boolean | string, fullName?: string) => Promise<void>;
   onSubmitPhone?: (phoneNumber: string, email?: string, country?: string) => void | Promise<void>;
   onSubmitKycInfo?: (info: any) => Promise<void>;
   onVerifyDocuments?: () => Promise<void | boolean>;
