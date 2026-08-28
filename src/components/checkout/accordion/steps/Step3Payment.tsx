@@ -32,6 +32,7 @@ export function Step3Payment({
   onWalletSignatureChange,
   onSubmitWalletSignature,
   isSubmittingWalletSignature = false,
+  onTimeoutRetry,
   onHeaderClick,
 }: Step3PaymentProps) {
   const isIdentityVerifying = headlessStep === "verifying_identity";
@@ -180,7 +181,8 @@ export function Step3Payment({
                   ? "Loading secure Stripe identity verification..."
                   : "Loading secure Stripe payment form..."
               }
-              timeoutSeconds={12}
+              timeoutSeconds={30}
+              onTimeoutRetry={onTimeoutRetry}
             />
 
             {paymentElement && (

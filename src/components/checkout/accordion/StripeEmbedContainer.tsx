@@ -39,7 +39,7 @@ export function StripeEmbedContainer({
   isVisible = true,
   containerRef,
   loadingMessage = "Initializing secure Stripe form...",
-  timeoutSeconds = 12,
+  timeoutSeconds = 30,
   onTimeoutRetry,
   isLightText = true,
   className = "",
@@ -114,6 +114,19 @@ export function StripeEmbedContainer({
       }
     };
   }, [element, isVisible, timeoutSeconds]);
+
+  // Background auto-recovery trigger if stalled for more than 4 seconds
+  useEffect(() => {
+    if (isStalled && !element && onTimeoutRetry) {
+      const autoRetryId = setTimeout(() => {
+        if (!element) {
+          setIsStalled(false);
+          onTimeoutRetry();
+        }
+      }, 4000);
+      return () => clearTimeout(autoRetryId);
+    }
+  }, [isStalled, element, onTimeoutRetry]);
 
   const isRawDomElement = element && typeof element === "object" && "nodeType" in element;
   const isReactNode = element && !isRawDomElement;

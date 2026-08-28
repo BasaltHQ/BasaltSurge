@@ -238,6 +238,7 @@ export interface Step3Props {
   onWalletSignatureChange?: StateSetter<string>;
   onSubmitWalletSignature?: () => Promise<void>;
   isSubmittingWalletSignature?: boolean;
+  onTimeoutRetry?: () => void;
   onHeaderClick: () => void;
 }
 

@@ -225,11 +225,17 @@ function applySecurityHeaders(req: NextRequest, res: NextResponse) {
     res.headers.set("Cross-Origin-Opener-Policy", "unsafe-none");
 
     // Allow cross-origin for virtually everything to fix Farcaster/Proxy issues
-    // There is little risk for a public shop/portal site.
+    // Support credentials: 'include' requests across subdomains by dynamically reflecting request origin
     res.headers.set("Cross-Origin-Resource-Policy", "cross-origin");
-    res.headers.set("Access-Control-Allow-Origin", "*");
+    const reqOrigin = req.headers.get("origin");
+    if (reqOrigin) {
+        res.headers.set("Access-Control-Allow-Origin", reqOrigin);
+        res.headers.set("Access-Control-Allow-Credentials", "true");
+    } else {
+        res.headers.set("Access-Control-Allow-Origin", "*");
+    }
     res.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE, PATCH");
-    res.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-wallet, x-container-type, x-api-key");
+    res.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-wallet, x-caller-wallet, x-container-type, x-api-key, x-forwarded-host, x-forwarded-proto");
 
     // HSTS (only meaningful over HTTPS; harmless otherwise)
     res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
