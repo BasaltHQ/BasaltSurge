@@ -146,6 +146,9 @@ export function Step2Identity({
       : "bg-black/5 border border-black/10 text-black focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30";
   };
 
+  const normalizedState = (stateCode || "").trim().toUpperCase();
+  const isUnsupportedState = (country || "US").toUpperCase() === "US" && (normalizedState === "NY" || normalizedState === "HI" || normalizedState === "NEW YORK" || normalizedState === "HAWAII");
+
   const hasAddressError = Boolean(
     activeError && (
       activeError.toLowerCase().includes("address") ||
@@ -162,7 +165,7 @@ export function Step2Identity({
   );
 
   const isAlreadyVerifiedCard = Boolean(
-    isL0Approved && !showStepUpForm && !isDocVerifyRequired && (!isL2Requirement || isL2Approved) && !hasAddressError
+    isL0Approved && !showStepUpForm && !isDocVerifyRequired && (!isL2Requirement || isL2Approved) && !hasAddressError && !isUnsupportedState
   );
 
   return (
@@ -176,11 +179,11 @@ export function Step2Identity({
         stepNumber={2}
         title="Identity & Residential Verification"
         badge={
-          !hasAddressError && (isL2Approved || (isL0Approved && !showStepUpForm && !isDocVerifyRequired)) ? (
+          !hasAddressError && !isUnsupportedState && (isL2Approved || (isL0Approved && !showStepUpForm && !isDocVerifyRequired)) ? (
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
               <Check className="w-3 h-3 stroke-[3]" /> Verified
             </span>
-          ) : (showStepUpForm || isDocVerifyRequired || hasAddressError) ? (
+          ) : (showStepUpForm || isDocVerifyRequired || hasAddressError || isUnsupportedState) ? (
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 inline-flex items-center gap-1">
               <Shield className="w-3 h-3" /> Action Required
             </span>
@@ -373,8 +376,21 @@ export function Step2Identity({
               </div>
             )}
 
+            {/* Unsupported Region Notice (NY / HI) */}
+            {isUnsupportedState && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1.5 text-left animate-in fade-in my-1">
+                <div className="flex items-center gap-2 text-amber-200 text-xs font-bold">
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>Unsupported Region Notice (New York & Hawaii)</span>
+                </div>
+                <p className="text-xs text-amber-300/90 leading-relaxed">
+                  Instant card checkout is currently unavailable for New York (NY) and Hawaii (HI) due to state regulatory guidelines. Please verify your address or use an alternative payment method.
+                </p>
+              </div>
+            )}
+
             {/* Address Autocomplete / Search Input */}
-            {(showFullForm || hasAddressError) && (
+            {(showFullForm || hasAddressError || isUnsupportedState) && (
               <div className="space-y-3 text-left">
                 {/* Legal Name */}
                 <div className="grid grid-cols-2 gap-2.5">
