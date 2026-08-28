@@ -2617,28 +2617,31 @@ export function useStripeEmbeddedOnramp({
             cleanAddr[k] = String(v).trim();
           }
         }
-        const isNorthAmerica = cleanAddr.country === "US" || cleanAddr.country === "CA";
-        if (cleanAddr.state && isNorthAmerica) {
-          const lower = cleanAddr.state.toLowerCase();
-          const STATE_MAP: Record<string, string> = {
-            "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA", "colorado": "CO", "connecticut": "CT",
-            "delaware": "DE", "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN",
-            "iowa": "IA", "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD", "massachusetts": "MA",
-            "michigan": "MI", "minnesota": "MN", "mississippi": "MS", "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
-            "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND",
-            "ohio": "OH", "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
-            "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT", "virginia": "VA", "washington": "WA",
-            "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY", "washington dc": "DC", "district of columbia": "DC",
-            "alberta": "AB", "british columbia": "BC", "manitoba": "MB", "new brunswick": "NB", "newfoundland": "NL", "nova scotia": "NS",
-            "ontario": "ON", "prince edward island": "PE", "quebec": "QC", "saskatchewan": "SK", "yukon": "YT"
-          };
-          cleanAddr.state = STATE_MAP[lower] || cleanAddr.state.toUpperCase();
+        const isNorthAmerica = cleanAddr.country === "US" || activeCountryRef.current === "US";
+        if (isNorthAmerica) {
+          if (cleanAddr.state) {
+            const lower = cleanAddr.state.toLowerCase();
+            const STATE_MAP: Record<string, string> = {
+              "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA", "colorado": "CO", "connecticut": "CT",
+              "delaware": "DE", "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN",
+              "iowa": "IA", "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD", "massachusetts": "MA",
+              "michigan": "MI", "minnesota": "MN", "mississippi": "MS", "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+              "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND",
+              "ohio": "OH", "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+              "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT", "virginia": "VA", "washington": "WA",
+              "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY", "washington dc": "DC", "district of columbia": "DC"
+            };
+            cleanAddr.state = STATE_MAP[lower] || cleanAddr.state.toUpperCase();
+          }
+        } else {
+          // Stripe API strictly forbids state parameter for European / International addresses (e.g. Germany DE)
+          delete cleanAddr.state;
         }
         payload.address = cleanAddr;
 
         // Auto-inject required EU KYC fields (nationalities, birth_country, birth_city) if not already provided
         const countryCode = (cleanAddr.country || activeCountryRef.current || "US").toUpperCase();
-        if (countryCode !== "US" && countryCode !== "CA") {
+        if (countryCode !== "US") {
           if (!payload.nationalities) {
             payload.nationalities = [countryCode];
           }
@@ -2648,9 +2651,7 @@ export function useStripeEmbeddedOnramp({
           if (!payload.birth_city && cleanAddr.city) {
             payload.birth_city = cleanAddr.city;
           }
-          if (!payload.nationality) {
-            payload.nationality = countryCode;
-          }
+          delete payload.nationality;
         }
       }
       await submitKycInfoWithTimeout(onrampRef.current, payload);
@@ -2874,7 +2875,7 @@ export function useStripeEmbeddedOnramp({
               stripeSessionId: sessionIdRef.current,
               customerEmail: activeEmailRef.current,
             })
-          }).catch(() => {});
+          }).catch((_err) => {});
         }
         return;
       }
@@ -2887,7 +2888,11 @@ export function useStripeEmbeddedOnramp({
           sessionStorage.removeItem("stripe_onramp_oauth_token");
         }
         if (onrampRef.current) {
-          try { onrampRef.current.destroy(); } catch {}
+          try {
+            onrampRef.current.destroy();
+          } catch (_e) {
+            // ignore
+          }
           onrampRef.current = null;
         }
         if (startOnrampRef.current && activeEmailRef.current) {

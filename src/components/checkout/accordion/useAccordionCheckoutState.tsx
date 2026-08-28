@@ -422,12 +422,15 @@ export function useAccordionCheckoutState(
   const showDobField = showStepUpForm || isL2Requirement || isEU;
   const showSsnField = isUS && (showStepUpForm || isL2Requirement);
 
+  const normalizedState = (stateCode || "").trim().toUpperCase();
+  const isUnsupportedState = isUS && (normalizedState === "NY" || normalizedState === "HI" || normalizedState === "NEW YORK" || normalizedState === "HAWAII");
+
   const fieldValidation = {
     firstName: (firstName || "").trim().length >= 1,
     lastName: (lastName || "").trim().length >= 1,
     line1: (line1 || "").trim().length >= 3,
     city: (city || "").trim().length >= 2,
-    stateCode: countryConfig.requiresState ? (stateCode || "").trim().length >= 2 : true,
+    stateCode: countryConfig.requiresState ? (stateCode || "").trim().length >= 2 && !isUnsupportedState : true,
     zipCode: (zipCode || "").trim().length >= 2,
     dob: showDobField ? dobStatus.valid : true,
     ssn: showSsnField ? ssnDigits.length === 9 : true,
@@ -832,6 +835,13 @@ export function useAccordionCheckoutState(
       return;
     }
 
+    if (isUnsupportedState) {
+      setLocalError("Instant card checkout is currently unavailable for New York (NY) and Hawaii (HI) due to state regulatory guidelines. Please verify your address or select an alternative payment method.");
+      setIsSubmittingIdentity(false);
+      setManualEditAddress(true);
+      return;
+    }
+
     try {
       let parsedDob: { year: number; month: number; day: number } | undefined = undefined;
       if (dob) {
@@ -841,14 +851,15 @@ export function useAccordionCheckoutState(
         }
       }
 
-      if ((isL1Approved || isL0Approved || isAllKycCompleted || effectiveStatus === "verified") && !showStepUpForm && (!isL2Requirement || isL2Approved)) {
+      if (!isUnsupportedState && (isL1Approved || isL0Approved || isAllKycCompleted || effectiveStatus === "verified") && !showStepUpForm && (!isL2Requirement || isL2Approved)) {
         setIsSubmittingIdentity(false);
         setActiveStep(3);
         return;
       }
 
       const targetCountry = (country || "US").toUpperCase();
-      const isEU = targetCountry !== "US" && targetCountry !== "CA";
+      const isEU = targetCountry !== "US";
+      const isNorthAmerica = targetCountry === "US";
 
       // Stripe KYC Tier Invariant:
       // - If US customer is already L0-verified (Address verified) and performing reactive L1 step-up, Stripe specifies uploading only DOB + SSN (attachKYCInfo partial upload).
@@ -865,7 +876,7 @@ export function useAccordionCheckoutState(
                   line1: line1.trim(),
                   ...(line2 ? { line2: line2.trim() } : {}),
                   city: city.trim(),
-                  ...(stateCode ? { state: stateCode.trim() } : {}),
+                  ...(isNorthAmerica && stateCode ? { state: stateCode.trim() } : {}),
                   postal_code: zipCode.trim(),
                   country: targetCountry,
                 },
@@ -878,7 +889,6 @@ export function useAccordionCheckoutState(
                 nationalities: [targetCountry],
                 birth_city: city.trim(),
                 birth_country: targetCountry,
-                nationality: targetCountry,
               }
             : {}),
         });
