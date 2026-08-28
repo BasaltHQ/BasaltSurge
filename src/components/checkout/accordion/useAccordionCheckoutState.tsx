@@ -549,20 +549,24 @@ export function useAccordionCheckoutState(
     }
   }, [email, phone, country, firstName, lastName, propPaymentElement, onHeadlessSubmitEmailPhone, isSimulationMode]);
 
-  // Reactive Step 3 Watchdog: Trigger recovery initialization ONLY if in idle or error state with null paymentElement
+  // Reactive Step 3 Watchdog: Trigger recovery initialization if Step 3 is active with null paymentElement
   useEffect(() => {
     if (
       activeStep === 3 &&
       !propPaymentElement &&
       !isSimulationMode &&
       onHeadlessSubmitEmailPhone &&
-      email &&
-      (!headlessStep || headlessStep === "idle" || headlessStep === "error")
+      email
     ) {
-      console.log("[ACCORDION STATE] Step 3 active in idle/error state with null paymentElement. Triggering recovery...");
-      onHeadlessSubmitEmailPhone(email.trim(), phone || "", country || "US", `${firstName} ${lastName}`.trim()).catch(() => {});
+      const timer = setTimeout(() => {
+        if (!propPaymentElement) {
+          console.log("[ACCORDION STATE] Step 3 active with null paymentElement after 2.5s. Triggering session re-initialization...");
+          onHeadlessSubmitEmailPhone(email.trim(), phone || "", country || "US", `${firstName} ${lastName}`.trim()).catch(() => {});
+        }
+      }, 2500);
+      return () => clearTimeout(timer);
     }
-  }, [activeStep, propPaymentElement, isSimulationMode, onHeadlessSubmitEmailPhone, email, phone, country, firstName, lastName, headlessStep]);
+  }, [activeStep, propPaymentElement, isSimulationMode, onHeadlessSubmitEmailPhone, email, phone, country, firstName, lastName]);
 
   // Address Autocomplete handler
   const handleFetchSuggestions = async (input: string) => {
@@ -881,10 +885,18 @@ export function useAccordionCheckoutState(
       }
 
       // Post-KYC Step Routing Discrimination:
-      // If payment token exists (reactive step-up), resume fulfillment in Step 4; otherwise open Step 3 payment selection
+      // - If payment token exists (reactive step-up), resume fulfillment in Step 4
+      // - If Level 2 photo ID / document verification is required (EU region or tier limit), automatically launch document verification
+      // - Otherwise proceed to Step 3 payment method selection
       if (!propError && headlessStep !== "error") {
         if (effectivePaymentConfirmed || headlessStep === "checking_out" || headlessStep === "confirming_fees") {
           setActiveStep(4);
+        } else if ((isL2Requirement || showVerifyDocs || isEU) && !isL2Approved && !docVerificationSuccess) {
+          if (onVerifyDocuments) {
+            await handleVerifyDocuments();
+          } else {
+            setActiveStep(2);
+          }
         } else {
           setActiveStep(3);
         }

@@ -3821,6 +3821,9 @@ export function useStripeEmbeddedOnramp({
               setPaymentElement(element);
             }
           }).catch((err) => {
+            if (mountedRef.current) {
+              setPaymentElement(null);
+            }
             paymentRejectRef.current = null;
             reject(err);
           });
@@ -3839,6 +3842,9 @@ export function useStripeEmbeddedOnramp({
           collectedLast4 = result.last4;
         } catch (paymentErr: any) {
           console.warn("[EMBEDDED ONRAMP] Payment method collection rejected:", paymentErr);
+          if (mountedRef.current) {
+            setPaymentElement(null);
+          }
           const pErrMsg = String(paymentErr?.message || paymentErr || "").toLowerCase();
           if (pErrMsg.includes("not authenticated") || pErrMsg.includes("authentication required") || pErrMsg.includes("unauthenticated")) {
             console.warn("[EMBEDDED ONRAMP] Coordinator unauthenticated during collectPaymentMethod. Refreshing Link session...");

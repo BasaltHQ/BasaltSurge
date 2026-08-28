@@ -175,9 +175,11 @@ export function useStepProgressionGuard({
       currentTier: kyc.currentTier,
     });
 
-    // Check if error explicitly demands KYC (L0, L1, L2, or limit step-up)
-    const isKycError =
+    // Check if error explicitly demands KYC or Address edit (L0, L1, L2, address validation, or limit step-up)
+    const isAddressOrKycError =
       parsed?.isKycRequirement ||
+      parsed?.targetStep === 2 ||
+      parsed?.recoveryAction === "edit_address" ||
       (parsed?.isAmountLimit && (!kyc.isL1Verified || !kyc.isL2Verified));
 
     const isPaymentReady =
@@ -191,13 +193,13 @@ export function useStepProgressionGuard({
       (showStepUpForm && !kyc.isL1Verified) ||
       (isL2Requirement && !kyc.isL2Verified) ||
       (showVerifyDocs && !kyc.isL2Verified) ||
-      isKycError;
+      isAddressOrKycError;
 
     if (needsKycStep && activeStep > 2) {
       logTransition(
         activeStep,
         2,
-        `KYC Escalation / Step-Up Required (${parsed?.code || headlessStep || "kyc_required"})`
+        `KYC / Address Escalation Required (${parsed?.code || parsed?.recoveryAction || headlessStep || "kyc_required"})`
       );
       setActiveStep(2);
     }

@@ -472,8 +472,9 @@ export function parseOnrampError(
     targetStep = 3;
   } else if (matchedCode === "crypto_onramp_unsupported_country" || matchedCode === "crypto_onramp_unsupportable_customer") {
     targetStep = 1;
-  } else if (matchedCode === "crypto_onramp_unsupported" || matchedCode === "crypto_onramp_unsupported_region") {
+  } else if (matchedCode === "crypto_onramp_unsupported" || matchedCode === "crypto_onramp_unsupported_region" || rawLower.includes("address") || rawLower.includes("postal") || rawLower.includes("street") || rawLower.includes("zip") || rawLower.includes("city") || rawLower.includes("state")) {
     targetStep = 2;
+    recoveryAction = "edit_address";
   } else if (def?.defaultTargetStep && typeof def.defaultTargetStep === "number") {
     targetStep = def.defaultTargetStep as 1 | 2 | 3 | 4;
   }
