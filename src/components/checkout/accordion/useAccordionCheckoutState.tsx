@@ -10,6 +10,7 @@ import {
   formatErrorMessage,
   validateDob,
   getCountryAddressConfig,
+  isEuEeaCountry,
 } from "./utils";
 import { getSubdivisionsForCountry } from "./subdivisions";
 import {
@@ -311,6 +312,8 @@ export function useAccordionCheckoutState(
   const [zipCode, setZipCode] = useState(initialZipCode || "");
   const [ssn, setSsn] = useState("");
   const [dob, setDob] = useState(initialDob || "");
+  const [micaIdentifierValue, setMicaIdentifierValue] = useState("");
+  const [micaIdentifierType, setMicaIdentifierType] = useState<string>("");
 
   // Compiled single-line address for address lookup & autocomplete
   const compiledInitialAddress = [initialLine1, initialLine2, initialCity, initialStateCode, initialZipCode]
@@ -389,18 +392,17 @@ export function useAccordionCheckoutState(
   const isUS = countryConfig.isUS;
   const isEU = countryConfig.isEU;
 
-  // Step-up (DOB + SSN required): user is at L0 (name & address verified, needs L1)
+  // Step-up (DOB + SSN required): user is at L0 (name & address verified) but requires L1 (e.g. order exceeds L0 tier limit or Stripe API requested L1)
   const showStepUpForm =
     !l1Verified &&
     !showFullForm &&
-    (kycLevel === "L0" ||
-      effectiveTier === "l1" ||
+    (effectiveTier === "l1" ||
       effectiveStatus === "step_up" ||
       (kycTierRequired as string) === "l1" ||
       isProactiveL1StepUp ||
       parsedActiveError?.kycTargetTier === "l1" ||
       Boolean(parsedActiveError?.isAmountLimit && !l1Verified) ||
-      (headlessStep === "collecting_kyc" && !l1Verified) ||
+      (headlessStep === "collecting_kyc" && (kycTierRequired as string) === "l1") ||
       headlessStep === "submitting_kyc");
 
   // Document verification button (Photo ID/Selfie): user needs L2 (EU region, explicit L2 tier requirement, amount limit, or retry L2 on rejection)
@@ -414,8 +416,7 @@ export function useAccordionCheckoutState(
       parsedActiveError?.kycTargetTier === "l2" ||
       Boolean(parsedActiveError?.isAmountLimit && !l2Verified) ||
       headlessStep === "verifying_identity" ||
-      (headlessStep === "collecting_kyc" && (l1Verified || isEU)) ||
-      headlessStep === "checking_kyc");
+      (headlessStep === "collecting_kyc" && (l1Verified || isEU)));
 
   const isL2Requirement = showVerifyDocs;
 
@@ -423,7 +424,7 @@ export function useAccordionCheckoutState(
   const showSsnField = isUS && (showStepUpForm || isL2Requirement);
 
   const normalizedState = (stateCode || "").trim().toUpperCase();
-  const isUnsupportedState = isUS && (normalizedState === "NY" || normalizedState === "HI" || normalizedState === "NEW YORK" || normalizedState === "HAWAII");
+  const isUnsupportedState = isUS && (normalizedState === "HI" || normalizedState === "HAWAII");
 
   const fieldValidation = {
     firstName: (firstName || "").trim().length >= 1,
@@ -434,6 +435,7 @@ export function useAccordionCheckoutState(
     zipCode: (zipCode || "").trim().length >= 2,
     dob: showDobField ? dobStatus.valid : true,
     ssn: showSsnField ? ssnDigits.length === 9 : true,
+    micaIdentifier: countryConfig.micaIdentifier ? (micaIdentifierValue || "").trim().length >= 3 : true,
   };
 
   // Step 3: Payment State
@@ -676,6 +678,12 @@ export function useAccordionCheckoutState(
     if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
     if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
     if (isEU && !fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
+    if (isEU && countryConfig.micaIdentifier && !fieldValidation.micaIdentifier) {
+      missingIdentityFields.push({
+        key: "micaIdentifier",
+        label: countryConfig.micaIdentifier.label,
+      });
+    }
   }
 
   const isIdentityComplete = missingIdentityFields.length === 0;
@@ -852,7 +860,7 @@ export function useAccordionCheckoutState(
     }
 
     if (isUnsupportedState) {
-      setLocalError("Instant card checkout is currently unavailable for New York (NY) and Hawaii (HI) due to state regulatory guidelines. Please verify your address or select an alternative payment method.");
+      setLocalError("Instant card checkout is currently unavailable for Hawaii (HI) due to state regulatory guidelines. Please verify your address or select an alternative payment method.");
       setIsSubmittingIdentity(false);
       setManualEditAddress(true);
       return;
@@ -874,8 +882,8 @@ export function useAccordionCheckoutState(
       }
 
       const targetCountry = (country || "US").toUpperCase();
-      const isEU = targetCountry !== "US";
-      const isNorthAmerica = targetCountry === "US";
+      const isEU = isEuEeaCountry(targetCountry);
+      const isNorthAmerica = targetCountry === "US" || targetCountry === "CA";
 
       // Stripe KYC Tier Invariant:
       // - If US customer is already L0-verified (Address verified) and performing reactive L1 step-up, Stripe specifies uploading only DOB + SSN (attachKYCInfo partial upload).
@@ -905,6 +913,14 @@ export function useAccordionCheckoutState(
                 nationalities: [targetCountry],
                 birth_city: city.trim(),
                 birth_country: targetCountry,
+                ...(countryConfig.micaIdentifier && micaIdentifierValue.trim()
+                  ? {
+                      id_number: {
+                        type: micaIdentifierType || countryConfig.micaIdentifier.type,
+                        value: micaIdentifierValue.trim().toUpperCase(),
+                      },
+                    }
+                  : {}),
               }
             : {}),
         });
@@ -1105,6 +1121,10 @@ export function useAccordionCheckoutState(
       setDob,
       ssn,
       setSsn,
+      micaIdentifierValue,
+      setMicaIdentifierValue,
+      micaIdentifierType,
+      setMicaIdentifierType,
       addressSearchInput,
       setAddressSearchInput,
       isAddressParsed,

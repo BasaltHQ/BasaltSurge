@@ -184,6 +184,10 @@ export interface Step2Props {
   setDob: StateSetter<string>;
   ssn: string;
   setSsn: StateSetter<string>;
+  micaIdentifierValue?: string;
+  setMicaIdentifierValue?: StateSetter<string>;
+  micaIdentifierType?: string;
+  setMicaIdentifierType?: StateSetter<string>;
   addressSearchInput: string;
   setAddressSearchInput: StateSetter<string>;
   isAddressParsed: boolean;
