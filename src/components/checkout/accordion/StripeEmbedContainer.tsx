@@ -75,6 +75,9 @@ export function StripeEmbedContainer({
         clearTimeout(timeoutTimerRef.current);
         timeoutTimerRef.current = null;
       }
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
     }
   }, [element]);
 
