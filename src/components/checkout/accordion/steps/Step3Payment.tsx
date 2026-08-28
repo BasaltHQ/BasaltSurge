@@ -179,7 +179,19 @@ export function Step3Payment({
               loadingMessage={
                 isIdentityVerifying
                   ? "Loading secure Stripe identity verification..."
-                  : "Loading secure Stripe payment form..."
+                  : headlessStep === "checking_link"
+                  ? "Checking Stripe Link authorization..."
+                  : headlessStep === "authenticating"
+                  ? "Authenticating secure payment session..."
+                  : headlessStep === "exchanging_tokens"
+                  ? "Securing session tokens..."
+                  : headlessStep === "creating_wallet"
+                  ? "Setting up guest payment wallet..."
+                  : headlessStep === "registering_wallet"
+                  ? "Registering wallet with Stripe..."
+                  : headlessStep === "checking_kyc"
+                  ? "Verifying compliance requirements..."
+                  : "Connecting to secure Stripe payment network..."
               }
               timeoutSeconds={30}
               onTimeoutRetry={onTimeoutRetry}

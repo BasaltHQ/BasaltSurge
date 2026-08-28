@@ -701,6 +701,7 @@ export function useStripeEmbeddedOnramp({
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
   const isCoordinatorAuthedRef = useRef(false);
+  const lastStartOnrampTimeRef = useRef<number>(0);
   const kycOccurredRef = useRef(false);
   const activeCountryRef = useRef<string>("US");
 
@@ -3018,11 +3019,19 @@ export function useStripeEmbeddedOnramp({
       }
     }
 
+    const now = Date.now();
     if (isRunningRef.current && !isForceRetry) {
-      console.warn("[EMBEDDED ONRAMP] Onramp flow is already running. Ignoring duplicate trigger.");
-      return;
+      if (now - lastStartOnrampTimeRef.current > 8000) {
+        console.warn("[EMBEDDED ONRAMP] Onramp flow lock exceeded 8s timeout. Auto-resetting lock for re-trigger.");
+        isRunningRef.current = false;
+      } else {
+        console.warn("[EMBEDDED ONRAMP] Onramp flow is already running. Ignoring duplicate trigger.");
+        return;
+      }
     }
     isRunningRef.current = true;
+    lastStartOnrampTimeRef.current = now;
+
     if (isForceRetry || Date.now() - lastErrorSetTimeRef.current > 5000) {
       setError(null);
     }
@@ -3079,11 +3088,15 @@ export function useStripeEmbeddedOnramp({
     const formattedPhone = activePhone ? formatToE164(activePhone, activeCountryRef.current || "US") : "";
 
     if (!enabled || !activeEmail || !splitAddress || !publishableKey) {
-      handleError("Missing required fields (email, split address, or API key)");
+      isRunningRef.current = false;
+      if (activeEmail) {
+        handleError("Missing required fields (split address or API key)");
+      }
       return;
     }
 
     if (!amount || amount <= 0) {
+      isRunningRef.current = false;
       handleError("Invalid amount");
       return;
     }
@@ -3839,6 +3852,7 @@ export function useStripeEmbeddedOnramp({
               onrampRef.current = null;
             }
             if (startOnrampRef.current && activeEmailRef.current) {
+              isRunningRef.current = false;
               startOnrampRef.current(activeEmailRef.current, undefined, undefined, true);
             }
             return;

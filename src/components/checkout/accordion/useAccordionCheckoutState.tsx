@@ -526,7 +526,6 @@ export function useAccordionCheckoutState(
     } catch {}
   }, [receiptId]);
 
-  // Session Storage Persistence on change
   useEffect(() => {
     if (typeof window === "undefined" || !receiptId) return;
     try {
@@ -534,6 +533,34 @@ export function useAccordionCheckoutState(
       window.sessionStorage.setItem(`pp_checkout_${receiptId}`, JSON.stringify(payload));
     } catch {}
   }, [receiptId, email, phone, country, firstName, lastName, line1, line2, city, stateCode, zipCode]);
+
+  // Background pre-warm Stripe Onramp initialization as soon as valid email is present
+  const hasPrewarmedRef = useRef(false);
+  useEffect(() => {
+    if (hasPrewarmedRef.current || isSimulationMode) return;
+    if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      if (!propPaymentElement && onHeadlessSubmitEmailPhone) {
+        hasPrewarmedRef.current = true;
+        console.log("[ACCORDION STATE] Pre-warming Stripe Onramp for valid email:", email);
+        onHeadlessSubmitEmailPhone(email.trim(), phone || "", country || "US", `${firstName} ${lastName}`.trim()).catch((err) => {
+          console.warn("[ACCORDION STATE] Pre-warm attempt encountered error:", err);
+        });
+      }
+    }
+  }, [email, phone, country, firstName, lastName, propPaymentElement, onHeadlessSubmitEmailPhone, isSimulationMode]);
+
+  // Reactive Step 3 Watchdog: If user is on Step 3 and paymentElement is null, trigger recovery initialization
+  useEffect(() => {
+    if (activeStep === 3 && !propPaymentElement && !isSimulationMode && onHeadlessSubmitEmailPhone && email) {
+      const recoveryTimer = setTimeout(() => {
+        if (!propPaymentElement) {
+          console.log("[ACCORDION STATE] Step 3 active with null paymentElement. Triggering recovery initialization...");
+          onHeadlessSubmitEmailPhone(email.trim(), phone || "", country || "US", `${firstName} ${lastName}`.trim()).catch(() => {});
+        }
+      }, 1500);
+      return () => clearTimeout(recoveryTimer);
+    }
+  }, [activeStep, propPaymentElement, isSimulationMode, onHeadlessSubmitEmailPhone, email, phone, country, firstName, lastName]);
 
   // Address Autocomplete handler
   const handleFetchSuggestions = async (input: string) => {
