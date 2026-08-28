@@ -3021,8 +3021,8 @@ export function useStripeEmbeddedOnramp({
 
     const now = Date.now();
     if (isRunningRef.current && !isForceRetry) {
-      if (now - lastStartOnrampTimeRef.current > 8000) {
-        console.warn("[EMBEDDED ONRAMP] Onramp flow lock exceeded 8s timeout. Auto-resetting lock for re-trigger.");
+      if (now - lastStartOnrampTimeRef.current > 45000) {
+        console.warn("[EMBEDDED ONRAMP] Onramp flow lock exceeded 45s timeout. Auto-resetting lock for re-trigger.");
         isRunningRef.current = false;
       } else {
         console.warn("[EMBEDDED ONRAMP] Onramp flow is already running. Ignoring duplicate trigger.");
