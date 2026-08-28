@@ -549,18 +549,20 @@ export function useAccordionCheckoutState(
     }
   }, [email, phone, country, firstName, lastName, propPaymentElement, onHeadlessSubmitEmailPhone, isSimulationMode]);
 
-  // Reactive Step 3 Watchdog: If user is on Step 3 and paymentElement is null, trigger recovery initialization
+  // Reactive Step 3 Watchdog: Trigger recovery initialization ONLY if in idle or error state with null paymentElement
   useEffect(() => {
-    if (activeStep === 3 && !propPaymentElement && !isSimulationMode && onHeadlessSubmitEmailPhone && email) {
-      const recoveryTimer = setTimeout(() => {
-        if (!propPaymentElement) {
-          console.log("[ACCORDION STATE] Step 3 active with null paymentElement. Triggering recovery initialization...");
-          onHeadlessSubmitEmailPhone(email.trim(), phone || "", country || "US", `${firstName} ${lastName}`.trim()).catch(() => {});
-        }
-      }, 1500);
-      return () => clearTimeout(recoveryTimer);
+    if (
+      activeStep === 3 &&
+      !propPaymentElement &&
+      !isSimulationMode &&
+      onHeadlessSubmitEmailPhone &&
+      email &&
+      (!headlessStep || headlessStep === "idle" || headlessStep === "error")
+    ) {
+      console.log("[ACCORDION STATE] Step 3 active in idle/error state with null paymentElement. Triggering recovery...");
+      onHeadlessSubmitEmailPhone(email.trim(), phone || "", country || "US", `${firstName} ${lastName}`.trim()).catch(() => {});
     }
-  }, [activeStep, propPaymentElement, isSimulationMode, onHeadlessSubmitEmailPhone, email, phone, country, firstName, lastName]);
+  }, [activeStep, propPaymentElement, isSimulationMode, onHeadlessSubmitEmailPhone, email, phone, country, firstName, lastName, headlessStep]);
 
   // Address Autocomplete handler
   const handleFetchSuggestions = async (input: string) => {
