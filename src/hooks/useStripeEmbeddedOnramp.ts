@@ -379,7 +379,7 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
   checking_link: "Checking account...",
   registering_link: "Creating account...",
   collecting_phone: "Enter phone number for Link...",
-  authenticating: "Verifying identity...",
+  authenticating: "Authenticating with Link...",
   exchanging_tokens: "Securing session...",
   checking_kyc: "Checking verification...",
   collecting_kyc: "Collecting identity info...",
@@ -3005,22 +3005,32 @@ export function useStripeEmbeddedOnramp({
     isForceRetryOrName?: boolean | string,
     overrideCountry?: string
   ) => {
-    // Detect if Argument 3 was passed as a 2-letter country code (e.g. "DE", "FR", "US")
-    let resolvedCountry = overrideCountry;
-    let resolvedName = fullName;
+    // Robust, dynamic argument parsing for all caller permutations:
+    // - (email, phone, country, fullName)
+    // - (email, phone, country, isForceRetry, fullName)
+    // - (email, phone, fullName, isForceRetry)
+    // - (email, phone, fullName)
+    // - (email, undefined, undefined, isForceRetry)
+    // - (email, phone, undefined, isForceRetry, country)
+    let resolvedCountry: string | undefined = typeof overrideCountry === "string" && overrideCountry.trim() ? overrideCountry.trim() : undefined;
+    let resolvedName: string | undefined = fullName;
     let isForceRetry = false;
 
-    if (typeof overrideNameOrCountry === "string" && overrideNameOrCountry.length === 2 && overrideNameOrCountry === overrideNameOrCountry.toUpperCase()) {
-      resolvedCountry = overrideNameOrCountry;
-      if (typeof isForceRetryOrName === "string") {
-        resolvedName = isForceRetryOrName;
-      }
-    } else {
-      if (typeof overrideNameOrCountry === "string") {
-        resolvedName = overrideNameOrCountry;
-      }
-      if (typeof isForceRetryOrName === "boolean") {
-        isForceRetry = isForceRetryOrName;
+    const remainingArgs = [overrideNameOrCountry, isForceRetryOrName, overrideCountry].filter(
+      (a) => a !== undefined && a !== null
+    );
+
+    for (const arg of remainingArgs) {
+      if (typeof arg === "boolean") {
+        isForceRetry = arg;
+      } else if (typeof arg === "string") {
+        const trimmed = arg.trim();
+        const upper = trimmed.toUpperCase();
+        if (VALID_ISO_COUNTRY_CODES.has(upper) && (!resolvedCountry || resolvedCountry === upper)) {
+          resolvedCountry = upper;
+        } else if (trimmed.length > 0) {
+          resolvedName = trimmed;
+        }
       }
     }
 

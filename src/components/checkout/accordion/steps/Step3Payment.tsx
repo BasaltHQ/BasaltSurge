@@ -186,7 +186,7 @@ export function Step3Payment({
                   ? "Verifying compliance requirements..."
                   : "Connecting to secure Stripe payment network..."
               }
-              timeoutSeconds={3.5}
+              timeoutSeconds={10}
               onTimeoutRetry={onTimeoutRetry}
             />
 

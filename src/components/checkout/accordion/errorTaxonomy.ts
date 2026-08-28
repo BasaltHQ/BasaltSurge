@@ -116,6 +116,16 @@ export const STRIPE_ONRAMP_ERRORS: Record<string, OnrampErrorDefinition> = {
   },
 
   // ─── 2. PAYMENT METHOD & DECLINE ERRORS ───
+  crypto_onramp_card_institution_block: {
+    code: "crypto_onramp_card_institution_block",
+    category: "payment",
+    actionable: true,
+    defaultTargetStep: 3,
+    title: "Card Issuer Restricted",
+    userMessage:
+      "Your card issuer does not support crypto transactions. Please pay with a bank account (ACH) or use a different debit/credit card.",
+    recoveryAction: "switch_to_bank",
+  },
   crypto_onramp_bank_institution_block: {
     code: "crypto_onramp_bank_institution_block",
     category: "payment",
@@ -505,6 +515,8 @@ function findMatchingErrorCode(text: string): string | null {
   for (const code of Object.keys(STRIPE_ONRAMP_ERRORS)) {
     if (text.includes(code)) return code;
   }
+  if (text.includes("institution_block") || text.includes("card_institution_block")) return "crypto_onramp_card_institution_block";
+  if (text.includes("bank_institution_block")) return "crypto_onramp_bank_institution_block";
   if (text.includes("do_not_honor") || text.includes("card was declined")) return "card_declined";
   if (text.includes("insufficient_funds")) return "insufficient_funds";
   if (text.includes("expired_card")) return "expired_card";
