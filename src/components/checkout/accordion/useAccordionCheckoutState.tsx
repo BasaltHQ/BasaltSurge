@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   PortalPayAccordionCheckoutV2Props,
   UseAccordionCheckoutStateReturn,
@@ -552,6 +552,22 @@ export function useAccordionCheckoutState(
     }
   }, [email, phone, country, firstName, lastName, propPaymentElement, onHeadlessSubmitEmailPhone, isSimulationMode]);
 
+  // Manual or Watchdog Reconnection Trigger for Step 3 Payment Element
+  const handlePaymentTimeoutRetry = useCallback(() => {
+    console.log("[ACCORDION STATE] Triggering onramp force retry for payment element collection...");
+    if (onHeadlessSubmitEmailPhone && email) {
+      onHeadlessSubmitEmailPhone(
+        email.trim(),
+        phone || "",
+        country || "US",
+        true,
+        `${firstName} ${lastName}`.trim()
+      ).catch((err) => {
+        console.warn("[ACCORDION STATE] Payment retry attempt failed:", err);
+      });
+    }
+  }, [onHeadlessSubmitEmailPhone, email, phone, country, firstName, lastName]);
+
   // Reactive Step 3 Watchdog: Trigger recovery initialization if Step 3 is active with null paymentElement
   useEffect(() => {
     if (
@@ -564,12 +580,12 @@ export function useAccordionCheckoutState(
       const timer = setTimeout(() => {
         if (!propPaymentElement) {
           console.log("[ACCORDION STATE] Step 3 active with null paymentElement after 2.5s. Triggering session re-initialization...");
-          onHeadlessSubmitEmailPhone(email.trim(), phone || "", country || "US", true, `${firstName} ${lastName}`.trim()).catch(() => {});
+          handlePaymentTimeoutRetry();
         }
       }, 2500);
       return () => clearTimeout(timer);
     }
-  }, [activeStep, propPaymentElement, isSimulationMode, onHeadlessSubmitEmailPhone, email, phone, country, firstName, lastName]);
+  }, [activeStep, propPaymentElement, isSimulationMode, handlePaymentTimeoutRetry, email]);
 
   // Address Autocomplete handler
   const handleFetchSuggestions = async (input: string) => {
@@ -1138,6 +1154,7 @@ export function useAccordionCheckoutState(
       onWalletSignatureChange: setWalletSignature,
       onSubmitWalletSignature: handleWalletSignatureSubmit,
       isSubmittingWalletSignature,
+      onTimeoutRetry: handlePaymentTimeoutRetry,
       onHeaderClick: () => handleStepChange(3),
     },
     // Step 4 Props Bundle

@@ -91,8 +91,8 @@ export function Step4Fulfillment({
     ? 20
     : 0;
 
-  // Modal active during active in-flight processing or during the smooth decline feedback transition
-  const isProcessingModalActive = isOpen && !isConfirmed;
+  // Modal active during active in-flight processing or during the smooth decline feedback transition (yields to Stripe native identity modal)
+  const isProcessingModalActive = isOpen && !isConfirmed && !isIdentityVerifying;
 
   // ─── Scroll Locking Guard for Processing Modal ───
   useEffect(() => {
