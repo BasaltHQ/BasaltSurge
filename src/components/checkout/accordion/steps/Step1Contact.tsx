@@ -104,7 +104,7 @@ export function Step1Contact({
       {/* Step 1 Expanded Form */}
       <form
         onSubmit={onSubmit}
-        className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}
+        className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 transition-all duration-300 ease-out ${isOpen ? "opacity-100" : "hidden"}`}
       >
         {/* Email Address */}
         <div>
@@ -248,6 +248,7 @@ export function Step1Contact({
               isVisible={isOpen && (!headlessStep || ["authenticating", "collecting_phone"].includes(headlessStep))}
               containerRef={authContainerRef}
               isLightText={isLightText}
+              minHeight={130}
               loadingMessage="Connecting to Stripe Link verification..."
             />
           </div>

@@ -3012,7 +3012,7 @@ export function useStripeEmbeddedOnramp({
     // - (email, phone, fullName)
     // - (email, undefined, undefined, isForceRetry)
     // - (email, phone, undefined, isForceRetry, country)
-    let resolvedCountry: string | undefined = typeof overrideCountry === "string" && overrideCountry.trim() ? overrideCountry.trim() : undefined;
+    let resolvedCountry: string | undefined = undefined;
     let resolvedName: string | undefined = fullName;
     let isForceRetry = false;
 
@@ -3026,7 +3026,7 @@ export function useStripeEmbeddedOnramp({
       } else if (typeof arg === "string") {
         const trimmed = arg.trim();
         const upper = trimmed.toUpperCase();
-        if (VALID_ISO_COUNTRY_CODES.has(upper) && (!resolvedCountry || resolvedCountry === upper)) {
+        if (VALID_ISO_COUNTRY_CODES.has(upper) && !resolvedCountry) {
           resolvedCountry = upper;
         } else if (trimmed.length > 0) {
           resolvedName = trimmed;

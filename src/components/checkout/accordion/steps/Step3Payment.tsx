@@ -57,8 +57,6 @@ export function Step3Payment({
         title={
           isWalletOwnershipRequired
             ? "Security Verification & Payment"
-            : isIdentityVerifying
-            ? "Identity Verification & Payment"
             : "Payment Method"
         }
         subtitle={
@@ -84,7 +82,7 @@ export function Step3Payment({
       />
 
       {/* Step 3 Expanded Body */}
-      <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${isOpen ? "" : "h-0 opacity-0 overflow-visible pointer-events-none p-0 border-0"}`}>
+      <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 transition-all duration-300 ease-out ${isOpen ? "opacity-100" : "h-0 opacity-0 overflow-visible pointer-events-none p-0 border-0"}`}>
         {/* Top Error Alert Banner & Decline Recovery Panel */}
         {activeError && !isWalletOwnershipRequired && (
           <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 animate-in fade-in my-1 space-y-2 text-left">
@@ -153,15 +151,15 @@ export function Step3Payment({
           <div className="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/30 space-y-2 animate-in fade-in duration-300 my-1">
             <div className="flex items-center gap-2 text-purple-300 text-sm font-bold">
               <Shield className="w-4 h-4 text-purple-400 shrink-0" />
-              <span>Stripe Identity Verification Required</span>
+              <span>Stripe Identity Verification in Progress</span>
             </div>
             <p className="text-xs text-purple-300/80 leading-relaxed">
-              Please follow the secure on-screen instructions below to scan your government-issued ID (or passport) and take a quick selfie to verify your identity.
+              Please follow the secure on-screen instructions in the verification window to scan your government-issued ID (or passport) and take a quick selfie to verify your identity.
             </p>
           </div>
         )}
 
-        {/* Embedded Live Stripe Payment / Identity Element Container */}
+        {/* Embedded Live Stripe Payment Element Container */}
         {!isWalletOwnershipRequired && (
           <div className="space-y-2">
             <StripeEmbedContainer
@@ -169,10 +167,10 @@ export function Step3Payment({
               isVisible={isOpen && !isWalletOwnershipRequired}
               containerRef={paymentContainerRef}
               isLightText={isLightText}
+              minHeight={210}
+              errorMessage={activeError || undefined}
               loadingMessage={
-                isIdentityVerifying
-                  ? "Loading secure Stripe identity verification..."
-                  : headlessStep === "checking_link"
+                headlessStep === "checking_link"
                   ? "Checking Stripe Link authorization..."
                   : headlessStep === "authenticating"
                   ? "Authenticating secure payment session..."
@@ -194,9 +192,7 @@ export function Step3Payment({
               <div className="flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold text-amber-400/90 text-center animate-in fade-in">
                 <Lock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span>
-                  {isIdentityVerifying
-                    ? "Complete the secure photo verification above to proceed."
-                    : "Please confirm your payment method in the secure form above to complete checkout."}
+                  Please confirm your payment method in the secure form above to complete checkout.
                 </span>
               </div>
             )}
