@@ -312,6 +312,8 @@ export function useAccordionCheckoutState(
   const [zipCode, setZipCode] = useState(initialZipCode || "");
   const [ssn, setSsn] = useState("");
   const [dob, setDob] = useState(initialDob || "");
+  const [micaIdentifierValue, setMicaIdentifierValue] = useState("");
+  const [micaIdentifierType, setMicaIdentifierType] = useState<string>("");
 
   // Compiled single-line address for address lookup & autocomplete
   const compiledInitialAddress = [initialLine1, initialLine2, initialCity, initialStateCode, initialZipCode]
@@ -422,7 +424,7 @@ export function useAccordionCheckoutState(
   const showSsnField = isUS && (showStepUpForm || isL2Requirement);
 
   const normalizedState = (stateCode || "").trim().toUpperCase();
-  const isUnsupportedState = isUS && (normalizedState === "NY" || normalizedState === "HI" || normalizedState === "NEW YORK" || normalizedState === "HAWAII");
+  const isUnsupportedState = isUS && (normalizedState === "HI" || normalizedState === "HAWAII");
 
   const fieldValidation = {
     firstName: (firstName || "").trim().length >= 1,
@@ -433,6 +435,7 @@ export function useAccordionCheckoutState(
     zipCode: (zipCode || "").trim().length >= 2,
     dob: showDobField ? dobStatus.valid : true,
     ssn: showSsnField ? ssnDigits.length === 9 : true,
+    micaIdentifier: countryConfig.micaIdentifier ? (micaIdentifierValue || "").trim().length >= 3 : true,
   };
 
   // Step 3: Payment State
@@ -675,6 +678,12 @@ export function useAccordionCheckoutState(
     if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
     if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
     if (isEU && !fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
+    if (isEU && countryConfig.micaIdentifier && !fieldValidation.micaIdentifier) {
+      missingIdentityFields.push({
+        key: "micaIdentifier",
+        label: countryConfig.micaIdentifier.label,
+      });
+    }
   }
 
   const isIdentityComplete = missingIdentityFields.length === 0;
@@ -851,7 +860,7 @@ export function useAccordionCheckoutState(
     }
 
     if (isUnsupportedState) {
-      setLocalError("Instant card checkout is currently unavailable for New York (NY) and Hawaii (HI) due to state regulatory guidelines. Please verify your address or select an alternative payment method.");
+      setLocalError("Instant card checkout is currently unavailable for Hawaii (HI) due to state regulatory guidelines. Please verify your address or select an alternative payment method.");
       setIsSubmittingIdentity(false);
       setManualEditAddress(true);
       return;
@@ -904,6 +913,14 @@ export function useAccordionCheckoutState(
                 nationalities: [targetCountry],
                 birth_city: city.trim(),
                 birth_country: targetCountry,
+                ...(countryConfig.micaIdentifier && micaIdentifierValue.trim()
+                  ? {
+                      id_number: {
+                        type: micaIdentifierType || countryConfig.micaIdentifier.type,
+                        value: micaIdentifierValue.trim().toUpperCase(),
+                      },
+                    }
+                  : {}),
               }
             : {}),
         });
@@ -1104,6 +1121,10 @@ export function useAccordionCheckoutState(
       setDob,
       ssn,
       setSsn,
+      micaIdentifierValue,
+      setMicaIdentifierValue,
+      micaIdentifierType,
+      setMicaIdentifierType,
       addressSearchInput,
       setAddressSearchInput,
       isAddressParsed,

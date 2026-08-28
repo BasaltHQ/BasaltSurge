@@ -1,3 +1,12 @@
+export interface MicaIdentifierConfig {
+  type: "ee_ik" | "es_nif" | "is_kt" | "it_cf" | "mt_nic" | "mt_pp" | "pl_pesel" | "pl_nip";
+  label: string;
+  placeholder: string;
+  description: string;
+  alternativeType?: "mt_pp" | "pl_nip";
+  alternativeLabel?: string;
+}
+
 export interface CountryAddressConfig {
   countryCode: string;
   isUS: boolean;
@@ -11,6 +20,7 @@ export interface CountryAddressConfig {
   cityLabel: string;
   ssnRequired: boolean;
   idDocumentLabel: string;
+  micaIdentifier?: MicaIdentifierConfig;
 }
 
 export const EU_EEA_COUNTRIES = new Set([
@@ -109,6 +119,12 @@ export const getCountryAddressConfig = (countryCode: string = "US"): CountryAddr
         cityLabel: "Città / City",
         ssnRequired: false,
         idDocumentLabel: "Carta d'Identità or Passaporto",
+        micaIdentifier: {
+          type: "it_cf",
+          label: "Codice Fiscale",
+          placeholder: "RSSMRA85M01H501Z",
+          description: "Italian Tax Identification Code (16 alphanumeric characters)",
+        },
       };
     case "ES": // Spain
       return {
@@ -124,6 +140,12 @@ export const getCountryAddressConfig = (countryCode: string = "US"): CountryAddr
         cityLabel: "Ciudad / City",
         ssnRequired: false,
         idDocumentLabel: "DNI, NIE or Pasaporte",
+        micaIdentifier: {
+          type: "es_nif",
+          label: "NIF / NIE",
+          placeholder: "12345678Z",
+          description: "Spanish Tax Identification Number (9 characters)",
+        },
       };
     case "NL": // Netherlands
       return {
@@ -289,6 +311,14 @@ export const getCountryAddressConfig = (countryCode: string = "US"): CountryAddr
         cityLabel: "Miasto / City",
         ssnRequired: false,
         idDocumentLabel: "Dowód Osobisty or Paszport",
+        micaIdentifier: {
+          type: "pl_pesel",
+          label: "PESEL Number",
+          placeholder: "85010112345",
+          description: "Polish PESEL (or NIP)",
+          alternativeType: "pl_nip",
+          alternativeLabel: "NIP (Tax Number)",
+        },
       };
     case "CZ": // Czech Republic
       return {
@@ -424,6 +454,12 @@ export const getCountryAddressConfig = (countryCode: string = "US"): CountryAddr
         cityLabel: "Linn / City",
         ssnRequired: false,
         idDocumentLabel: "ID-kaart or Pass",
+        micaIdentifier: {
+          type: "ee_ik",
+          label: "Isikukood (PIC)",
+          placeholder: "38001085718",
+          description: "Estonian Personal Identification Code (11 digits)",
+        },
       };
     case "LV": // Latvia
       return {
@@ -484,6 +520,14 @@ export const getCountryAddressConfig = (countryCode: string = "US"): CountryAddr
         cityLabel: "Locality / City",
         ssnRequired: false,
         idDocumentLabel: "ID Card or Passport",
+        micaIdentifier: {
+          type: "mt_nic",
+          label: "National ID Card Number",
+          placeholder: "123456M",
+          description: "Maltese ID Card Number (or Passport Number)",
+          alternativeType: "mt_pp",
+          alternativeLabel: "Passport Number",
+        },
       };
     case "CY": // Cyprus
       return {
@@ -514,6 +558,12 @@ export const getCountryAddressConfig = (countryCode: string = "US"): CountryAddr
         cityLabel: "Bær / City",
         ssnRequired: false,
         idDocumentLabel: "Nafnskírteini or Vegabréf",
+        micaIdentifier: {
+          type: "is_kt",
+          label: "Kennitala (PIC)",
+          placeholder: "010101-2340",
+          description: "Icelandic National Identification Code (10 digits)",
+        },
       };
     case "LI": // Liechtenstein
       return {

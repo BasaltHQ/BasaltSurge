@@ -53,6 +53,10 @@ export function Step2Identity({
   setDob,
   ssn,
   setSsn,
+  micaIdentifierValue = "",
+  setMicaIdentifierValue,
+  micaIdentifierType,
+  setMicaIdentifierType,
   addressSearchInput,
   setAddressSearchInput,
   isAddressParsed,
@@ -98,6 +102,7 @@ export function Step2Identity({
   const buttonTextColor = getContrastingTextColor(primaryColor);
   const showDobField = showStepUpForm || isL2Requirement || isEU;
   const showSsnField = isUS && (showStepUpForm || isL2Requirement);
+  const showMicaField = Boolean(countryConfig.micaIdentifier);
 
   const isFieldValid = (field: string): boolean => {
     switch (field) {
@@ -117,6 +122,8 @@ export function Step2Identity({
         return showDobField ? dobStatus.valid : true;
       case "ssn":
         return showSsnField ? ssnDigits.length === 9 : true;
+      case "micaIdentifier":
+        return showMicaField ? (micaIdentifierValue || "").trim().length >= 3 : true;
       default:
         return true;
     }
@@ -147,7 +154,7 @@ export function Step2Identity({
   };
 
   const normalizedState = (stateCode || "").trim().toUpperCase();
-  const isUnsupportedState = (country || "US").toUpperCase() === "US" && (normalizedState === "NY" || normalizedState === "HI" || normalizedState === "NEW YORK" || normalizedState === "HAWAII");
+  const isUnsupportedState = (country || "US").toUpperCase() === "US" && (normalizedState === "HI" || normalizedState === "HAWAII");
 
   const hasAddressError = Boolean(
     activeError && (
@@ -376,15 +383,15 @@ export function Step2Identity({
               </div>
             )}
 
-            {/* Unsupported Region Notice (NY / HI) */}
+            {/* Unsupported Region Notice (HI) */}
             {isUnsupportedState && (
               <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1.5 text-left animate-in fade-in my-1">
                 <div className="flex items-center gap-2 text-amber-200 text-xs font-bold">
                   <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>Unsupported Region Notice (New York & Hawaii)</span>
+                  <span>Unsupported Region Notice (Hawaii)</span>
                 </div>
                 <p className="text-xs text-amber-300/90 leading-relaxed">
-                  Instant card checkout is currently unavailable for New York (NY) and Hawaii (HI) due to state regulatory guidelines. Please verify your address or use an alternative payment method.
+                  Instant card checkout is currently unavailable for Hawaii (HI) due to state regulatory guidelines. Please verify your address or use an alternative payment method.
                 </p>
               </div>
             )}
@@ -597,6 +604,31 @@ export function Step2Identity({
                     />
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* MiCA National Identifier (EU MiCA Regulated Countries: EE, ES, IS, IT, MT, PL) */}
+            {showMicaField && countryConfig.micaIdentifier && (
+              <div className="pt-3 border-t border-dashed border-white/10 text-left">
+                <div className="w-full min-w-0">
+                  <label className={`flex items-center justify-between text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+                    <span className="flex items-center gap-1.5 truncate">
+                      <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" /> {countryConfig.micaIdentifier.label}
+                    </span>
+                    <span className="text-zinc-400 text-xs font-mono">MiCA Required</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={countryConfig.micaIdentifier.placeholder}
+                    value={micaIdentifierValue}
+                    onBlur={() => markFieldTouched("micaIdentifier")}
+                    onChange={(e) => setMicaIdentifierValue?.(e.target.value.toUpperCase())}
+                    className={`w-full h-11 px-3.5 font-mono text-sm font-semibold rounded-xl focus:outline-none transition-all ${getFieldInputClass("micaIdentifier")}`}
+                  />
+                  <p className={`text-[11px] mt-1.5 ${isLightText ? "text-white/40" : "text-black/40"}`}>
+                    {countryConfig.micaIdentifier.description}
+                  </p>
+                </div>
               </div>
             )}
 
