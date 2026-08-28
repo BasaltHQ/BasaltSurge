@@ -10,6 +10,7 @@ import {
   formatErrorMessage,
   validateDob,
   getCountryAddressConfig,
+  isEuEeaCountry,
 } from "./utils";
 import { getSubdivisionsForCountry } from "./subdivisions";
 import {
@@ -389,18 +390,17 @@ export function useAccordionCheckoutState(
   const isUS = countryConfig.isUS;
   const isEU = countryConfig.isEU;
 
-  // Step-up (DOB + SSN required): user is at L0 (name & address verified, needs L1)
+  // Step-up (DOB + SSN required): user is at L0 (name & address verified) but requires L1 (e.g. order exceeds L0 tier limit or Stripe API requested L1)
   const showStepUpForm =
     !l1Verified &&
     !showFullForm &&
-    (kycLevel === "L0" ||
-      effectiveTier === "l1" ||
+    (effectiveTier === "l1" ||
       effectiveStatus === "step_up" ||
       (kycTierRequired as string) === "l1" ||
       isProactiveL1StepUp ||
       parsedActiveError?.kycTargetTier === "l1" ||
       Boolean(parsedActiveError?.isAmountLimit && !l1Verified) ||
-      (headlessStep === "collecting_kyc" && !l1Verified) ||
+      (headlessStep === "collecting_kyc" && (kycTierRequired as string) === "l1") ||
       headlessStep === "submitting_kyc");
 
   // Document verification button (Photo ID/Selfie): user needs L2 (EU region, explicit L2 tier requirement, amount limit, or retry L2 on rejection)
@@ -414,8 +414,7 @@ export function useAccordionCheckoutState(
       parsedActiveError?.kycTargetTier === "l2" ||
       Boolean(parsedActiveError?.isAmountLimit && !l2Verified) ||
       headlessStep === "verifying_identity" ||
-      (headlessStep === "collecting_kyc" && (l1Verified || isEU)) ||
-      headlessStep === "checking_kyc");
+      (headlessStep === "collecting_kyc" && (l1Verified || isEU)));
 
   const isL2Requirement = showVerifyDocs;
 
@@ -874,8 +873,8 @@ export function useAccordionCheckoutState(
       }
 
       const targetCountry = (country || "US").toUpperCase();
-      const isEU = targetCountry !== "US";
-      const isNorthAmerica = targetCountry === "US";
+      const isEU = isEuEeaCountry(targetCountry);
+      const isNorthAmerica = targetCountry === "US" || targetCountry === "CA";
 
       // Stripe KYC Tier Invariant:
       // - If US customer is already L0-verified (Address verified) and performing reactive L1 step-up, Stripe specifies uploading only DOB + SSN (attachKYCInfo partial upload).

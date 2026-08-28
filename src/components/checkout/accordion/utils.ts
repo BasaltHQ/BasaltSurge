@@ -13,11 +13,21 @@ export interface CountryAddressConfig {
   idDocumentLabel: string;
 }
 
+export const EU_EEA_COUNTRIES = new Set([
+  "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", 
+  "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", 
+  "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH"
+]);
+
+export function isEuEeaCountry(countryCode: string): boolean {
+  return EU_EEA_COUNTRIES.has((countryCode || "").trim().toUpperCase());
+}
+
 export const getCountryAddressConfig = (countryCode: string = "US"): CountryAddressConfig => {
   const code = (countryCode || "US").trim().toUpperCase();
   const isUS = code === "US";
-  const isGB = code === "GB";
-  const isEU = !isUS && !isGB;
+  const isGB = code === "GB" || code === "UK";
+  const isEU = isEuEeaCountry(code);
 
   if (isUS) {
     return {
@@ -525,7 +535,7 @@ export const getCountryAddressConfig = (countryCode: string = "US"): CountryAddr
         countryCode: code,
         isUS: false,
         isGB: false,
-        isEU: true,
+        isEU: isEuEeaCountry(code),
         requiresState: false,
         stateLabel: "State / Region (Optional)",
         statePlaceholder: "",

@@ -6,9 +6,8 @@ export const MONTH_NAMES = [
 ];
 
 export const SUPPORTED_COUNTRIES: SupportedCountry[] = [
-  // Primary (United States & United Kingdom)
+  // Primary (United States)
   { code: "US", name: "United States", dial: "+1", flag: "🇺🇸" },
-  { code: "GB", name: "United Kingdom", dial: "+44", flag: "🇬🇧" },
 
   // European Union (All 27 Member States)
   { code: "AT", name: "Austria", dial: "+43", flag: "🇦🇹" },

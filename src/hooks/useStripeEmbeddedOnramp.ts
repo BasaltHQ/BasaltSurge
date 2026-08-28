@@ -3744,7 +3744,7 @@ export function useStripeEmbeddedOnramp({
         const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | "us_bank_account" | null; brand: string; last4: string; paymentMethodDetails?: any }>((resolve, reject) => {
           paymentRejectRef.current = reject;
 
-          onramp.collectPaymentMethod(
+          const elemResult = onramp.collectPaymentMethod(
             {
               payment_method_types: achEnabled ? ["card", "us_bank_account"] : ["card"],
               wallets: { applePay: "auto", googlePay: "auto" },
@@ -3853,17 +3853,28 @@ export function useStripeEmbeddedOnramp({
                 reject(new Error("Payment method collection failed"));
               }
             }
-          ).then((element: HTMLElement) => {
+          );
+
+          if (elemResult && typeof (elemResult as any).then === "function") {
+            (elemResult as Promise<HTMLElement>).then((element: HTMLElement) => {
+              if (mountedRef.current && element) {
+                console.log("[EMBEDDED ONRAMP] Payment element resolved from Promise");
+                setPaymentElement(element);
+              }
+            }).catch((err) => {
+              console.error("[EMBEDDED ONRAMP] Payment element Promise failed:", err);
+              if (mountedRef.current) {
+                setPaymentElement(null);
+              }
+              paymentRejectRef.current = null;
+              reject(err);
+            });
+          } else if (elemResult && typeof elemResult === "object") {
+            console.log("[EMBEDDED ONRAMP] Payment element returned synchronously");
             if (mountedRef.current) {
-              setPaymentElement(element);
+              setPaymentElement(elemResult as HTMLElement);
             }
-          }).catch((err) => {
-            if (mountedRef.current) {
-              setPaymentElement(null);
-            }
-            paymentRejectRef.current = null;
-            reject(err);
-          });
+          }
         });
 
         let pmToken: string;
