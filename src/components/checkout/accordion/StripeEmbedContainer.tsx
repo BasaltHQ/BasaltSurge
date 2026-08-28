@@ -59,17 +59,15 @@ export function StripeEmbedContainer({
     }
   }, [containerRef]);
 
-  // Idempotent DOM attachment for raw HTMLElement instances
+  // Single-source-of-truth DOM attachment for raw HTMLElement instances
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return;
+    if (!host || !element || !isVisible) return;
 
-    if (element && typeof element === "object" && "nodeType" in element) {
+    if (typeof element === "object" && "nodeType" in element) {
       const domNode = element as HTMLElement;
-      if (!host.contains(domNode)) {
-        host.innerHTML = "";
-        host.appendChild(domNode);
-      }
+      host.innerHTML = "";
+      host.appendChild(domNode);
       setIsStalled(false);
       if (timeoutTimerRef.current) {
         clearTimeout(timeoutTimerRef.current);
@@ -79,7 +77,7 @@ export function StripeEmbedContainer({
         window.dispatchEvent(new Event("resize"));
       });
     }
-  }, [element]);
+  }, [element, isVisible]);
 
   // Layout recalibration whenever the container becomes visible
   useEffect(() => {

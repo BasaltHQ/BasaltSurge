@@ -146,12 +146,23 @@ export function Step2Identity({
       : "bg-black/5 border border-black/10 text-black focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30";
   };
 
+  const hasAddressError = Boolean(
+    activeError && (
+      activeError.toLowerCase().includes("address") ||
+      activeError.toLowerCase().includes("postal") ||
+      activeError.toLowerCase().includes("street") ||
+      activeError.toLowerCase().includes("city") ||
+      activeError.toLowerCase().includes("zip") ||
+      activeError.toLowerCase().includes("state")
+    )
+  );
+
   const isDocVerifyRequired = Boolean(
     (showVerifyDocs || isL2Requirement) && !isL2Approved && !showFullForm && !showStepUpForm
   );
 
   const isAlreadyVerifiedCard = Boolean(
-    isL0Approved && !showStepUpForm && !isDocVerifyRequired && (!isL2Requirement || isL2Approved)
+    isL0Approved && !showStepUpForm && !isDocVerifyRequired && (!isL2Requirement || isL2Approved) && !hasAddressError
   );
 
   return (
@@ -165,11 +176,11 @@ export function Step2Identity({
         stepNumber={2}
         title="Identity & Residential Verification"
         badge={
-          isL2Approved || (isL0Approved && !showStepUpForm && !isDocVerifyRequired) ? (
+          !hasAddressError && (isL2Approved || (isL0Approved && !showStepUpForm && !isDocVerifyRequired)) ? (
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
               <Check className="w-3 h-3 stroke-[3]" /> Verified
             </span>
-          ) : (showStepUpForm || isDocVerifyRequired) ? (
+          ) : (showStepUpForm || isDocVerifyRequired || hasAddressError) ? (
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 inline-flex items-center gap-1">
               <Shield className="w-3 h-3" /> Action Required
             </span>
@@ -351,19 +362,19 @@ export function Step2Identity({
 
             {/* Document Verification Notice if L2 */}
             {isL2Requirement && !isL2Approved && (
-              <div className="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/30 space-y-2 text-left animate-in fade-in">
+              <div className="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/30 space-y-1.5 text-left animate-in fade-in">
                 <div className="flex items-center gap-2 text-purple-300 text-sm font-bold">
                   <Shield className="w-4 h-4 text-purple-400" />
-                  <span>Level 2 Document Verification Required</span>
+                  <span>Level 2 Verification Notice</span>
                 </div>
-                <p className="text-xs text-purple-300/80 leading-relaxed">
-                  Government photo ID or passport verification is required for this transaction level.
+                <p className="text-xs text-purple-200/90 leading-relaxed">
+                  Please complete and save your identity details below. Photo ID / Passport verification will launch automatically after saving to satisfy Level 2 compliance requirements.
                 </p>
               </div>
             )}
 
             {/* Address Autocomplete / Search Input */}
-            {showFullForm && (
+            {(showFullForm || hasAddressError) && (
               <div className="space-y-3 text-left">
                 {/* Legal Name */}
                 <div className="grid grid-cols-2 gap-2.5">

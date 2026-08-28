@@ -40,21 +40,14 @@ export function Step3Payment({
     Boolean(walletOwnershipChallenge) && !isWalletOwnershipVerified;
   const internalPaymentContainerRef = React.useRef<HTMLDivElement | null>(null);
 
-  // Guarantee DOM element attachment and iframe layout integrity across step transitions
+  // Layout recalibration when Step 3 opens
   React.useEffect(() => {
-    const target = (paymentContainerRef as any)?.current || internalPaymentContainerRef.current;
-    if (target && paymentElement && typeof paymentElement === "object" && "nodeType" in paymentElement) {
-      if (!target.contains(paymentElement as Node)) {
-        target.innerHTML = "";
-        target.appendChild(paymentElement as HTMLElement);
-      }
-    }
     if (isOpen) {
       requestAnimationFrame(() => {
         window.dispatchEvent(new Event("resize"));
       });
     }
-  }, [paymentElement, isOpen, paymentContainerRef]);
+  }, [isOpen]);
 
   return (
     <AccordionCard isActive={isOpen} isLightText={isLightText}>
@@ -193,7 +186,7 @@ export function Step3Payment({
                   ? "Verifying compliance requirements..."
                   : "Connecting to secure Stripe payment network..."
               }
-              timeoutSeconds={30}
+              timeoutSeconds={3.5}
               onTimeoutRetry={onTimeoutRetry}
             />
 
