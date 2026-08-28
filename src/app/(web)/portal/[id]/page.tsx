@@ -8865,48 +8865,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         </div>
       )}
 
-      {/* Connection Mode LED Indicator */}
-      {isClientSide && (
-        <div
-          title={isIframe ? "Direct Settlement Active" : "Secure Handshake"}
-          aria-label={isIframe ? "Direct Settlement Active" : "Secure Handshake"}
-          style={{
-            position: "fixed",
-            bottom: 16,
-            right: 16,
-            zIndex: 9999,
-            pointerEvents: "none",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "4px 10px 4px 6px",
-            borderRadius: 20,
-            background: "rgba(0,0,0,0.55)",
-            backdropFilter: "blur(8px)",
-            cursor: "help",
-            userSelect: "none",
-            fontSize: 10,
-            fontFamily: "system-ui, sans-serif",
-            color: "rgba(255,255,255,0.8)",
-            letterSpacing: 0.3,
-            lineHeight: 1,
-          }}
-        >
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: isIframe ? "#22c55e" : "#3b82f6",
-              boxShadow: `0 0 6px 1px ${isIframe ? "rgba(34,197,94,0.6)" : "rgba(59,130,246,0.6)"}`,
-              animation: "portalLedPulse 2s ease-in-out infinite",
-              flexShrink: 0,
-            }}
-          />
-          <span>{isIframe ? "Direct" : "Standalone"}</span>
-          <style>{`@keyframes portalLedPulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }`}</style>
-        </div>
-      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useActiveAccount } from "thirdweb/react";
 import {
   MessageSquare,
@@ -63,10 +64,15 @@ export function CheckoutChatWidget({
   buyerWallet: propBuyerWallet
 }: CheckoutChatWidgetProps) {
   const account = useActiveAccount();
+  const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showProactiveBanner, setShowProactiveBanner] = useState(false);
   const [proactiveDismissed, setProactiveDismissed] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Safe brand context fallback
   const brandName = propBrandName || "Merchant Support";
@@ -373,7 +379,9 @@ export function CheckoutChatWidget({
     }
   };
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <>
       {/* Mobile Drawer Overlay Backdrop */}
       {isOpen && (
@@ -427,135 +435,139 @@ export function CheckoutChatWidget({
 
         {/* Expanded Chat Drawer / Mobile Bottom Sheet */}
         {isOpen ? (
-          <div className="fixed inset-x-0 bottom-0 sm:bottom-5 sm:right-5 sm:left-auto w-full sm:w-96 h-[85vh] sm:h-[460px] max-h-[100dvh] rounded-t-3xl sm:rounded-2xl border-t sm:border border-foreground/15 bg-background shadow-2xl flex flex-col overflow-hidden z-50 animate-in slide-in-from-bottom-5 sm:zoom-in-95 duration-250 backdrop-blur-xl">
+          <div className="fixed inset-x-0 bottom-0 sm:bottom-5 sm:right-5 sm:left-auto w-full sm:w-96 h-[78vh] max-h-[78vh] sm:h-[480px] sm:max-h-[85vh] rounded-t-3xl sm:rounded-2xl border-t sm:border border-white/15 bg-neutral-950 text-white shadow-2xl flex flex-col overflow-hidden z-50 animate-in slide-in-from-bottom-5 sm:zoom-in-95 duration-250 backdrop-blur-2xl">
             {/* Mobile Top Drag Indicator */}
-            <div className="sm:hidden w-12 h-1 rounded-full bg-foreground/20 mx-auto my-2 shrink-0" />
+            <div className="sm:hidden w-12 h-1 rounded-full bg-white/30 mx-auto my-2 shrink-0" />
 
             {/* Header */}
             <div
-              className="p-3.5 border-b border-foreground/10 flex items-center justify-between text-white shrink-0"
-              style={{ backgroundColor: primaryColor }}
+              className="px-4 py-3 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between text-white shrink-0 shadow-sm relative"
+              style={{ borderBottomColor: primaryColor }}
             >
               <div className="flex items-center gap-2.5">
                 {logoUrl ? (
-                  <div className="w-8 h-8 rounded-full bg-white/20 p-0.5 overflow-hidden shrink-0 border border-white/20">
+                  <div className="w-8 h-8 rounded-full bg-white/10 p-0.5 overflow-hidden shrink-0 border border-white/20 shadow-inner">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={logoUrl} alt={brandName} className="w-full h-full object-contain rounded-full bg-white" />
                   </div>
                 ) : (
-                  <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center font-bold text-sm shrink-0">
+                  <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center font-bold text-xs shrink-0 border border-white/20">
                     💬
                   </div>
                 )}
                 <div className="space-y-0.5 overflow-hidden">
-                  <h4 className="text-xs font-bold truncate tracking-wide leading-tight">{brandName}</h4>
-                  <div className="flex items-center gap-1 text-[10px] text-white/80">
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-xs font-extrabold text-white truncate tracking-wide leading-tight">
+                      {brandName !== "Merchant Support" ? `${brandName} Support` : "Live Merchant Support"}
+                    </h4>
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>Live Merchant Support</span>
+                    <span>Live & Online</span>
                   </div>
                 </div>
               </div>
               <button
                 onClick={() => setIsOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-white/20 transition-colors text-white/90"
-                title="Close Chat"
+                className="p-1.5 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 transition-colors text-white"
+                title="Close Support Chat"
               >
-                <X className="w-5 h-5 sm:hidden" />
-                <Minimize2 className="w-4 h-4 hidden sm:block" />
+                <X className="w-4 h-4 text-white" />
               </button>
             </div>
 
-          {/* Messages Thread Container */}
-          <div className="flex-1 p-3 overflow-y-auto space-y-3 bg-foreground/[0.02] text-xs">
-            {/* Introductory Support Banner */}
-            <div className="p-3 rounded-xl border border-foreground/10 bg-foreground/[0.03] text-[11px] text-muted-foreground text-center space-y-1">
-              <p className="font-semibold text-foreground">Have questions about your checkout?</p>
-              <p>Send a message directly to the merchant. Messages wire live to their Admin panel.</p>
-            </div>
-
-            {loading && messages.length === 0 && (
-              <div className="flex items-center justify-center h-32 text-muted-foreground">
-                <span className="animate-spin mr-2">⏳</span> Loading conversation...
+            {/* Messages Thread Container */}
+            <div className="flex-1 p-3.5 overflow-y-auto space-y-3 bg-neutral-900/90 text-xs">
+              {/* Introductory Support Banner */}
+              <div className="p-3 rounded-xl border border-neutral-800 bg-neutral-800/80 text-[11px] text-neutral-300 text-center space-y-1 shadow-inner">
+                <p className="font-bold text-white">Have questions about your checkout?</p>
+                <p className="text-neutral-400 leading-snug">Send a message directly to the merchant. Messages wire live to their Admin panel.</p>
               </div>
-            )}
 
-            {/* Quick Action Helper Chips */}
-            {messages.length < 2 && (
-              <div className="space-y-1.5 pt-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Quick Options</p>
-                <div className="flex flex-col gap-1.5">
-                  {quickChips.map((chip, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => handleSendMessage(chip.text)}
-                      className="text-left px-2.5 py-1.5 rounded-lg border border-foreground/10 bg-background hover:bg-foreground/5 text-[11px] font-medium transition-all duration-150 flex items-center justify-between"
-                    >
-                      <span className="truncate">{chip.label}</span>
-                      <Send className="w-3 h-3 text-muted-foreground shrink-0 ml-1" />
-                    </button>
-                  ))}
+              {loading && messages.length === 0 && (
+                <div className="flex items-center justify-center h-32 text-neutral-400 font-medium">
+                  <span className="animate-spin mr-2">⏳</span> Loading conversation...
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Message Bubble Feed */}
-            {messages.map((msg) => {
-              const isMe = msg.senderWallet.toLowerCase() === clientWallet.toLowerCase();
-              return (
-                <div
-                  key={msg.id}
-                  className={`flex flex-col ${isMe ? "items-end" : "items-start"} space-y-1`}
-                >
-                  <div
-                    className={`max-w-[85%] px-3 py-2 rounded-2xl font-normal leading-relaxed break-words shadow-sm ${
-                      isMe
-                        ? "bg-foreground text-background rounded-tr-none"
-                        : "bg-foreground/10 text-foreground border border-foreground/10 rounded-tl-none"
-                    }`}
-                  >
-                    {msg.body}
+              {/* Quick Action Helper Chips */}
+              {messages.length < 2 && (
+                <div className="space-y-1.5 pt-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Quick Options</p>
+                  <div className="flex flex-col gap-1.5">
+                    {quickChips.map((chip, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleSendMessage(chip.text)}
+                        className="text-left px-3 py-2 rounded-xl border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-neutral-100 text-[11px] font-semibold transition-all duration-150 flex items-center justify-between shadow-sm active:scale-98"
+                      >
+                        <span className="truncate pr-2">{chip.label}</span>
+                        <Send className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                      </button>
+                    ))}
                   </div>
-                  <span className="text-[9px] text-muted-foreground px-1">
-                    {formatTime(msg.createdAt)}
-                  </span>
                 </div>
-              );
-            })}
-            <div ref={messagesEndRef} />
-          </div>
+              )}
 
-          {/* Composer Input Area */}
-          <div className="p-2.5 border-t border-foreground/10 bg-background shrink-0 space-y-1.5">
-            {errorText && (
-              <div className="text-[10px] text-red-500 px-1 font-semibold truncate">{errorText}</div>
-            )}
-            <div className="flex items-end gap-1.5 relative">
-              <textarea
-                ref={inputRef}
-                value={composerText}
-                onChange={(e) => setComposerText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendMessage();
-                  }
-                }}
-                placeholder="Type a message to merchant..."
-                rows={1}
-                className="flex-1 min-h-[38px] max-h-24 p-2 text-xs bg-foreground/[0.04] border border-foreground/15 rounded-xl focus:outline-none focus:ring-1 focus:ring-foreground/30 resize-none font-medium"
-              />
-              <button
-                onClick={() => handleSendMessage()}
-                disabled={sending || !composerText.trim()}
-                className="w-9 h-9 rounded-xl bg-foreground text-background font-bold flex items-center justify-center hover:opacity-90 active:scale-95 transition-all disabled:opacity-30 shrink-0"
-                title="Send Message"
-              >
-                <Send className="w-4 h-4" />
-              </button>
+              {/* Message Bubble Feed */}
+              {messages.map((msg) => {
+                const isMe = msg.senderWallet.toLowerCase() === clientWallet.toLowerCase();
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex flex-col ${isMe ? "items-end" : "items-start"} space-y-1`}
+                  >
+                    <div
+                      className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-xs font-semibold leading-relaxed break-words shadow-md ${
+                        isMe
+                          ? "bg-blue-600 text-white rounded-tr-none"
+                          : "bg-neutral-800 text-neutral-100 border border-neutral-700 rounded-tl-none"
+                      }`}
+                    >
+                      {msg.body}
+                    </div>
+                    <span className="text-[9px] text-neutral-400 px-1 font-medium">
+                      {formatTime(msg.createdAt)}
+                    </span>
+                  </div>
+                );
+              })}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Composer Input Area */}
+            <div className="p-3 pb-[calc(12px+env(safe-area-inset-bottom,0px))] border-t border-neutral-800 bg-neutral-950 shrink-0 space-y-2">
+              {errorText && (
+                <div className="text-[10px] text-red-400 px-1 font-bold truncate">{errorText}</div>
+              )}
+              <div className="flex items-end gap-2 relative">
+                <textarea
+                  ref={inputRef}
+                  value={composerText}
+                  onChange={(e) => setComposerText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                  placeholder="Type a message to merchant..."
+                  rows={1}
+                  className="flex-1 min-h-[42px] max-h-24 p-2.5 text-xs bg-neutral-900 border border-neutral-700 text-white placeholder:text-neutral-400 rounded-xl focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-medium resize-none"
+                />
+                <button
+                  onClick={() => handleSendMessage()}
+                  disabled={sending || !composerText.trim()}
+                  className="w-10 h-10 rounded-xl text-white font-bold flex items-center justify-center shadow-lg hover:opacity-90 active:scale-95 transition-all disabled:opacity-30 shrink-0 cursor-pointer"
+                  style={{ backgroundColor: primaryColor }}
+                  title="Send Message"
+                >
+                  <Send className="w-4 h-4 text-white stroke-[2.5]" />
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      ) : (
+        ) : (
         /* Collapsed Floating Trigger Button */
         <button
           onClick={() => setIsOpen(true)}
@@ -581,6 +593,7 @@ export function CheckoutChatWidget({
         </button>
       )}
     </div>
-  </>
+  </>,
+  document.body
   );
 }
