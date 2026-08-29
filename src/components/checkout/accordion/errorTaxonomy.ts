@@ -355,6 +355,16 @@ export const STRIPE_ONRAMP_ERRORS: Record<string, OnrampErrorDefinition> = {
   },
 
   // ─── 7. SECURITY & SYSTEM ERRORS ───
+  authentication_required: {
+    code: "authentication_required",
+    category: "security",
+    actionable: true,
+    defaultTargetStep: 1,
+    title: "Authentication Required",
+    userMessage:
+      "Please verify your account with the 6-digit one-time code sent to your phone or email.",
+    recoveryAction: "retry_payment",
+  },
   crypto_onramp_transaction_blocked: {
     code: "crypto_onramp_transaction_blocked",
     category: "security",
@@ -480,6 +490,9 @@ export function parseOnrampError(
     }
   } else if (isDecline || matchedCode === "crypto_onramp_bank_institution_block" || matchedCode === "crypto_onramp_invalid_payment_method") {
     targetStep = 3;
+  } else if (matchedCode === "authentication_required" || rawLower.includes("authentication required") || rawLower.includes("not authenticated") || rawLower.includes("unauthenticated")) {
+    targetStep = 1;
+    recoveryAction = "retry_payment";
   } else if (matchedCode === "crypto_onramp_unsupported_country" || matchedCode === "crypto_onramp_unsupportable_customer") {
     targetStep = 1;
   } else if (matchedCode === "crypto_onramp_unsupported" || matchedCode === "crypto_onramp_unsupported_region" || rawLower.includes("address") || rawLower.includes("postal") || rawLower.includes("street") || rawLower.includes("zip") || rawLower.includes("city") || rawLower.includes("state")) {
@@ -514,6 +527,14 @@ export function parseOnrampError(
 function findMatchingErrorCode(text: string): string | null {
   for (const code of Object.keys(STRIPE_ONRAMP_ERRORS)) {
     if (text.includes(code)) return code;
+  }
+  if (
+    text.includes("authentication_required") ||
+    text.includes("authentication required") ||
+    text.includes("not authenticated") ||
+    text.includes("unauthenticated")
+  ) {
+    return "authentication_required";
   }
   if (text.includes("institution_block") || text.includes("card_institution_block")) return "crypto_onramp_card_institution_block";
   if (text.includes("bank_institution_block")) return "crypto_onramp_bank_institution_block";

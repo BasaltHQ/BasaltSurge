@@ -2895,7 +2895,9 @@ export function useStripeEmbeddedOnramp({
           }
           onrampRef.current = null;
         }
+        updateStep("authenticating");
         if (startOnrampRef.current && activeEmailRef.current) {
+          isRunningRef.current = false;
           startOnrampRef.current(activeEmailRef.current, undefined, undefined, true);
         }
         return;
@@ -2987,7 +2989,9 @@ export function useStripeEmbeddedOnramp({
           try { onrampRef.current.destroy(); } catch {}
           onrampRef.current = null;
         }
+        updateStep("authenticating");
         if (startOnrampRef.current && activeEmailRef.current) {
+          isRunningRef.current = false;
           startOnrampRef.current(activeEmailRef.current, undefined, undefined, true);
         }
         return false;
@@ -3744,136 +3748,145 @@ export function useStripeEmbeddedOnramp({
         const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | "us_bank_account" | null; brand: string; last4: string; paymentMethodDetails?: any }>((resolve, reject) => {
           paymentRejectRef.current = reject;
 
-          const elemResult = onramp.collectPaymentMethod(
-            {
-              payment_method_types: achEnabled ? ["card", "us_bank_account"] : ["card"],
-              wallets: { applePay: "auto", googlePay: "auto" },
-            },
-            (result: any) => {
-              console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
-              if (result) {
-                const newToken = result.oauthToken || 
-                                 result.accessToken || 
-                                 result.oauth_token || 
-                                 result.access_token ||
-                                 result.paymentDetails?.oauthToken ||
-                                 result.paymentDetails?.accessToken ||
-                                 result.paymentMethod?.oauthToken ||
-                                 result.payment_details?.oauthToken;
-                if (newToken) {
-                  console.log("[EMBEDDED ONRAMP] Updated OAuth token detected in collectPaymentMethod result:", newToken.slice(0, 10) + "...");
-                  oauthTokenRef.current = newToken;
-                  if (typeof window !== "undefined") {
-                    sessionStorage.setItem("stripe_onramp_oauth_token", newToken);
+          try {
+            const elemResult = onramp.collectPaymentMethod(
+              {
+                payment_method_types: achEnabled ? ["card", "us_bank_account"] : ["card"],
+                wallets: { applePay: "auto", googlePay: "auto" },
+              },
+              (result: any) => {
+                console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
+                if (result) {
+                  const newToken = result.oauthToken || 
+                                   result.accessToken || 
+                                   result.oauth_token || 
+                                   result.access_token ||
+                                   result.paymentDetails?.oauthToken ||
+                                   result.paymentDetails?.accessToken ||
+                                   result.paymentMethod?.oauthToken ||
+                                   result.payment_details?.oauthToken;
+                  if (newToken) {
+                    console.log("[EMBEDDED ONRAMP] Updated OAuth token detected in collectPaymentMethod result:", newToken.slice(0, 10) + "...");
+                    oauthTokenRef.current = newToken;
+                    if (typeof window !== "undefined") {
+                      sessionStorage.setItem("stripe_onramp_oauth_token", newToken);
+                    }
                   }
                 }
-              }
-              if (result.cryptoPaymentToken) {
-                const pmDetails = result.paymentMethodDetails || result.payment_method_details || result.paymentDetails || result.payment_details || result;
-                let fundingType: "credit" | "debit" | "us_bank_account" | null = null;
-                let brandStr = "";
-                let last4Str = "";
+                if (result.cryptoPaymentToken) {
+                  const pmDetails = result.paymentMethodDetails || result.payment_method_details || result.paymentDetails || result.payment_details || result;
+                  let fundingType: "credit" | "debit" | "us_bank_account" | null = null;
+                  let brandStr = "";
+                  let last4Str = "";
 
-                if (pmDetails) {
-                  if (pmDetails.type === "card") {
-                    const card = pmDetails.card || pmDetails.payment_details?.card || pmDetails.paymentDetails?.card;
+                  if (pmDetails) {
+                    if (pmDetails.type === "card") {
+                      const card = pmDetails.card || pmDetails.payment_details?.card || pmDetails.paymentDetails?.card;
+                      if (card) {
+                        const isDebit = card.funding === "debit" || card.funding === "prepaid";
+                        fundingType = isDebit ? "debit" : "credit";
+                        brandStr = card.brand || "";
+                        last4Str = card.last4 || "";
+                      }
+                    } else if (pmDetails.type === "us_bank_account" || pmDetails.paymentMethod === "us_bank_account" || pmDetails.payment_method === "us_bank_account") {
+                      const bank = pmDetails.us_bank_account || pmDetails.payment_details?.us_bank_account || pmDetails.paymentDetails?.us_bank_account;
+                      fundingType = "us_bank_account";
+                      brandStr = bank?.bank_name || "";
+                      last4Str = bank?.last4 || "";
+                    }
+                  }
+
+                  // Fallbacks
+                  if (!fundingType) {
+                    const card = result.card || result.paymentDetails?.card || result.payment_details?.card;
                     if (card) {
                       const isDebit = card.funding === "debit" || card.funding === "prepaid";
                       fundingType = isDebit ? "debit" : "credit";
                       brandStr = card.brand || "";
                       last4Str = card.last4 || "";
+                    } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
+                      fundingType = "debit";
+                    } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
+                      fundingType = "credit";
                     }
-                  } else if (pmDetails.type === "us_bank_account" || pmDetails.paymentMethod === "us_bank_account" || pmDetails.payment_method === "us_bank_account") {
-                    const bank = pmDetails.us_bank_account || pmDetails.payment_details?.us_bank_account || pmDetails.paymentDetails?.us_bank_account;
-                    fundingType = "us_bank_account";
-                    brandStr = bank?.bank_name || "";
-                    last4Str = bank?.last4 || "";
                   }
+
+                  // Format paymentMethodDetails to send
+                  const pmDetailsToSend = pmDetails?.type ? pmDetails : {
+                    type: fundingType === "us_bank_account" ? "us_bank_account" : "card",
+                    ...(fundingType === "us_bank_account" ? {
+                      us_bank_account: { bank_name: brandStr, last4: last4Str, account_type: null }
+                    } : {
+                      card: { brand: brandStr, funding: fundingType, last4: last4Str, exp_month: null, exp_year: null, wallet: null }
+                    })
+                  };
+
+                  // Asynchronously save payment method details
+                  (async () => {
+                    try {
+                      await fetch("/api/stripe/onramp-limits", {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          "x-stripe-oauth-token": oauthTokenRef.current || ""
+                        },
+                        body: JSON.stringify({
+                          receiptId,
+                          walletAddress: buyerWallet,
+                          network,
+                          email: activeEmail,
+                          stripeSessionId: sessionIdRef.current,
+                          paymentMethodDetails: pmDetailsToSend
+                        })
+                      });
+                      console.log("[EMBEDDED ONRAMP] Successfully requested payment method logging");
+                    } catch (saveErr) {
+                      console.warn("[EMBEDDED ONRAMP] Failed to save payment method details:", saveErr);
+                    }
+                  })();
+
+                  paymentRejectRef.current = null;
+                  resolve({ 
+                    token: result.cryptoPaymentToken, 
+                    funding: fundingType, 
+                    brand: brandStr, 
+                    last4: last4Str,
+                    paymentMethodDetails: pmDetailsToSend
+                  });
+                } else {
+                  paymentRejectRef.current = null;
+                  reject(new Error("Payment method collection failed"));
                 }
+              }
+            );
 
-                // Fallbacks
-                if (!fundingType) {
-                  const card = result.card || result.paymentDetails?.card || result.payment_details?.card;
-                  if (card) {
-                    const isDebit = card.funding === "debit" || card.funding === "prepaid";
-                    fundingType = isDebit ? "debit" : "credit";
-                    brandStr = card.brand || "";
-                    last4Str = card.last4 || "";
-                  } else if (result.paymentMethod === "debit_card" || result.payment_method === "debit_card") {
-                    fundingType = "debit";
-                  } else if (result.paymentMethod === "credit_card" || result.payment_method === "credit_card") {
-                    fundingType = "credit";
-                  }
+            if (elemResult && typeof (elemResult as any).then === "function") {
+              (elemResult as Promise<HTMLElement>).then((element: HTMLElement) => {
+                if (mountedRef.current && element) {
+                  console.log("[EMBEDDED ONRAMP] Payment element resolved from Promise");
+                  setPaymentElement(element);
                 }
-
-                // Format paymentMethodDetails to send
-                const pmDetailsToSend = pmDetails?.type ? pmDetails : {
-                  type: fundingType === "us_bank_account" ? "us_bank_account" : "card",
-                  ...(fundingType === "us_bank_account" ? {
-                    us_bank_account: { bank_name: brandStr, last4: last4Str, account_type: null }
-                  } : {
-                    card: { brand: brandStr, funding: fundingType, last4: last4Str, exp_month: null, exp_year: null, wallet: null }
-                  })
-                };
-
-                // Asynchronously save payment method details
-                (async () => {
-                  try {
-                    await fetch("/api/stripe/onramp-limits", {
-                      method: "POST",
-                      headers: {
-                        "Content-Type": "application/json",
-                        "x-stripe-oauth-token": oauthTokenRef.current || ""
-                      },
-                      body: JSON.stringify({
-                        receiptId,
-                        walletAddress: buyerWallet,
-                        network,
-                        email: activeEmail,
-                        stripeSessionId: sessionIdRef.current,
-                        paymentMethodDetails: pmDetailsToSend
-                      })
-                    });
-                    console.log("[EMBEDDED ONRAMP] Successfully requested payment method logging");
-                  } catch (saveErr) {
-                    console.warn("[EMBEDDED ONRAMP] Failed to save payment method details:", saveErr);
-                  }
-                })();
-
+              }).catch((err) => {
+                console.error("[EMBEDDED ONRAMP] Payment element Promise failed:", err);
+                if (mountedRef.current) {
+                  setPaymentElement(null);
+                }
                 paymentRejectRef.current = null;
-                resolve({ 
-                  token: result.cryptoPaymentToken, 
-                  funding: fundingType, 
-                  brand: brandStr, 
-                  last4: last4Str,
-                  paymentMethodDetails: pmDetailsToSend
-                });
-              } else {
-                paymentRejectRef.current = null;
-                reject(new Error("Payment method collection failed"));
-              }
-            }
-          );
-
-          if (elemResult && typeof (elemResult as any).then === "function") {
-            (elemResult as Promise<HTMLElement>).then((element: HTMLElement) => {
-              if (mountedRef.current && element) {
-                console.log("[EMBEDDED ONRAMP] Payment element resolved from Promise");
-                setPaymentElement(element);
-              }
-            }).catch((err) => {
-              console.error("[EMBEDDED ONRAMP] Payment element Promise failed:", err);
+                reject(err);
+              });
+            } else if (elemResult && typeof elemResult === "object" && !(elemResult instanceof Promise)) {
+              console.log("[EMBEDDED ONRAMP] Payment element returned synchronously");
               if (mountedRef.current) {
-                setPaymentElement(null);
+                setPaymentElement(elemResult as unknown as HTMLElement);
               }
-              paymentRejectRef.current = null;
-              reject(err);
-            });
-          } else if (elemResult && typeof elemResult === "object") {
-            console.log("[EMBEDDED ONRAMP] Payment element returned synchronously");
-            if (mountedRef.current) {
-              setPaymentElement(elemResult as HTMLElement);
             }
+          } catch (syncErr) {
+            console.error("[EMBEDDED ONRAMP] Synchronous error during collectPaymentMethod call:", syncErr);
+            if (mountedRef.current) {
+              setPaymentElement(null);
+            }
+            paymentRejectRef.current = null;
+            reject(syncErr);
           }
         });
 
@@ -3905,6 +3918,7 @@ export function useStripeEmbeddedOnramp({
               try { onrampRef.current.destroy(); } catch {}
               onrampRef.current = null;
             }
+            updateStep("authenticating");
             if (startOnrampRef.current && activeEmailRef.current) {
               isRunningRef.current = false;
               startOnrampRef.current(activeEmailRef.current, undefined, undefined, true);
