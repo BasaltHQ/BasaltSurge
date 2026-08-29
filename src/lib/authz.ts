@@ -306,6 +306,19 @@ export function resolveWalletRole(wallet?: string): AdminRole | null {
     return 'platform_super_admin';
   }
 
+  // Check active team context in localStorage
+  try {
+    if (typeof window !== 'undefined') {
+      const storedCtx = localStorage.getItem('pp_active_merchant_context');
+      if (storedCtx) {
+        const parsed = JSON.parse(storedCtx);
+        if (parsed && parsed.role) {
+          return parsed.role as AdminRole;
+        }
+      }
+    }
+  } catch { }
+
   return null;
 }
 

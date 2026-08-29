@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
         // Query all team members across all partitions where linkedWallet matches
         // Note: Cross-partition query. This is acceptable as number of merchant sessions for a single user is low.
         const querySpec = {
-            query: "SELECT c.id, c.merchantWallet, c.role, c.name FROM c WHERE c.type = 'merchant_team_member' AND c.linkedWallet = @w",
+            query: "SELECT c.id, c.merchantWallet, c.role, c.name FROM c WHERE c.type = 'merchant_team_member' AND c.linkedWallet = @w AND (NOT IS_DEFINED(c.active) OR c.active = true)",
             parameters: [{ name: "@w", value: linkedWallet }]
         };
 

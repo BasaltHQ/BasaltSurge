@@ -11,7 +11,7 @@ import { client, chain, getWallets, getPrivateWallets } from "@/lib/thirdweb/cli
 import { usePortalThirdwebTheme } from "@/lib/thirdweb/theme";
 import { useBrand } from "@/contexts/BrandContext";
 import ImageUploadField from "./forms/ImageUploadField";
-import { Eye, EyeOff, ChevronDown } from "lucide-react";
+import { Eye, EyeOff, ChevronDown, Copy, Check, Users, RefreshCw, Key } from "lucide-react";
 
 interface SignupWizardProps {
     isOpen: boolean;
@@ -259,6 +259,9 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
     const [submitError, setSubmitError] = useState("");
     const [applicationStatus, setApplicationStatus] = useState<"none" | "pending" | "success" | "blocked" | "awaiting_approval">("none");
     const [showSensitive, setShowSensitive] = useState(false);
+    const [showTeamHelper, setShowTeamHelper] = useState(false);
+    const [walletCopied, setWalletCopied] = useState(false);
+    const [isCheckingTeam, setIsCheckingTeam] = useState(false);
 
     // Referral State
     const [referralAgent, setReferralAgent] = useState("");
@@ -423,7 +426,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
 
             // If already approved, allow login (skip application)
             // Note: me.approved is legacy, me.shopStatus is current
-            if (me?.authed || me?.approved || me?.shopStatus === "approved") {
+            if (me?.authed || me?.approved || me?.shopStatus === "approved" || me?.isTeamMember) {
                 onComplete();
             } else if (me?.blocked) {
                 // User is blocked - show blocked alert
@@ -677,6 +680,91 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                         <div className="text-[10px] font-mono text-gray-500 uppercase">Wallet</div>
                                         <div className="text-xs font-mono text-amber-400 truncate">{connectedWallet}</div>
                                     </div>
+
+                                    {/* Team Member Helper in Awaiting Approval */}
+                                    <div className="w-full max-w-md mx-auto mb-6 text-left">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowTeamHelper(!showTeamHelper)}
+                                            className="w-full flex items-center justify-between p-3 rounded-xl bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/25 text-purple-300 transition-colors text-xs font-medium"
+                                        >
+                                            <span className="flex items-center gap-2">
+                                                <Users className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                                                <span>Are you joining an existing team?</span>
+                                            </span>
+                                            <ChevronDown className={`w-3.5 h-3.5 text-purple-400 transition-transform duration-200 ${showTeamHelper ? 'rotate-180' : ''}`} />
+                                        </button>
+
+                                        <AnimatePresence>
+                                            {showTeamHelper && (
+                                                <motion.div
+                                                    initial={{ opacity: 0, height: 0 }}
+                                                    animate={{ opacity: 1, height: "auto" }}
+                                                    exit={{ opacity: 0, height: 0 }}
+                                                    transition={{ duration: 0.2 }}
+                                                    className="overflow-hidden"
+                                                >
+                                                    <div className="mt-2.5 p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/20 text-xs text-purple-200/90 space-y-3">
+                                                        <p className="leading-relaxed">
+                                                            If you were invited as a team member by an existing merchant, give them your wallet address so they can add you to their team roster.
+                                                        </p>
+
+                                                        {connectedWallet && (
+                                                            <div className="space-y-1.5">
+                                                                <div className="text-[10px] font-mono uppercase tracking-wider text-purple-400/80 font-semibold flex items-center gap-1">
+                                                                    <Key className="w-3 h-3" />
+                                                                    Your Wallet Address
+                                                                </div>
+                                                                <div className="flex items-center gap-2 p-2 bg-black/60 rounded-lg border border-purple-500/30">
+                                                                    <span className="font-mono text-[11px] text-white truncate flex-1 select-all">
+                                                                        {connectedWallet}
+                                                                    </span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            navigator.clipboard.writeText(connectedWallet);
+                                                                            setWalletCopied(true);
+                                                                            setTimeout(() => setWalletCopied(false), 2000);
+                                                                        }}
+                                                                        className="px-2.5 py-1 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-[11px] font-medium transition-colors flex items-center gap-1 flex-shrink-0 border border-purple-500/40"
+                                                                    >
+                                                                        {walletCopied ? (
+                                                                            <>
+                                                                                <Check className="w-3 h-3 text-emerald-400" />
+                                                                                <span className="text-emerald-400 font-bold">Copied</span>
+                                                                            </>
+                                                                        ) : (
+                                                                            <>
+                                                                                <Copy className="w-3 h-3" />
+                                                                                <span>Copy</span>
+                                                                            </>
+                                                                        )}
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        <button
+                                                            type="button"
+                                                            disabled={isCheckingTeam}
+                                                            onClick={async () => {
+                                                                setIsCheckingTeam(true);
+                                                                try {
+                                                                    await handleWalletConnected(connectedWallet);
+                                                                } finally {
+                                                                    setIsCheckingTeam(false);
+                                                                }
+                                                            }}
+                                                            className="w-full py-2 px-3 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 active:scale-[0.98] text-purple-200 text-xs font-semibold transition-all border border-purple-500/30 flex items-center justify-center gap-1.5"
+                                                        >
+                                                            <RefreshCw className={`w-3.5 h-3.5 ${isCheckingTeam ? 'animate-spin' : ''}`} />
+                                                            <span>{isCheckingTeam ? "Checking Team Status..." : "Check Team Access"}</span>
+                                                        </button>
+                                                    </div>
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </div>
                                     <button onClick={onClose} className="w-full max-w-xs mx-auto py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold transition-colors block">
                                         Close
                                     </button>
@@ -745,6 +833,91 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             </div>
                                         </div>
                                     )}
+
+                                    {/* Team Member Helper in Application Form */}
+                                    <div className="mb-5">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowTeamHelper(!showTeamHelper)}
+                                            className="w-full flex items-center justify-between p-3 rounded-xl bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/25 text-purple-300 transition-colors text-xs font-medium text-left"
+                                        >
+                                            <span className="flex items-center gap-2">
+                                                <Users className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                                                <span>Are you joining an existing team instead of opening a new store?</span>
+                                            </span>
+                                            <ChevronDown className={`w-3.5 h-3.5 text-purple-400 transition-transform duration-200 ${showTeamHelper ? 'rotate-180' : ''}`} />
+                                        </button>
+
+                                        <AnimatePresence>
+                                            {showTeamHelper && (
+                                                <motion.div
+                                                    initial={{ opacity: 0, height: 0 }}
+                                                    animate={{ opacity: 1, height: "auto" }}
+                                                    exit={{ opacity: 0, height: 0 }}
+                                                    transition={{ duration: 0.2 }}
+                                                    className="overflow-hidden"
+                                                >
+                                                    <div className="mt-2 p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/20 text-xs text-purple-200/90 space-y-3">
+                                                        <p className="leading-relaxed">
+                                                            Team members do not need to register a new store. Share your wallet address with your store owner or manager so they can add you to their team roster.
+                                                        </p>
+
+                                                        {connectedWallet && (
+                                                            <div className="space-y-1.5">
+                                                                <div className="text-[10px] font-mono uppercase tracking-wider text-purple-400/80 font-semibold flex items-center gap-1">
+                                                                    <Key className="w-3 h-3" />
+                                                                    Your Wallet Address
+                                                                </div>
+                                                                <div className="flex items-center gap-2 p-2 bg-black/60 rounded-lg border border-purple-500/30">
+                                                                    <span className="font-mono text-[11px] text-white truncate flex-1 select-all">
+                                                                        {connectedWallet}
+                                                                    </span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            navigator.clipboard.writeText(connectedWallet);
+                                                                            setWalletCopied(true);
+                                                                            setTimeout(() => setWalletCopied(false), 2000);
+                                                                        }}
+                                                                        className="px-2.5 py-1 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-[11px] font-medium transition-colors flex items-center gap-1 flex-shrink-0 border border-purple-500/40"
+                                                                    >
+                                                                        {walletCopied ? (
+                                                                            <>
+                                                                                <Check className="w-3 h-3 text-emerald-400" />
+                                                                                <span className="text-emerald-400 font-bold">Copied</span>
+                                                                            </>
+                                                                        ) : (
+                                                                            <>
+                                                                                <Copy className="w-3 h-3" />
+                                                                                <span>Copy</span>
+                                                                            </>
+                                                                        )}
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        <button
+                                                            type="button"
+                                                            disabled={isCheckingTeam}
+                                                            onClick={async () => {
+                                                                setIsCheckingTeam(true);
+                                                                try {
+                                                                    await handleWalletConnected(connectedWallet);
+                                                                } finally {
+                                                                    setIsCheckingTeam(false);
+                                                                }
+                                                            }}
+                                                            className="w-full py-2 px-3 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 active:scale-[0.98] text-purple-200 text-xs font-semibold transition-all border border-purple-500/30 flex items-center justify-center gap-1.5"
+                                                        >
+                                                            <RefreshCw className={`w-3.5 h-3.5 ${isCheckingTeam ? 'animate-spin' : ''}`} />
+                                                            <span>{isCheckingTeam ? "Checking Team Status..." : "Check Team Access"}</span>
+                                                        </button>
+                                                    </div>
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </div>
 
                                     {formStep === 1 && (
                                         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">

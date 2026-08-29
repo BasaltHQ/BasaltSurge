@@ -11,7 +11,20 @@ export const getApiBase = (): string => {
       return "";
     }
     const base = String(process.env.NEXT_PUBLIC_APP_URL || "").trim().replace(/\/+$/, "");
-    return base || "";
+    if (!base) return "";
+
+    // If in the browser, check if we're already on the same origin/host (including www vs apex)
+    if (typeof window !== "undefined") {
+      try {
+        const currentHost = window.location.hostname.toLowerCase().replace(/^www\./, "");
+        const baseHost = new URL(base).hostname.toLowerCase().replace(/^www\./, "");
+        if (currentHost === baseHost) {
+          return ""; // Same host / same root domain - use relative paths
+        }
+      } catch {}
+    }
+
+    return base;
   } catch {
     return "";
   }

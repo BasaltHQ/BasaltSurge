@@ -53,6 +53,8 @@ export async function GET(req: NextRequest) {
     // Check for Shop Config status (for Partner Access Gating)
     let shopStatus = "none";
     let blocked = false;
+    let isTeamMember = false;
+    let hasOwnShop = false;
     const { getPlatformAdminWallets } = await import("@/lib/authz-server");
     const platformAdminWallets = await getPlatformAdminWallets();
     const isPlatformAdmin = platformAdminWallets.includes(wallet.toLowerCase());
@@ -81,6 +83,7 @@ export async function GET(req: NextRequest) {
         const requestStatus = clientRequestResources[0].status;
         if (requestStatus === "approved") {
           shopStatus = "approved";
+          hasOwnShop = true;
         } else if (requestStatus === "pending") {
           shopStatus = "pending";
         } else if (requestStatus === "blocked") {
@@ -109,6 +112,7 @@ export async function GET(req: NextRequest) {
           if (legacyResources.length > 0) {
             // Legacy approved merchant - has a config but no client_request
             shopStatus = "approved";
+            hasOwnShop = true;
           }
         }
       }
@@ -120,8 +124,38 @@ export async function GET(req: NextRequest) {
         const role = await resolveAdminRole(wallet, brandKey);
         if (role && (role.startsWith("partner_") || role.startsWith("platform_"))) {
           shopStatus = "approved";
+          hasOwnShop = true;
           if (!roles.includes("admin")) {
             roles.push("admin");
+          }
+        }
+      }
+
+      // TEAM MEMBER BYPASS: If the user is on an existing merchant team (linkedWallet),
+      // they should bypass the merchant sign-up gate on closed partner containers so they can
+      // access the admin console without having to register as a new merchant.
+      if (shopStatus === "none" && !blocked) {
+        const teamMemberQuery = "SELECT top 1 c.id, c.merchantWallet, c.role, c.brandKey, c.name FROM c WHERE c.type = 'merchant_team_member' AND c.linkedWallet = @w AND (NOT IS_DEFINED(c.active) OR c.active = true)";
+        const { resources: teamRes } = await container.items.query({
+          query: teamMemberQuery,
+          parameters: [{ name: "@w", value: wallet.toLowerCase() }]
+        }).fetchAll();
+
+        if (teamRes.length > 0) {
+          const tm = teamRes[0];
+          shopStatus = "approved";
+          isTeamMember = true;
+          if (!roles.includes("team_member")) {
+            roles.push("team_member");
+          }
+          const tmRole = String(tm.role || "").toLowerCase();
+          if (tmRole === "merchant_admin" || tmRole === "manager" || tmRole === "merchant_owner") {
+            if (!roles.includes("admin")) {
+              roles.push("admin");
+            }
+          }
+          if (tm.role && !roles.includes(tm.role)) {
+            roles.push(tm.role);
           }
         }
       }
@@ -135,10 +169,11 @@ export async function GET(req: NextRequest) {
       if (shopStatus === "none" || shopStatus === "pending" || shopStatus === "rejected") {
         shopStatus = "approved";
       }
+      hasOwnShop = true;
       blocked = false;
     }
 
-    return NextResponse.json({ authed: sessionAuthed, wallet, roles, shopStatus, isPlatformAdmin, blocked });
+    return NextResponse.json({ authed: sessionAuthed, wallet, roles, shopStatus, isPlatformAdmin, isTeamMember, hasOwnShop, blocked });
   } catch (e: any) {
     return NextResponse.json({ authed: false, error: e?.message || "failed" }, { status: 500 });
   }

@@ -103,13 +103,12 @@ export function usePermissions() {
         const res = await fetch('/api/auth/me');
         if (res.ok) {
           const data = await res.json();
-          if (data.authed && data.shopStatus === 'approved') {
-            // If server says approved, ensure local user reflects "Manager" or appropriate role if currently "pending" or missing
-            // This is a simplified sync to fix the "Access Restricted" issue immediately
+          if (data.authed && (data.shopStatus === 'approved' || data.isTeamMember)) {
+            // If server says approved or team member, ensure local user reflects assigned role
             const current = userData ? JSON.parse(userData) : {};
             if (current.role !== 'Manager' && current.role !== 'Super Admin') {
-              // Upgrade to Manager if approved but locally restricted
-              const updated = { ...current, role: 'Manager', permissions: ROLE_PERMISSIONS['Manager'] };
+              const assignedRole: Role = data.isPlatformAdmin ? 'Super Admin' : (data.roles?.includes('merchant_admin') || data.roles?.includes('manager') ? 'Manager' : 'Staff');
+              const updated = { ...current, role: assignedRole, permissions: ROLE_PERMISSIONS[assignedRole] };
               setUser(updated);
               localStorage.setItem('user', JSON.stringify(updated));
             }
