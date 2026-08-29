@@ -54,7 +54,6 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   aipowerpay: "aipowerpay",
   lucky13: "lucky13",
   lucky13marketing: "lucky13",
-  canyapay: "canyapay",
   // Add more partner brands here as needed
 };
 
@@ -68,11 +67,7 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "bt-checkout.aipowerpay.com": "aipowerpay",
   "www.bt-checkout.aipowerpay.com": "aipowerpay",
   "pay.lucky13marketing.com": "lucky13",
-  "www.pay.lucky13marketing.com": "lucky13",
-  "canyapay.com": "canyapay",
-  "www.canyapay.com": "canyapay",
-  "canyapay.azurewebsites.net": "canyapay",
-  "canyapay.payportal.co": "canyapay",
+  "www.pay.lucky13marketing.com": "lucky13"
   // Add more custom partner domains here as needed
 };
 

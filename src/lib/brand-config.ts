@@ -15,8 +15,6 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   aipowerpay: "aipowerpay",
   lucky13: "lucky13",
   lucky13marketing: "lucky13",
-  "lucky13-marketing": "lucky13",
-  canyapay: "canyapay",
   // Add more partner brands here as needed
 };
 
@@ -32,11 +30,7 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "bt-checkout.aipowerpay.com": "aipowerpay",
   "www.bt-checkout.aipowerpay.com": "aipowerpay",
   "pay.lucky13marketing.com": "lucky13",
-  "www.pay.lucky13marketing.com": "lucky13",
-  "canyapay.com": "canyapay",
-  "www.canyapay.com": "canyapay",
-  "canyapay.azurewebsites.net": "canyapay",
-  "canyapay.payportal.co": "canyapay",
+  "www.pay.lucky13marketing.com": "lucky13"
 };
 
 // Cache and variables for dynamic partner domains from DB
@@ -44,6 +38,19 @@ export let DYNAMIC_PARTNER_DOMAINS: Record<string, string> = {};
 let lastDynamicDomainsFetch = 0;
 const DYNAMIC_DOMAINS_TTL = 10 * 60 * 1000; // 10 minutes cache TTL to prevent Cosmos DB stampedes
 let dynamicDomainsPromise: Promise<Record<string, string>> | null = null;
+
+const SHARED_PARENT_DOMAINS = new Set([
+  "azurewebsites.net",
+  "azurecontainerapps.io",
+  "azurefd.net",
+  "vercel.app",
+  "payportal.co",
+  "portalpay.app",
+  "basaltsurge.app",
+  "basalthq.com",
+  "ledger1.ai",
+  "portalpay.io",
+]);
 
 /**
  * Triggers a background fetch of dynamic partner domains from Cosmos DB
@@ -58,14 +65,14 @@ function fetchDynamicDomainsInBackground(): Promise<Record<string, string>> {
       console.log("[brand-config] Fetching dynamic partner domains from Cosmos DB...");
       const c = await getContainer();
       const query = {
-        query: "SELECT c.wallet, c.type, c.appUrl, c.containerFqdn, c.params FROM c WHERE c.type = 'brand_config' OR c.type = 'brand_deploy_params'",
+        query: "SELECT c.id, c.wallet, c.brandKey, c.type, c.appUrl, c.containerFqdn, c.params, c.domains, c.customDomains FROM c WHERE c.type = 'brand_config' OR c.type = 'brand_deploy_params'",
         parameters: [],
       };
       const { resources } = await c.items.query<any>(query, { maxItemCount: 2000 }).fetchAll();
 
       if (resources && Array.isArray(resources)) {
         for (const doc of resources) {
-          const brandKey = String(doc.wallet || "").toLowerCase().trim();
+          const brandKey = String(doc.brandKey || doc.wallet || "").toLowerCase().trim();
           if (!brandKey) continue;
 
           const addDomain = (urlOrFqdn: string) => {
@@ -84,11 +91,11 @@ function fetchDynamicDomainsInBackground(): Promise<Record<string, string>> {
                   domains[`www.${hostname}`] = brandKey;
                 }
 
-                // Also index root domain parts for subdomain wildcard resolution
+                // Also index root domain parts for subdomain wildcard resolution if NOT a shared cloud provider
                 const parts = hostname.split(".");
                 if (parts.length >= 2) {
                   const rootDomain = parts.slice(-2).join(".");
-                  if (rootDomain && !domains[rootDomain]) {
+                  if (rootDomain && !domains[rootDomain] && !SHARED_PARENT_DOMAINS.has(rootDomain)) {
                     domains[rootDomain] = brandKey;
                   }
                 }
@@ -101,6 +108,16 @@ function fetchDynamicDomainsInBackground(): Promise<Record<string, string>> {
           if (doc.type === "brand_config") {
             if (doc.containerFqdn) addDomain(doc.containerFqdn);
             if (doc.appUrl) addDomain(doc.appUrl);
+            if (Array.isArray(doc.domains)) {
+              for (const d of doc.domains) {
+                if (typeof d === "string") addDomain(d);
+              }
+            }
+            if (Array.isArray(doc.customDomains)) {
+              for (const d of doc.customDomains) {
+                if (typeof d === "string") addDomain(d);
+              }
+            }
           } else if (doc.type === "brand_deploy_params") {
             const doms = doc.params?.domains;
             if (Array.isArray(doms)) {
@@ -111,8 +128,14 @@ function fetchDynamicDomainsInBackground(): Promise<Record<string, string>> {
           }
         }
       }
+
+      // Synchronize in-place to avoid breaking existing object references
       Object.keys(DYNAMIC_PARTNER_DOMAINS).forEach((k) => delete DYNAMIC_PARTNER_DOMAINS[k]);
       Object.assign(DYNAMIC_PARTNER_DOMAINS, domains);
+      if (typeof globalThis !== "undefined") {
+        (globalThis as any).__DYNAMIC_DOMAINS__ = DYNAMIC_PARTNER_DOMAINS;
+      }
+
       lastDynamicDomainsFetch = Date.now();
       return domains;
     } catch (err) {
@@ -278,6 +301,13 @@ export async function deriveContainerIdentityFromHostname(host: string, cookieHe
     if (dynamicDomains[hostLower]) {
       return { brandKey: dynamicDomains[hostLower], containerType: "partner" };
     }
+    const hostParts = hostLower.split(".");
+    if (hostParts.length >= 2) {
+      const rootDomain = hostParts.slice(-2).join(".");
+      if (dynamicDomains[rootDomain] && !SHARED_PARENT_DOMAINS.has(rootDomain)) {
+        return { brandKey: dynamicDomains[rootDomain], containerType: "partner" };
+      }
+    }
   } catch (err) {
     console.error("[brand-config] Error checking dynamic partner domains:", err);
   }
@@ -352,7 +382,6 @@ export async function deriveContainerIdentityFromHostname(host: string, cookieHe
   if (hostLower.includes("icunow")) return { brandKey: "icunow-store", containerType: "partner" };
   if (hostLower.includes("aipowerpay")) return { brandKey: "aipowerpay", containerType: "partner" };
   if (hostLower.includes("lucky13")) return { brandKey: "lucky13", containerType: "partner" };
-  if (hostLower.includes("canyapay")) return { brandKey: "canyapay", containerType: "partner" };
 
   return null;
 }

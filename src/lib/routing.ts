@@ -106,7 +106,6 @@ export function isMainDomainHost(host: string): boolean {
         h.includes("azurecontainerapps.io") ||
         h.includes("vercel.app") ||
         h.includes("xpaypass.com") ||
-        h.includes("canyapay.com") ||
         h.includes("vps.ovh.us")
     );
     if (isStaticMain) return true;
