@@ -383,10 +383,9 @@ export function ThemeLoader() {
         let effectivePrimary: string;
         let effectiveSecondary: string;
 
-        // Check if site-config colors are just platform defaults (not user-customized)
-        const defaultPlatformColors = ["#0ea5e9", "#35ff7c", "#3b82f6", "#1f2937", "#0d9488", "#14b8a6", "#10b981", "#6b7280", "#f54029", "#2dd4bf", "#22d3ee", "#22c55e", "#16a34a"];
-        const isSiteConfigDefaultPrimary = !effectiveSiteConfigPrimary || defaultPlatformColors.includes(effectiveSiteConfigPrimary.toLowerCase());
-        const isSiteConfigDefaultSecondary = !effectiveSiteConfigSecondary || defaultPlatformColors.includes(effectiveSiteConfigSecondary.toLowerCase());
+        // Check if site-config colors are just defaults (not user-set)
+        const isSiteConfigDefaultPrimary = effectiveSiteConfigPrimary === "#1f2937" || effectiveSiteConfigPrimary === "#10b981" || effectiveSiteConfigPrimary === "#14b8a6";
+        const isSiteConfigDefaultSecondary = effectiveSiteConfigSecondary === "#F54029" || effectiveSiteConfigSecondary === "#2dd4bf" || effectiveSiteConfigSecondary === "#22d3ee";
 
         console.log("[ThemeLoader] isPartnerContainer:", isPartnerContainer, "isSiteConfigDefaultPrimary:", isSiteConfigDefaultPrimary, "isSiteConfigDefaultSecondary:", isSiteConfigDefaultSecondary);
 
@@ -400,13 +399,11 @@ export function ThemeLoader() {
           effectivePrimary = String(
             (userHasCustomPrimary ? effectiveSiteConfigPrimary : "") ||
             platformPrimary ||
-            (root.dataset.ppBrandPrimary || "").trim() ||
             defaultPrimary
           );
           effectiveSecondary = String(
             (userHasCustomSecondary ? effectiveSiteConfigSecondary : "") ||
             platformAccent ||
-            (root.dataset.ppBrandAccent || "").trim() ||
             defaultSecondary
           );
           console.log("[ThemeLoader] Partner container - effectivePrimary:", effectivePrimary, "effectiveSecondary:", effectiveSecondary);
