@@ -183,6 +183,13 @@ export function useAccordionCheckoutState(
     };
   }, []);
 
+  // Reset OTP verification flag if coordinator requests re-authentication
+  useEffect(() => {
+    if (headlessStep === "authenticating" || headlessStep === "collecting_phone") {
+      setIsLinkOtpVerified(false);
+    }
+  }, [headlessStep]);
+
   // Email Lockout Guard: once OTP is complete, authorized from token, or KYC/payment is underway, lock email modification
   const isEmailLocked = Boolean(
     propIsEmailLocked ||
@@ -572,22 +579,40 @@ export function useAccordionCheckoutState(
 
   // Reactive Step 3 Watchdog: Trigger recovery initialization if Step 3 is active with null paymentElement
   useEffect(() => {
+    const isStepInFlightOrAuth = [
+      "authenticating",
+      "collecting_phone",
+      "checking_link",
+      "registering_link",
+      "initializing",
+      "collecting_kyc",
+      "submitting_kyc",
+      "verifying_identity",
+      "creating_session",
+      "confirming_fees",
+      "checking_out",
+      "awaiting_funds",
+      "transferring",
+      "completed",
+    ].includes(effectiveHeadlessStep as string);
+
     if (
       activeStep === 3 &&
       !propPaymentElement &&
       !isSimulationMode &&
       onHeadlessSubmitEmailPhone &&
-      email
+      email &&
+      !isStepInFlightOrAuth
     ) {
       const timer = setTimeout(() => {
-        if (!propPaymentElement) {
+        if (!propPaymentElement && !isStepInFlightOrAuth) {
           console.log("[ACCORDION STATE] Step 3 active with null paymentElement after 2.5s. Triggering session re-initialization...");
           handlePaymentTimeoutRetry();
         }
       }, 2500);
       return () => clearTimeout(timer);
     }
-  }, [activeStep, propPaymentElement, isSimulationMode, handlePaymentTimeoutRetry, email]);
+  }, [activeStep, propPaymentElement, isSimulationMode, handlePaymentTimeoutRetry, email, effectiveHeadlessStep]);
 
   // Address Autocomplete handler
   const handleFetchSuggestions = async (input: string) => {

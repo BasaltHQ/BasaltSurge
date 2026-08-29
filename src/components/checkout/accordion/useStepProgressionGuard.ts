@@ -175,6 +175,15 @@ export function useStepProgressionGuard({
       currentTier: kyc.currentTier,
     });
 
+    // Check if error explicitly demands Authentication/OTP (Step 1)
+    if (parsed?.targetStep === 1 || parsed?.code === "authentication_required") {
+      if (activeStep !== 1) {
+        logTransition(activeStep, 1, "Authentication / OTP Required (authentication_required)");
+        setActiveStep(1);
+      }
+      return;
+    }
+
     // Check if error explicitly demands KYC or Address edit (L0, L1, L2, address validation, or limit step-up)
     const isAddressOrKycError =
       parsed?.isKycRequirement ||
@@ -223,6 +232,22 @@ export function useStepProgressionGuard({
   useEffect(() => {
     if (isPaid || isOrderConfirmed) return;
 
+    // Case 0: Link OTP or phone authentication active in Step 1
+    if (
+      headlessStep === "authenticating" ||
+      headlessStep === "collecting_phone" ||
+      headlessStep === "registering_link" ||
+      headlessStep === "checking_link"
+    ) {
+      if (headlessStep === "authenticating" || headlessStep === "collecting_phone") {
+        if (activeStep !== 1) {
+          logTransition(activeStep, 1, `Link Auth Required (${headlessStep})`);
+          setActiveStep(1);
+        }
+      }
+      return;
+    }
+
     const isPaymentReady =
       Boolean(propPaymentElement) ||
       headlessStep === "collecting_payment";
@@ -260,19 +285,28 @@ export function useStepProgressionGuard({
       return;
     }
 
-    // Case C: Link OTP active authentication step
-    if (headlessStep === "authenticating") {
-      if (activeStep !== 1) {
-        logTransition(activeStep, 1, "Link OTP Authentication Active");
-        setActiveStep(1);
-      }
-      return;
-    }
-
-    // Case D: Customer is authenticated via Link session or OTP
+    // Case D: Customer is authenticated via Link session or OTP (only once progressed past auth phase)
     const isAuthComplete =
       isLinkOtpVerified ||
-      Boolean(headlessStep && !["authenticating", "collecting_phone", "idle", "error"].includes(headlessStep));
+      Boolean(
+        headlessStep &&
+        [
+          "exchanging_tokens",
+          "checking_kyc",
+          "collecting_kyc",
+          "submitting_kyc",
+          "verifying_identity",
+          "creating_wallet",
+          "registering_wallet",
+          "collecting_payment",
+          "creating_session",
+          "confirming_fees",
+          "checking_out",
+          "awaiting_funds",
+          "transferring",
+          "completed",
+        ].includes(headlessStep)
+      );
 
     if (isAuthComplete && activeStep === 1) {
       if (isStep2Satisfied) {
