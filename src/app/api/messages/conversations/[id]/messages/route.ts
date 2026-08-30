@@ -156,10 +156,29 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     const convoWallet = String(convo.wallet || "").toLowerCase().trim();
     const meTrim = String(me).toLowerCase().trim();
     if (participantsLc.length === 0 || (!participantsLc.includes(meTrim) && convoWallet !== meTrim)) {
-      return NextResponse.json(
-        { ok: false, error: "forbidden" },
-        { status: 403, headers: { "x-correlation-id": correlationId } }
-      );
+      // Check if conversation subject is a checkout receipt owned by caller
+      let isReceiptOwner = false;
+      if (convo?.subject?.type === "checkout" && convo?.subject?.id) {
+        try {
+          const rId = String(convo.subject.id);
+          const { resource: rDoc } = await container.item(`receipt:${rId}`, meTrim).read<any>();
+          if (rDoc && String(rDoc.wallet || "").toLowerCase() === meTrim) {
+            isReceiptOwner = true;
+            if (!participantsLc.includes(meTrim)) {
+              participantsLc.push(meTrim);
+              const updatedDoc = { ...convo, participants: participantsLc };
+              container.items.upsert(updatedDoc as any).catch(() => {});
+            }
+          }
+        } catch {}
+      }
+
+      if (!isReceiptOwner && !participantsLc.includes(meTrim) && convoWallet !== meTrim) {
+        return NextResponse.json(
+          { ok: false, error: "forbidden" },
+          { status: 403, headers: { "x-correlation-id": correlationId } }
+        );
+      }
     }
     // Brand check disabled for simplicity: allow messaging across brands if participants include caller.
     // This avoids false 404 when host domain brand differs from conversation brand.
@@ -276,10 +295,29 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     const convoWallet2 = String(convo.wallet || "").toLowerCase().trim();
     const senderTrim = String(senderWallet).toLowerCase().trim();
     if (participantsLc2.length === 0 || (!participantsLc2.includes(senderTrim) && convoWallet2 !== senderTrim)) {
-      return NextResponse.json(
-        { ok: false, error: "forbidden" },
-        { status: 403, headers: { "x-correlation-id": correlationId } }
-      );
+      // Check if conversation subject is a checkout receipt owned by sender
+      let isReceiptOwner = false;
+      if (convo?.subject?.type === "checkout" && convo?.subject?.id) {
+        try {
+          const rId = String(convo.subject.id);
+          const { resource: rDoc } = await container.item(`receipt:${rId}`, senderTrim).read<any>();
+          if (rDoc && String(rDoc.wallet || "").toLowerCase() === senderTrim) {
+            isReceiptOwner = true;
+            if (!participantsLc2.includes(senderTrim)) {
+              participantsLc2.push(senderTrim);
+              const updatedDoc = { ...convo, participants: participantsLc2 };
+              container.items.upsert(updatedDoc as any).catch(() => {});
+            }
+          }
+        } catch {}
+      }
+
+      if (!isReceiptOwner && !participantsLc2.includes(senderTrim) && convoWallet2 !== senderTrim) {
+        return NextResponse.json(
+          { ok: false, error: "forbidden" },
+          { status: 403, headers: { "x-correlation-id": correlationId } }
+        );
+      }
     }
 
     const partitionKey = String(convo.wallet || convo.participants?.[0] || senderWallet).toLowerCase();

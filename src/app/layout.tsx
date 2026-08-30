@@ -769,8 +769,8 @@ export default async function RootLayout({
       const params: any[] = [];
 
       if (isPartner && brand.key) {
-        teamQuery += " AND c.brandKey = @brandKey";
-        rolesQuery += " AND c.brandKey = @brandKey";
+        teamQuery += " AND (c.brandKey = @brandKey OR NOT IS_DEFINED(c.brandKey) OR c.brandKey = '' OR c.brandKey = null)";
+        rolesQuery += " AND (c.brandKey = @brandKey OR NOT IS_DEFINED(c.brandKey) OR c.brandKey = '' OR c.brandKey = null)";
         params.push({ name: "@brandKey", value: brand.key.toLowerCase() });
       }
 

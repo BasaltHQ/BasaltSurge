@@ -235,7 +235,10 @@ function applySecurityHeaders(req: NextRequest, res: NextResponse) {
         res.headers.set("Access-Control-Allow-Origin", "*");
     }
     res.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE, PATCH");
-    res.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-wallet, x-caller-wallet, x-container-type, x-api-key, x-forwarded-host, x-forwarded-proto");
+    res.headers.set(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, x-wallet, x-caller-wallet, x-container-type, x-api-key, x-forwarded-host, x-forwarded-proto, x-csrf, x-csrf-token, x-brand-key, x-requested-with, x-correlation-id, x-payment, x-custom-host"
+    );
 
     // HSTS (only meaningful over HTTPS; harmless otherwise)
     res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");

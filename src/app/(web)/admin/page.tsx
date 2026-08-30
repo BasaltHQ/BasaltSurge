@@ -11726,11 +11726,26 @@ export default function AdminPage() {
         const isPartner = domContainerType === "partner" || containerType === "partner";
         const isRegistrationRegime = process.env.NEXT_PUBLIC_PLATFORM_REGISTRATION_REGIME === "true";
 
-        const isApproved = (!isPartner && !isRegistrationRegime) || String(me.shopStatus || "").toLowerCase() === "approved" || me.isPlatformAdmin;
+        const isApproved = (!isPartner && !isRegistrationRegime) || String(me.shopStatus || "").toLowerCase() === "approved" || me.isPlatformAdmin || !!me.isTeamMember;
 
         if (!isApproved) {
           window.location.href = "/apply";
           return;
+        }
+
+        // Auto-select primary team context for team-only members
+        if (me.isTeamMember && me.hasOwnShop === false && !activeTeamContext) {
+          try {
+            const accRes = await fetch(`/api/admin/reports/access?wallet=${encodeURIComponent(wallet)}`).then(r => r.ok ? r.json() : null);
+            if (accRes && Array.isArray(accRes.profiles) && accRes.profiles.length > 0) {
+              const primaryTeam = accRes.profiles[0];
+              setActiveTeamContext(primaryTeam);
+              try {
+                localStorage.setItem('pp_active_merchant_context', JSON.stringify(primaryTeam));
+              } catch {}
+              setActiveTab((prev) => prev === 'reserve' ? 'terminal' : prev);
+            }
+          } catch {}
         }
 
         // 2. Authentication Gate (prompt signature if needed)

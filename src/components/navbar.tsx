@@ -61,6 +61,7 @@ export function Navbar() {
     const [authed, setAuthed] = useState(false);
     const [showAccessPending, setShowAccessPending] = useState(false);
     const [hasPendingApplication, setHasPendingApplication] = useState(false);
+    const [authCheckTrigger, setAuthCheckTrigger] = useState(0);
     const [pendingAdminNav, setPendingAdminNav] = useState(false);
     const router = useRouter();
     const brand = useBrand();
@@ -325,7 +326,7 @@ export function Navbar() {
 
                 // Access Control Gating — Approval is only mandatory on partner containers for now
                 // The platform container uses the registration regime only if the env var is set.
-                const isApproved = (!isPartner && !isRegistrationRegime) || String(me?.shopStatus || "").toLowerCase() === "approved" || isPlatformAdmin;
+                const isApproved = (!isPartner && !isRegistrationRegime) || String(me?.shopStatus || "").toLowerCase() === "approved" || isPlatformAdmin || !!me?.isTeamMember;
                 const blocked = !isApproved;
 
                 if (me?.authed && !blocked && me?.wallet && String(me.wallet).toLowerCase() === w) {
@@ -414,7 +415,7 @@ export function Navbar() {
                 checkingAuth.current = false;
             }
         })();
-    }, [account, account?.address, activeWallet?.id, brand, container, showSignupWizard]);
+    }, [account, account?.address, activeWallet?.id, brand, container, showSignupWizard, authCheckTrigger]);
 
     // Broadcast login/logout so ThemeLoader can immediately apply merchant-scoped theme
     useEffect(() => {
@@ -1387,6 +1388,11 @@ export function Navbar() {
             />
             <AccessPendingModal
                 isOpen={showAccessPending && !showSignupWizard}
+                wallet={account?.address || ""}
+                onCheckStatus={async () => {
+                    checkingAuth.current = false;
+                    setAuthCheckTrigger(c => c + 1);
+                }}
                 onClose={() => {
                     setShowAccessPending(false);
                     if (activeWallet) {

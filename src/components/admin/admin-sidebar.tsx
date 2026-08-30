@@ -453,6 +453,17 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
 
 
   const [teamProfiles, setTeamProfiles] = useState<any[]>([]);
+  const [authMe, setAuthMe] = useState<{ isTeamMember?: boolean; hasOwnShop?: boolean; shopStatus?: string } | null>(null);
+
+  useEffect(() => {
+    if (!wallet) return;
+    fetch(`/api/auth/me`, { headers: { 'x-wallet': wallet } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setAuthMe(d);
+      })
+      .catch(() => {});
+  }, [wallet]);
 
   useEffect(() => {
     if (!wallet) return;
@@ -466,6 +477,18 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
             (p: any) => p.merchantWallet && p.merchantWallet.toLowerCase() !== wallet.toLowerCase()
           );
           setTeamProfiles(extTeams);
+
+          // Ensure team member role is recorded in data-pp-admin-roles if not yet set
+          if (extTeams.length > 0 && typeof document !== 'undefined') {
+            try {
+              const currentRolesJson = document.documentElement.getAttribute('data-pp-admin-roles');
+              const rolesObj = currentRolesJson ? JSON.parse(currentRolesJson) : {};
+              if (!rolesObj[wallet.toLowerCase()]) {
+                rolesObj[wallet.toLowerCase()] = extTeams[0].role || 'merchant_cashier';
+                document.documentElement.setAttribute('data-pp-admin-roles', JSON.stringify(rolesObj));
+              }
+            } catch {}
+          }
         }
       })
       .catch(() => {});
@@ -514,6 +537,9 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
     };
   });
 
+  const isTeamMemberOnly = teamProfiles.length > 0 && authMe?.hasOwnShop === false && !isSuperadmin;
+  const showMyShop = !isTeamMemberOnly;
+
   const groups: NavItem[] = [
     {
       title: 'General',
@@ -533,7 +559,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Rewards', key: 'rewards' as AdminTabKey, icon: <Gift className="w-4 h-4" /> },
       ],
     },
-    {
+    ...(showMyShop ? [{
       title: 'Merchant (My Shop)',
       icon: <Building2 className="w-4 h-4" />,
       items: [
@@ -552,7 +578,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Reports', key: 'reports' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
         { title: 'Notifications', key: 'notificationsMerchant' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
       ].filter((item) => !disabledMerchantModules.includes(item.key)),
-    },
+    }] : []),
     ...teamMerchantGroups,
     {
       title: 'Apps',

@@ -4818,6 +4818,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         <PortalPayAccordionCheckoutV2
           theme={theme}
           isLightText={isLightText}
+          merchantWallet={effectiveMerchantWallet || merchantWallet}
           email={shipEmail || headlessEmailInput}
           phone={headlessPhoneInput}
           fullName={shipName || (kycFirstName && kycLastName ? `${kycFirstName} ${kycLastName}` : kycFirstName || kycLastName || "")}

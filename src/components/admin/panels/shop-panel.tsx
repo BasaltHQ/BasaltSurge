@@ -480,7 +480,7 @@ export function ShopPanel({ overrideWallet }: { overrideWallet?: string } = {}) 
         const isPartner = domContainerType === "partner" || containerType === "partner";
         const isRegistrationRegime = process.env.NEXT_PUBLIC_PLATFORM_REGISTRATION_REGIME === "true";
         
-        const isApproved = (!isPartner && !isRegistrationRegime) || status === "approved" || me?.isPlatformAdmin;
+        const isApproved = (!isPartner && !isRegistrationRegime) || status === "approved" || me?.isPlatformAdmin || !!me?.isTeamMember;
 
         if (!isApproved) {
           router.replace("/apply");

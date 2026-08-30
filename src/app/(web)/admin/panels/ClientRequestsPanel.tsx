@@ -2190,9 +2190,9 @@ export default function ClientRequestsPanel() {
                                                     {/* Presented Fee Card */}
                                                     {(() => {
                                                         const fallbackFeeBps = unifiedServiceFeeBps + currentPartnerBps + customAgentsBps;
-                                                        const basePresentedFeeBps = (isDebitTab ? presentedFeeBps : creditPresentedFeeBps);
+                                                        const basePresentedFeeBps = (isDebitTab ? (presentedFeeBps ?? creditPresentedFeeBps) : (creditPresentedFeeBps ?? presentedFeeBps));
                                                         const activePresentedFeeBps = basePresentedFeeBps !== undefined
-                                                            ? (basePresentedFeeBps + currentPartnerBps)
+                                                            ? (basePresentedFeeBps + currentPartnerBps + customAgentsBps)
                                                             : fallbackFeeBps;
                                                         return (
                                                             <div className={`p-6 rounded-2xl border bg-gradient-to-br ${

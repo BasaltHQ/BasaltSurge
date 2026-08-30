@@ -48,12 +48,38 @@ export function isSameOrigin(req: NextRequest): boolean {
     // Direct origin match
     if (origin && origin === urlOrigin) return true;
 
+    // www vs apex domain match (e.g., https://www.canyapay.com vs https://canyapay.com)
+    if (origin && urlOrigin) {
+      try {
+        const o = new URL(origin);
+        const u = new URL(urlOrigin);
+        if (
+          o.protocol === u.protocol &&
+          o.port === u.port &&
+          o.hostname.replace(/^www\./, "").toLowerCase() === u.hostname.replace(/^www\./, "").toLowerCase()
+        ) {
+          return true;
+        }
+      } catch {}
+    }
+
     // Check referer
     const referer = req.headers.get("referer") || req.headers.get("referrer");
     if (referer) {
       const normalizedReferer = referer.replace(/\/\/127\.0\.0\.1/, "//localhost");
       const normalizedUrlOrigin = urlOrigin.replace(/\/\/127\.0\.0\.1/, "//localhost");
       if (normalizedReferer.startsWith(normalizedUrlOrigin)) return true;
+      try {
+        const r = new URL(normalizedReferer);
+        const u = new URL(normalizedUrlOrigin);
+        if (
+          r.protocol === u.protocol &&
+          r.port === u.port &&
+          r.hostname.replace(/^www\./, "").toLowerCase() === u.hostname.replace(/^www\./, "").toLowerCase()
+        ) {
+          return true;
+        }
+      } catch {}
     }
 
     // Non-browser clients often omit origin/referer. If host matches, allow.

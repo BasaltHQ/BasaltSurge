@@ -138,7 +138,10 @@ function cors(res: NextResponse, req?: NextRequest) {
     res.headers.set("Access-Control-Allow-Origin", "*");
   }
   res.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-wallet, x-caller-wallet, x-forwarded-host, x-forwarded-proto, x-api-key, x-container-type");
+  res.headers.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, x-wallet, x-caller-wallet, x-forwarded-host, x-forwarded-proto, x-api-key, x-container-type, x-csrf, x-csrf-token, x-brand-key, x-requested-with"
+  );
   return res;
 }
 

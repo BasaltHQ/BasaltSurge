@@ -333,9 +333,17 @@ export default function GlobalSplitGuard() {
         const isPartnerFlag = domContainerType === "partner" || ct === "partner";
         const isRegistrationRegime = process.env.NEXT_PUBLIC_PLATFORM_REGISTRATION_REGIME === "true";
         
-        const isApprovedStatus = (!isPartnerFlag && !isRegistrationRegime) || String(authCheck?.shopStatus || "").toLowerCase() === "approved" || authCheck?.isPlatformAdmin;
+        const isApprovedStatus = (!isPartnerFlag && !isRegistrationRegime) || String(authCheck?.shopStatus || "").toLowerCase() === "approved" || authCheck?.isPlatformAdmin || !!authCheck?.isTeamMember;
         
         if (!isApprovedStatus) {
+          setOpen(false);
+          setChecking(false);
+          return;
+        }
+
+        // SUPPRESSION: Team Members (without own shops)
+        // Team members operate under their merchant's store splits and do not deploy their own contracts.
+        if (authCheck?.isTeamMember && authCheck?.hasOwnShop === false) {
           setOpen(false);
           setChecking(false);
           return;
