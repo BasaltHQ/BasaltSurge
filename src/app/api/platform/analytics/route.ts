@@ -392,25 +392,30 @@ export async function GET(req: NextRequest) {
     }
 
     // Pre-fetch merchant configurations for split addresses and merchant names resolution in a single query
-    const configMap: Record<string, { brandKey?: string; merchantName?: string; splitAddress?: string; splitAddressCredit?: string }> = {};
+    const configMap: Record<string, { brandKey?: string; merchantName?: string; slug?: string; splitAddress?: string; splitAddressCredit?: string }> = {};
     try {
       const configQuery = {
-        query: "SELECT c.wallet, c.brandKey, c.merchantName, c.name, c.businessName, c.shopName, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit FROM c WHERE c.type = 'wallet_config' OR c.type = 'client_request'"
+        query: "SELECT c.wallet, c.brandKey, c.merchantName, c.name, c.businessName, c.shopName, c.displayName, c.title, c.slug, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit FROM c WHERE c.type = 'site_config' OR c.type = 'shop_config' OR c.type = 'wallet_config' OR c.type = 'client_request'"
       };
       const { resources: configs } = await container.items.query(configQuery).fetchAll();
       for (const cfg of configs || []) {
         if (cfg.wallet) {
-          const pair = `${cfg.wallet}:${cfg.brandKey || ""}`;
-          const mName = cfg.merchantName || cfg.businessName || cfg.name || cfg.shopName;
+          const wLower = String(cfg.wallet).toLowerCase().trim();
+          const bKeyLower = String(cfg.brandKey || "").toLowerCase().trim();
+          const pair = `${wLower}:${bKeyLower}`;
+          const mName = cfg.merchantName || cfg.shopName || cfg.businessName || cfg.displayName || cfg.name || cfg.title;
           const entry = {
             brandKey: cfg.brandKey || undefined,
             merchantName: mName || undefined,
+            slug: cfg.slug || undefined,
             splitAddress: cfg.splitAddress || cfg.split?.address || undefined,
             splitAddressCredit: cfg.splitAddressCredit || cfg.splitCredit?.address || undefined
           };
-          configMap[pair] = entry;
-          if (cfg.wallet && !configMap[cfg.wallet]) {
-            configMap[cfg.wallet] = entry;
+          if (!configMap[pair] || (mName && !configMap[pair].merchantName)) {
+            configMap[pair] = entry;
+          }
+          if (!configMap[wLower] || (mName && !configMap[wLower].merchantName)) {
+            configMap[wLower] = entry;
           }
         }
       }
@@ -447,8 +452,9 @@ export async function GET(req: NextRequest) {
       if (rc.shopSlug && rc.shopSlug !== "unknown") {
         return rc.shopSlug;
       }
-      if (rc.wallet && configMap[rc.wallet]?.brandKey) {
-        return configMap[rc.wallet].brandKey;
+      const wLower = String(rc.wallet || "").toLowerCase().trim();
+      if (wLower && configMap[wLower]?.brandKey) {
+        return configMap[wLower].brandKey;
       }
       if (rc.parentUrl) {
         const url = String(rc.parentUrl).toLowerCase();
@@ -640,10 +646,12 @@ export async function GET(req: NextRequest) {
       const rLogs = logsByReceipt[rId] || [];
       const status = r.status || "pending";
       const resolvedBrandKey = getReceiptBrandKey(r);
-      const pairKey = `${r.wallet || ""}:${resolvedBrandKey}`;
-      const resolvedConfig = configMap[pairKey] || configMap[r.wallet || ""] || {};
+      const wLower = String(r.wallet || "").toLowerCase().trim();
+      const pairKey = `${wLower}:${resolvedBrandKey.toLowerCase()}`;
+      const resolvedConfig = configMap[pairKey] || configMap[wLower] || {};
 
       const derivedMerchantName = r.merchantName || r.shopName || r.shopTitle || r.merchantTitle || r.shopifyShop || resolvedConfig.merchantName || null;
+      const derivedShopSlug = r.shopSlug || resolvedConfig.slug || null;
       const feeUsd = getReceiptFeeUsd(r);
 
       return {
@@ -651,6 +659,8 @@ export async function GET(req: NextRequest) {
         brandKey: resolvedBrandKey,
         brandName: r.brandName || resolvedBrandKey,
         merchantName: derivedMerchantName,
+        shopName: r.shopName || derivedMerchantName || null,
+        shopSlug: derivedShopSlug,
         wallet: r.wallet || null,
         status,
         totalUsd: r.totalUsd || 0,

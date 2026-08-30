@@ -5,7 +5,8 @@ import { useActiveAccount } from "thirdweb/react";
 import { DefaultAvatar } from "@/components/default-avatar";
 import {
   ImagePlus, X, Link as LinkIcon, MoreHorizontal, ExternalLink, Store, Image as ImageIcon,
-  Search, Filter, MessageSquare, CheckCircle2, Clock, AlertCircle, Send, User, ChevronLeft
+  Search, Filter, MessageSquare, CheckCircle2, Clock, AlertCircle, Send, User, ChevronLeft,
+  Receipt, CreditCard, Hash, Mail, Copy, Check, DollarSign, FileText, ShieldCheck
 } from "lucide-react";
 import { GalleryModal } from "@/components/support/GalleryModal";
 import { ImageMarkupModal, MarkupButton } from "@/components/support/ImageMarkupModal";
@@ -121,6 +122,20 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
   const [merchantShopSlug, setMerchantShopSlug] = React.useState<string | null>(null);
   const [shopSlugLoading, setShopSlugLoading] = React.useState(false);
   const [orderTxHash, setOrderTxHash] = React.useState<string | null>(null);
+
+  // Receipt & Transaction Details state
+  const [receiptDetails, setReceiptDetails] = React.useState<any>(null);
+  const [receiptLoading, setReceiptLoading] = React.useState(false);
+  const [showReceiptModal, setShowReceiptModal] = React.useState(false);
+  const [copiedKey, setCopiedKey] = React.useState<string | null>(null);
+
+  const copyToClipboard = React.useCallback((text: string, key: string) => {
+    try {
+      navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    } catch {}
+  }, []);
 
   // User PFP cache and helpers (fetches profile by wallet and caches pfpUrl/displayName)
   const [pfp, setPfp] = React.useState<Record<string, { pfpUrl?: string; displayName?: string }>>({});
@@ -418,26 +433,37 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
     [conversations, activeConvoId]
   );
 
-  // Fetch merchant shop slug or order details based on subject
+  // Fetch merchant shop slug, order details, or receipt details based on subject
   React.useEffect(() => {
     setMerchantShopSlug(null);
     setOrderTxHash(null);
+    setReceiptDetails(null);
     if (!activeConvo) return;
 
     // 1. If subject is shop, or we need shop slug for merchant
     const other = activeConvo.participants.find(p => p.toLowerCase() !== me) || activeConvo.participants[0];
     if (other) fetchMerchantShopSlug(other);
 
-    // 2. If subject is order, fetch order details for tx hash
-    if (activeConvo.subject?.type === 'order' && activeConvo.subject.id) {
-      fetch(`/api/orders/${encodeURIComponent(activeConvo.subject.id)}`)
+    // 2. If subject is order or checkout, fetch full receipt details
+    const subjectType = activeConvo.subject?.type;
+    const subjectId = activeConvo.subject?.id;
+
+    if ((subjectType === 'order' || subjectType === 'checkout') && subjectId) {
+      setReceiptLoading(true);
+      fetch(`/api/receipts/${encodeURIComponent(subjectId)}`, { cache: "no-store" })
         .then(r => r.json())
         .then(data => {
-          if (data.ok && data.item?.transactionHash) {
-            setOrderTxHash(data.item.transactionHash);
+          const item = data?.item || data?.receipt;
+          if (item) {
+            setReceiptDetails(item);
+            const tx = item.transactionHash || item.txHash;
+            if (tx) {
+              setOrderTxHash(tx);
+            }
           }
         })
-        .catch(() => { });
+        .catch(() => { })
+        .finally(() => setReceiptLoading(false));
     }
   }, [activeConvo, me]);
 
@@ -798,7 +824,7 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
           <>
             {/* Header */}
             <div className="flex items-center justify-between mb-3 shrink-0">
-              <div className="flex items-center gap-3 overflow-hidden">
+              <div className="flex items-center gap-3 overflow-hidden flex-wrap">
                 <div className="text-sm font-semibold truncate">
                   {activeConvo ? subjectLabelFrom(activeConvo) : "Conversation"}
                 </div>
@@ -813,6 +839,23 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
                     </span>
                   )}
                 </div>
+
+                {/* Receipt Details Button in Header */}
+                {(receiptDetails || (activeConvo?.subject?.type === 'checkout' || activeConvo?.subject?.type === 'order')) && (
+                  <button
+                    onClick={() => setShowReceiptModal(true)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 text-xs font-medium transition-all shadow-sm shrink-0 cursor-pointer"
+                    title="View Receipt & Transaction Details"
+                  >
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>Receipt Info</span>
+                    {receiptDetails?.totalUsd !== undefined && (
+                      <span className="font-mono text-white text-[11px] font-bold bg-blue-500/20 px-1.5 py-0.5 rounded border border-blue-500/30">
+                        ${Number(receiptDetails.totalUsd).toFixed(2)}
+                      </span>
+                    )}
+                  </button>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -833,7 +876,16 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
                     <MoreHorizontal className="w-5 h-5 text-muted-foreground" />
                   </button>
                   {showMenu && (
-                    <div className="absolute right-0 top-full mt-1 w-56 bg-background border rounded-xl shadow-xl z-50 py-2 animate-in fade-in slide-in-from-top-2">
+                    <div className="absolute right-0 top-full mt-1 w-64 bg-background border rounded-xl shadow-xl z-50 py-2 animate-in fade-in slide-in-from-top-2">
+                      {(receiptDetails || (activeConvo?.subject?.type === 'checkout' || activeConvo?.subject?.type === 'order')) && (
+                        <button
+                          onClick={() => { setShowReceiptModal(true); setShowMenu(false); }}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-muted transition-colors text-sm text-left text-blue-400 font-medium"
+                        >
+                          <Receipt className="w-4 h-4 text-blue-400" />
+                          <span>View Receipt Details</span>
+                        </button>
+                      )}
                       {role === 'buyer' && (
                         <a
                           href={getMerchantUrl('shop', '')} // Wallet not needed for shop if slug is set
@@ -1092,6 +1144,359 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
           />
         )
       }
+
+      {/* Receipt Details Modal */}
+      {
+        showReceiptModal && (
+          <ReceiptDetailsModal
+            receipt={receiptDetails}
+            loading={receiptLoading}
+            onClose={() => setShowReceiptModal(false)}
+            copiedKey={copiedKey}
+            onCopy={copyToClipboard}
+          />
+        )
+      }
     </div >
+  );
+}
+
+function ReceiptDetailsModal({
+  receipt,
+  loading,
+  onClose,
+  copiedKey,
+  onCopy
+}: {
+  receipt: any;
+  loading: boolean;
+  onClose: () => void;
+  copiedKey: string | null;
+  onCopy: (text: string, key: string) => void;
+}) {
+  const status = String(receipt?.status || "pending").toLowerCase();
+  const isSettled = ["paid", "checkout_success", "confirmed", "tx_mined", "completed"].includes(status);
+  const isAchPending = status.includes("ach");
+  const isFailed = status.includes("fail") || status.includes("cancel");
+
+  const statusBadge = isSettled ? (
+    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+      <CheckCircle2 className="w-3.5 h-3.5" />
+      <span>Paid / Settled</span>
+    </span>
+  ) : isAchPending ? (
+    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center gap-1">
+      <Clock className="w-3.5 h-3.5" />
+      <span>ACH Pending</span>
+    </span>
+  ) : isFailed ? (
+    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/20 flex items-center gap-1">
+      <AlertCircle className="w-3.5 h-3.5" />
+      <span>Failed</span>
+    </span>
+  ) : (
+    <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1">
+      <Clock className="w-3.5 h-3.5" />
+      <span>{status || "Pending"}</span>
+    </span>
+  );
+
+  const email = receipt?.customerEmail || receipt?.stripeEmail || receipt?.email;
+  const funding = receipt?.detectedCardFunding || (receipt?.isCreditCard ? "credit" : undefined);
+  const fundingLabel = funding === "us_bank_account" || funding === "ach"
+    ? "US Bank Account (ACH)"
+    : funding === "debit"
+      ? "Debit Card"
+      : funding === "credit"
+        ? "Credit Card"
+        : funding
+          ? String(funding).toUpperCase()
+          : "Standard Card / Digital Payment";
+
+  const txHash = receipt?.transactionHash || receipt?.txHash;
+  const leg1TxHash = receipt?.leg1TxHash || receipt?.onrampTxHash;
+  const leg2TxHash = receipt?.leg2TxHash;
+  const stripeId = receipt?.stripeSessionId || receipt?.stripePaymentIntentId || receipt?.paymentIntentId;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 overflow-y-auto animate-in fade-in duration-200">
+      <div className="w-full max-w-xl bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200 text-zinc-200">
+        
+        {/* Header */}
+        <div className="p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
+              <Receipt className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base font-bold text-white">Receipt &amp; Order Details</h3>
+                {statusBadge}
+              </div>
+              <p className="text-xs font-mono text-zinc-400 mt-0.5">
+                ID: {receipt?.receiptId || receipt?.id || "Loading..."}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0 text-sm">
+          {loading && !receipt ? (
+            <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
+              <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+              <span className="text-xs font-mono text-zinc-400">Fetching receipt details...</span>
+            </div>
+          ) : (
+            <>
+              {/* Financial & Time Summary Card */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80">
+                  <span className="text-[10px] font-mono uppercase text-zinc-400 tracking-wider">Total Amount</span>
+                  <div className="text-lg font-black text-white font-mono mt-0.5">
+                    ${Number(receipt?.totalUsd || 0).toFixed(2)}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80">
+                  <span className="text-[10px] font-mono uppercase text-zinc-400 tracking-wider">Payment Method</span>
+                  <div className="text-xs font-semibold text-zinc-200 mt-1 truncate" title={fundingLabel}>
+                    {fundingLabel}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 col-span-2 sm:col-span-1">
+                  <span className="text-[10px] font-mono uppercase text-zinc-400 tracking-wider">Date &amp; Time</span>
+                  <div className="text-xs font-mono text-zinc-300 mt-1">
+                    {receipt?.createdAt ? new Date(receipt.createdAt).toLocaleDateString() : "—"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Customer Information */}
+              <div className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800 space-y-3">
+                <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Customer Contact</span>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-zinc-400">Customer Email:</span>
+                    {email ? (
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`mailto:${email}`}
+                          className="font-mono text-blue-400 hover:underline"
+                        >
+                          {email}
+                        </a>
+                        <button
+                          onClick={() => onCopy(email, "email")}
+                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                          title="Copy Email"
+                        >
+                          {copiedKey === "email" ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-zinc-500 font-mono">Not provided</span>
+                    )}
+                  </div>
+
+                  {receipt?.buyerWallet && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-400">Buyer Wallet:</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-zinc-300 truncate max-w-[180px] sm:max-w-[240px]">
+                          {receipt.buyerWallet}
+                        </span>
+                        <button
+                          onClick={() => onCopy(receipt.buyerWallet, "buyerWallet")}
+                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                          title="Copy Wallet"
+                        >
+                          {copiedKey === "buyerWallet" ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                        <a
+                          href={`https://basescan.org/address/${receipt.buyerWallet}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors"
+                          title="View on BaseScan"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Processor & Stripe Reference */}
+              <div className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800 space-y-3">
+                <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-1.5">
+                  <CreditCard className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Stripe &amp; Processor Reference</span>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-zinc-400">Stripe Session ID:</span>
+                    {stripeId ? (
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-purple-300 truncate max-w-[180px] sm:max-w-[240px]">
+                          {stripeId}
+                        </span>
+                        <button
+                          onClick={() => onCopy(stripeId, "stripeId")}
+                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                          title="Copy Stripe ID"
+                        >
+                          {copiedKey === "stripeId" ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-zinc-500 font-mono">None (Direct Web3)</span>
+                    )}
+                  </div>
+
+                  {receipt?.brandName && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-400">Container / Brand:</span>
+                      <span className="font-medium text-zinc-300">{receipt.brandName}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Blockchain Transaction Hashes */}
+              <div className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800 space-y-3">
+                <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-1.5">
+                  <Hash className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>On-Chain Transaction Hashes</span>
+                </div>
+
+                <div className="space-y-2">
+                  {/* Settlement Hash */}
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-zinc-400">Settlement Hash:</span>
+                    {txHash ? (
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`https://basescan.org/tx/${txHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-mono text-emerald-400 hover:underline truncate max-w-[180px] sm:max-w-[240px]"
+                        >
+                          {txHash}
+                        </a>
+                        <button
+                          onClick={() => onCopy(txHash, "txHash")}
+                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                          title="Copy Hash"
+                        >
+                          {copiedKey === "txHash" ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                        <a
+                          href={`https://basescan.org/tx/${txHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors"
+                          title="View on BaseScan"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      </div>
+                    ) : (
+                      <span className="text-zinc-500 font-mono">Pending on-chain</span>
+                    )}
+                  </div>
+
+                  {/* Leg 1 / Onramp Hash */}
+                  {leg1TxHash && leg1TxHash !== txHash && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-400">Onramp Hash:</span>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`https://basescan.org/tx/${leg1TxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-mono text-zinc-300 hover:underline truncate max-w-[180px] sm:max-w-[240px]"
+                        >
+                          {leg1TxHash}
+                        </a>
+                        <button
+                          onClick={() => onCopy(leg1TxHash, "leg1TxHash")}
+                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                        >
+                          {copiedKey === "leg1TxHash" ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Leg 2 Hash */}
+                  {leg2TxHash && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-400">Delivery Hash:</span>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`https://basescan.org/tx/${leg2TxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-mono text-zinc-300 hover:underline truncate max-w-[180px] sm:max-w-[240px]"
+                        >
+                          {leg2TxHash}
+                        </a>
+                        <button
+                          onClick={() => onCopy(leg2TxHash, "leg2TxHash")}
+                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                        >
+                          {copiedKey === "leg2TxHash" ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Line Items if available */}
+              {Array.isArray(receipt?.lineItems) && receipt.lineItems.length > 0 && (
+                <div className="p-4 rounded-xl bg-zinc-900/40 border border-zinc-800 space-y-2">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Line Items ({receipt.lineItems.length})</span>
+                  </div>
+                  <div className="divide-y divide-zinc-800/60 max-h-40 overflow-y-auto">
+                    {receipt.lineItems.map((item: any, idx: number) => (
+                      <div key={idx} className="py-1.5 flex justify-between items-center text-xs">
+                        <span className="text-zinc-300">{item.name || item.label || `Item #${idx + 1}`}</span>
+                        <span className="font-mono text-zinc-400">${Number(item.priceUsd || item.price || 0).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-zinc-800 bg-zinc-900/50 flex justify-end shrink-0">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -1349,6 +1349,9 @@ export default function PlatformAnalyticsPanel() {
         (r.stripeSessionId && r.stripeSessionId.toLowerCase().includes(q)) ||
         (r.transactionHash && r.transactionHash.toLowerCase().includes(q)) ||
         (r.merchantName && r.merchantName.toLowerCase().includes(q)) ||
+        (r.shopName && r.shopName.toLowerCase().includes(q)) ||
+        (r.shopSlug && r.shopSlug.toLowerCase().includes(q)) ||
+        (r.wallet && r.wallet.toLowerCase().includes(q)) ||
         r.brandKey.toLowerCase().includes(q);
 
       return matchesBrand && matchesStatus && matchesQuery;

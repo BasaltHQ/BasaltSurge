@@ -139,6 +139,43 @@ export async function GET(req: NextRequest) {
         return true;
       });
 
+    // Query 3: Receipt-linked checkout conversations where caller is the merchant/owner of the receipt
+    try {
+      const specReceipts = {
+        query: "SELECT c.receiptId FROM c WHERE c.type = 'receipt' AND c.wallet = @me",
+        parameters: [{ name: "@me", value: me }],
+      };
+      const { resources: myReceipts } = await container.items.query(specReceipts, { partitionKey: me as any }).fetchAll();
+      const myReceiptIds = Array.isArray(myReceipts) ? myReceipts.map((r: any) => String(r.receiptId || "")).filter(Boolean) : [];
+
+      if (myReceiptIds.length > 0) {
+        // Query checkout conversations matching this merchant's receipts
+        const specCheckout = {
+          query:
+            "SELECT c.id, c.wallet, c.brandKey, c.participants, c.subject, c.lastMessageAt, c.createdAt " +
+            "FROM c WHERE c.type = 'conversation' AND c.subject.type = 'checkout' AND ARRAY_CONTAINS(@rids, c.subject.id)",
+          parameters: [{ name: "@rids", value: myReceiptIds }],
+        };
+        const { resources: resCheckout } = await container.items.query(specCheckout).fetchAll();
+        if (Array.isArray(resCheckout)) {
+          for (const cc of resCheckout) {
+            const cid = String(cc?.id || "");
+            if (cid && !seen.has(cid)) {
+              seen.add(cid);
+              rows.push(cc);
+              // Auto-heal: add merchant to participants if missing
+              const parts = Array.isArray(cc.participants) ? cc.participants.map(normalizeWallet) : [];
+              if (!parts.includes(me)) {
+                parts.push(me);
+                const updatedDoc = { ...cc, participants: parts };
+                container.items.upsert(updatedDoc as any).catch(() => {});
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+
     // Fallback: derive conversations from messages if none found (cross-partition)
     if (rows.length === 0) {
       try {

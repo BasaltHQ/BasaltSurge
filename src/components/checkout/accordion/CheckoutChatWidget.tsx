@@ -106,8 +106,30 @@ export function CheckoutChatWidget({
     }
   }, [account?.address, propBuyerWallet]);
 
-  // Fallback target merchant wallet if not provided
+  // Target merchant wallet resolution (with receipt fallback)
+  const [resolvedMerchantWallet, setResolvedMerchantWallet] = useState<string>(propMerchantWallet || "");
+
+  useEffect(() => {
+    if (propMerchantWallet && /^0x[a-f0-9]{40}$/i.test(propMerchantWallet)) {
+      setResolvedMerchantWallet(propMerchantWallet.toLowerCase());
+      return;
+    }
+    // Fallback: If receiptId is present and not a sample, resolve merchant wallet from receipt
+    if (receiptId && !receiptId.startsWith("REC-SAMPLE") && receiptId !== "REC-CHECKOUT") {
+      fetch(`/api/receipts/${encodeURIComponent(receiptId)}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((data) => {
+          const w = data?.item?.wallet || data?.item?.recipient || data?.receipt?.wallet || data?.receipt?.recipient;
+          if (w && /^0x[a-f0-9]{40}$/i.test(w)) {
+            setResolvedMerchantWallet(w.toLowerCase());
+          }
+        })
+        .catch(() => {});
+    }
+  }, [propMerchantWallet, receiptId]);
+
   const targetMerchantWallet = (
+    resolvedMerchantWallet ||
     propMerchantWallet ||
     process.env.NEXT_PUBLIC_OWNER_WALLET ||
     "0x0000000000000000000000000000000000000000"
