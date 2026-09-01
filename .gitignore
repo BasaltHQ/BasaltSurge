@@ -92,3 +92,6 @@ vcrun.py
 
 # Local utility scripts
 trigger-transfer.js
+
+# Docs to not Commit
+/Docs/sales/BasaltSurge_Sales*

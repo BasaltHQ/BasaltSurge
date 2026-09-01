@@ -6,6 +6,7 @@ import { sendTransaction, getContract, prepareContractCall } from "thirdweb";
 import { client, chain, getWallets } from "@/lib/thirdweb/client";
 import { usePortalThirdwebTheme } from "@/lib/thirdweb/theme";
 import { useBrand } from "@/contexts/BrandContext";
+import AgentHero from "@/components/agents/agent-hero";
 import TruncatedAddress from "@/components/truncated-address";
 import { formatCurrency } from "@/lib/fx";
 import { EnhancedStatCard, HorizontalBarChart, DonutChart, VolumeVsTipsBar, MultiLineChart } from "@/components/admin/ReportCharts";
@@ -968,36 +969,39 @@ export default function AgentDashboard() {
     /* Not connected → Connect Prompt */
     if (!account) {
         return (
-            <div className="min-h-screen flex flex-col items-center justify-center px-4">
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-green-500/5 pointer-events-none" />
-                <div className="relative max-w-md w-full text-center space-y-6">
-                    <div className="h-20 w-20 mx-auto rounded-2xl bg-gradient-to-br from-primary/20 to-green-500/10 grid place-items-center shadow-lg shadow-primary/10">
-                        <Wallet className="h-10 w-10 text-primary" />
-                    </div>
-                    <h1 className="text-3xl font-bold">Agent Portal</h1>
-                    <p className="text-muted-foreground leading-relaxed">
-                        Connect the wallet associated with your agent role to view commission reports, earnings analytics, and withdraw funds across all your assigned merchants.
-                    </p>
-                    <div className="flex justify-center">
-                        {wallets.length > 0 ? (
-                        <ConnectButton 
-                            client={client} 
-                            chain={chain} 
-                            theme={twTheme}
-                            wallets={wallets}
-                            connectModal={{
-                                size: "compact",
-                                title: "Agent Console",
-                                showThirdwebBranding: false
-                            }}
-                        />
-                        ) : (
-                            <div className="w-[140px] h-[40px] bg-white/5 animate-pulse rounded-[10px]" />
-                        )}
-                    </div>
-                    <div className="pt-4 border-t border-border/50 space-y-2 text-xs text-muted-foreground">
-                        <p>Your agent wallet was set by the partner when configuring merchant splits.</p>
-                        {brand?.name && <p className="opacity-60">Powered by {brand.name}</p>}
+            <div className="min-h-screen flex flex-col pt-16">
+                <AgentHero />
+                <div className="flex-1 flex flex-col items-center justify-center px-4">
+                    <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-green-500/5 pointer-events-none" />
+                    <div className="relative max-w-md w-full text-center space-y-6">
+                        <div className="h-20 w-20 mx-auto rounded-2xl bg-gradient-to-br from-primary/20 to-green-500/10 grid place-items-center shadow-lg shadow-primary/10">
+                            <Wallet className="h-10 w-10 text-primary" />
+                        </div>
+                        <h1 className="text-3xl font-bold">Agent Portal</h1>
+                        <p className="text-muted-foreground leading-relaxed">
+                            Connect the wallet associated with your agent role to view commission reports, earnings analytics, and withdraw funds across all your assigned merchants.
+                        </p>
+                        <div className="flex justify-center">
+                            {wallets.length > 0 ? (
+                            <ConnectButton 
+                                client={client} 
+                                chain={chain} 
+                                theme={twTheme}
+                                wallets={wallets}
+                                connectModal={{
+                                    size: "compact",
+                                    title: "Agent Console",
+                                    showThirdwebBranding: false
+                                }}
+                            />
+                            ) : (
+                                <div className="w-[140px] h-[40px] bg-white/5 animate-pulse rounded-[10px]" />
+                            )}
+                        </div>
+                        <div className="pt-4 border-t border-border/50 space-y-2 text-xs text-muted-foreground">
+                            <p>Your agent wallet was set by the partner when configuring merchant splits.</p>
+                            {brand?.name && <p className="opacity-60">Powered by {brand.name}</p>}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1007,8 +1011,11 @@ export default function AgentDashboard() {
     /* Profile loading */
     if (profileLoading) {
         return (
-            <div className="min-h-screen flex items-center justify-center">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <div className="min-h-screen flex flex-col pt-16">
+                <AgentHero />
+                <div className="flex-1 flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
             </div>
         );
     }
@@ -1016,20 +1023,23 @@ export default function AgentDashboard() {
     /* Pending gate */
     if (hasProfile && profileStatus === "pending") {
         return (
-            <div className="min-h-[80vh] flex flex-col items-center justify-center px-4 pt-16">
-                <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-orange-500/5 pointer-events-none" />
-                <div className="relative max-w-lg w-full space-y-6 text-center z-10">
-                    <div className="h-16 w-16 mx-auto rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 grid place-items-center shadow-lg shadow-amber-500/10 border border-amber-500/20">
-                        <User className="h-8 w-8 text-amber-500" />
-                    </div>
-                    <h1 className="text-2xl font-bold text-white">Pending Approval</h1>
-                    <p className="text-sm text-gray-400">
-                        Your agent application has been submitted and is currently under review. 
-                        You will be able to access the dashboard once approved.
-                    </p>
-                    <div className="p-4 bg-white/5 border border-white/10 rounded-xl max-w-xs mx-auto">
-                        <div className="text-[10px] uppercase font-mono tracking-wider text-amber-500 mb-1">Application Wallet</div>
-                        <div className="font-mono text-xs text-white truncate px-2">{agentWallet}</div>
+            <div className="min-h-screen flex flex-col pt-16">
+                <AgentHero />
+                <div className="flex-1 flex flex-col items-center justify-center px-4 pt-8">
+                    <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-orange-500/5 pointer-events-none" />
+                    <div className="relative max-w-lg w-full space-y-6 text-center z-10">
+                        <div className="h-16 w-16 mx-auto rounded-2xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 grid place-items-center shadow-lg shadow-amber-500/10 border border-amber-500/20">
+                            <User className="h-8 w-8 text-amber-500" />
+                        </div>
+                        <h1 className="text-2xl font-bold text-white">Pending Approval</h1>
+                        <p className="text-sm text-gray-400">
+                            Your agent application has been submitted and is currently under review. 
+                            You will be able to access the dashboard once approved.
+                        </p>
+                        <div className="p-4 bg-white/5 border border-white/10 rounded-xl max-w-xs mx-auto">
+                            <div className="text-[10px] uppercase font-mono tracking-wider text-amber-500 mb-1">Application Wallet</div>
+                            <div className="font-mono text-xs text-white truncate px-2">{agentWallet}</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1039,82 +1049,85 @@ export default function AgentDashboard() {
     /* Profile gate — require info before showing dashboard */
     if (!hasProfile) {
         return (
-            <div className="min-h-screen flex flex-col items-center justify-center px-4">
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-blue-500/5 pointer-events-none" />
-                <div className="relative max-w-lg w-full space-y-6">
-                    <div className="text-center space-y-2">
-                        <div className="h-16 w-16 mx-auto rounded-2xl bg-gradient-to-br from-primary/20 to-green-500/10 grid place-items-center shadow-lg shadow-primary/10">
-                            <User className="h-8 w-8 text-primary" />
-                        </div>
-                        <h1 className="text-2xl font-bold">Complete Your Profile</h1>
-                        <p className="text-sm text-muted-foreground">
-                            Before accessing your agent dashboard, please provide your contact information.
-                        </p>
-                    </div>
-
-                    <div className="space-y-4 bg-card rounded-xl border p-6">
-                        <div className="space-y-1">
-                            <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
-                                <Wallet className="h-3 w-3" /> Wallet
-                            </label>
-                            <div className="px-3 py-2.5 rounded-lg bg-muted/20 border text-sm font-mono text-muted-foreground truncate">
-                                {agentWallet}
+            <div className="min-h-screen flex flex-col pt-16">
+                <AgentHero />
+                <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
+                    <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-blue-500/5 pointer-events-none" />
+                    <div className="relative max-w-lg w-full space-y-6">
+                        <div className="text-center space-y-2">
+                            <div className="h-16 w-16 mx-auto rounded-2xl bg-gradient-to-br from-primary/20 to-green-500/10 grid place-items-center shadow-lg shadow-primary/10">
+                                <User className="h-8 w-8 text-primary" />
                             </div>
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
-                                <User className="h-3 w-3" /> Full Name *
-                            </label>
-                            <input
-                                type="text"
-                                required
-                                value={profileName}
-                                onChange={(e) => setProfileName(e.target.value)}
-                                placeholder="Your full name"
-                                className="w-full px-3 py-2.5 rounded-lg bg-background border text-sm focus:ring-1 focus:ring-primary/50 outline-none"
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
-                                <Mail className="h-3 w-3" /> Email *
-                            </label>
-                            <input
-                                type="email"
-                                required
-                                value={profileEmail}
-                                onChange={(e) => setProfileEmail(e.target.value)}
-                                placeholder="agent@example.com"
-                                className="w-full px-3 py-2.5 rounded-lg bg-background border text-sm focus:ring-1 focus:ring-primary/50 outline-none"
-                            />
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
-                                <Phone className="h-3 w-3" /> Phone
-                            </label>
-                            <input
-                                type="tel"
-                                value={profilePhone}
-                                onChange={(e) => setProfilePhone(e.target.value)}
-                                placeholder="+1 (555) 123-4567"
-                                className="w-full px-3 py-2.5 rounded-lg bg-background border text-sm focus:ring-1 focus:ring-primary/50 outline-none"
-                            />
+                            <h1 className="text-2xl font-bold">Complete Your Profile</h1>
+                            <p className="text-sm text-muted-foreground">
+                                Before accessing your agent dashboard, please provide your contact information.
+                            </p>
                         </div>
 
-                        {profileError && (
-                            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-sm">{profileError}</div>
-                        )}
+                        <div className="space-y-4 bg-card rounded-xl border p-6">
+                            <div className="space-y-1">
+                                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
+                                    <Wallet className="h-3 w-3" /> Wallet
+                                </label>
+                                <div className="px-3 py-2.5 rounded-lg bg-muted/20 border text-sm font-mono text-muted-foreground truncate">
+                                    {agentWallet}
+                                </div>
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
+                                    <User className="h-3 w-3" /> Full Name *
+                                </label>
+                                <input
+                                    type="text"
+                                    required
+                                    value={profileName}
+                                    onChange={(e) => setProfileName(e.target.value)}
+                                    placeholder="Your full name"
+                                    className="w-full px-3 py-2.5 rounded-lg bg-background border text-sm focus:ring-1 focus:ring-primary/50 outline-none"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
+                                    <Mail className="h-3 w-3" /> Email *
+                                </label>
+                                <input
+                                    type="email"
+                                    required
+                                    value={profileEmail}
+                                    onChange={(e) => setProfileEmail(e.target.value)}
+                                    placeholder="agent@example.com"
+                                    className="w-full px-3 py-2.5 rounded-lg bg-background border text-sm focus:ring-1 focus:ring-primary/50 outline-none"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground flex items-center gap-1.5">
+                                    <Phone className="h-3 w-3" /> Phone
+                                </label>
+                                <input
+                                    type="tel"
+                                    value={profilePhone}
+                                    onChange={(e) => setProfilePhone(e.target.value)}
+                                    placeholder="+1 (555) 123-4567"
+                                    className="w-full px-3 py-2.5 rounded-lg bg-background border text-sm focus:ring-1 focus:ring-primary/50 outline-none"
+                                />
+                            </div>
 
-                        <button
-                            onClick={saveProfile}
-                            disabled={savingProfile || !profileName || !profileEmail}
-                            className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-semibold hover:brightness-110 transition disabled:opacity-50 inline-flex items-center justify-center gap-2"
-                        >
-                            {savingProfile ? (
-                                <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</>
-                            ) : (
-                                <><Save className="h-4 w-4" /> Save & Continue to Dashboard</>
+                            {profileError && (
+                                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-sm">{profileError}</div>
                             )}
-                        </button>
+
+                            <button
+                                onClick={saveProfile}
+                                disabled={savingProfile || !profileName || !profileEmail}
+                                className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-semibold hover:brightness-110 transition disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                            >
+                                {savingProfile ? (
+                                    <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</>
+                                ) : (
+                                    <><Save className="h-4 w-4" /> Save & Continue to Dashboard</>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1126,7 +1139,8 @@ export default function AgentDashboard() {
     const topEarner = sortedMerchants.length > 0 ? sortedMerchants.reduce((a, b) => a.estimatedEarnings > b.estimatedEarnings ? a : b) : null;
 
     return (
-        <div className="min-h-screen pb-20">
+        <div className="min-h-screen pb-20 pt-16">
+            <AgentHero activeTab={activeTab} onTabChange={setActiveTab} />
             {/* ─── Hero / Header ─── */}
             <div className="relative overflow-hidden border-b bg-gradient-to-br from-primary/8 via-background to-green-500/5">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 md:py-12">
