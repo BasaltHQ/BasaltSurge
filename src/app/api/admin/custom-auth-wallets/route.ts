@@ -59,108 +59,20 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Resolve brand-specific Thirdweb Client ID dynamically
-    const bKey = targetBrandKey ? targetBrandKey.toUpperCase().replace(/-/g, "_") : "";
-    const envClientId = (bKey ? (process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] || process.env[`THIRDWEB_CLIENT_ID_${bKey}`]) : undefined)
-      || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID
-      || process.env.THIRDWEB_CLIENT_ID;
-
-    const uncheckedLegacy = legacyProfiles.filter(p => {
-      const checked = p.checkedBrands || [];
-      return !checked.map((b: string) => b.toLowerCase()).includes(targetBrandKey);
-    });
-
-    // Process a max batch size of 20 at a time to prevent server/gateway timeouts
-    const batchToProcess = uncheckedLegacy.slice(0, 20);
-
-    if (envClientId && targetBrandKey && batchToProcess.length > 0) {
-      try {
-        const { createThirdwebClient } = await import("thirdweb");
-        const { inAppWallet } = await import("thirdweb/wallets");
-        const { base } = await import("thirdweb/chains");
-        const { markEmailVerified } = await import("@/app/api/auth/thirdweb-verify/route");
-
-        const brandTwClient = createThirdwebClient({
-          clientId: envClientId,
-          secretKey: process.env.THIRDWEB_SECRET_KEY,
-        });
-
-        // Run EOA checks and database upserts concurrently
-        await Promise.all(
-          batchToProcess.map(async (legacyProfile) => {
-            const wallet = String(legacyProfile.wallet || "").toLowerCase().trim();
-            const email = String(legacyProfile.contact?.email || "").toLowerCase().trim();
-
-            if (brandScopedProfiles.has(wallet)) {
-              return;
-            }
-
-            try {
-              const verificationToken = markEmailVerified(email);
-              const tempWallet = inAppWallet({
-                auth: { options: ["auth_endpoint" as any] },
-                executionMode: { mode: "EIP7702", sponsorGas: true },
-              });
-              const account = await tempWallet.connect({
-                client: brandTwClient,
-                chain: base,
-                strategy: "auth_endpoint" as any,
-                payload: JSON.stringify({ email, verificationToken }),
-              });
-              const derivedAddress = account.address.toLowerCase().trim();
-
-              if (derivedAddress === wallet) {
-                console.log(`[custom-auth-wallets] EOA matched: email ${email} derived ${derivedAddress} == wallet ${wallet} using client ID ${envClientId}`);
-                
-                // Create the brand-scoped profile
-                const nextDoc = {
-                  ...legacyProfile,
-                  id: `${wallet}:user:${targetBrandKey}`,
-                  brandKey: targetBrandKey,
-                  lastSeen: Date.now()
-                };
-
-                await container.items.upsert(nextDoc);
-                console.log(`[custom-auth-wallets] Successfully backfilled user profile for ${targetBrandKey}: ${nextDoc.id}`);
-                brandScopedProfiles.set(wallet, nextDoc);
-              }
-            } catch (deriveErr) {
-              console.warn(`[custom-auth-wallets] Failed EOA derivation check for email ${email} under brand ${targetBrandKey}:`, deriveErr);
-            }
-
-            // Mark this legacy profile as checked for this brand so we never try slow EOA derivation on it again
-            try {
-              const checked = Array.isArray(legacyProfile.checkedBrands) ? [...legacyProfile.checkedBrands] : [];
-              if (!checked.map((b: string) => b.toLowerCase()).includes(targetBrandKey)) {
-                checked.push(targetBrandKey);
-              }
-              const updatedLegacy = {
-                ...legacyProfile,
-                checkedBrands: checked,
-                lastSeen: Date.now()
-              };
-              await container.items.upsert(updatedLegacy);
-            } catch (legacyUpdateErr) {
-              console.error(`[custom-auth-wallets] Failed to update checkedBrands on legacy profile for ${wallet}:`, legacyUpdateErr);
-            }
-          })
-        );
-      } catch (importErr) {
-        console.error(`[custom-auth-wallets] Failed to load Thirdweb SDK for derivation:`, importErr);
-      }
-    }
-
     // Determine final resources list to output
     let finalResources: any[] = [];
     if (targetBrandKey) {
-      finalResources = Array.from(brandScopedProfiles.values());
+      finalResources = resources.filter(r => {
+        const id = String(r.id || "").toLowerCase();
+        return id.endsWith(`:${targetBrandKey}`) || id.endsWith(":user");
+      });
     } else {
       finalResources = resources;
     }
 
     const seenKeys = new Set<string>();
     const seenIds = new Set<string>();
-    const items: any[] = [];
+    const preliminaryItems: any[] = [];
 
     // Sort resources by lastSeen descending first to prioritize the most recent records
     finalResources.sort((a: any, b: any) => (b.lastSeen || 0) - (a.lastSeen || 0));
@@ -178,7 +90,7 @@ export async function GET(req: NextRequest) {
       seenKeys.add(compositeKey);
       seenIds.add(id);
 
-      items.push({
+      preliminaryItems.push({
         id: r.id,
         wallet: r.wallet,
         displayName: r.displayName || "Anonymous User",
@@ -186,9 +98,47 @@ export async function GET(req: NextRequest) {
         phone: r.contact?.phone || "",
         firstSeen: r.firstSeen,
         lastSeen: r.lastSeen,
-        xp: r.xp || 0
+        xp: r.xp || 0,
+        brandKey: r.brandKey || (r.id.includes(":") ? r.id.split(":").pop() : "")
       });
     }
+
+    // Check on-chain USDC balances via free read-only RPC (zero Thirdweb auth cost)
+    const { createThirdwebClient, getContract, readContract } = await import("thirdweb");
+    const { base } = await import("thirdweb/chains");
+    const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+    const twReadClient = createThirdwebClient({
+      clientId: process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "",
+      secretKey: process.env.THIRDWEB_SECRET_KEY
+    });
+
+    const usdcContract = getContract({
+      client: twReadClient,
+      chain: base,
+      address: BASE_USDC_ADDRESS
+    });
+
+    // Check top 50 wallets concurrently
+    const items = await Promise.all(
+      preliminaryItems.slice(0, 100).map(async (item) => {
+        let usdcBalance = 0;
+        try {
+          const rawUnits = await readContract({
+            contract: usdcContract,
+            method: "function balanceOf(address account) view returns (uint256)",
+            params: [item.wallet]
+          });
+          usdcBalance = +(Number(rawUnits) / 1_000_000).toFixed(2);
+        } catch {
+          usdcBalance = 0;
+        }
+        return {
+          ...item,
+          usdcBalance
+        };
+      })
+    );
 
     try {
       await auditEvent(req, {
@@ -216,6 +166,122 @@ export async function GET(req: NextRequest) {
       });
     } catch {}
     return NextResponse.json({ error: e?.message || "unauthorized" }, { status: 401, headers: { "x-correlation-id": correlationId } });
+  }
+}
+
+/**
+ * POST /api/admin/custom-auth-wallets
+ * Trigger on-demand gasless sweep for a specific custom auth wallet with stranded balance
+ * Uses the exact same target split resolution and receipt settlement logic as the background poller
+ */
+export async function POST(req: NextRequest) {
+  const correlationId = crypto.randomUUID();
+  try {
+    const caller = await requireRole(req, "admin");
+    const body = await req.json().catch(() => ({}));
+    const { email, targetSplitAddress: explicitSplit, brandKey: explicitBrandKey } = body;
+
+    if (!email) {
+      return NextResponse.json({ error: "missing_email" }, { status: 400 });
+    }
+
+    const container = await getContainer();
+    
+    // 1. Look up any active/pending receipt for this customer email
+    const querySpec = {
+      query: "SELECT TOP 1 * FROM c WHERE c.type = 'receipt' AND (LOWER(c.customerEmail) = @email OR LOWER(c.email) = @email OR LOWER(c.stripeEmail) = @email) ORDER BY c._ts DESC",
+      parameters: [{ name: "@email", value: email.toLowerCase().trim() }]
+    };
+    const { resources: matchingReceipts } = await container.items.query(querySpec).fetchAll();
+    const receipt = matchingReceipts?.[0];
+
+    let targetBrandKey = explicitBrandKey || receipt?.brandKey || "";
+    let merchantWallet = receipt?.wallet || "";
+    let targetSplitAddress = explicitSplit || "";
+
+    // 2. Resolve target split address using identical background poller logic
+    if (!targetSplitAddress) {
+      if (receipt) {
+        const isCredit = receipt.isCreditCard === true || receipt.detectedCardFunding === "credit";
+        const isAch = receipt.detectedCardFunding === "us_bank_account";
+        targetSplitAddress = (isCredit || isAch)
+          ? (receipt.splitAddress || receipt.wallet)
+          : (receipt.splitAddressCredit || receipt.splitAddress || receipt.wallet);
+      }
+      
+      if (!targetSplitAddress) {
+        const { getSiteConfigForWallet } = await import("@/lib/site-config");
+        const siteConfig = await getSiteConfigForWallet(merchantWallet, targetBrandKey);
+        
+        targetSplitAddress = siteConfig?.splitAddress || siteConfig?.split?.address || merchantWallet;
+      }
+    }
+
+    if (!targetSplitAddress) {
+      return NextResponse.json({ error: "could_not_resolve_split_address" }, { status: 400 });
+    }
+
+    const { executeGaslessTransferServer } = await import("@/app/api/stripe/background-poll/route");
+    const txHash = await executeGaslessTransferServer(
+      email,
+      targetSplitAddress,
+      0, // sweepAll = true will sweep entire remaining balance
+      targetBrandKey,
+      true
+    );
+
+    if (!txHash) {
+      return NextResponse.json({ error: "sweep_failed_or_zero_balance" }, { status: 400 });
+    }
+
+    // 3. If a matching un-settled receipt was found, update its status to paid with the transaction hash
+    if (receipt && receipt.status !== "paid" && receipt.status !== "checkout_success") {
+      try {
+        receipt.status = "paid";
+        receipt.transactionHash = txHash;
+        receipt.transactionTimestamp = Date.now();
+        receipt.lastUpdatedAt = Date.now();
+        receipt.statusHistory = Array.isArray(receipt.statusHistory)
+          ? [...receipt.statusHistory, { status: "paid", ts: Date.now() }]
+          : [{ status: "paid", ts: Date.now() }];
+        receipt.ttl = -1;
+
+        let finalDoc = receipt;
+        try {
+          const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
+          const { readBrandOverridesCached } = await import("@/lib/brand-config");
+          const { getSiteConfigForWallet } = await import("@/lib/site-config");
+          const siteConfig = await getSiteConfigForWallet(merchantWallet, targetBrandKey);
+          const brandConfigDoc = targetBrandKey ? await readBrandOverridesCached(targetBrandKey) : null;
+          const funding = (receipt.detectedCardFunding === "credit" || receipt.isCreditCard === true)
+            ? "credit"
+            : (receipt.detectedCardFunding === "us_bank_account" ? "us_bank_account" : "debit");
+          if (siteConfig) {
+            finalDoc = recalculateReceiptForCardFunding(receipt, funding, siteConfig, brandConfigDoc);
+          }
+        } catch {}
+
+        await container.items.upsert(finalDoc);
+      } catch (receiptUpdateErr) {
+        console.warn("[admin/custom-auth-wallets] Failed to update matching receipt on sweep:", receiptUpdateErr);
+      }
+    }
+
+    try {
+      await auditEvent(req, {
+        who: caller.wallet,
+        roles: caller.roles,
+        what: "admin_custom_auth_wallet_sweep",
+        target: targetSplitAddress,
+        correlationId,
+        ok: true,
+        metadata: { email, txHash, brandKey: targetBrandKey, targetSplitAddress }
+      });
+    } catch {}
+
+    return NextResponse.json({ ok: true, txHash, targetSplitAddress });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || "sweep_failed" }, { status: 500 });
   }
 }
 

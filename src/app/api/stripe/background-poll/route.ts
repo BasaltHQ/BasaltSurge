@@ -25,11 +25,12 @@ export async function findLeg2OnChainTx(
     const blockNumRes = await fetch(rpcUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] })
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
+      signal: AbortSignal.timeout(4000)
     });
     const blockNumData = await blockNumRes.json();
     const currentBlock = blockNumData.result ? parseInt(blockNumData.result, 16) : 0;
-    const fromBlockHex = currentBlock > 10000 ? "0x" + (currentBlock - 10000).toString(16) : "0x0";
+    const fromBlockHex = currentBlock > 500 ? "0x" + (currentBlock - 500).toString(16) : "0x0";
 
     const usdcTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
@@ -51,7 +52,8 @@ export async function findLeg2OnChainTx(
             ...(paddedSplit ? [paddedSplit] : [])
           ]
         }]
-      })
+      }),
+      signal: AbortSignal.timeout(5000)
     });
 
     if (response.ok) {
@@ -81,7 +83,8 @@ export async function findLeg2OnChainTx(
               paddedUserWallet
             ]
           }]
-        })
+        }),
+        signal: AbortSignal.timeout(5000)
       });
 
       if (response.ok) {

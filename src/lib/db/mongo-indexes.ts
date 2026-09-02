@@ -20,6 +20,11 @@ export interface IndexDefinition {
 }
 
 export const REQUIRED_INDEXES: IndexDefinition[] = [
+  {
+    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    keys: { type: 1, createdAt: -1, _id: -1 },
+    options: { name: "idx_type_createdAt_id", background: true }
+  },
   // ── Events / Receipts collection (payportal_events / surge_events) ──
   {
     collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",

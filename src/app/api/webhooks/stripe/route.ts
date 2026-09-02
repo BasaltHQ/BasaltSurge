@@ -43,15 +43,60 @@ function verifyStripeSignature(
   }
 }
 
-// Resolve merchant context from wallet address
-async function resolveMerchantFromMetadata(
+// Resolve merchant context from wallet address or receipt in Cosmos DB
+async function resolveMerchantContext(
   metadata: any,
+  sessionId: string,
   container: any,
   brandKey: string,
   cardFunding = ""
-): Promise<{ merchantWallet?: string; splitAddress?: string; fundingType?: string } | null> {
-  // First try metadata
-  const mw = String(metadata?.merchantWallet || "").toLowerCase();
+): Promise<{ merchantWallet?: string; splitAddress?: string; fundingType?: string; receipt?: any } | null> {
+  let mw = String(metadata?.merchantWallet || metadata?.wallet || "").toLowerCase();
+  let foundReceipt: any = null;
+
+  // If merchantWallet not directly in metadata, look up receipt by receiptId or sessionId
+  if (!mw || !/^0x[a-f0-9]{40}$/.test(mw)) {
+    try {
+      const receiptIdRaw = String(metadata?.receiptId || "").replace(/^receipt:/, "").trim();
+      let querySpec: any = null;
+      if (receiptIdRaw && sessionId) {
+        querySpec = {
+          query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId OR c.stripeSessionId = @sId)",
+          parameters: [
+            { name: "@rId", value: receiptIdRaw },
+            { name: "@docId", value: `receipt:${receiptIdRaw}` },
+            { name: "@sId", value: sessionId }
+          ]
+        };
+      } else if (receiptIdRaw) {
+        querySpec = {
+          query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId)",
+          parameters: [
+            { name: "@rId", value: receiptIdRaw },
+            { name: "@docId", value: `receipt:${receiptIdRaw}` }
+          ]
+        };
+      } else if (sessionId) {
+        querySpec = {
+          query: "SELECT * FROM c WHERE c.type = 'receipt' AND c.stripeSessionId = @sId",
+          parameters: [
+            { name: "@sId", value: sessionId }
+          ]
+        };
+      }
+
+      if (querySpec) {
+        const { resources } = await container.items.query(querySpec).fetchAll();
+        if (resources && resources.length > 0) {
+          foundReceipt = resources[0];
+          mw = String(foundReceipt.wallet || foundReceipt.merchantWallet || "").toLowerCase();
+        }
+      }
+    } catch (lookupErr) {
+      console.warn("[STRIPE WEBHOOK] Error querying receipt for merchant resolution:", lookupErr);
+    }
+  }
+
   if (mw && /^0x[a-f0-9]{40}$/.test(mw)) {
     try {
       const spec = {
@@ -74,16 +119,17 @@ async function resolveMerchantFromMetadata(
         const isDual = !!splitAddressCreditResolved && splitAddressCreditResolved !== splitAddressResolved;
 
         let splitAddress = splitAddressResolved;
-        if (isDual && cardFunding === "debit") {
+        if (isDual && (cardFunding === "debit" || cardFunding === "")) {
           splitAddress = splitAddressCreditResolved;
         }
 
-        return { merchantWallet: mw, splitAddress, fundingType: cardFunding || "credit" };
+        return { merchantWallet: mw, splitAddress, fundingType: cardFunding || "credit", receipt: foundReceipt };
       }
     } catch (e) {
       console.error('[STRIPE WEBHOOK] Error resolving merchant:', e);
     }
-    return { merchantWallet: mw, splitAddress: mw, fundingType: cardFunding || "credit" };
+    const receiptSplit = foundReceipt?.splitAddress || foundReceipt?.splitAddressCredit || mw;
+    return { merchantWallet: mw, splitAddress: receiptSplit, fundingType: cardFunding || "credit", receipt: foundReceipt };
   }
   return null;
 }
@@ -156,8 +202,8 @@ export async function POST(req: NextRequest) {
       cardFunding = "credit";
     }
 
-    // Resolve merchant context from metadata
-    const context = await resolveMerchantFromMetadata(metadata, container, brandKey, cardFunding);
+    // Resolve merchant context with receipt fallback
+    const context = await resolveMerchantContext(metadata, sessionId, container, brandKey, cardFunding);
     const merchantWallet = context?.merchantWallet;
     const splitAddress = context?.splitAddress;
 
@@ -194,30 +240,18 @@ export async function POST(req: NextRequest) {
       console.error('[STRIPE WEBHOOK] Error storing event:', e);
     }
 
-    // On fulfillment_complete: trigger split indexing + receipt reconciliation
-    if (status === 'fulfillment_complete' && splitAddress && merchantWallet) {
+    const isFulfillmentEvent = status === 'fulfillment_complete' || status === 'fulfillment_processing' || status === 'onramp_completed';
+
+    if (isFulfillmentEvent && merchantWallet) {
       const baseOrigin = req.nextUrl.origin;
-      
-      console.log(`[STRIPE WEBHOOK] Onramp COMPLETED, triggering split indexing for ${merchantWallet.slice(0, 10)}...`);
+      const detectedFunding = cardFunding === "us_bank_account" ? "us_bank_account" : (cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined));
+      const isAch = cardFunding === "us_bank_account";
+      const nextStatus = isAch ? "paid - ach pending" : (status === "fulfillment_complete" ? "paid" : "paid");
 
       try {
-        // Trigger split webhook
-        await fetch(`${baseOrigin}/api/split/webhook`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            splitAddress,
-            merchantWallet,
-            trigger: 'stripe_onramp',
-            correlationId
-          })
-        });
-
-        // Update receipt status if we have a receiptId
-        const receiptId = metadata.receiptId;
-        if (receiptId) {
-          const detectedFunding = cardFunding === "us_bank_account" ? "us_bank_account" : (cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined));
-          await fetch(`${baseOrigin}/api/split/webhook`, {
+        // Trigger split indexing webhook if splitAddress is resolved
+        if (splitAddress) {
+          fetch(`${baseOrigin}/api/split/webhook`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -226,115 +260,193 @@ export async function POST(req: NextRequest) {
               trigger: 'stripe_onramp',
               correlationId
             })
-          });
-
-          await fetch(`${baseOrigin}/api/receipts/status`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              receiptId: String(receiptId),
-              wallet: merchantWallet,
-              status: 'reconciled',
-              detectedCardFunding: detectedFunding,
-              isCreditCard: cardFunding === "credit"
-            })
-          });
-          console.log(`[STRIPE WEBHOOK] Updated receipt ${receiptId} to reconciled with cardFunding=${cardFunding}`);
-        }
-      } catch (e) {
-        console.error('[STRIPE WEBHOOK] Error triggering split/receipt:', e);
-      }
-    }
-
-    // On fulfillment_processing or onramp_completed: mark receipt as paid (or paid - ach pending for ACH)
-    if ((status === 'fulfillment_processing' || status === 'onramp_completed') && merchantWallet) {
-      const baseOrigin = req.nextUrl.origin;
-      try {
-        const detectedFunding = cardFunding === "us_bank_account" ? "us_bank_account" : (cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined));
-        const isAch = cardFunding === "us_bank_account";
-        const nextStatus = isAch ? "paid - ach pending" : "paid";
-
-        // 1. Update receipt from metadata.receiptId if present
-        if (metadata.receiptId) {
-          await fetch(`${baseOrigin}/api/receipts/status`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              receiptId: String(metadata.receiptId),
-              wallet: merchantWallet,
-              status: nextStatus,
-              detectedCardFunding: detectedFunding,
-              isCreditCard: cardFunding === "credit"
-            })
-          });
+          }).catch(err => console.warn('[STRIPE WEBHOOK] Split webhook error:', err));
         }
 
-        // 2. Also query any receipts linked to this stripeSessionId in Cosmos DB
-        if (sessionId) {
-          try {
-            const querySpec = {
+        // Query all candidate receipts linked by sessionId or metadata.receiptId
+        const metaReceiptRaw = String(metadata.receiptId || "").replace(/^receipt:/, "").trim();
+        let linkedReceipts: any[] = [];
+        try {
+          let querySpec: any = null;
+          if (sessionId && metaReceiptRaw) {
+            querySpec = {
+              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.stripeSessionId = @sessionId OR c.receiptId = @rId OR c.id = @docId)",
+              parameters: [
+                { name: "@sessionId", value: sessionId },
+                { name: "@rId", value: metaReceiptRaw },
+                { name: "@docId", value: `receipt:${metaReceiptRaw}` }
+              ]
+            };
+          } else if (sessionId) {
+            querySpec = {
               query: "SELECT * FROM c WHERE c.type = 'receipt' AND c.stripeSessionId = @sessionId",
               parameters: [{ name: "@sessionId", value: sessionId }]
             };
-            const { resources: linkedReceipts } = await container.items.query(querySpec).fetchAll();
-            const metaReceiptRaw = String(metadata.receiptId || "").replace(/^receipt:/, "").trim().toLowerCase();
+          } else if (metaReceiptRaw) {
+            querySpec = {
+              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId)",
+              parameters: [
+                { name: "@rId", value: metaReceiptRaw },
+                { name: "@docId", value: `receipt:${metaReceiptRaw}` }
+              ]
+            };
+          }
+          if (querySpec) {
+            const { resources } = await container.items.query(querySpec).fetchAll();
+            linkedReceipts = resources || [];
+          }
+        } catch (queryErr) {
+          console.warn('[STRIPE WEBHOOK] Failed to query linked receipts:', queryErr);
+        }
 
-            for (const r of linkedReceipts || []) {
-              const rIdRaw = String(r.receiptId || r.id || "").replace(/^receipt:/, "").trim().toLowerCase();
-              
-              // SAFEGUARD: If metadata.receiptId is present, strictly enforce that DB receipt ID matches metadata.receiptId!
-              if (metaReceiptRaw && rIdRaw && rIdRaw !== metaReceiptRaw) {
-                console.warn(`[STRIPE WEBHOOK] Foreign receipt ${r.id} shares stripeSessionId ${sessionId} but does not match session metadata receiptId ${metadata.receiptId}. Skipping foreign receipt.`);
-                continue;
-              }
+        // Also check if context had a directly found receipt
+        if (context?.receipt && !linkedReceipts.some(r => r.id === context.receipt.id)) {
+          linkedReceipts.push(context.receipt);
+        }
 
-              // SAFEGUARD: Verify amount discrepancy if sourceAmount is available
-              const sourceAmount = Number(txDetails.source_amount || 0);
-              if (typeof r.totalUsd === "number" && r.totalUsd > 0 && sourceAmount > 0) {
-                const minExpected = +(r.totalUsd * 0.95).toFixed(2);
-                if (sourceAmount < minExpected) {
-                  console.warn(`[STRIPE WEBHOOK] Amount discrepancy detected for receipt ${r.id}: charged $${sourceAmount} vs receipt total $${r.totalUsd}. Skipping paid status update.`);
-                  continue;
+        for (const r of linkedReceipts) {
+          const rIdRaw = String(r.receiptId || r.id || "").replace(/^receipt:/, "").trim().toLowerCase();
+          
+          if (metaReceiptRaw && rIdRaw && rIdRaw !== metaReceiptRaw.toLowerCase()) {
+            console.warn(`[STRIPE WEBHOOK] Foreign receipt ${r.id} shares stripeSessionId ${sessionId} but does not match session metadata receiptId ${metadata.receiptId}. Skipping foreign receipt.`);
+            continue;
+          }
+
+          // SAFEGUARD: Verify amount discrepancy if sourceAmount is available
+          const sourceAmount = Number(txDetails.source_amount || 0);
+          if (typeof r.totalUsd === "number" && r.totalUsd > 0 && sourceAmount > 0) {
+            const minExpected = +(r.totalUsd * 0.95).toFixed(2);
+            if (sourceAmount < minExpected) {
+              console.warn(`[STRIPE WEBHOOK] Amount discrepancy detected for receipt ${r.id}: charged $${sourceAmount} vs receipt total $${r.totalUsd}. Skipping paid status update.`);
+              continue;
+            }
+          }
+
+          // If onramp fulfillment is complete and receipt is missing transactionHash, check for auto-sweep
+          let onChainTx = r.transactionHash;
+          if (status === 'fulfillment_complete' && (!onChainTx || onChainTx === 'ecommerce_pending') && !isAch) {
+            const customerEmail = r.customerEmail || r.email || metadata.customerEmail || session.customer_information?.email;
+            const targetSplit = r.splitAddress || splitAddress || merchantWallet;
+            const targetAmount = r.totalUsd || r.onrampAmount || Number(txDetails.source_amount || 0);
+            const targetBrand = r.brandKey || brandKey || "";
+
+            if (customerEmail && targetSplit && targetAmount > 0) {
+              try {
+                // Free read-only RPC balance check before deciding whether to sweep
+                const { createThirdwebClient, getContract, readContract } = await import("thirdweb");
+                const { base } = await import("thirdweb/chains");
+                const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+
+                const twReadClient = createThirdwebClient({
+                  clientId: process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "",
+                  secretKey: process.env.THIRDWEB_SECRET_KEY
+                });
+
+                const usdcContract = getContract({
+                  client: twReadClient,
+                  chain: base,
+                  address: BASE_USDC_ADDRESS
+                });
+
+                const buyerWalletAddr = r.buyerWallet || txDetails.wallet_address;
+                let balanceUnits = BigInt(0);
+                if (buyerWalletAddr) {
+                  try {
+                    balanceUnits = await readContract({
+                      contract: usdcContract,
+                      method: "function balanceOf(address account) view returns (uint256)",
+                      params: [buyerWalletAddr]
+                    });
+                  } catch {}
                 }
-              }
 
-              if (r.status !== "paid" && r.status !== "paid - ach pending" && r.status !== "checkout_success") {
-                r.status = nextStatus;
-                if (isAch) {
-                  r.detectedCardFunding = "us_bank_account";
-                } else {
-                  r.ttl = -1;
+                if (balanceUnits > BigInt(0) || !buyerWalletAddr) {
+                  console.log(`[STRIPE WEBHOOK] Triggering automatic gasless sweep for receipt ${r.id} ($${targetAmount} to ${targetSplit})...`);
+                  const { executeGaslessTransferServer } = await import("@/app/api/stripe/background-poll/route");
+                  const sweepTx = await executeGaslessTransferServer(
+                    customerEmail,
+                    targetSplit,
+                    targetAmount,
+                    targetBrand,
+                    true
+                  );
+                  if (sweepTx) {
+                    onChainTx = sweepTx;
+                    r.transactionHash = sweepTx;
+                    r.transactionTimestamp = Date.now();
+                    console.log(`[STRIPE WEBHOOK] Automatic sweep succeeded for receipt ${r.id}: ${sweepTx}`);
+                  }
                 }
-                r.statusHistory = Array.isArray(r.statusHistory)
-                  ? [...r.statusHistory, { status: nextStatus, ts: Date.now() }]
-                  : [{ status: nextStatus, ts: Date.now() }];
-                r.lastUpdatedAt = Date.now();
-                await container.items.upsert(r);
+              } catch (sweepErr) {
+                console.warn(`[STRIPE WEBHOOK] Auto-sweep skipped or failed for ${r.id}:`, sweepErr);
               }
             }
-          } catch (linkedErr) {
-            console.warn('[STRIPE WEBHOOK] Failed to update linked receipts for session:', linkedErr);
           }
+
+          // Update receipt status
+          r.status = nextStatus;
+          if (isAch) {
+            r.detectedCardFunding = "us_bank_account";
+          } else {
+            r.ttl = -1;
+            if (detectedFunding) r.detectedCardFunding = detectedFunding;
+            r.isCreditCard = cardFunding === "credit";
+          }
+          r.stripeSessionStatus = status;
+          r.statusHistory = Array.isArray(r.statusHistory)
+            ? [...r.statusHistory, { status: nextStatus, ts: Date.now() }]
+            : [{ status: nextStatus, ts: Date.now() }];
+          r.lastUpdatedAt = Date.now();
+
+          let finalDoc = r;
+          try {
+            const { recalculateReceiptForCardFunding } = await import("@/lib/receipts");
+            const { readBrandOverridesCached } = await import("@/lib/brand-config");
+            const { getSiteConfigForWallet } = await import("@/lib/site-config");
+            const siteConfig = await getSiteConfigForWallet(merchantWallet, r.brandKey || brandKey);
+            const brandConfigDoc = (r.brandKey || brandKey) ? await readBrandOverridesCached(r.brandKey || brandKey) : null;
+            if (siteConfig) {
+              finalDoc = recalculateReceiptForCardFunding(r, detectedFunding || "debit", siteConfig, brandConfigDoc);
+            }
+          } catch {}
+
+          await container.items.upsert(finalDoc);
+          console.log(`[STRIPE WEBHOOK] Successfully updated receipt ${r.id} to '${nextStatus}' (txHash: ${onChainTx || 'none'})`);
         }
       } catch (e) {
-        console.error('[STRIPE WEBHOOK] Error updating receipt status:', e);
+        console.error('[STRIPE WEBHOOK] Error updating receipt status on fulfillment:', e);
       }
     }
 
     // On rejected: mark receipt as failed
-    if (status === 'rejected' && merchantWallet && metadata.receiptId) {
-      const baseOrigin = req.nextUrl.origin;
+    if (status === 'rejected' && merchantWallet) {
       try {
-        await fetch(`${baseOrigin}/api/receipts/status`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            receiptId: String(metadata.receiptId),
-            wallet: merchantWallet,
-            status: 'failed'
-          })
-        });
-        console.log(`[STRIPE WEBHOOK] Updated receipt ${metadata.receiptId} to failed due to rejection`);
+        const metaReceiptRaw = String(metadata.receiptId || "").replace(/^receipt:/, "").trim();
+        let querySpec: any = null;
+        if (sessionId) {
+          querySpec = {
+            query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.stripeSessionId = @sessionId OR c.receiptId = @rId)",
+            parameters: [
+              { name: "@sessionId", value: sessionId },
+              { name: "@rId", value: metaReceiptRaw }
+            ]
+          };
+        }
+        if (querySpec) {
+          const { resources } = await container.items.query(querySpec).fetchAll();
+          for (const r of resources || []) {
+            if (r.status !== "paid" && r.status !== "checkout_success") {
+              r.status = "failed";
+              r.stripeSessionStatus = "rejected";
+              r.statusHistory = Array.isArray(r.statusHistory)
+                ? [...r.statusHistory, { status: "failed", ts: Date.now() }]
+                : [{ status: "failed", ts: Date.now() }];
+              r.lastUpdatedAt = Date.now();
+              await container.items.upsert(r);
+              console.log(`[STRIPE WEBHOOK] Updated receipt ${r.id} to failed due to Stripe rejection`);
+            }
+          }
+        }
       } catch (e) {
         console.error('[STRIPE WEBHOOK] Error updating receipt to failed:', e);
       }

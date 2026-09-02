@@ -360,8 +360,11 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
     // Polling Logic for Fallback
     useEffect(() => {
         let timer: NodeJS.Timeout;
+        let isChecking = false;
         if (qrOpen && selected && selected.status !== "paid") {
             const poll = async () => {
+                if (isChecking) return;
+                isChecking = true;
                 try {
                     const res = await fetch("/api/terminal/check-payment", {
                         method: "POST",
@@ -382,6 +385,8 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                     }
                 } catch (e) {
                     console.error("Poll failed", e);
+                } finally {
+                    isChecking = false;
                 }
             };
 

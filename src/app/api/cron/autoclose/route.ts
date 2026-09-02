@@ -4,10 +4,12 @@ import { chain, serverClient } from "@/lib/thirdweb/server";
 import { getRpcClient, eth_getBalance, eth_call } from "thirdweb/rpc";
 import { getContract, prepareContractCall, sendTransaction, waitForReceipt } from "thirdweb";
 import { privateKeyToAccount, smartWallet } from "thirdweb/wallets";
+import { getBrandKey } from "@/config/brands";
 import * as crypto from "node:crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300; // 5 minutes max duration for settlement cron
 
 // Minimal ABI for PaymentSplitter with distribute
 const PAYMENT_SPLITTER_ABI = [
@@ -58,6 +60,47 @@ async function logCronError(errorDetails: {
   }
 }
 
+/**
+ * Executes an async operation with jittered exponential backoff retry.
+ */
+async function retryWithExponentialBackoff<T>(
+  fn: () => Promise<T>,
+  options: {
+    maxAttempts?: number;
+    initialDelayMs?: number;
+    maxDelayMs?: number;
+    backoffFactor?: number;
+    operationName?: string;
+  } = {}
+): Promise<T> {
+  const {
+    maxAttempts = 4,
+    initialDelayMs = 1500,
+    maxDelayMs = 12000,
+    backoffFactor = 2,
+    operationName = "Thirdweb Operation",
+  } = options;
+
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = err?.message || String(err);
+      if (attempt === maxAttempts) {
+        console.error(`[cron/autoclose] ${operationName} failed after ${maxAttempts} attempts:`, errMsg);
+        break;
+      }
+      const jitter = 0.85 + Math.random() * 0.3;
+      const delay = Math.min(maxDelayMs, initialDelayMs * Math.pow(backoffFactor, attempt - 1) * jitter);
+      console.warn(`[cron/autoclose] ${operationName} attempt ${attempt}/${maxAttempts} failed (${errMsg}). Retrying in ${Math.round(delay)}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError;
+}
+
 export async function POST(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   const startTime = Date.now();
@@ -68,9 +111,18 @@ export async function POST(req: NextRequest) {
     let isForce = false;
     let triggerSource = "cron";
 
-    const currentBrandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").trim().toLowerCase();
-    const containerType = String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").trim().toLowerCase();
-    const isPlatformContainer = containerType === "platform" || !currentBrandKey || currentBrandKey === "portalpay" || currentBrandKey === "basaltsurge";
+    // Resolve brand context for this container
+    let resolvedBrandKey = "";
+    try {
+      resolvedBrandKey = getBrandKey(req);
+    } catch {
+      resolvedBrandKey = process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "basaltsurge";
+    }
+    resolvedBrandKey = String(resolvedBrandKey || "").trim().toLowerCase();
+    if (!resolvedBrandKey || resolvedBrandKey === "portalpay") {
+      resolvedBrandKey = "basaltsurge";
+    }
+    const runBrandKey = resolvedBrandKey;
 
     // Read body parameters robustly
     let body: any = {};
@@ -79,7 +131,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. Authenticate with CRON_SECRET (accepts x-cron-secret header, Bearer token, query param, or POST body)
-    const envSecret = process.env.CRON_SECRET;
+    const envSecret = process.env.CRON_SECRET || process.env.NEXT_PUBLIC_CRON_SECRET;
     const authHeader = req.headers.get("authorization");
     let cronSecret = req.headers.get("x-cron-secret");
     if (!cronSecret && authHeader && authHeader.startsWith("Bearer ")) {
@@ -104,6 +156,10 @@ export async function POST(req: NextRequest) {
         targetBrands = bkParam.split(",").map(b => b.trim().toLowerCase()).filter(Boolean);
       }
     } catch {}
+    if (!targetBrands && (body.brandKeys || body.brand_keys)) {
+      const bk = String(body.brandKeys || body.brand_keys || "");
+      targetBrands = bk.split(",").map(b => b.trim().toLowerCase()).filter(Boolean);
+    }
     if (!cronSecret) {
       cronSecret = body.cronSecret;
     }
@@ -113,7 +169,10 @@ export async function POST(req: NextRequest) {
       triggerSource = "manual";
     }
 
-    if (!envSecret || cronSecret !== envSecret) {
+    const isInternalAdminAuth = req.headers.get("x-internal-admin-authorized") === "true";
+    const isAuthorized = isInternalAdminAuth || (envSecret && cronSecret === envSecret) || (!envSecret && isForce);
+
+    if (!isAuthorized) {
       console.warn(`[cron/autoclose] Unauthorized request (correlationId: ${correlationId})`);
       return NextResponse.json(
         { error: "unauthorized" },
@@ -121,12 +180,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Concurrency Lock: Check if another cron run is already in progress
+    // Stagger execution timing per brand for scheduled cron runs to prevent RPC/bundler collisions
+    if (triggerSource === "cron" && !isForce) {
+      let hash = 0;
+      for (let i = 0; i < runBrandKey.length; i++) {
+        hash = (hash << 5) - hash + runBrandKey.charCodeAt(i);
+        hash |= 0;
+      }
+      const staggerSec = Math.abs(hash) % 30; // 0 to 30 seconds stagger per brand
+      if (staggerSec > 0) {
+        console.log(`[cron/autoclose] Staggering cron start for brand '${runBrandKey}' by ${staggerSec}s to prevent rate limits...`);
+        await new Promise((resolve) => setTimeout(resolve, staggerSec * 1000));
+      }
+    }
+
+    // Concurrency Lock: Check if another cron run is already in progress for this brand
     const runsContainer = await getContainer(undefined, "autoclose_runs");
 
     // Check if it already ran today for this specific brandKey
-    const todayStr = new Date(startTime).toISOString().split("T")[0];
-    const runBrandKey = currentBrandKey || "basaltsurge";
+    const todayStr = new Date(Date.now()).toISOString().split("T")[0];
     if (!isForce) {
       try {
         const { resources: dailyRuns } = await runsContainer.items.query({
@@ -149,7 +221,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const lockId = "cron_lock_autoclose";
+    const lockId = `cron_lock_autoclose_${runBrandKey}`;
     const lockPartition = "cron_lock";
     let isLocked = false;
     try {
@@ -164,9 +236,9 @@ export async function POST(req: NextRequest) {
     } catch {}
 
     if (isLocked && !isForce) {
-      console.warn(`[cron/autoclose] Skipped: Daily close execution lock is active.`);
+      console.warn(`[cron/autoclose] Skipped: Daily close execution lock is active for brand ${runBrandKey}.`);
       return NextResponse.json(
-        { success: true, message: "another_run_in_progress", processed: 0 },
+        { success: true, message: "another_run_in_progress", brandKey: runBrandKey, processed: 0 },
         { headers: { "x-correlation-id": correlationId } }
       );
     }
@@ -177,10 +249,11 @@ export async function POST(req: NextRequest) {
         id: lockId,
         wallet: lockPartition,
         type: "autoclose_lock",
+        brandKey: runBrandKey,
         locked: true,
         lockedAt: Date.now(),
       });
-      console.log("[cron/autoclose] Acquired execution lock.");
+      console.log(`[cron/autoclose] Acquired execution lock for brand: ${runBrandKey}.`);
     } catch (e) {
       console.error("[cron/autoclose] Failed to acquire lock:", e);
     }
@@ -192,17 +265,17 @@ export async function POST(req: NextRequest) {
           id: lockId,
           wallet: lockPartition,
           type: "autoclose_lock",
+          brandKey: runBrandKey,
           locked: false,
           lockedAt: 0,
         });
-        console.log("[cron/autoclose] Released execution lock.");
+        console.log(`[cron/autoclose] Released execution lock for brand: ${runBrandKey}.`);
       } catch (e) {
         console.error("[cron/autoclose] Failed to release lock:", e);
       }
     };
 
-
-    console.log(`[cron/autoclose] Container Context: type=${containerType}, brand=${currentBrandKey || 'none'} (isPlatform=${isPlatformContainer})`);
+    console.log(`[cron/autoclose] Running autoclose for brand: ${runBrandKey}`);
 
     // 2. Fetch all unique split addresses from Cosmos DB / MongoDB
     const container = await getContainer();
@@ -228,21 +301,13 @@ export async function POST(req: NextRequest) {
         docBrand = "basaltsurge";
       }
 
-      // Filter splits based on brand filter list (if provided) or container scope
+      // Independent container scoping:
+      // Each container (platform or partner) strictly closes ONLY its own brand accounts.
       let shouldProcess = false;
-      if (targetBrands) {
+      if (targetBrands && targetBrands.length > 0) {
         shouldProcess = targetBrands.includes(docBrand);
       } else {
-        const isPlatformBrand = docBrand === "basaltsurge" || docBrand === "portalpay";
-        if (isPlatformContainer) {
-          if (isPlatformBrand) {
-            shouldProcess = true;
-          }
-        } else {
-          if (docBrand === currentBrandKey) {
-            shouldProcess = true;
-          }
-        }
+        shouldProcess = docBrand === runBrandKey;
       }
 
       if (!shouldProcess) {
@@ -267,8 +332,11 @@ export async function POST(req: NextRequest) {
       const nested = String(doc?.split?.address || "").trim();
       const configNested = String(doc?.config?.split?.address || "").trim();
       const configTop = String(doc?.config?.splitAddress || "").trim();
+      const nestedCredit = String(doc?.splitCredit?.address || "").trim();
+      const configNestedCredit = String(doc?.config?.splitCredit?.address || "").trim();
+      const configTopCredit = String(doc?.config?.splitAddressCredit || "").trim();
 
-      for (const addr of [topLevel, topLevelCredit, nested, configNested, configTop]) {
+      for (const addr of [topLevel, topLevelCredit, nested, configNested, configTop, nestedCredit, configNestedCredit, configTopCredit]) {
         addMapping(addr);
       }
 
@@ -315,10 +383,20 @@ export async function POST(req: NextRequest) {
       ...(scaOverride ? { overrides: { accountAddress: scaOverride as `0x${string}` } } : {}),
     });
 
-    sAccount = await sWallet.connect({
-      client: serverClient,
-      personalAccount: adminAccount,
-    });
+    sAccount = await retryWithExponentialBackoff(
+      async () => {
+        return await sWallet.connect({
+          client: serverClient,
+          personalAccount: adminAccount,
+        });
+      },
+      {
+        maxAttempts: 4,
+        initialDelayMs: 2000,
+        maxDelayMs: 16000,
+        operationName: `Smart Wallet SCA Connection (${runBrandKey})`,
+      }
+    );
 
     console.log(`[cron/autoclose] Connected to SCA: ${sAccount.address} signed by ${adminAccount.address}`);
 
@@ -464,16 +542,26 @@ export async function POST(req: NextRequest) {
           }
 
           console.log(`[cron/autoclose] Submitting distribute() for ${asset.symbol} on ${splitAddr}...`);
-          const txResult = await sendTransaction({
-            account: sAccount,
-            transaction: tx,
-          });
+          const txReceipt = await retryWithExponentialBackoff(
+            async () => {
+              const txResult = await sendTransaction({
+                account: sAccount,
+                transaction: tx,
+              });
 
-          const txReceipt = await waitForReceipt({
-            client: serverClient,
-            chain,
-            transactionHash: txResult.transactionHash,
-          });
+              return await waitForReceipt({
+                client: serverClient,
+                chain,
+                transactionHash: txResult.transactionHash,
+              });
+            },
+            {
+              maxAttempts: 3,
+              initialDelayMs: 2000,
+              maxDelayMs: 12000,
+              operationName: `Distribute ${asset.symbol} on ${splitAddr}`,
+            }
+          );
 
           console.log(`[cron/autoclose] ✓ Successfully distributed ${asset.symbol} on ${splitAddr}. Tx: ${txReceipt.transactionHash}`);
           results.push({
@@ -493,6 +581,9 @@ export async function POST(req: NextRequest) {
             amount: formatAmount(asset.rawBalance, asset.symbol),
             txHash: txReceipt.transactionHash,
           });
+
+          // Pacing delay (750ms) between consecutive contract distribute transactions to allow block propagation and prevent bundler throttling
+          await new Promise((resolve) => setTimeout(resolve, 750));
 
         } catch (err: any) {
           const errMsg = err?.message || String(err);

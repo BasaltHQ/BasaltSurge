@@ -271,6 +271,11 @@ export async function POST(req: NextRequest) {
           status === "buyer_logged_in" ||
           status === "checkout_ready" ||
           status === "generated" ||
+          status === "error" ||
+          status === "failed" ||
+          status.startsWith("onramp_") ||
+          status === "collecting_kyc" ||
+          status === "authenticating" ||
           (status === "failed" && (hasOnChainTx || isClientJsRuntimeError)));
 
       if (isDowngrade) {

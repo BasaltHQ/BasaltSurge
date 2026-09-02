@@ -374,8 +374,11 @@ export default function KioskClient({ config, items: initialItems, merchantWalle
     // ─── Polling Logic ────────────────────────────────────────────────────────
     useEffect(() => {
         let timer: NodeJS.Timeout;
+        let isChecking = false;
         if (checkoutOpen && currentReceipt && !isPaid) {
             const poll = async () => {
+                if (isChecking) return;
+                isChecking = true;
                 try {
                     const res = await fetch("/api/terminal/check-payment", {
                         method: "POST",
@@ -394,6 +397,8 @@ export default function KioskClient({ config, items: initialItems, merchantWalle
                     }
                 } catch (e) {
                     console.error("Poll failed", e);
+                } finally {
+                    isChecking = false;
                 }
             };
             timer = setInterval(poll, 7000);

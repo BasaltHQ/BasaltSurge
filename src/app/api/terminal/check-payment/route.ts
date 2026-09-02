@@ -79,7 +79,7 @@ async function handleCheckPayment(params: {
             "USDT": { address: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", decimals: 6 },
             "cbBTC": { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", decimals: 8 },
             "cbXRP": { address: "0xcb585250f852C6c6bf90434AB21A00f02833a4af", decimals: 6 },
-            "SOL": { address: "0x1C61629598e4a901136a81BC138E5828dc150d67", decimals: 9 },
+            "SOL": { address: process.env.NEXT_PUBLIC_BASE_SOL_ADDRESS || "0x311935Cd80B76769bF2ecC9D8Ab7635b2139cf82", decimals: 9 },
         };
         const fallback = fallbackTokens[currency];
         if (fallback) {
@@ -96,13 +96,18 @@ async function handleCheckPayment(params: {
     // BLOCKCHAIN CHECK
     try {
         // OPTIMIZATION: Fetch latest block number to limit scan range
-        // Base block time is ~2s. 2000 blocks is ~66 minutes.
+        // Base block time is ~2s. Capped at 300 blocks (~10 minutes) or dynamic based on sinceTime
+        const nowMs = Date.now();
+        const elapsedSec = Math.max(0, (nowMs - sinceTime) / 1000);
+        const blocksToScan = Math.min(300, Math.ceil(elapsedSec / 2) + 30); // 30-block (~1m) buffer, capped at 300 blocks (10m)
+
         let latestBlock = BigInt(0);
         try {
             const rpcRes = await fetch("https://mainnet.base.org", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] })
+                body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] }),
+                signal: AbortSignal.timeout(4000)
             });
             const rpcJson = await rpcRes.json();
             if (rpcJson.result) {
@@ -112,7 +117,7 @@ async function handleCheckPayment(params: {
             console.error("Failed to fetch latest block, defaulting to recent heuristic", e);
         }
 
-        const safeFromBlock = latestBlock > BigInt(2000) ? latestBlock - BigInt(2000) : undefined;
+        const safeFromBlock = latestBlock > BigInt(blocksToScan) ? latestBlock - BigInt(blocksToScan) : undefined;
 
         const contract = getContract({
             client: getThirdwebClient(),
@@ -182,7 +187,8 @@ async function handleCheckPayment(params: {
                         id: 1,
                         method: "eth_getBlockByNumber",
                         params: [blockHex, false]
-                    })
+                    }),
+                    signal: AbortSignal.timeout(4000)
                 });
                 const rpcData = await rpcResponse.json();
                 if (rpcData?.result?.timestamp) {

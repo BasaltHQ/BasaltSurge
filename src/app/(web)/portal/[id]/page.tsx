@@ -3607,12 +3607,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   useEffect(() => {
     let active = true;
+    let isChecking = false;
     let timer: NodeJS.Timeout;
 
     const activeAmount = Number(widgetAmount) > 0 ? Number(widgetAmount) : Number(stripeWidgetAmount);
     if (!receipt || paymentConfirmed || isSettled(receipt.status) || loadingReceipt || !merchantWallet || !receiptId || !token || isNaN(activeAmount) || activeAmount <= 0) return;
 
     const checkPayment = async () => {
+      if (isChecking) return;
+      isChecking = true;
       try {
         const queryParams = new URLSearchParams({
           wallet: String(merchantWallet || ""),
@@ -3683,6 +3686,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         }
       } catch (e) {
         console.error("Poll error", e);
+      } finally {
+        isChecking = false;
       }
     };
 

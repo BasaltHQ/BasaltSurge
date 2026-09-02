@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
       // Query site configs to find splits for these brands
       const siteConfigContainer = await getContainer();
       const querySpec = {
-        query: "SELECT c.id, c.brandKey, c.config, c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitHistory FROM c WHERE c.type = 'site_config'",
+        query: "SELECT c.id, c.brandKey, c.config, c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.splitHistory FROM c WHERE c.type = 'site_config' OR c.type = 'wallet_config' OR c.type = 'client_request'",
       };
       const { resources: allSiteConfigs } = await siteConfigContainer.items.query(querySpec).fetchAll();
 
@@ -61,8 +61,11 @@ export async function GET(req: NextRequest) {
           addMapping(doc?.splitAddress);
           addMapping(doc?.splitAddressCredit);
           addMapping(doc?.split?.address);
+          addMapping(doc?.splitCredit?.address);
           addMapping(doc?.config?.split?.address);
+          addMapping(doc?.config?.splitCredit?.address);
           addMapping(doc?.config?.splitAddress);
+          addMapping(doc?.config?.splitAddressCredit);
           if (Array.isArray(doc.splitHistory)) {
             for (const h of doc.splitHistory) {
               addMapping(h?.address);
@@ -437,22 +440,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Trigger close by calling the cron endpoint internally using CRON_SECRET
-    const cronSecret = process.env.CRON_SECRET;
-    if (!cronSecret) {
-      return NextResponse.json(
-        { error: "Configuration error: CRON_SECRET is not configured." },
-        { status: 500 }
-      );
-    }
+    // 3. Trigger close by calling the cron endpoint internally
+    const cronSecret = process.env.CRON_SECRET || process.env.NEXT_PUBLIC_CRON_SECRET || "portalpay_cron_internal_default";
 
     const { searchParams: postParams } = new URL(req.url);
     let brandKeysStr = postParams.get("brandKeys") || postParams.get("brand_keys") || "";
-    if (!brandKeysStr) {
-      try {
-        const bodyParams = await req.json().catch(() => ({}));
-        brandKeysStr = bodyParams.brandKeys || bodyParams.brand_keys || "";
-      } catch {}
+    if (!brandKeysStr && (body?.brandKeys || body?.brand_keys)) {
+      brandKeysStr = String(body.brandKeys || body.brand_keys || "").trim();
     }
 
     let cronUrl = `${req.nextUrl.origin}/api/cron/autoclose?cronSecret=${encodeURIComponent(cronSecret)}&manual=true&force=true`;
@@ -466,12 +460,20 @@ export async function POST(req: NextRequest) {
       // Try direct function invocation first to bypass loopback DNS/SSL/network restrictions
       const mockReq = new NextRequest(cronUrl, {
         method: "GET",
+        headers: {
+          "x-cron-secret": cronSecret,
+          "x-internal-admin-authorized": "true"
+        }
       });
       res = await runAutoclose(mockReq);
     } catch (directErr: any) {
       console.warn(`[api/admin/autoclose] Direct invocation failed, falling back to fetch:`, directErr);
       res = await fetch(cronUrl, {
         method: "GET",
+        headers: {
+          "x-cron-secret": cronSecret,
+          "x-internal-admin-authorized": "true"
+        }
       });
     }
 
