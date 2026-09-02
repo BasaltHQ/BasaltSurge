@@ -112,11 +112,55 @@ function reportFilename(stem: string): string {
 async function createPdfDoc(orientation: PdfOrientation = "portrait") {
   const jsPDFMod = await import("jspdf");
   const autoTableMod = await import("jspdf-autotable");
-  const jsPDF = jsPDFMod.default || (jsPDFMod as any);
-  const autoTable = autoTableMod.default || (autoTableMod as any);
+  const jsPDFDefault = (jsPDFMod as any).default;
+  const jsPDF = (jsPDFMod as any).jsPDF
+    || (typeof jsPDFDefault === "function" ? jsPDFDefault : jsPDFDefault?.jsPDF)
+    || (jsPDFMod as any)["module.exports"]?.jsPDF;
+  const autoTableDefault = (autoTableMod as any).default;
+  const autoTable = (autoTableMod as any).autoTable
+    || (typeof autoTableDefault === "function" ? autoTableDefault : autoTableDefault?.autoTable)
+    || (autoTableMod as any)["module.exports"]?.autoTable;
+
+  if (typeof jsPDF !== "function") {
+    throw new Error("The PDF document engine could not be initialized. Refresh the page and retry the report.");
+  }
+  if (typeof autoTable !== "function") {
+    throw new Error("The PDF table engine could not be initialized. Refresh the page and retry the report.");
+  }
 
   const doc = new jsPDF({ orientation, unit: "mm", format: "a4", compress: true, putOnlyUsedFonts: true });
   return { doc, autoTable };
+}
+
+function downloadPdf(doc: any, filename: string) {
+  const pdfBytes = doc.output("arraybuffer") as ArrayBuffer;
+  if (!pdfBytes || pdfBytes.byteLength < 1000) {
+    throw new Error("The generated PDF was empty or incomplete. Retry the report.");
+  }
+
+  if (
+    typeof window === "undefined"
+    || typeof document === "undefined"
+    || typeof URL === "undefined"
+    || typeof URL.createObjectURL !== "function"
+  ) {
+    doc.save(filename);
+    return;
+  }
+
+  const blobUrl = URL.createObjectURL(new Blob([pdfBytes], { type: "application/pdf" }));
+  const downloadLink = document.createElement("a");
+  downloadLink.href = blobUrl;
+  downloadLink.download = filename;
+  downloadLink.style.display = "none";
+  document.body.appendChild(downloadLink);
+
+  try {
+    downloadLink.click();
+  } finally {
+    downloadLink.remove();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  }
 }
 
 function drawHeader(
@@ -369,7 +413,7 @@ export async function exportExecutiveSummaryPDF(
   });
 
   drawFooters(doc);
-  doc.save(reportFilename("executive_summary"));
+  downloadPdf(doc, reportFilename("executive_summary"));
 }
 
 // ─── 2. Transaction Audit Ledger PDF ─────────────────────────────────────────
@@ -456,7 +500,7 @@ export async function exportTransactionLedgerPDF(
   }
 
   drawFooters(doc);
-  doc.save(reportFilename("transaction_ledger"));
+  downloadPdf(doc, reportFilename("transaction_ledger"));
 }
 
 // ─── 3. Brand Financial Performance & Fees PDF ──────────────────────────────
@@ -545,7 +589,7 @@ export async function exportBrandFinancialPDF(
   });
 
   drawFooters(doc);
-  doc.save(reportFilename("brand_financials"));
+  downloadPdf(doc, reportFilename("brand_financials"));
 }
 
 // ─── 4. Failure Diagnostics & Error Matrix PDF ──────────────────────────────
@@ -671,5 +715,5 @@ export async function exportFailureDiagnosticsPDF(
   });
 
   drawFooters(doc);
-  doc.save(reportFilename("failure_diagnostics"));
+  downloadPdf(doc, reportFilename("failure_diagnostics"));
 }

@@ -133,6 +133,7 @@ export async function GET(req: NextRequest) {
           { type: "receipt" },
           {
             projection: {
+            _id: 1,
             id: 1,
             receiptId: 1,
             brandKey: 1,
@@ -266,6 +267,7 @@ export async function GET(req: NextRequest) {
         receiptsQueryFilter,
         {
           projection: {
+            _id: 1,
             id: 1,
             receiptId: 1,
             brandKey: 1,
@@ -800,6 +802,7 @@ export async function GET(req: NextRequest) {
       const feeUsd = getReceiptFeeUsd(r);
 
       return {
+        storageId: String(r._id || r.id || `${rId}:${r.createdAt || "unknown"}`),
         id: r.id || rId,
         receiptId: rId,
         brandKey: resolvedBrandKey,

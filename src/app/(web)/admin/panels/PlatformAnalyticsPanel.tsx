@@ -223,6 +223,7 @@ interface ReceiptLog {
 }
 
 interface ReceiptInfo {
+  storageId?: string;
   id?: string;
   receiptId: string;
   brandKey: string;
@@ -307,6 +308,37 @@ interface ReceiptInfo {
   destinationToken?: any;
   originAmount?: string | number | null;
   quoteSummary?: any;
+}
+
+type PdfReportType = "executive" | "ledger" | "brands" | "diagnostics";
+
+interface PdfExportError {
+  reportType: PdfReportType;
+  reportName: string;
+  message: string;
+  guidance: string;
+  occurredAt: string;
+}
+
+const PDF_REPORT_NAMES: Record<PdfReportType, string> = {
+  executive: "Executive Analytics Summary",
+  ledger: "Transaction Audit Ledger",
+  brands: "Brand Financial & Fee Settlement",
+  diagnostics: "Failure & Error Diagnostics"
+};
+
+function getPdfErrorGuidance(message: string): string {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("duplicate") || normalized.includes("snapshot")) {
+    return "The analytics snapshot changed or repeated a storage record while it was being collected. Retry to start a fresh, pinned snapshot.";
+  }
+  if (normalized.includes("ended early") || normalized.includes("batch") || normalized.includes("network") || normalized.includes("fetch")) {
+    return "The complete data set could not be collected. Check the connection and retry; the report will restart from the first batch.";
+  }
+  if (normalized.includes("pdf") || normalized.includes("document engine") || normalized.includes("table engine")) {
+    return "The report renderer did not initialize or return a complete file. Refresh the admin page if retrying does not resolve it.";
+  }
+  return "The report was not downloaded. Retry once; if the issue persists, copy the technical detail below for investigation.";
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -1088,6 +1120,7 @@ export default function PlatformAnalyticsPanel() {
   // PDF Export Menu State
   const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
   const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
+  const [exportError, setExportError] = useState<PdfExportError | null>(null);
 
   const [kycFilter, setKycFilter] = useState<string>("all");
   const [isCardFundingFlipped, setIsCardFundingFlipped] = useState<boolean>(false);
@@ -1186,6 +1219,15 @@ export default function PlatformAnalyticsPanel() {
   useEffect(() => {
     setCurrentPage(1);
   }, [selectedBrand, statusFilter, timeRange, searchQuery, appliedSearch, searchMode, kycFilter, sortKey, sortDirection, fetchLimit]);
+
+  useEffect(() => {
+    if (!exportError) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExportError(null);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [exportError]);
 
   // Debounced server search sync (auto-queries backend after 500ms of typing)
   useEffect(() => {
@@ -1339,7 +1381,7 @@ export default function PlatformAnalyticsPanel() {
     }
 
     const uniqueKeys = new Set(accumulated.map(receipt =>
-      receipt.id || `${receipt.receiptId || "missing"}:${receipt.createdAt || "unknown"}`
+      receipt.storageId || `${receipt.receiptId || "missing"}:${receipt.createdAt || "unknown"}`
     ));
     if (uniqueKeys.size !== accumulated.length) {
       throw new Error("Analytics snapshot contained duplicate records; retry the export to avoid an inconsistent report");
@@ -2033,10 +2075,11 @@ export default function PlatformAnalyticsPanel() {
     }
   }, [searchMode]);
 
-  const handleExportPdf = useCallback(async (type: "executive" | "ledger" | "brands" | "diagnostics") => {
+  const handleExportPdf = useCallback(async (type: PdfReportType) => {
     exportAbortRef.current?.abort();
     const controller = new AbortController();
     exportAbortRef.current = controller;
+    setExportError(null);
     setIsExportingPdf(true);
     setExportProgress(0);
     setIsExportMenuOpen(false);
@@ -2098,7 +2141,14 @@ export default function PlatformAnalyticsPanel() {
     } catch (err: any) {
       if (err?.name !== "AbortError") {
         console.error("[PDF EXPORT ERROR]:", err);
-        alert(`Failed to generate PDF report: ${err?.message || "Unknown error"}`);
+        const message = err?.message || "An unknown report generation error occurred.";
+        setExportError({
+          reportType: type,
+          reportName: PDF_REPORT_NAMES[type],
+          message,
+          guidance: getPdfErrorGuidance(message),
+          occurredAt: new Date().toISOString()
+        });
       }
     } finally {
       if (exportAbortRef.current === controller) {
@@ -6718,6 +6768,102 @@ export default function PlatformAnalyticsPanel() {
         </div>
 
       </div>
+
+      {/* Report export errors are mounted above the analytics HUD so they remain visible on long ledgers. */}
+      {exportError && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed inset-0 z-[100000] flex items-center justify-center p-4 sm:p-6"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="pdf-export-error-title"
+          aria-describedby="pdf-export-error-description"
+        >
+          <button
+            type="button"
+            aria-label="Close report error"
+            className="absolute inset-0 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+            onClick={() => setExportError(null)}
+          />
+
+          <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-3xl border border-rose-500/30 bg-zinc-950 shadow-[0_30px_100px_rgba(0,0,0,0.7)] animate-in fade-in zoom-in-95 duration-200">
+            <div className="h-1 w-full bg-gradient-to-r from-rose-500 via-purple-500 to-primary" />
+            <div className="p-5 sm:p-6">
+              <div className="flex items-start gap-4">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-rose-500/30 bg-rose-500/15 shadow-[0_0_24px_rgba(244,63,94,0.14)]">
+                  <AlertCircle className="h-5 w-5 text-rose-400" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-rose-500/25 bg-rose-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-rose-300">
+                      Export interrupted
+                    </span>
+                    <span className="text-[10px] font-mono text-white/35">
+                      {new Date(exportError.occurredAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <h3 id="pdf-export-error-title" className="text-base font-extrabold tracking-tight text-white sm:text-lg">
+                    {exportError.reportName} was not downloaded
+                  </h3>
+                  <p id="pdf-export-error-description" className="mt-2 text-sm leading-relaxed text-white/65">
+                    {exportError.guidance}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExportError(null)}
+                  className="shrink-0 rounded-xl border border-white/10 bg-white/[0.04] p-2 text-white/45 transition-colors hover:bg-white/[0.08] hover:text-white"
+                  title="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-white/10 bg-black/35 p-3.5">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <span className="text-[9px] font-bold uppercase tracking-[0.16em] text-white/35">Technical detail</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(
+                      `${exportError.reportName}\n${exportError.message}\n${exportError.occurredAt}`,
+                      "pdf-export-error"
+                    )}
+                    className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] font-bold text-white/50 transition-colors hover:bg-white/[0.06] hover:text-white"
+                  >
+                    {copySuccess["pdf-export-error"] ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                    <span>{copySuccess["pdf-export-error"] ? "Copied" : "Copy"}</span>
+                  </button>
+                </div>
+                <p className="break-words font-mono text-[11px] leading-relaxed text-rose-200/80">
+                  {exportError.message}
+                </p>
+              </div>
+
+              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setExportError(null)}
+                  className="h-10 rounded-xl border border-white/10 bg-white/[0.04] px-4 text-xs font-bold text-white/65 transition-colors hover:bg-white/[0.08] hover:text-white"
+                >
+                  Dismiss
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const reportType = exportError.reportType;
+                    setExportError(null);
+                    void handleExportPdf(reportType);
+                  }}
+                  className="flex h-10 items-center justify-center gap-2 rounded-xl border border-primary/40 bg-gradient-to-r from-primary/25 via-purple-500/20 to-emerald-500/20 px-4 text-xs font-extrabold text-white shadow-lg shadow-primary/10 transition-all hover:border-primary/60 hover:from-primary/35 active:scale-[0.98]"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Retry report
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Mobile Full-Screen Slide-Over Investigation Drawer Modal mounted via React Portal onto document.body */}
       {mobileDrawerReceipt && typeof document !== "undefined" && createPortal(
