@@ -159,10 +159,25 @@ export async function POST(req: NextRequest) {
         }
 
         if (receipt) {
-          receipt.stripeSessionId = data.id;
+          const hadStripeSession = Boolean(receipt.stripeSessionId);
           if (amount && Number(amount) > 0) {
-            receipt.totalUsd = Number(amount);
+            // `source_amount` is not the receipt/order total: Stripe can add
+            // payment-method fees around it. Never overwrite the amount used
+            // by receipts and merchant webhooks.
+            const currentTotal = Number(receipt.totalUsd);
+            const storedOrderTotal = Number(receipt.orderTotalUsd);
+            const creationMinor = receipt.grossMinor == null ? NaN : Number(receipt.grossMinor);
+            const creationTotal = creationMinor / 100;
+            if (!hadStripeSession && Number.isFinite(currentTotal) && currentTotal >= 0) {
+              receipt.orderTotalUsd = currentTotal;
+            } else if (receipt.orderTotalUsd == null || !Number.isFinite(storedOrderTotal) || storedOrderTotal < 0) {
+              receipt.orderTotalUsd = Number.isFinite(creationTotal) && creationTotal >= 0
+                ? creationTotal
+                : Number(receipt.totalUsd || 0);
+            }
+            receipt.onrampAmount = Number(amount);
           }
+          receipt.stripeSessionId = data.id;
           receipt.lastUpdatedAt = Date.now();
           await container.items.upsert(receipt);
           console.log(`[STRIPE ONRAMP] Successfully linked Stripe session ${data.id} for receipt ${receiptId}`);

@@ -4,6 +4,11 @@ import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { isDualSplitEnabled } from "@/lib/env";
 import { maskSensitiveData } from "@/lib/sanitize-logs";
 import { resolveSettlementSplitAddress } from "@/lib/payment-split-routing";
+import {
+  isStripeFulfillmentCompleteStatus,
+  isStripeOnrampTerminalFailure,
+  isStripePaymentAcceptedStatus,
+} from "@/lib/stripe-onramp-status";
 
 // Safe sessionStorage decorator that redirects persistent user tokens to localStorage to minimize OTP prompts
 const sessionStorageDecorator = {
@@ -1886,36 +1891,126 @@ export function useStripeEmbeddedOnramp({
 
     console.log("[EMBEDDED ONRAMP] Checking eCommerce mode before Step 11. isEcommerceMode:", isEcommerceMode, "fundingTypeToUse:", fundingTypeToUse, "resolvedKycLevel:", resolvedKycLevel);
     if (isEcommerceMode) {
-      console.log("[EMBEDDED ONRAMP] eCommerce mode active. Launching background task and completing client flow.");
-      fetch("/api/stripe/background-poll", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId,
-          receiptId,
-          merchantWallet,
-          email: activeEmail,
-          amount: getOnrampAmount(fundingTypeToUse),
-          splitAddress,
-          splitAddressCredit,
-          brandKey,
-          detectedCardFunding: fundingTypeToUse,
-          kycOccurred: true,
-          kycLevel: resolvedKycLevel,
-        }),
-      }).catch((err) => {
-        console.error("[EMBEDDED ONRAMP] Failed to kick off background poll:", err);
-      });
-
-      isRunningRef.current = false;
+      console.log("[EMBEDDED ONRAMP] eCommerce mode active. Launching verified background reconciliation.");
       const isAch = fundingTypeToUse === "us_bank_account";
+      updateStep("awaiting_funds");
+
+      let currentStripeStatus = "";
+      const backgroundPollPayload = {
+        sessionId,
+        receiptId,
+        merchantWallet,
+        email: activeEmail,
+        amount: getOnrampAmount(fundingTypeToUse),
+        splitAddress,
+        splitAddressCredit,
+        brandKey,
+        detectedCardFunding: fundingTypeToUse,
+        kycOccurred: kycOccurredRef.current,
+        kycLevel: resolvedKycLevel,
+      };
+      let backgroundPollLaunched = false;
+      let retryLaunchWhenStripeAccepts = false;
+
+      const launchBackgroundPoll = async (allowAcceptedRetry: boolean) => {
+        try {
+          const launchResponse = await fetch("/api/stripe/background-poll", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(backgroundPollPayload),
+          });
+          const launchData = await launchResponse.json().catch(() => ({}));
+          currentStripeStatus = String(launchData.stripeStatus || currentStripeStatus);
+          if (!launchResponse.ok || launchData.ok === false) {
+            // An explicit server rejection occurs before the detached worker is
+            // launched, so it is safe to retry once after Stripe reaches its
+            // accepted state (customer/session data can become available then).
+            retryLaunchWhenStripeAccepts = allowAcceptedRetry;
+            console.error(
+              `[EMBEDDED ONRAMP] Background poll launch returned HTTP ${launchResponse.status}:`,
+              launchData
+            );
+            return;
+          }
+          backgroundPollLaunched = true;
+          retryLaunchWhenStripeAccepts = false;
+        } catch (err) {
+          // A network failure is ambiguous: the server may already have
+          // launched the worker. Avoid starting a duplicate settlement worker.
+          console.error("[EMBEDDED ONRAMP] Failed to confirm background poll launch; using client status fallback:", err);
+        }
+      };
+
+      await launchBackgroundPoll(true);
+
       if (isAch) {
-        updateStep("awaiting_funds");
+        isRunningRef.current = false;
         onSuccessRef.current?.({ sessionId, txHash: "ach_pending", kycLevel: resolvedKycLevel });
+        return;
+      }
+
+      // eCommerce paid status is tied to Stripe's signed provider state, not
+      // merely to performCheckout returning. Poll every two seconds so the UI
+      // transitions as soon as fulfillment_processing is visible.
+      for (let poll = 0; poll < 90 && !isStripePaymentAcceptedStatus(currentStripeStatus); poll++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (!mountedRef.current) return;
+
+        try {
+          const statusHeaders: Record<string, string> = {
+            "x-stripe-oauth-token": oauthTokenRef.current || "",
+          };
+          if (customerIdRef.current) {
+            statusHeaders["x-crypto-customer-id"] = customerIdRef.current;
+          }
+          const statusResponse = await fetch(
+            `/api/stripe/onramp-status?sessionId=${encodeURIComponent(sessionId)}`,
+            { headers: statusHeaders }
+          );
+          const statusData = await statusResponse.json().catch(() => ({}));
+          if (!statusResponse.ok || statusData.ok === false) {
+            console.warn(`[EMBEDDED ONRAMP] eCommerce status fallback returned HTTP ${statusResponse.status}`);
+            continue;
+          }
+          if (statusData.refreshedToken) {
+            oauthTokenRef.current = statusData.refreshedToken;
+            if (typeof window !== "undefined") {
+              sessionStorage.setItem("stripe_onramp_oauth_token", statusData.refreshedToken);
+            }
+          }
+
+          currentStripeStatus = String(statusData.status || "");
+          if (
+            isStripePaymentAcceptedStatus(currentStripeStatus) &&
+            !backgroundPollLaunched &&
+            retryLaunchWhenStripeAccepts
+          ) {
+            retryLaunchWhenStripeAccepts = false;
+            await launchBackgroundPoll(false);
+          }
+          if (isStripeOnrampTerminalFailure(statusData)) {
+            handleError("Stripe declined or rejected this payment before fulfillment.");
+            return;
+          }
+        } catch (statusError) {
+          console.warn("[EMBEDDED ONRAMP] eCommerce status fallback failed:", statusError);
+        }
+      }
+
+      if (isStripePaymentAcceptedStatus(currentStripeStatus)) {
+        isRunningRef.current = false;
+        updateStep("completed");
+        onSuccessRef.current?.({
+          sessionId,
+          txHash: "ecommerce_pending",
+          kycLevel: resolvedKycLevel,
+          detectedCardFunding: fundingTypeToUse || "debit",
+          isCreditCard: fundingTypeToUse === "credit",
+        });
       } else {
-        // Checkout submission is not merchant settlement. The verified
-        // webhook/background reconciler owns the transition to completed.
-        updateStep("awaiting_funds");
+        // Do not claim payment before Stripe accepts it. The server worker and
+        // Plesk reconciliation remain active after this client-side timeout.
+        isRunningRef.current = false;
         onSuccessRef.current?.({ sessionId, txHash: "ecommerce_pending", kycLevel: resolvedKycLevel });
       }
       return;
@@ -1963,7 +2058,7 @@ export function useStripeEmbeddedOnramp({
         }
         console.log(`[EMBEDDED ONRAMP] Polled status (attempt ${poll + 1}):`, statusData?.status, statusData);
 
-        if (statusData && statusData.status === "fulfillment_complete") {
+        if (statusData && isStripeFulfillmentCompleteStatus(statusData.status)) {
           fundsDelivered = true;
           const method = statusData.paymentMethod || null;
           const funding = statusData.paymentDetails?.card?.funding || null;

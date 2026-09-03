@@ -6,7 +6,7 @@ import { auditEvent } from "@/lib/audit";
 import { requireApimOrJwt } from "@/lib/gateway-auth";
 import * as crypto from "crypto";
 import { getBrandKey } from "@/config/brands";
-import { dispatchReceiptStatusWebhook } from "@/lib/webhook-dispatch";
+import { dispatchReceiptStatusWebhookBestEffort } from "@/lib/webhook-dispatch";
 import { resolveMerchantErrorInfo } from "@/lib/errors/merchant-error-taxonomy";
 import {
   getReceiptStatusInternalSecret,
@@ -569,38 +569,17 @@ export async function POST(req: NextRequest) {
         });
       } catch { }
 
-      // Deliver only authoritative state, and wait for the result so serverless
-      // execution cannot terminate before the request leaves the process.
+      // Deliver only authoritative state. The receipt was persisted first and
+      // a failed merchant delivery stays queued for the Plesk retry job; it
+      // must never turn a successful payment-state write into an HTTP error.
       if (shouldDeliver) {
-        const delivery = await dispatchReceiptStatusWebhook(next, status, previousStatus, {
+        void dispatchReceiptStatusWebhookBestEffort(container, next, status, previousStatus, {
           transactionHash: txHash || next?.transactionHash,
           buyerWallet: buyerWallet || next?.buyerWallet,
           merchantWallet: wallet,
           brandKey,
           stripeSessionId: stripeSessionId || next?.stripeSessionId || resource?.stripeSessionId,
         });
-        await container.item(id, wallet).patch([
-          { op: "set", path: "/webhookLastStatus", value: status },
-          { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
-          { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
-          { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
-          ...(next?.transactionHash
-            ? [{ op: "set" as const, path: "/webhookLastTransactionHash", value: next.transactionHash }]
-            : []),
-          ...(delivery.statusCode
-            ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
-            : []),
-          ...(delivery.error
-            ? [{ op: "set" as const, path: "/webhookLastError", value: delivery.error }]
-            : [{ op: "set" as const, path: "/webhookLastError", value: null }]),
-        ] as any);
-
-        if (!delivery.ok) {
-          return NextResponse.json(
-            { ok: false, persisted: true, error: "webhook_delivery_failed", reason: delivery.error },
-            { status: 502, headers: { "x-correlation-id": correlationId } }
-          );
-        }
       }
 
       return NextResponse.json({ ok: true }, { headers: { "x-correlation-id": correlationId } });

@@ -3,8 +3,12 @@ import { getContainer } from "@/lib/cosmos";
 import { getBrandKey } from "@/config/brands";
 import { auditEvent } from "@/lib/audit";
 import crypto from "node:crypto";
-import { dispatchReceiptStatusWebhook } from "@/lib/webhook-dispatch";
+import { dispatchReceiptStatusWebhookBestEffort } from "@/lib/webhook-dispatch";
 import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
+import {
+  isStripeFulfillmentCompleteStatus,
+  isStripePaymentAcceptedStatus,
+} from "@/lib/stripe-onramp-status";
 import {
   normalizeSettlementFunding,
   resolveSettlementSplitAddress,
@@ -308,7 +312,7 @@ export async function POST(req: NextRequest) {
       throw e;
     }
 
-    const isFulfillmentEvent = status === 'fulfillment_complete' || status === 'fulfillment_processing' || status === 'onramp_completed';
+    const isFulfillmentEvent = isStripePaymentAcceptedStatus(status);
 
     if (isFulfillmentEvent && merchantWallet) {
       const baseOrigin = req.nextUrl.origin;
@@ -404,6 +408,9 @@ export async function POST(req: NextRequest) {
 
           // SAFEGUARD: Verify amount discrepancy if sourceAmount is available
           const sourceAmount = Number(txDetails.source_amount || 0);
+          if (sourceAmount > 0) {
+            r.onrampAmount = sourceAmount;
+          }
           if (typeof r.totalUsd === "number" && r.totalUsd > 0 && sourceAmount > 0) {
             const minExpected = +(r.totalUsd * 0.95).toFixed(2);
             if (sourceAmount < minExpected) {
@@ -414,7 +421,7 @@ export async function POST(req: NextRequest) {
 
           // If onramp fulfillment is complete and receipt is missing transactionHash, check for auto-sweep
           let onChainTx = r.transactionHash;
-          if (status === 'fulfillment_complete' && (!onChainTx || onChainTx === 'ecommerce_pending') && !receiptIsAch) {
+          if (isStripeFulfillmentCompleteStatus(status) && (!onChainTx || onChainTx === 'ecommerce_pending') && !receiptIsAch) {
             const customerEmail = r.customerEmail || r.email || metadata.customerEmail || session.customer_information?.email;
             const targetSplit = resolveSettlementSplitAddress({
               funding: receiptFunding,
@@ -423,7 +430,9 @@ export async function POST(req: NextRequest) {
               splitAddressCredit: r.splitAddressCredit || context?.splitAddressCredit,
               fallbackAddress: merchantWallet,
             });
-            const targetAmount = r.totalUsd || r.onrampAmount || Number(txDetails.source_amount || 0);
+            // Sweep the Stripe source/deposit amount, never the customer-facing
+            // receipt total (which can include fees that were not deposited).
+            const targetAmount = r.onrampAmount || Number(txDetails.source_amount || 0) || r.totalUsd;
             const targetBrand = r.brandKey || brandKey || "";
 
             if (customerEmail && targetSplit && targetAmount > 0) {
@@ -481,7 +490,7 @@ export async function POST(req: NextRequest) {
 
           const previousStatus = String(r.status || "pending");
           const hasVerifiedSettlementTx = typeof onChainTx === "string" && /^0x[a-f0-9]{64}$/i.test(onChainTx);
-          const stripeAcceptedPayment = status === "fulfillment_processing" || status === "fulfillment_complete";
+          const stripeAcceptedPayment = isStripePaymentAcceptedStatus(status);
           const nextStatus = stripeAcceptedPayment
             ? (receiptIsAch ? "paid - ach pending" : "paid")
             : null;
@@ -554,22 +563,13 @@ export async function POST(req: NextRequest) {
           await container.items.upsert(finalDoc);
 
           if (nextStatus && shouldDeliver) {
-            const delivery = await dispatchReceiptStatusWebhook(finalDoc, nextStatus, previousStatus, {
+            void dispatchReceiptStatusWebhookBestEffort(container, finalDoc, nextStatus, previousStatus, {
               transactionHash: hasVerifiedSettlementTx ? onChainTx : undefined,
               merchantWallet,
               stripeSessionId: sessionId,
               brandKey: finalDoc.brandKey || brandKey,
+              stripeSourceAmountUsd: sourceAmount > 0 ? sourceAmount : undefined,
             });
-            await container.item(finalDoc.id, finalDoc.wallet).patch([
-              { op: "set", path: "/webhookLastStatus", value: nextStatus },
-              { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
-              { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
-              { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
-              ...(hasVerifiedSettlementTx ? [{ op: "set" as const, path: "/webhookLastTransactionHash", value: onChainTx }] : []),
-              ...(delivery.statusCode ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }] : []),
-              { op: "set", path: "/webhookLastError", value: delivery.error || null },
-            ] as any);
-            if (!delivery.ok) throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
           }
 
           console.log(`[STRIPE WEBHOOK] Updated receipt ${r.id}; provider='${status}', payment='${nextStatus || previousStatus}' (txHash: ${onChainTx || 'none'})`);
@@ -624,22 +624,11 @@ export async function POST(req: NextRequest) {
                 r.webhookLastAttemptAt = Date.now();
               }
               await container.items.upsert(r);
-              const delivery = await dispatchReceiptStatusWebhook(r, "failed", previousStatus, {
+              void dispatchReceiptStatusWebhookBestEffort(container, r, "failed", previousStatus, {
                 merchantWallet: r.wallet || merchantWallet,
                 stripeSessionId: sessionId,
                 brandKey: r.brandKey || brandKey,
               });
-              await container.item(r.id, r.wallet).patch([
-                { op: "set", path: "/webhookLastStatus", value: "failed" },
-                { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
-                { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
-                { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
-                ...(delivery.statusCode
-                  ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
-                  : []),
-                { op: "set", path: "/webhookLastError", value: delivery.error || null },
-              ] as any);
-              if (!delivery.ok) throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
               console.log(`[STRIPE WEBHOOK] Updated receipt ${r.id} to failed due to Stripe rejection`);
             }
           }

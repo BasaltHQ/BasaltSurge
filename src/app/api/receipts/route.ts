@@ -386,6 +386,9 @@ export async function POST(req: NextRequest) {
       receiptId: id,
       brandKey: brand.key || undefined,
       totalUsd,
+      // Immutable merchant order amount. Stripe's source amount and the
+      // customer-facing total are tracked separately during payment.
+      orderTotalUsd: totalUsd,
       currency: "USD",
       lineItems,
       createdAt: now,

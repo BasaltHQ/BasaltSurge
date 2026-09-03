@@ -5165,7 +5165,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 <p className={`text-xs ${shipEmail ? 'mb-2' : 'mb-6'} max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
                   {stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account"
                     ? "Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance."
-                    : "USDC has been transferred successfully."}
+                    : "Stripe accepted your payment and fulfillment is in progress."}
                 </p>
                 {shipEmail && (
                   <p className="text-[11px] text-emerald-400 font-medium animate-pulse mb-6">

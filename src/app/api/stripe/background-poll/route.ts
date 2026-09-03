@@ -4,8 +4,13 @@ import { sendEmail } from "@/lib/aws/ses";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { generateHtmlEmailTemplate } from "@/lib/notifications/email-template";
 import { markEmailVerified } from "@/app/api/auth/thirdweb-verify/route";
-import { dispatchReceiptStatusWebhook } from "@/lib/webhook-dispatch";
+import { dispatchReceiptStatusWebhookBestEffort } from "@/lib/webhook-dispatch";
 import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
+import {
+  isStripeFulfillmentCompleteStatus,
+  isStripeOnrampTerminalFailure,
+  isStripePaymentAcceptedStatus,
+} from "@/lib/stripe-onramp-status";
 import {
   normalizeSettlementFunding,
   resolveSettlementSplitAddress,
@@ -280,8 +285,13 @@ async function recordStripeFulfillmentProcessing(params: {
   sessionId: string;
   brandKey: string;
   funding: string;
+  stripeStatus?: string;
+  stripeSourceAmountUsd?: number;
 }): Promise<void> {
   const { receiptId, merchantWallet, sessionId, brandKey, funding } = params;
+  const stripeStatus = isStripePaymentAcceptedStatus(params.stripeStatus)
+    ? String(params.stripeStatus).trim().toLowerCase()
+    : "fulfillment_processing";
   const container = await getContainer(undefined, undefined, { profile: "critical" });
   const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
   const { resource: receipt } = await container.item(docId, merchantWallet).read<any>();
@@ -294,11 +304,14 @@ async function recordStripeFulfillmentProcessing(params: {
   const isAch = funding === "us_bank_account";
   const nextStatus = isAch ? "paid - ach pending" : "paid";
   receipt.stripeSessionId = sessionId;
-  receipt.stripeSessionStatus = "fulfillment_processing";
-  receipt.checkoutStatus = "fulfillment_processing";
+  receipt.stripeSessionStatus = stripeStatus;
+  receipt.checkoutStatus = stripeStatus;
   receipt.checkoutStatusSource = "stripe_background_poll";
   receipt.checkoutStatusUpdatedAt = Date.now();
   receipt.lastUpdatedAt = Date.now();
+  if (Number.isFinite(params.stripeSourceAmountUsd) && Number(params.stripeSourceAmountUsd) > 0) {
+    receipt.onrampAmount = Number(params.stripeSourceAmountUsd);
+  }
 
   if (previousStatus !== nextStatus && !isProtectedPaymentStatus(previousStatus)) {
     receipt.status = nextStatus;
@@ -324,22 +337,12 @@ async function recordStripeFulfillmentProcessing(params: {
   await container.items.upsert(receipt);
 
   if (!shouldDeliver) return;
-  const delivery = await dispatchReceiptStatusWebhook(receipt, nextStatus, previousStatus, {
+  void dispatchReceiptStatusWebhookBestEffort(container, receipt, nextStatus, previousStatus, {
     merchantWallet,
     stripeSessionId: sessionId,
     brandKey,
+    stripeSourceAmountUsd: params.stripeSourceAmountUsd,
   });
-  await container.item(receipt.id, receipt.wallet).patch([
-    { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
-    { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
-    ...(delivery.statusCode
-      ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
-      : []),
-    { op: "set", path: "/webhookLastError", value: delivery.error || null },
-  ] as any);
-  if (!delivery.ok) {
-    throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
-  }
 }
 
 async function runBackgroundPoll(params: {
@@ -385,9 +388,13 @@ async function runBackgroundPoll(params: {
   let cryptoCustomerId = "";
   let processingRecorded = false;
 
-  // Poll up to 120 times every 5 seconds (10 minutes total)
+  // Poll immediately, then up to 120 times every 5 seconds (10 minutes total).
+  // The first immediate read closes the gap between checkout success and the
+  // eCommerce paid transition.
   for (let attempt = 0; attempt < 120; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
 
     try {
       const response = await fetch(
@@ -409,12 +416,11 @@ async function runBackgroundPoll(params: {
 
       const data = await response.json();
       const status = data.status;
-      const lastError = data.transaction_details?.last_error;
       cryptoCustomerId = data.customer || data.crypto_customer || "";
 
       console.log(`[BACKGROUND POLL] Status check (attempt ${attempt + 1}): ${status}`);
 
-      if (status === "fulfillment_processing" && !processingRecorded) {
+      if (isStripePaymentAcceptedStatus(status) && !processingRecorded) {
         const processingFunding = resolveStripeOnrampFunding(data, detectedCardFunding, isCreditCard);
         resolvedFunding = processingFunding;
         await recordStripeFulfillmentProcessing({
@@ -423,11 +429,17 @@ async function runBackgroundPoll(params: {
           sessionId,
           brandKey,
           funding: processingFunding,
+          stripeStatus: status,
+          stripeSourceAmountUsd: Number(
+            data.transaction_details?.source_amount
+            || data.transaction_details?.source_exchange_amount
+            || 0
+          ),
         });
         processingRecorded = true;
       }
 
-      if (status === "fulfillment_complete") {
+      if (isStripeFulfillmentCompleteStatus(status)) {
         resolvedStatus = "success";
         // Query database receipt to check if client has already stored the card funding type
         let dbFunding = null;
@@ -462,13 +474,8 @@ async function runBackgroundPoll(params: {
       }
 
       // Early exit if session failed
-      if (
-        status === "rejected" ||
-        lastError === "transaction_failed" ||
-        lastError === "location_not_supported" ||
-        lastError === "transaction_limit_reached"
-      ) {
-        console.warn(`[BACKGROUND POLL] Stripe session failed early: status=${status}, lastError=${lastError}`);
+      if (isStripeOnrampTerminalFailure(data)) {
+        console.warn(`[BACKGROUND POLL] Stripe session failed early: status=${status}, lastError=${JSON.stringify(data.transaction_details?.last_error || null)}`);
         resolvedStatus = "failed";
         isDefinitiveFailure = true;
         break;
@@ -636,24 +643,12 @@ async function runBackgroundPoll(params: {
           finalReceipt.webhookLastAttemptAt = Date.now();
           finalReceipt.webhookLastTransactionHash = txHash;
           await container.items.upsert(finalReceipt);
-          const delivery = await dispatchReceiptStatusWebhook(finalReceipt, "paid", previousStatus, {
+          void dispatchReceiptStatusWebhookBestEffort(container, finalReceipt, "paid", previousStatus, {
             transactionHash: txHash,
             merchantWallet,
             stripeSessionId: sessionId,
             brandKey,
           });
-          await container.item(finalReceipt.id, finalReceipt.wallet).patch([
-            { op: "set", path: "/webhookLastStatus", value: "paid" },
-            { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
-            { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
-            { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
-            { op: "set", path: "/webhookLastTransactionHash", value: txHash },
-            ...(delivery.statusCode ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }] : []),
-            { op: "set", path: "/webhookLastError", value: delivery.error || null },
-          ] as any);
-          if (!delivery.ok) {
-            throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
-          }
           console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to paid with txHash: ${txHash}`);
         } else {
           console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found in DB`);
@@ -782,7 +777,7 @@ async function runBackgroundPoll(params: {
           }
 
           const data = await response.json();
-          if (data.status === "fulfillment_complete") {
+          if (isStripeFulfillmentCompleteStatus(data.status)) {
             const metaReceiptId = data.metadata?.receiptId || "";
             if (metaReceiptId && metaReceiptId !== receiptId && metaReceiptId !== docId) {
               console.warn(`[10MIN SAFETY CHECK] Stripe metadata receiptId (${metaReceiptId}) does not match current receipt (${receiptId}). Skipping.`);
@@ -830,24 +825,13 @@ async function runBackgroundPoll(params: {
             await container.items.upsert(receipt);
             console.log(`🎉 [10MIN SAFETY RECOVERY SUCCESS] Updated receipt ${receiptId} to 'paid' in DB!`);
 
-            const delivery = await dispatchReceiptStatusWebhook(receipt, "paid", "failed", {
+            void dispatchReceiptStatusWebhookBestEffort(container, receipt, "paid", "failed", {
               transactionHash: gaslessTx || undefined,
               merchantWallet,
-              totalUsd: amount,
+              stripeSourceAmountUsd: amount,
               brandKey,
               stripeSessionId: sessionId,
             });
-            await container.item(receipt.id, receipt.wallet).patch([
-              { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
-              { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
-              ...(delivery.statusCode
-                ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
-                : []),
-              { op: "set", path: "/webhookLastError", value: delivery.error || null },
-            ] as any);
-            if (!delivery.ok) {
-              throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
-            }
           } else {
             console.log(`[10MIN SAFETY CHECK] Stripe session ${sessionId} status is still '${data.status}'. Failure confirmed.`);
           }
@@ -864,7 +848,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const sessionId = String(body.sessionId || "").trim();
     const receiptId = String(body.receiptId || "").trim();
-    const merchantWallet = String(body.merchantWallet || "").trim().toLowerCase();
+    let merchantWallet = String(body.merchantWallet || "").trim().toLowerCase();
     let email = String(body.email || "").trim().toLowerCase();
     let amount = Number(body.amount || 0);
     let splitAddress = String(body.splitAddress || "").trim().toLowerCase();
@@ -874,7 +858,7 @@ export async function POST(req: NextRequest) {
     const kycOccurred = typeof body.kycOccurred === "boolean" ? body.kycOccurred : undefined;
     const kycLevel = body.kycLevel ? String(body.kycLevel).trim() : undefined;
 
-    if (!sessionId || !receiptId || !merchantWallet || !email || !amount || !splitAddress) {
+    if (!sessionId || !receiptId) {
       return NextResponse.json(
         { ok: false, error: "missing_required_fields" },
         { status: 400 }
@@ -890,12 +874,47 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, error: "stripe_not_configured" }, { status: 500 });
       }
 
-      const container = await getContainer();
+      const container = await getContainer(undefined, undefined, { profile: "critical" });
       const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
-      const { resource: receipt } = await container.item(docId, merchantWallet).read();
+      const rawReceiptId = receiptId.replace(/^receipt:/, "");
+      let receipt: any = null;
+
+      if (merchantWallet) {
+        try {
+          const { resource } = await container.item(docId, merchantWallet).read();
+          receipt = resource;
+        } catch {}
+      }
+
+      // Existing receipts are not uniformly partitioned by the merchant wallet.
+      // Fall back to the immutable receipt ID and then bind the result to the
+      // Stripe session metadata below instead of silently declining to launch.
+      if (!receipt) {
+        const { resources } = await container.items.query({
+          query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rawId OR c.id = @docId OR c.id = @rawId)",
+          parameters: [
+            { name: "@rawId", value: rawReceiptId },
+            { name: "@docId", value: docId },
+          ],
+        }).fetchAll();
+        const candidates = resources || [];
+        receipt = candidates.find((item: any) => item.stripeSessionId === sessionId)
+          || candidates.find((item: any) => merchantWallet && String(item.wallet || "").toLowerCase() === merchantWallet)
+          || (candidates.length === 1 ? candidates[0] : null);
+      }
+
       if (!receipt) {
         return NextResponse.json({ ok: false, error: "receipt_not_found" }, { status: 404 });
       }
+
+      // Preserve the receipt's exact partition-key casing for Cosmos point
+      // reads. Normalize only for address comparisons; legacy receipts are not
+      // guaranteed to have a lower-case partition value.
+      const storedMerchantWallet = String(receipt.wallet || receipt.merchantWallet || "").trim();
+      if (!/^0x[a-f0-9]{40}$/i.test(storedMerchantWallet)) {
+        return NextResponse.json({ ok: false, error: "verified_merchant_wallet_required" }, { status: 409 });
+      }
+      merchantWallet = storedMerchantWallet;
 
       if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
         console.error(`[BACKGROUND POLL] Receipt ${receiptId} is bound to ${receipt.stripeSessionId}; rejected ${sessionId}`);
@@ -922,27 +941,39 @@ export async function POST(req: NextRequest) {
       if ((!receipt.stripeSessionId && !stripeReceiptId) || (stripeReceiptId && stripeReceiptId !== expectedReceiptId)) {
         return NextResponse.json({ ok: false, error: "stripe_metadata_receipt_mismatch" }, { status: 409 });
       }
-      const stripeMerchantWallet = String(stripeSession.metadata?.merchantWallet || stripeSession.metadata?.wallet || "").toLowerCase();
-      if (stripeMerchantWallet && stripeMerchantWallet !== merchantWallet) {
+      const stripeMerchantWallet = String(stripeSession.metadata?.merchantWallet || stripeSession.metadata?.wallet || "").trim().toLowerCase();
+      if (stripeMerchantWallet && stripeMerchantWallet !== merchantWallet.toLowerCase()) {
         return NextResponse.json({ ok: false, error: "stripe_metadata_merchant_mismatch" }, { status: 409 });
       }
 
       const stripeEmail = String(stripeSession.customer_information?.email || stripeSession.customer_details?.email || "").trim().toLowerCase();
       const storedEmail = String(receipt.customerEmail || receipt.email || "").trim().toLowerCase();
-      if (!stripeEmail) {
-        return NextResponse.json({ ok: false, error: "verified_stripe_customer_email_required" }, { status: 409 });
-      }
       if (stripeEmail && email && stripeEmail !== email) {
         return NextResponse.json({ ok: false, error: "stripe_customer_email_mismatch" }, { status: 409 });
       }
       if (storedEmail && email && storedEmail !== email) {
         return NextResponse.json({ ok: false, error: "receipt_customer_email_mismatch" }, { status: 409 });
       }
-      email = stripeEmail;
+      if (stripeEmail && storedEmail && stripeEmail !== storedEmail) {
+        return NextResponse.json({ ok: false, error: "stripe_receipt_customer_email_mismatch" }, { status: 409 });
+      }
+      email = stripeEmail || storedEmail || email;
+      if (!email) {
+        return NextResponse.json({ ok: false, error: "verified_customer_email_required" }, { status: 409 });
+      }
 
       const receiptTotal = Number(receipt.totalUsd || 0);
-      if (receiptTotal > 0 && amount + 0.01 < receiptTotal) {
-        return NextResponse.json({ ok: false, error: "onramp_amount_below_receipt_total" }, { status: 409 });
+      const stripeSourceAmount = Number(
+        stripeSession.transaction_details?.source_amount
+        || stripeSession.transaction_details?.source_exchange_amount
+        || 0
+      );
+      const storedOnrampAmount = Number(receipt.onrampAmount || receiptTotal || 0);
+      amount = stripeSourceAmount > 0
+        ? stripeSourceAmount
+        : (storedOnrampAmount > 0 ? storedOnrampAmount : amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return NextResponse.json({ ok: false, error: "verified_onramp_amount_required" }, { status: 409 });
       }
 
       const siteConfig = await getSiteConfigForWallet(merchantWallet, receipt.brandKey || brandKey).catch(() => null);
@@ -953,21 +984,54 @@ export async function POST(req: NextRequest) {
       }
 
       brandKey = String(receipt.brandKey || brandKey || "");
-      detectedCardFunding = String(receipt.detectedCardFunding || detectedCardFunding || "");
+      detectedCardFunding = resolveStripeOnrampFunding(
+        stripeSession,
+        receipt.detectedCardFunding || detectedCardFunding,
+        receipt.isCreditCard === true
+      );
 
       receipt.stripeSessionId = sessionId;
       receipt.customerEmail = email;
+      if (receipt.orderTotalUsd == null || !Number.isFinite(Number(receipt.orderTotalUsd))) {
+        const creationMinor = receipt.grossMinor == null ? NaN : Number(receipt.grossMinor);
+        const creationTotal = creationMinor / 100;
+        receipt.orderTotalUsd = Number.isFinite(creationTotal) && creationTotal >= 0
+          ? creationTotal
+          : Number(receipt.totalUsd || 0);
+      }
       receipt.onrampAmount = amount;
       receipt.splitAddress = splitAddress;
       receipt.splitAddressCredit = splitAddressCredit || null;
       receipt.detectedCardFunding = detectedCardFunding || null;
       receipt.isCreditCard = detectedCardFunding === "credit";
+      receipt.stripeSessionStatus = String(stripeSession.status || receipt.stripeSessionStatus || "");
+      receipt.checkoutStatus = String(stripeSession.status || receipt.checkoutStatus || "");
+      receipt.checkoutStatusSource = "stripe_background_poll_launch";
+      receipt.checkoutStatusUpdatedAt = Date.now();
       if (typeof kycOccurred === "boolean") receipt.kycOccurred = kycOccurred;
       if (kycLevel) receipt.kycLevel = kycLevel;
       receipt.lastUpdatedAt = Date.now();
       await container.items.upsert(receipt);
       verifiedReceipt = receipt;
       console.log(`[BACKGROUND POLL] Verified and saved Stripe metadata for receipt ${receiptId}`);
+
+      // Close the customer-visible gap immediately when Stripe has already
+      // crossed the signed fulfillment boundary by the time this POST arrives.
+      if (isStripePaymentAcceptedStatus(stripeSession.status)) {
+        try {
+          await recordStripeFulfillmentProcessing({
+            receiptId,
+            merchantWallet,
+            sessionId,
+            brandKey,
+            funding: detectedCardFunding,
+            stripeStatus: stripeSession.status,
+          });
+        } catch (processingError) {
+          // The poll loop starts below and retries the canonical state write.
+          console.error("[BACKGROUND POLL] Immediate fulfillment persistence failed; polling will retry:", processingError);
+        }
+      }
     } catch (dbErr) {
       console.error("[BACKGROUND POLL] Failed to verify and write Stripe metadata to receipt:", dbErr);
       return NextResponse.json({ ok: false, error: "receipt_binding_failed" }, { status: 503 });
@@ -998,7 +1062,11 @@ export async function POST(req: NextRequest) {
       }
     })();
 
-    return NextResponse.json({ ok: true, message: "background_poll_initiated" });
+    return NextResponse.json({
+      ok: true,
+      message: "background_poll_initiated",
+      stripeStatus: verifiedReceipt?.stripeSessionStatus || verifiedReceipt?.checkoutStatus || null,
+    });
   } catch (error: any) {
     console.error("[BACKGROUND POLL] Error starting background task:", error);
     return NextResponse.json(

@@ -180,7 +180,8 @@ export function recalculateReceiptForCardFunding(
     return {
       ...receipt,
       detectedCardFunding: activeFunding,
-      lineItems: finalLineItems
+      lineItems: finalLineItems,
+      customerTotalUsd: fromCents(customerTotalCents),
     };
   } else {
     // Standard fee-on-top checkout: processing fee is added on top of base items
@@ -201,7 +202,8 @@ export function recalculateReceiptForCardFunding(
       ...receipt,
       detectedCardFunding: activeFunding,
       lineItems: finalLineItems,
-      totalUsd: fromCents(baseWithoutFeeCents + finalFeeCents)
+      totalUsd: fromCents(baseWithoutFeeCents + finalFeeCents),
+      customerTotalUsd: fromCents(baseWithoutFeeCents + finalFeeCents),
     };
   }
 }

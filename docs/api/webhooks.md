@@ -67,6 +67,8 @@ User-Agent: PortalPay-Webhook/1.0
   "buyerWallet": "0x1234...abcd",
   "merchantWallet": "0x5678...efgh",
   "totalUsd": 25.00,
+  "customerTotalUsd": 26.25,
+  "stripeSourceAmountUsd": 25.34,
   "token": "USDC",
   "timestamp": 1713200000000,
   "brandKey": "myshop",
@@ -117,7 +119,9 @@ User-Agent: PortalPay-Webhook/1.0
 | `transactionHash` | string \| null | On-chain transaction hash (when completed) |
 | `buyerWallet` | string \| null | Buyer's wallet address |
 | `merchantWallet` | string | Merchant recipient wallet address |
-| `totalUsd` | number | Receipt total in USD |
+| `totalUsd` | number | Stable merchant order total in USD (the value submitted when the payment was initiated) |
+| `customerTotalUsd` | number | Final customer-facing receipt total in USD, including configured processing fees when available |
+| `stripeSourceAmountUsd` | number | Stripe Crypto Onramp `source_amount` used for settlement when available; it can differ from the order and customer totals because Stripe fees are accounted for separately |
 | `stripeSessionId` | string \| null | Stripe Checkout/Onramp Session ID (if applicable) |
 | `isStripeSessionUnique` | boolean | `true` if the `stripeSessionId` is unique to this single receipt; `false` if shared or unpopulated |
 | `transactionId` | string \| null | Custom transaction reference ID passed at order creation |

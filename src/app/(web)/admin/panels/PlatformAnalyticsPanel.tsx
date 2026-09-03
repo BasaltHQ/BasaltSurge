@@ -1545,12 +1545,15 @@ export default function PlatformAnalyticsPanel() {
     setActionLoading(prev => ({ ...prev, [receiptId]: true }));
     setActionFeedback(prev => ({ ...prev, [receiptId]: "Connecting to reconciliation engine..." }));
     try {
-      const cronSecret = process.env.NEXT_PUBLIC_CRON_SECRET || "default_cron_secret_temp_key_portalpay";
-      const res = await fetch(`/api/cron/reconcile-stuck?receiptId=${encodeURIComponent(receiptId)}&cronSecret=${encodeURIComponent(cronSecret)}`, {
+      // Manual reconciliation is authorized by the logged-in admin session.
+      // CRON_SECRET is server-only and must never be embedded in the browser.
+      const res = await fetch(`/api/cron/reconcile-stuck?receiptId=${encodeURIComponent(receiptId)}`, {
+        method: "POST",
         headers: {
+          "Content-Type": "application/json",
           "x-wallet": wallet || "",
-          "x-cron-secret": cronSecret
         },
+        body: JSON.stringify({ receiptId }),
         cache: "no-store"
       });
       const text = await res.text();
