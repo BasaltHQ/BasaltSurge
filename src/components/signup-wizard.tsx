@@ -822,14 +822,10 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
 
                                     {/* Agent Referral Banner */}
                                     {referralAgent && referralBps > 0 && (
-                                        <div className="mb-6 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center justify-between">
+                                        <div className="mb-6 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs">
                                             <div>
                                                 <span className="font-semibold block mb-0.5">Agent Referral Active</span>
                                                 <span className="opacity-80 font-mono">Referred by: {referralAgent.slice(0, 6)}...{referralAgent.slice(-4)}</span>
-                                            </div>
-                                            <div className="text-right">
-                                                <div className="font-mono font-bold text-sm text-emerald-300">{referralBps} BPS</div>
-                                                <div className="opacity-80 text-[10px] uppercase tracking-wider">Agent Commission ({(referralBps / 100).toFixed(2)}%)</div>
                                             </div>
                                         </div>
                                     )}

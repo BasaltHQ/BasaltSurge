@@ -282,7 +282,7 @@ interface ReceiptInfo {
   canonicalStatusHistory?: { status: string; ts: number; reason?: string }[];
   lifecycleHistory?: { status: string; ts: number; reason?: string; source?: string }[];
   platformFee?: number;
-  platformFeeSource?: "recorded_minor" | "recorded_usd" | "recorded_bps" | "unavailable";
+  platformFeeSource?: "recorded_minor" | "recorded_usd" | "recorded_bps" | "minimum_50bps" | "unavailable";
   lineItems?: { label: string; priceUsd: number; qty?: number }[];
   items?: { label?: string; priceUsd?: number; quantity?: number; qty?: number }[];
   parentUrl?: string | null;
@@ -2927,7 +2927,7 @@ export default function PlatformAnalyticsPanel() {
               </div>
               <div className="text-muted-foreground flex justify-between">
                 <span>Fee Basis:</span>
-                <span className="font-medium text-white/80">BPS Config Model</span>
+                <span className="font-medium text-white/80">50 BPS Floor Model</span>
               </div>
             </div>
           </div>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { resolveWalletRole } from "@/lib/authz";
 import { formatYMDInTimeZone, getDayRangeForYmdInTz, zonedTimeToUtcDate } from "@/lib/timezone";
+import { getPlatformAnalyticsFeeData } from "@/lib/platform-analytics-fees";
 
 export const dynamic = 'force-dynamic';
 
@@ -613,40 +614,9 @@ export async function GET(req: NextRequest) {
       console.error("[PLATFORM ANALYTICS API] Failed to pre-fetch wallet configs:", err);
     }
 
-    // Use only persisted platform-fee evidence. effectiveProcessingFeeBps is a
-    // checkout processing rate and must not be silently presented as platform
-    // revenue. Missing legacy fee data is reported as unavailable instead.
-    const getReceiptFeeData = (rc: any): { amount: number; source: "recorded_minor" | "recorded_usd" | "recorded_bps" | "unavailable" } => {
-      const totalUsd = Number(rc.totalUsd || 0);
-      const persistedNumber = (value: unknown): number | null => {
-        if (value === null || value === undefined || value === "") return null;
-        const parsed = Number(value);
-        return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-      };
-
-      const amountPlatformMinor = persistedNumber(rc.amountPlatformMinor);
-      if (amountPlatformMinor !== null) {
-        return { amount: amountPlatformMinor / 100, source: "recorded_minor" };
-      }
-
-      const directUsdCandidates = [rc.platformFeeUsd, rc.platformFee, rc.portalFeeUsd];
-      for (const candidate of directUsdCandidates) {
-        const amount = persistedNumber(candidate);
-        if (amount !== null) {
-          return { amount, source: "recorded_usd" };
-        }
-      }
-
-      const bpsCandidates = [rc.platformFeeBps, rc.platformBps, rc.splitConfig?.platformFeeBps];
-      for (const candidate of bpsCandidates) {
-        const bps = persistedNumber(candidate);
-        if (totalUsd >= 0 && bps !== null) {
-          return { amount: (totalUsd * bps) / 10000, source: "recorded_bps" };
-        }
-      }
-
-      return { amount: 0, source: "unavailable" };
-    };
+    // Every settled receipt contributes at least the platform's persistent
+    // 50 BPS floor. Persisted platform-fee evidence may raise that amount.
+    const getReceiptFeeData = getPlatformAnalyticsFeeData;
     const getReceiptFeeUsd = (rc: any) => getReceiptFeeData(rc).amount;
 
     // Helper to resolve brand key container slug cleanly
