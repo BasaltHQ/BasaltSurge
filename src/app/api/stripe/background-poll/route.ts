@@ -4,6 +4,13 @@ import { sendEmail } from "@/lib/aws/ses";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { generateHtmlEmailTemplate } from "@/lib/notifications/email-template";
 import { markEmailVerified } from "@/app/api/auth/thirdweb-verify/route";
+import { dispatchReceiptStatusWebhook } from "@/lib/webhook-dispatch";
+import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
+import {
+  normalizeSettlementFunding,
+  resolveSettlementSplitAddress,
+  resolveStripeOnrampFunding,
+} from "@/lib/payment-split-routing";
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +19,8 @@ const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589
 
 export async function findLeg2OnChainTx(
   userWallet: string,
-  splitAddress: string
+  splitAddress: string,
+  expectedAmount?: number
 ): Promise<string | null> {
   try {
     if (!userWallet || !userWallet.startsWith("0x")) return null;
@@ -59,40 +67,11 @@ export async function findLeg2OnChainTx(
     if (response.ok) {
       const data = await response.json();
       const logs = data.result || [];
-      if (logs.length > 0) {
-        const latestLog = logs[logs.length - 1];
-        return latestLog.transactionHash || null;
-      }
-    }
-
-    // Attempt 2: Fallback query for any outbound transfer from userWallet (matching reconcile-stuck)
-    if (paddedSplit) {
-      response = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 3,
-          method: "eth_getLogs",
-          params: [{
-            address: BASE_USDC_ADDRESS,
-            fromBlock: fromBlockHex,
-            toBlock: "latest",
-            topics: [
-              usdcTopic,
-              paddedUserWallet
-            ]
-          }]
-        }),
-        signal: AbortSignal.timeout(5000)
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const logs = data.result || [];
-        if (logs.length > 0) {
-          const latestLog = logs[logs.length - 1];
-          return latestLog.transactionHash || null;
+      for (let index = logs.length - 1; index >= 0; index--) {
+        const log = logs[index];
+        const transferredAmount = log?.data ? Number(BigInt(log.data)) / 1_000_000 : 0;
+        if (!expectedAmount || transferredAmount + 0.000001 >= expectedAmount * 0.95) {
+          return log.transactionHash || null;
         }
       }
     }
@@ -259,7 +238,7 @@ export async function executeGaslessTransferServer(
         if (retry > 0) {
           await new Promise(r => setTimeout(r, 2000));
         }
-        const existingLeg2Tx = await findLeg2OnChainTx(account.address, toAddress);
+        const existingLeg2Tx = await findLeg2OnChainTx(account.address, toAddress, usdcAmount);
         if (existingLeg2Tx) {
           console.log(`🎉 [BACKGROUND POLL] Found completed Leg 2 transaction on Base (attempt ${retry + 1}): ${existingLeg2Tx}`);
           return existingLeg2Tx;
@@ -292,6 +271,74 @@ export async function executeGaslessTransferServer(
     const errorMsg = err?.message || String(err || "Gasless transfer execution error");
     console.error("[BACKGROUND POLL] executeGaslessTransferServer error:", errorMsg, err?.stack);
     throw new Error(errorMsg);
+  }
+}
+
+async function recordStripeFulfillmentProcessing(params: {
+  receiptId: string;
+  merchantWallet: string;
+  sessionId: string;
+  brandKey: string;
+  funding: string;
+}): Promise<void> {
+  const { receiptId, merchantWallet, sessionId, brandKey, funding } = params;
+  const container = await getContainer(undefined, undefined, { profile: "critical" });
+  const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
+  const { resource: receipt } = await container.item(docId, merchantWallet).read<any>();
+  if (!receipt) throw new Error(`receipt_not_found:${receiptId}`);
+  if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
+    throw new Error(`receipt_session_mismatch:${receipt.stripeSessionId}:${sessionId}`);
+  }
+
+  const previousStatus = String(receipt.status || "pending");
+  const isAch = funding === "us_bank_account";
+  const nextStatus = isAch ? "paid - ach pending" : "paid";
+  receipt.stripeSessionId = sessionId;
+  receipt.stripeSessionStatus = "fulfillment_processing";
+  receipt.checkoutStatus = "fulfillment_processing";
+  receipt.checkoutStatusSource = "stripe_background_poll";
+  receipt.checkoutStatusUpdatedAt = Date.now();
+  receipt.lastUpdatedAt = Date.now();
+
+  if (previousStatus !== nextStatus && !isProtectedPaymentStatus(previousStatus)) {
+    receipt.status = nextStatus;
+    receipt.statusHistory = Array.isArray(receipt.statusHistory)
+      ? [...receipt.statusHistory, { status: nextStatus, ts: Date.now() }]
+      : [{ status: nextStatus, ts: Date.now() }];
+    receipt.detectedCardFunding = funding;
+    receipt.isCreditCard = funding === "credit";
+    if (!isAch) receipt.ttl = -1;
+  }
+
+  const shouldDeliver = Boolean(receipt.webhookUrl && receipt.status === nextStatus && (
+    previousStatus !== nextStatus ||
+    receipt.webhookLastStatus !== nextStatus ||
+    receipt.webhookLastDeliveryOk !== true
+  ));
+  if (shouldDeliver) {
+    receipt.webhookLastStatus = nextStatus;
+    receipt.webhookLastPreviousStatus = previousStatus;
+    receipt.webhookLastDeliveryOk = false;
+    receipt.webhookLastAttemptAt = Date.now();
+  }
+  await container.items.upsert(receipt);
+
+  if (!shouldDeliver) return;
+  const delivery = await dispatchReceiptStatusWebhook(receipt, nextStatus, previousStatus, {
+    merchantWallet,
+    stripeSessionId: sessionId,
+    brandKey,
+  });
+  await container.item(receipt.id, receipt.wallet).patch([
+    { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
+    { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
+    ...(delivery.statusCode
+      ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
+      : []),
+    { op: "set", path: "/webhookLastError", value: delivery.error || null },
+  ] as any);
+  if (!delivery.ok) {
+    throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
   }
 }
 
@@ -336,6 +383,7 @@ async function runBackgroundPoll(params: {
   let finalTxHash = "";
   let isDefinitiveFailure = false;
   let cryptoCustomerId = "";
+  let processingRecorded = false;
 
   // Poll up to 120 times every 5 seconds (10 minutes total)
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -366,21 +414,21 @@ async function runBackgroundPoll(params: {
 
       console.log(`[BACKGROUND POLL] Status check (attempt ${attempt + 1}): ${status}`);
 
+      if (status === "fulfillment_processing" && !processingRecorded) {
+        const processingFunding = resolveStripeOnrampFunding(data, detectedCardFunding, isCreditCard);
+        resolvedFunding = processingFunding;
+        await recordStripeFulfillmentProcessing({
+          receiptId,
+          merchantWallet,
+          sessionId,
+          brandKey,
+          funding: processingFunding,
+        });
+        processingRecorded = true;
+      }
+
       if (status === "fulfillment_complete") {
         resolvedStatus = "success";
-        const paymentDetailsType = String(data.payment_details?.type || data.payment_method_details?.type || "").toLowerCase();
-        const paymentMethod = String(data.payment_method || "").toLowerCase();
-        let stripeFunding = (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach"))
-          ? "us_bank_account"
-          : (data.payment_details?.card?.funding || data.payment_method_details?.card?.funding);
-        if (!stripeFunding) {
-          if (paymentMethod.includes("debit")) {
-            stripeFunding = "debit";
-          } else if (paymentMethod.includes("credit")) {
-            stripeFunding = "credit";
-          }
-        }
-
         // Query database receipt to check if client has already stored the card funding type
         let dbFunding = null;
         try {
@@ -404,8 +452,12 @@ async function runBackgroundPoll(params: {
           console.warn("[BACKGROUND POLL] Failed to query database receipt for funding:", dbErr);
         }
 
-        resolvedFunding = stripeFunding || dbFunding || detectedCardFunding || null;
-        isCreditCard = resolvedFunding === "credit" || resolvedFunding === null || resolvedFunding === undefined;
+        resolvedFunding = resolveStripeOnrampFunding(
+          data,
+          dbFunding || detectedCardFunding,
+          isCreditCard
+        );
+        isCreditCard = resolvedFunding === "credit";
         break;
       }
 
@@ -432,8 +484,9 @@ async function runBackgroundPoll(params: {
 
     const incomingKycLevel = initialKycLevel ? String(initialKycLevel).trim() : undefined;
     let kycLevel = (incomingKycLevel === "L2" || incomingKycLevel === "L1") ? incomingKycLevel : "L0";
-    const resolvedFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
-    const isAch = resolvedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account";
+    const finalFunding = normalizeSettlementFunding(resolvedFunding || detectedCardFunding, isCreditCard);
+    isCreditCard = finalFunding === "credit";
+    const isAch = finalFunding === "us_bank_account";
     
     if (isAch) {
       kycLevel = "L2";
@@ -487,9 +540,12 @@ async function runBackgroundPoll(params: {
       }
     }
 
-    const targetSplitAddress = (isCreditCard || resolvedFunding === "us_bank_account")
-      ? splitAddress
-      : (splitAddressCredit || splitAddress);
+    const targetSplitAddress = resolveSettlementSplitAddress({
+      funding: finalFunding,
+      splitAddress,
+      splitAddressCredit,
+      fallbackAddress: merchantWallet,
+    });
 
     // Execute transfer
     const txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey, true, kycLevel);
@@ -529,6 +585,10 @@ async function runBackgroundPoll(params: {
         }
 
         if (receipt) {
+          if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
+            throw new Error(`receipt_session_mismatch:${receipt.stripeSessionId}:${sessionId}`);
+          }
+          const previousStatus = String(receipt.status || "pending");
           receipt.status = "paid";
           receipt.transactionHash = txHash;
           receipt.transactionTimestamp = Date.now();
@@ -541,7 +601,7 @@ async function runBackgroundPoll(params: {
 
           // Persist card funding if resolved
           receipt.isCreditCard = isCreditCard;
-          receipt.detectedCardFunding = isCreditCard ? "credit" : (detectedCardFunding || "debit");
+          receipt.detectedCardFunding = finalFunding;
           receipt.kycLevel = kycLevel;
           if (typeof kycOccurred === "boolean") {
             receipt.kycOccurred = kycOccurred;
@@ -570,7 +630,30 @@ async function runBackgroundPoll(params: {
             console.error("[BACKGROUND POLL] Failed to run Shopify sync:", shopifyErr);
           }
 
+          finalReceipt.webhookLastStatus = "paid";
+          finalReceipt.webhookLastPreviousStatus = previousStatus;
+          finalReceipt.webhookLastDeliveryOk = false;
+          finalReceipt.webhookLastAttemptAt = Date.now();
+          finalReceipt.webhookLastTransactionHash = txHash;
           await container.items.upsert(finalReceipt);
+          const delivery = await dispatchReceiptStatusWebhook(finalReceipt, "paid", previousStatus, {
+            transactionHash: txHash,
+            merchantWallet,
+            stripeSessionId: sessionId,
+            brandKey,
+          });
+          await container.item(finalReceipt.id, finalReceipt.wallet).patch([
+            { op: "set", path: "/webhookLastStatus", value: "paid" },
+            { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
+            { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
+            { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
+            { op: "set", path: "/webhookLastTransactionHash", value: txHash },
+            ...(delivery.statusCode ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }] : []),
+            { op: "set", path: "/webhookLastError", value: delivery.error || null },
+          ] as any);
+          if (!delivery.ok) {
+            throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
+          }
           console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to paid with txHash: ${txHash}`);
         } else {
           console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found in DB`);
@@ -597,7 +680,7 @@ async function runBackgroundPoll(params: {
       const { resource: receipt } = await container.item(docId, merchantWallet).read();
 
       if (receipt) {
-        if (receipt.status === "paid" || receipt.transactionHash || receipt.leg2TxHash || receipt.leg1TxHash) {
+        if (isProtectedPaymentStatus(receipt.status) || receipt.transactionHash || receipt.leg2TxHash || receipt.leg1TxHash) {
           console.log(`[BACKGROUND POLL] Receipt ${receiptId} is already paid or confirmed on-chain. Skipping failure update.`);
           return;
         }
@@ -676,7 +759,7 @@ async function runBackgroundPoll(params: {
           if (!receipt) return;
 
           // If receipt was already marked paid or confirmed on-chain, exit
-          if (receipt.status === "paid" || receipt.transactionHash || receipt.leg2TxHash || receipt.leg1TxHash) {
+          if (isProtectedPaymentStatus(receipt.status) || receipt.transactionHash || receipt.leg2TxHash || receipt.leg1TxHash) {
             console.log(`[10MIN SAFETY CHECK] Receipt ${receiptId} is already paid or confirmed on-chain. Exiting.`);
             return;
           }
@@ -708,8 +791,17 @@ async function runBackgroundPoll(params: {
 
             console.log(`🎉 [10MIN SAFETY CHECK] Stripe session ${sessionId} was FULFILLED! Recovering receipt ${receiptId} from 'failed' -> 'paid'...`);
 
-            const isCredit = receipt.detectedCardFunding === "credit" || receipt.isCreditCard;
-            const targetSplit = (isCredit && receipt.splitAddress) ? receipt.splitAddress : (receipt.splitAddressCredit || receipt.splitAddress || splitAddress);
+            const recoveredFunding = resolveStripeOnrampFunding(
+              data,
+              receipt.detectedCardFunding || detectedCardFunding,
+              receipt.isCreditCard === true
+            );
+            const targetSplit = resolveSettlementSplitAddress({
+              funding: recoveredFunding,
+              splitAddress: receipt.splitAddress || splitAddress,
+              splitAddressCredit: receipt.splitAddressCredit || splitAddressCredit,
+              fallbackAddress: merchantWallet,
+            });
 
             let kycLevel = "L0";
             const gaslessTx = await executeGaslessTransferServer(
@@ -723,30 +815,38 @@ async function runBackgroundPoll(params: {
 
             receipt.status = "paid";
             receipt.transactionHash = gaslessTx || receipt.transactionHash || null;
+            receipt.detectedCardFunding = recoveredFunding;
+            receipt.isCreditCard = recoveredFunding === "credit";
             receipt.lastUpdatedAt = Date.now();
             receipt.statusHistory = Array.isArray(receipt.statusHistory)
               ? [...receipt.statusHistory, { status: "paid", ts: Date.now(), reason: "10_min_safety_recovery" }]
               : [{ status: "paid", ts: Date.now(), reason: "10_min_safety_recovery" }];
 
+            receipt.webhookLastStatus = "paid";
+            receipt.webhookLastPreviousStatus = "failed";
+            receipt.webhookLastDeliveryOk = false;
+            receipt.webhookLastAttemptAt = Date.now();
+            if (gaslessTx) receipt.webhookLastTransactionHash = gaslessTx;
             await container.items.upsert(receipt);
             console.log(`🎉 [10MIN SAFETY RECOVERY SUCCESS] Updated receipt ${receiptId} to 'paid' in DB!`);
 
-            // Dispatch partner webhook
-            if (receipt.webhookUrl) {
-              const { dispatchWebhookAsync } = await import("@/lib/webhook-dispatch");
-              dispatchWebhookAsync(receipt.webhookUrl, {
-                event: "receipt.status_updated",
-                receiptId: receipt.id || receiptId,
-                status: "paid",
-                previousStatus: "failed",
-                transactionHash: gaslessTx || undefined,
-                buyerWallet: receipt.buyerWallet || undefined,
-                merchantWallet: merchantWallet,
-                totalUsd: amount,
-                timestamp: Date.now(),
-                brandKey: brandKey || "aipowerpay",
-                stripeSessionId: sessionId
-              }, receipt.webhookSecret || undefined);
+            const delivery = await dispatchReceiptStatusWebhook(receipt, "paid", "failed", {
+              transactionHash: gaslessTx || undefined,
+              merchantWallet,
+              totalUsd: amount,
+              brandKey,
+              stripeSessionId: sessionId,
+            });
+            await container.item(receipt.id, receipt.wallet).patch([
+              { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
+              { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
+              ...(delivery.statusCode
+                ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
+                : []),
+              { op: "set", path: "/webhookLastError", value: delivery.error || null },
+            ] as any);
+            if (!delivery.ok) {
+              throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
             }
           } else {
             console.log(`[10MIN SAFETY CHECK] Stripe session ${sessionId} status is still '${data.status}'. Failure confirmed.`);
@@ -765,12 +865,12 @@ export async function POST(req: NextRequest) {
     const sessionId = String(body.sessionId || "").trim();
     const receiptId = String(body.receiptId || "").trim();
     const merchantWallet = String(body.merchantWallet || "").trim().toLowerCase();
-    const email = String(body.email || "").trim().toLowerCase();
-    const amount = Number(body.amount || 0);
-    const splitAddress = String(body.splitAddress || "").trim();
-    const splitAddressCredit = String(body.splitAddressCredit || "").trim();
-    const brandKey = String(body.brandKey || "").trim();
-    const detectedCardFunding = String(body.detectedCardFunding || "").trim();
+    let email = String(body.email || "").trim().toLowerCase();
+    let amount = Number(body.amount || 0);
+    let splitAddress = String(body.splitAddress || "").trim().toLowerCase();
+    let splitAddressCredit = String(body.splitAddressCredit || "").trim().toLowerCase();
+    let brandKey = String(body.brandKey || "").trim();
+    let detectedCardFunding = String(body.detectedCardFunding || "").trim();
     const kycOccurred = typeof body.kycOccurred === "boolean" ? body.kycOccurred : undefined;
     const kycLevel = body.kycLevel ? String(body.kycLevel).trim() : undefined;
 
@@ -781,38 +881,100 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Immediately write Stripe metadata to the receipt in Cosmos DB
+    // Bind every client-supplied value to both the stored receipt and the
+    // Stripe session before launching a privileged wallet transfer.
+    let verifiedReceipt: any = null;
     try {
+      const stripeKey = process.env.STRIPE_API_KEY;
+      if (!stripeKey) {
+        return NextResponse.json({ ok: false, error: "stripe_not_configured" }, { status: 500 });
+      }
+
       const container = await getContainer();
       const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
       const { resource: receipt } = await container.item(docId, merchantWallet).read();
-      if (receipt) {
-        // Safeguard: Retain existing session ID if already linked, preventing foreign session overwrites
-        if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
-          console.warn(`[BACKGROUND POLL] Receipt ${receiptId} already has stripeSessionId ${receipt.stripeSessionId}. Retaining existing session, ignoring foreign sessionId ${sessionId}`);
-        } else {
-          receipt.stripeSessionId = sessionId;
-        }
-        receipt.customerEmail = email;
-        receipt.onrampAmount = amount;
-        receipt.splitAddress = splitAddress;
-        receipt.splitAddressCredit = splitAddressCredit || null;
-        receipt.detectedCardFunding = detectedCardFunding || null;
-        receipt.isCreditCard = detectedCardFunding === "credit";
-        if (typeof kycOccurred === "boolean") {
-          receipt.kycOccurred = kycOccurred;
-        }
-        if (kycLevel) {
-          receipt.kycLevel = kycLevel;
-        }
-        receipt.lastUpdatedAt = Date.now();
-        await container.items.upsert(receipt);
-        console.log(`[BACKGROUND POLL] Immediately saved Stripe metadata to receipt ${receiptId}`);
-      } else {
-        console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found during immediate metadata write`);
+      if (!receipt) {
+        return NextResponse.json({ ok: false, error: "receipt_not_found" }, { status: 404 });
       }
+
+      if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
+        console.error(`[BACKGROUND POLL] Receipt ${receiptId} is bound to ${receipt.stripeSessionId}; rejected ${sessionId}`);
+        return NextResponse.json({ ok: false, error: "receipt_session_mismatch" }, { status: 409 });
+      }
+
+      const stripeResponse = await fetch(
+        `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
+        {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${stripeKey}`,
+            "Stripe-Version": STRIPE_API_VERSION,
+          },
+        }
+      );
+      if (!stripeResponse.ok) {
+        return NextResponse.json({ ok: false, error: "stripe_session_lookup_failed" }, { status: 502 });
+      }
+
+      const stripeSession = await stripeResponse.json();
+      const expectedReceiptId = String(receipt.receiptId || receipt.id || "").replace(/^receipt:/, "").toLowerCase();
+      const stripeReceiptId = String(stripeSession.metadata?.receiptId || "").replace(/^receipt:/, "").toLowerCase();
+      if ((!receipt.stripeSessionId && !stripeReceiptId) || (stripeReceiptId && stripeReceiptId !== expectedReceiptId)) {
+        return NextResponse.json({ ok: false, error: "stripe_metadata_receipt_mismatch" }, { status: 409 });
+      }
+      const stripeMerchantWallet = String(stripeSession.metadata?.merchantWallet || stripeSession.metadata?.wallet || "").toLowerCase();
+      if (stripeMerchantWallet && stripeMerchantWallet !== merchantWallet) {
+        return NextResponse.json({ ok: false, error: "stripe_metadata_merchant_mismatch" }, { status: 409 });
+      }
+
+      const stripeEmail = String(stripeSession.customer_information?.email || stripeSession.customer_details?.email || "").trim().toLowerCase();
+      const storedEmail = String(receipt.customerEmail || receipt.email || "").trim().toLowerCase();
+      if (!stripeEmail) {
+        return NextResponse.json({ ok: false, error: "verified_stripe_customer_email_required" }, { status: 409 });
+      }
+      if (stripeEmail && email && stripeEmail !== email) {
+        return NextResponse.json({ ok: false, error: "stripe_customer_email_mismatch" }, { status: 409 });
+      }
+      if (storedEmail && email && storedEmail !== email) {
+        return NextResponse.json({ ok: false, error: "receipt_customer_email_mismatch" }, { status: 409 });
+      }
+      email = stripeEmail;
+
+      const receiptTotal = Number(receipt.totalUsd || 0);
+      if (receiptTotal > 0 && amount + 0.01 < receiptTotal) {
+        return NextResponse.json({ ok: false, error: "onramp_amount_below_receipt_total" }, { status: 409 });
+      }
+
+      const siteConfig = await getSiteConfigForWallet(merchantWallet, receipt.brandKey || brandKey).catch(() => null);
+      splitAddress = String(receipt.splitAddress || siteConfig?.splitAddress || siteConfig?.split?.address || "").toLowerCase();
+      splitAddressCredit = String(receipt.splitAddressCredit || siteConfig?.splitAddressCredit || siteConfig?.splitCredit?.address || "").toLowerCase();
+      if (!/^0x[a-f0-9]{40}$/i.test(splitAddress)) {
+        return NextResponse.json({ ok: false, error: "verified_split_address_required" }, { status: 409 });
+      }
+
+      brandKey = String(receipt.brandKey || brandKey || "");
+      detectedCardFunding = String(receipt.detectedCardFunding || detectedCardFunding || "");
+
+      receipt.stripeSessionId = sessionId;
+      receipt.customerEmail = email;
+      receipt.onrampAmount = amount;
+      receipt.splitAddress = splitAddress;
+      receipt.splitAddressCredit = splitAddressCredit || null;
+      receipt.detectedCardFunding = detectedCardFunding || null;
+      receipt.isCreditCard = detectedCardFunding === "credit";
+      if (typeof kycOccurred === "boolean") receipt.kycOccurred = kycOccurred;
+      if (kycLevel) receipt.kycLevel = kycLevel;
+      receipt.lastUpdatedAt = Date.now();
+      await container.items.upsert(receipt);
+      verifiedReceipt = receipt;
+      console.log(`[BACKGROUND POLL] Verified and saved Stripe metadata for receipt ${receiptId}`);
     } catch (dbErr) {
-      console.error("[BACKGROUND POLL] Failed to write initial Stripe metadata to receipt:", dbErr);
+      console.error("[BACKGROUND POLL] Failed to verify and write Stripe metadata to receipt:", dbErr);
+      return NextResponse.json({ ok: false, error: "receipt_binding_failed" }, { status: 503 });
+    }
+
+    if (!verifiedReceipt) {
+      return NextResponse.json({ ok: false, error: "receipt_binding_failed" }, { status: 503 });
     }
 
     // Launch background task asynchronously without awaiting

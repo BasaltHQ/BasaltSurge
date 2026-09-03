@@ -3,6 +3,14 @@ import { getContainer } from "@/lib/cosmos";
 import { getBrandKey } from "@/config/brands";
 import { auditEvent } from "@/lib/audit";
 import crypto from "node:crypto";
+import { dispatchReceiptStatusWebhook } from "@/lib/webhook-dispatch";
+import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
+import {
+  normalizeSettlementFunding,
+  resolveSettlementSplitAddress,
+  resolveStripeOnrampFunding,
+  type SettlementFunding,
+} from "@/lib/payment-split-routing";
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +38,10 @@ function verifyStripeSignature(
     if (!timestampPart || sigParts.length === 0) return false;
 
     const timestamp = timestampPart.replace("t=", "");
+    const timestampSeconds = Number(timestamp);
+    if (!Number.isFinite(timestampSeconds) || Math.abs(Math.floor(Date.now() / 1000) - timestampSeconds) > 300) {
+      return false;
+    }
     const signedPayload = `${timestamp}.${payload}`;
 
     const expectedSig = crypto
@@ -37,7 +49,13 @@ function verifyStripeSignature(
       .update(signedPayload)
       .digest("hex");
 
-    return sigParts.some(sp => sp.replace("v1=", "") === expectedSig);
+    const expectedBuffer = Buffer.from(expectedSig, "hex");
+    return sigParts.some((sp) => {
+      const candidate = sp.replace("v1=", "");
+      if (!/^[a-f0-9]{64}$/i.test(candidate)) return false;
+      const candidateBuffer = Buffer.from(candidate, "hex");
+      return candidateBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(candidateBuffer, expectedBuffer);
+    });
   } catch {
     return false;
   }
@@ -50,7 +68,14 @@ async function resolveMerchantContext(
   container: any,
   brandKey: string,
   cardFunding = ""
-): Promise<{ merchantWallet?: string; splitAddress?: string; fundingType?: string; receipt?: any } | null> {
+): Promise<{
+  merchantWallet?: string;
+  splitAddress?: string;
+  splitAddressPrimary?: string;
+  splitAddressCredit?: string;
+  fundingType?: SettlementFunding;
+  receipt?: any;
+} | null> {
   let mw = String(metadata?.merchantWallet || metadata?.wallet || "").toLowerCase();
   let foundReceipt: any = null;
 
@@ -61,11 +86,10 @@ async function resolveMerchantContext(
       let querySpec: any = null;
       if (receiptIdRaw && sessionId) {
         querySpec = {
-          query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId OR c.stripeSessionId = @sId)",
+          query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId)",
           parameters: [
             { name: "@rId", value: receiptIdRaw },
-            { name: "@docId", value: `receipt:${receiptIdRaw}` },
-            { name: "@sId", value: sessionId }
+            { name: "@docId", value: `receipt:${receiptIdRaw}` }
           ]
         };
       } else if (receiptIdRaw) {
@@ -89,6 +113,10 @@ async function resolveMerchantContext(
         const { resources } = await container.items.query(querySpec).fetchAll();
         if (resources && resources.length > 0) {
           foundReceipt = resources[0];
+          if (sessionId && foundReceipt.stripeSessionId && foundReceipt.stripeSessionId !== sessionId) {
+            console.error(`[STRIPE WEBHOOK] Receipt ${foundReceipt.id} is bound to ${foundReceipt.stripeSessionId}, not ${sessionId}`);
+            return null;
+          }
           mw = String(foundReceipt.wallet || foundReceipt.merchantWallet || "").toLowerCase();
         }
       }
@@ -110,26 +138,55 @@ async function resolveMerchantContext(
         const splitObj = String(match.split?.address || '').toLowerCase();
         const splitCfgTop = String(match.config?.splitAddress || '').toLowerCase();
         const splitCfgObj = String(match.config?.split?.address || '').toLowerCase();
-        const splitAddressResolved = splitTop || splitObj || splitCfgTop || splitCfgObj || mw;
+        const splitAddressResolved = splitTop || splitObj || splitCfgTop || splitCfgObj;
 
         const splitCreditTop = String(match.splitAddressCredit || '').toLowerCase();
         const splitCreditObj = String(match.splitCredit?.address || '').toLowerCase();
         const splitAddressCreditResolved = splitCreditTop || splitCreditObj;
 
-        const isDual = !!splitAddressCreditResolved && splitAddressCreditResolved !== splitAddressResolved;
+        const fundingType = normalizeSettlementFunding(
+          cardFunding || foundReceipt?.detectedCardFunding,
+          foundReceipt?.isCreditCard === true
+        );
+        const splitAddress = resolveSettlementSplitAddress({
+          funding: fundingType,
+          splitAddress: splitAddressResolved,
+          splitAddressCredit: splitAddressCreditResolved,
+          fallbackAddress: mw,
+        });
 
-        let splitAddress = splitAddressResolved;
-        if (isDual && (cardFunding === "debit" || cardFunding === "")) {
-          splitAddress = splitAddressCreditResolved;
-        }
-
-        return { merchantWallet: mw, splitAddress, fundingType: cardFunding || "credit", receipt: foundReceipt };
+        return {
+          merchantWallet: mw,
+          splitAddress,
+          splitAddressPrimary: splitAddressResolved,
+          splitAddressCredit: splitAddressCreditResolved,
+          fundingType,
+          receipt: foundReceipt,
+        };
       }
     } catch (e) {
       console.error('[STRIPE WEBHOOK] Error resolving merchant:', e);
     }
-    const receiptSplit = foundReceipt?.splitAddress || foundReceipt?.splitAddressCredit || mw;
-    return { merchantWallet: mw, splitAddress: receiptSplit, fundingType: cardFunding || "credit", receipt: foundReceipt };
+    const fundingType = normalizeSettlementFunding(
+      cardFunding || foundReceipt?.detectedCardFunding,
+      foundReceipt?.isCreditCard === true
+    );
+    const splitAddressPrimary = foundReceipt?.splitAddress;
+    const splitAddressCredit = foundReceipt?.splitAddressCredit;
+    const receiptSplit = resolveSettlementSplitAddress({
+      funding: fundingType,
+      splitAddress: splitAddressPrimary,
+      splitAddressCredit,
+      fallbackAddress: mw,
+    });
+    return {
+      merchantWallet: mw,
+      splitAddress: receiptSplit,
+      splitAddressPrimary,
+      splitAddressCredit,
+      fundingType,
+      receipt: foundReceipt,
+    };
   }
   return null;
 }
@@ -141,26 +198,32 @@ export async function POST(req: NextRequest) {
     const rawBody = await req.text();
     const sigHeader = req.headers.get("stripe-signature") || "";
 
-    // Verify signature if webhook secret is configured
+    // Signature verification is mandatory. A payment webhook endpoint must
+    // never silently become unauthenticated because of an env misconfiguration.
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    if (webhookSecret) {
-      const valid = verifyStripeSignature(rawBody, sigHeader, webhookSecret);
-      if (!valid) {
-        console.error('[STRIPE WEBHOOK] Invalid signature');
-        await auditEvent(req, {
-          who: 'webhook',
-          roles: ['system'],
-          what: 'webhook_invalid_signature',
-          target: 'stripe',
-          correlationId,
-          ok: false,
-          metadata: { error: 'invalid_stripe_signature' }
-        });
-        return NextResponse.json(
-          { ok: false, error: 'invalid_signature' },
-          { status: 400, headers: { 'x-correlation-id': correlationId } }
-        );
-      }
+    if (!webhookSecret) {
+      console.error('[STRIPE WEBHOOK] STRIPE_WEBHOOK_SECRET not configured');
+      return NextResponse.json(
+        { ok: false, error: 'webhook_not_configured' },
+        { status: 500, headers: { 'x-correlation-id': correlationId } }
+      );
+    }
+    const valid = verifyStripeSignature(rawBody, sigHeader, webhookSecret);
+    if (!valid) {
+      console.error('[STRIPE WEBHOOK] Invalid or stale signature');
+      await auditEvent(req, {
+        who: 'webhook',
+        roles: ['system'],
+        what: 'webhook_invalid_signature',
+        target: 'stripe',
+        correlationId,
+        ok: false,
+        metadata: { error: 'invalid_or_stale_stripe_signature' }
+      });
+      return NextResponse.json(
+        { ok: false, error: 'invalid_signature' },
+        { status: 400, headers: { 'x-correlation-id': correlationId } }
+      );
     }
 
     const event = JSON.parse(rawBody);
@@ -177,7 +240,9 @@ export async function POST(req: NextRequest) {
     }
 
     const brandKey = getBrandKey();
-    const container = await getContainer();
+    // Payment correlation must read from the primary. A replica-lagged receipt
+    // can otherwise replay stale status or session bindings.
+    const container = await getContainer(undefined, undefined, { profile: "critical" });
     const metadata = session?.metadata || {};
     const sessionId = session?.id || '';
     const status = session?.status || '';
@@ -210,12 +275,14 @@ export async function POST(req: NextRequest) {
     // Store event in Cosmos
     try {
       const eventDoc = {
-        id: `stripe_onramp:${brandKey}:${sessionId}:${status}`,
+        id: `stripe_onramp:${brandKey}:${event.id || `${sessionId}:${status}`}`,
         type: 'payment_event_stripe_onramp',
         brandKey,
         merchantWallet,
         splitAddress,
-        fundingType: context?.fundingType || cardFunding || "credit",
+        splitAddressPrimary: context?.splitAddressPrimary,
+        splitAddressCredit: context?.splitAddressCredit,
+        fundingType: context?.fundingType || normalizeSettlementFunding(cardFunding),
         sessionId,
         status,
         stripeEventType: type,
@@ -238,15 +305,18 @@ export async function POST(req: NextRequest) {
       console.log(`[STRIPE WEBHOOK] Stored event ${sessionId} status=${status}`);
     } catch (e) {
       console.error('[STRIPE WEBHOOK] Error storing event:', e);
+      throw e;
     }
 
     const isFulfillmentEvent = status === 'fulfillment_complete' || status === 'fulfillment_processing' || status === 'onramp_completed';
 
     if (isFulfillmentEvent && merchantWallet) {
       const baseOrigin = req.nextUrl.origin;
-      const detectedFunding = cardFunding === "us_bank_account" ? "us_bank_account" : (cardFunding === "credit" ? "credit" : (cardFunding ? "debit" : undefined));
-      const isAch = cardFunding === "us_bank_account";
-      const nextStatus = isAch ? "paid - ach pending" : (status === "fulfillment_complete" ? "paid" : "paid");
+      const detectedFunding = resolveStripeOnrampFunding(
+        session,
+        context?.fundingType || context?.receipt?.detectedCardFunding,
+        context?.receipt?.isCreditCard === true
+      );
 
       try {
         // Trigger split indexing webhook if splitAddress is resolved
@@ -270,9 +340,8 @@ export async function POST(req: NextRequest) {
           let querySpec: any = null;
           if (sessionId && metaReceiptRaw) {
             querySpec = {
-              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.stripeSessionId = @sessionId OR c.receiptId = @rId OR c.id = @docId)",
+              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId)",
               parameters: [
-                { name: "@sessionId", value: sessionId },
                 { name: "@rId", value: metaReceiptRaw },
                 { name: "@docId", value: `receipt:${metaReceiptRaw}` }
               ]
@@ -296,12 +365,20 @@ export async function POST(req: NextRequest) {
             linkedReceipts = resources || [];
           }
         } catch (queryErr) {
-          console.warn('[STRIPE WEBHOOK] Failed to query linked receipts:', queryErr);
+          console.error('[STRIPE WEBHOOK] Failed to query linked receipts:', queryErr);
+          throw queryErr;
         }
 
         // Also check if context had a directly found receipt
         if (context?.receipt && !linkedReceipts.some(r => r.id === context.receipt.id)) {
           linkedReceipts.push(context.receipt);
+        }
+
+        if (metaReceiptRaw && linkedReceipts.length === 0) {
+          throw new Error(`linked_receipt_not_found:${metaReceiptRaw}`);
+        }
+        if (!metaReceiptRaw && linkedReceipts.length > 1) {
+          throw new Error(`ambiguous_stripe_session_receipts:${sessionId}`);
         }
 
         for (const r of linkedReceipts) {
@@ -311,6 +388,19 @@ export async function POST(req: NextRequest) {
             console.warn(`[STRIPE WEBHOOK] Foreign receipt ${r.id} shares stripeSessionId ${sessionId} but does not match session metadata receiptId ${metadata.receiptId}. Skipping foreign receipt.`);
             continue;
           }
+
+          if (sessionId && r.stripeSessionId && r.stripeSessionId !== sessionId) {
+            console.warn(`[STRIPE WEBHOOK] Receipt ${r.id} is already bound to ${r.stripeSessionId}; refusing event for ${sessionId}.`);
+            continue;
+          }
+          if (!r.stripeSessionId && sessionId) r.stripeSessionId = sessionId;
+
+          const receiptFunding = resolveStripeOnrampFunding(
+            session,
+            r.detectedCardFunding || detectedFunding,
+            r.isCreditCard === true
+          );
+          const receiptIsAch = receiptFunding === "us_bank_account";
 
           // SAFEGUARD: Verify amount discrepancy if sourceAmount is available
           const sourceAmount = Number(txDetails.source_amount || 0);
@@ -324,9 +414,15 @@ export async function POST(req: NextRequest) {
 
           // If onramp fulfillment is complete and receipt is missing transactionHash, check for auto-sweep
           let onChainTx = r.transactionHash;
-          if (status === 'fulfillment_complete' && (!onChainTx || onChainTx === 'ecommerce_pending') && !isAch) {
+          if (status === 'fulfillment_complete' && (!onChainTx || onChainTx === 'ecommerce_pending') && !receiptIsAch) {
             const customerEmail = r.customerEmail || r.email || metadata.customerEmail || session.customer_information?.email;
-            const targetSplit = r.splitAddress || splitAddress || merchantWallet;
+            const targetSplit = resolveSettlementSplitAddress({
+              funding: receiptFunding,
+              isCreditCard: r.isCreditCard === true,
+              splitAddress: r.splitAddress || context?.splitAddressPrimary,
+              splitAddressCredit: r.splitAddressCredit || context?.splitAddressCredit,
+              fallbackAddress: merchantWallet,
+            });
             const targetAmount = r.totalUsd || r.onrampAmount || Number(txDetails.source_amount || 0);
             const targetBrand = r.brandKey || brandKey || "";
 
@@ -383,20 +479,52 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Update receipt status
-          r.status = nextStatus;
-          if (isAch) {
+          const previousStatus = String(r.status || "pending");
+          const hasVerifiedSettlementTx = typeof onChainTx === "string" && /^0x[a-f0-9]{64}$/i.test(onChainTx);
+          const stripeAcceptedPayment = status === "fulfillment_processing" || status === "fulfillment_complete";
+          const nextStatus = stripeAcceptedPayment
+            ? (receiptIsAch ? "paid - ach pending" : "paid")
+            : null;
+
+          // In eCommerce mode Stripe's signed fulfillment_processing status is
+          // the authoritative paid boundary. Browser-reported progress remains
+          // diagnostic and cannot make this transition.
+          r.checkoutStatus = status;
+          r.checkoutStatusUpdatedAt = Date.now();
+          r.checkoutStatusSource = "stripe_webhook";
+          if (nextStatus) r.status = nextStatus;
+          if (receiptIsAch) {
             r.detectedCardFunding = "us_bank_account";
-          } else {
+          } else if (nextStatus === "paid") {
             r.ttl = -1;
-            if (detectedFunding) r.detectedCardFunding = detectedFunding;
-            r.isCreditCard = cardFunding === "credit";
+            r.detectedCardFunding = receiptFunding;
+            r.isCreditCard = receiptFunding === "credit";
           }
           r.stripeSessionStatus = status;
-          r.statusHistory = Array.isArray(r.statusHistory)
-            ? [...r.statusHistory, { status: nextStatus, ts: Date.now() }]
-            : [{ status: nextStatus, ts: Date.now() }];
+          if (nextStatus && previousStatus !== nextStatus) {
+            r.statusHistory = Array.isArray(r.statusHistory)
+              ? [...r.statusHistory, { status: nextStatus, ts: Date.now() }]
+              : [{ status: nextStatus, ts: Date.now() }];
+          }
           r.lastUpdatedAt = Date.now();
+
+          if (!nextStatus) {
+            // Patch diagnostic fields only. Replacing the whole receipt here
+            // could replay a stale pre-paid snapshot over a concurrent paid
+            // write from the settlement worker.
+            await container.item(r.id, r.wallet).patch([
+              { op: "set", path: "/stripeSessionStatus", value: status },
+              { op: "set", path: "/checkoutStatus", value: r.checkoutStatus },
+              { op: "set", path: "/checkoutStatusUpdatedAt", value: r.checkoutStatusUpdatedAt },
+              { op: "set", path: "/checkoutStatusSource", value: "stripe_webhook" },
+              { op: "set", path: "/lastUpdatedAt", value: r.lastUpdatedAt },
+              ...(sessionId
+                ? [{ op: "set" as const, path: "/stripeSessionId", value: sessionId }]
+                : []),
+            ] as any);
+            console.log(`[STRIPE WEBHOOK] Recorded provider progress '${status}' for receipt ${r.id}; canonical payment status unchanged.`);
+            continue;
+          }
 
           let finalDoc = r;
           try {
@@ -406,15 +534,49 @@ export async function POST(req: NextRequest) {
             const siteConfig = await getSiteConfigForWallet(merchantWallet, r.brandKey || brandKey);
             const brandConfigDoc = (r.brandKey || brandKey) ? await readBrandOverridesCached(r.brandKey || brandKey) : null;
             if (siteConfig) {
-              finalDoc = recalculateReceiptForCardFunding(r, detectedFunding || "debit", siteConfig, brandConfigDoc);
+              finalDoc = recalculateReceiptForCardFunding(r, receiptFunding, siteConfig, brandConfigDoc);
             }
           } catch {}
 
+          const shouldDeliver = Boolean(nextStatus && finalDoc.webhookUrl && (
+            previousStatus !== nextStatus ||
+            finalDoc.webhookLastDeliveryOk !== true ||
+            finalDoc.webhookLastStatus !== nextStatus ||
+            (hasVerifiedSettlementTx && finalDoc.webhookLastTransactionHash !== onChainTx)
+          ));
+          if (shouldDeliver) {
+            finalDoc.webhookLastStatus = nextStatus;
+            finalDoc.webhookLastPreviousStatus = previousStatus;
+            finalDoc.webhookLastDeliveryOk = false;
+            finalDoc.webhookLastAttemptAt = Date.now();
+            if (hasVerifiedSettlementTx) finalDoc.webhookLastTransactionHash = onChainTx;
+          }
           await container.items.upsert(finalDoc);
-          console.log(`[STRIPE WEBHOOK] Successfully updated receipt ${r.id} to '${nextStatus}' (txHash: ${onChainTx || 'none'})`);
+
+          if (nextStatus && shouldDeliver) {
+            const delivery = await dispatchReceiptStatusWebhook(finalDoc, nextStatus, previousStatus, {
+              transactionHash: hasVerifiedSettlementTx ? onChainTx : undefined,
+              merchantWallet,
+              stripeSessionId: sessionId,
+              brandKey: finalDoc.brandKey || brandKey,
+            });
+            await container.item(finalDoc.id, finalDoc.wallet).patch([
+              { op: "set", path: "/webhookLastStatus", value: nextStatus },
+              { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
+              { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
+              { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
+              ...(hasVerifiedSettlementTx ? [{ op: "set" as const, path: "/webhookLastTransactionHash", value: onChainTx }] : []),
+              ...(delivery.statusCode ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }] : []),
+              { op: "set", path: "/webhookLastError", value: delivery.error || null },
+            ] as any);
+            if (!delivery.ok) throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
+          }
+
+          console.log(`[STRIPE WEBHOOK] Updated receipt ${r.id}; provider='${status}', payment='${nextStatus || previousStatus}' (txHash: ${onChainTx || 'none'})`);
         }
       } catch (e) {
         console.error('[STRIPE WEBHOOK] Error updating receipt status on fulfillment:', e);
+        throw e;
       }
     }
 
@@ -423,32 +585,68 @@ export async function POST(req: NextRequest) {
       try {
         const metaReceiptRaw = String(metadata.receiptId || "").replace(/^receipt:/, "").trim();
         let querySpec: any = null;
-        if (sessionId) {
+        if (metaReceiptRaw) {
           querySpec = {
-            query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.stripeSessionId = @sessionId OR c.receiptId = @rId)",
+            query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rId OR c.id = @docId)",
             parameters: [
-              { name: "@sessionId", value: sessionId },
-              { name: "@rId", value: metaReceiptRaw }
+              { name: "@rId", value: metaReceiptRaw },
+              { name: "@docId", value: `receipt:${metaReceiptRaw}` }
             ]
+          };
+        } else if (sessionId) {
+          querySpec = {
+            query: "SELECT * FROM c WHERE c.type = 'receipt' AND c.stripeSessionId = @sessionId",
+            parameters: [{ name: "@sessionId", value: sessionId }]
           };
         }
         if (querySpec) {
           const { resources } = await container.items.query(querySpec).fetchAll();
+          if (!metaReceiptRaw && (resources || []).length > 1) {
+            throw new Error(`ambiguous_stripe_session_receipts:${sessionId}`);
+          }
           for (const r of resources || []) {
-            if (r.status !== "paid" && r.status !== "checkout_success") {
+            if (sessionId && r.stripeSessionId && r.stripeSessionId !== sessionId) {
+              console.warn(`[STRIPE WEBHOOK] Rejection for ${sessionId} does not match receipt ${r.id} session ${r.stripeSessionId}; skipping.`);
+              continue;
+            }
+            if (!isProtectedPaymentStatus(r.status)) {
+              const previousStatus = String(r.status || "pending");
               r.status = "failed";
               r.stripeSessionStatus = "rejected";
               r.statusHistory = Array.isArray(r.statusHistory)
                 ? [...r.statusHistory, { status: "failed", ts: Date.now() }]
                 : [{ status: "failed", ts: Date.now() }];
               r.lastUpdatedAt = Date.now();
+              if (r.webhookUrl) {
+                r.webhookLastStatus = "failed";
+                r.webhookLastPreviousStatus = previousStatus;
+                r.webhookLastDeliveryOk = false;
+                r.webhookLastAttemptAt = Date.now();
+              }
               await container.items.upsert(r);
+              const delivery = await dispatchReceiptStatusWebhook(r, "failed", previousStatus, {
+                merchantWallet: r.wallet || merchantWallet,
+                stripeSessionId: sessionId,
+                brandKey: r.brandKey || brandKey,
+              });
+              await container.item(r.id, r.wallet).patch([
+                { op: "set", path: "/webhookLastStatus", value: "failed" },
+                { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
+                { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
+                { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
+                ...(delivery.statusCode
+                  ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
+                  : []),
+                { op: "set", path: "/webhookLastError", value: delivery.error || null },
+              ] as any);
+              if (!delivery.ok) throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
               console.log(`[STRIPE WEBHOOK] Updated receipt ${r.id} to failed due to Stripe rejection`);
             }
           }
         }
       } catch (e) {
         console.error('[STRIPE WEBHOOK] Error updating receipt to failed:', e);
+        throw e;
       }
     }
 

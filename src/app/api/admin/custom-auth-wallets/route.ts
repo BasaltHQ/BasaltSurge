@@ -4,6 +4,7 @@ import { requireRole } from "@/lib/auth";
 import { auditEvent } from "@/lib/audit";
 import { getContainerIdentity } from "@/lib/brand-config";
 import crypto from "node:crypto";
+import { normalizeSettlementFunding, resolveSettlementSplitAddress } from "@/lib/payment-split-routing";
 
 export async function GET(req: NextRequest) {
   const correlationId = crypto.randomUUID();
@@ -202,11 +203,13 @@ export async function POST(req: NextRequest) {
     // 2. Resolve target split address using identical background poller logic
     if (!targetSplitAddress) {
       if (receipt) {
-        const isCredit = receipt.isCreditCard === true || receipt.detectedCardFunding === "credit";
-        const isAch = receipt.detectedCardFunding === "us_bank_account";
-        targetSplitAddress = (isCredit || isAch)
-          ? (receipt.splitAddress || receipt.wallet)
-          : (receipt.splitAddressCredit || receipt.splitAddress || receipt.wallet);
+        targetSplitAddress = resolveSettlementSplitAddress({
+          funding: receipt.detectedCardFunding,
+          isCreditCard: receipt.isCreditCard === true,
+          splitAddress: receipt.splitAddress,
+          splitAddressCredit: receipt.splitAddressCredit,
+          fallbackAddress: receipt.wallet,
+        });
       }
       
       if (!targetSplitAddress) {
@@ -253,9 +256,10 @@ export async function POST(req: NextRequest) {
           const { getSiteConfigForWallet } = await import("@/lib/site-config");
           const siteConfig = await getSiteConfigForWallet(merchantWallet, targetBrandKey);
           const brandConfigDoc = targetBrandKey ? await readBrandOverridesCached(targetBrandKey) : null;
-          const funding = (receipt.detectedCardFunding === "credit" || receipt.isCreditCard === true)
-            ? "credit"
-            : (receipt.detectedCardFunding === "us_bank_account" ? "us_bank_account" : "debit");
+          const funding = normalizeSettlementFunding(
+            receipt.detectedCardFunding,
+            receipt.isCreditCard === true
+          );
           if (siteConfig) {
             finalDoc = recalculateReceiptForCardFunding(receipt, funding, siteConfig, brandConfigDoc);
           }

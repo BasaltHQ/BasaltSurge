@@ -384,6 +384,7 @@ export async function POST(req: NextRequest) {
       type: "receipt",
       wallet,
       receiptId: id,
+      brandKey: brand.key || undefined,
       totalUsd,
       currency: "USD",
       lineItems,

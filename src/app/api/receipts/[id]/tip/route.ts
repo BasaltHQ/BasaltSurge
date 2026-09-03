@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { getSiteConfigForWallet } from "@/lib/site-config"; // If needed for fresh fees
 import { getBrandKey } from "@/config/brands";
+import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
 
 function toCents(n: number) { return Math.round(Math.max(0, Number(n || 0)) * 100); }
 function fromCents(c: number) { return Math.round(c) / 100; }
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
         const cfg = await getSiteConfigForWallet(wallet, effectiveBrandKey).catch(() => null as any);
         const isFeeMinus = !!cfg?.feeMinusEnabled;
+        const activeFunding = receipt.detectedCardFunding || (receipt.isCreditCard === true ? "credit" : "debit");
 
         let feePct = 0.005; // 0.5% default fallback
         try {
@@ -61,8 +63,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                     };
                     const { resources: cfgResources } = await container.items.query(spec).fetchAll();
                     const cfgResource = Array.isArray(cfgResources) && cfgResources[0] ? cfgResources[0] : null;
-                    if (cfgResource?.splitConfig && typeof cfgResource.splitConfig === "object") {
-                        const splitCfg = cfgResource.splitConfig;
+                    const splitCfg = resolveSettlementSplitConfig({
+                        funding: activeFunding,
+                        isCreditCard: receipt.isCreditCard === true,
+                        splitConfig: cfgResource?.splitConfig,
+                        splitConfigCredit: cfgResource?.splitConfigCredit,
+                    });
+                    if (splitCfg && typeof splitCfg === "object") {
                         const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
                         const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
                         const agentBps = Array.isArray(splitCfg.agents)
@@ -79,13 +86,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             // Priority 2: Fallback to site config
             if (typeof basePlatformFeePct !== "number") {
                 if (cfg) {
-                    const isCredit = (receipt.detectedCardFunding || "debit") === "credit";
+                    const isCredit = activeFunding === "credit";
                     const basePresentedBps = isCredit
                         ? ((cfg as any)?.creditPresentedFeeBps ?? (cfg as any)?.presentedFeeBps)
                         : ((cfg as any)?.presentedFeeBps);
-                    const splitCfg = isCredit
-                        ? ((cfg as any)?.splitConfig || (cfg as any)?.splitConfigCredit)
-                        : ((cfg as any)?.splitConfigCredit || (cfg as any)?.splitConfig);
+                    const splitCfg = resolveSettlementSplitConfig({
+                        funding: activeFunding,
+                        isCreditCard: receipt.isCreditCard === true,
+                        splitConfig: (cfg as any)?.splitConfig,
+                        splitConfigCredit: (cfg as any)?.splitConfigCredit,
+                    });
                     const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
 
                     if (basePresentedBps !== undefined) {
@@ -181,16 +191,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             finalTotalCents = customerTotalCents;
         } else {
             // Standard fee+ code path
-            const activeFunding = receipt.detectedCardFunding || "debit";
             const isCredit = activeFunding === "credit";
 
             const basePresentedBps = isCredit
                 ? (cfg?.creditPresentedFeeBps ?? cfg?.presentedFeeBps)
                 : (cfg?.presentedFeeBps);
 
-            const splitCfg = isCredit
-                ? (cfg?.splitConfig || cfg?.splitConfigCredit)
-                : (cfg?.splitConfigCredit || cfg?.splitConfig);
+            const splitCfg = resolveSettlementSplitConfig({
+                funding: activeFunding,
+                isCreditCard: receipt.isCreditCard === true,
+                splitConfig: cfg?.splitConfig,
+                splitConfigCredit: cfg?.splitConfigCredit,
+            });
 
             let stripeFeePct = activeFunding === "us_bank_account" ? 0.6 : (isCredit ? 3.5 : 2.25);
             if (basePresentedBps !== undefined) {

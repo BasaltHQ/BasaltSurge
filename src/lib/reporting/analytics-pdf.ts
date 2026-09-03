@@ -1,7 +1,7 @@
-// Professional PDF Generation Engine for Platform Analytics
-// Dynamically imports jsPDF and jspdf-autotable for client-side generation
+// BasaltSurge analytics PDF reports. Heavy PDF libraries are loaded only when an
+// administrator requests an export so the analytics panel stays lightweight.
 
-interface Stat {
+export interface AnalyticsReportStat {
   totalCreated: number;
   totalPaid: number;
   totalFailed: number;
@@ -13,11 +13,15 @@ interface Stat {
   trueProcessRate?: number;
   totalGmv: number;
   totalFees: number;
+  feeKnownCount?: number;
+  feeUnknownCount?: number;
+  feeCoveragePct?: number;
   aov: number;
   cardTypes: { credit: number; debit: number; bank: number; unknown: number };
+  kycLevels?: { none: number; l1: number; l2: number };
 }
 
-interface BrandStat {
+export interface AnalyticsBrandStat {
   brandKey: string;
   brandName: string;
   total: number;
@@ -26,45 +30,61 @@ interface BrandStat {
   gmv: number;
   fees: number;
   successRate: number;
+  dedupedTotal?: number;
+  dedupedPaid?: number;
+  dedupedFailed?: number;
   trueSuccessRate?: number;
+  feeKnownCount?: number;
+  feeUnknownCount?: number;
+  feeCoveragePct?: number;
 }
 
-interface FailureReason {
+export interface AnalyticsFailureReason {
   reason: string;
   count: number;
 }
 
-interface ReceiptItem {
+export interface AnalyticsReceiptItem {
+  storageId?: string;
+  id?: string;
   receiptId: string;
   brandKey: string;
   brandName?: string;
   merchantName?: string | null;
+  wallet?: string | null;
+  merchantWallet?: string | null;
+  buyerWallet?: string | null;
   status: string;
   totalUsd: number;
   createdAt: string;
   email: string;
   stripeSessionId?: string | null;
+  paymentId?: string | null;
   transactionHash?: string | null;
   cardFunding?: string | null;
   kycLevel?: string;
   platformFee?: number;
+  platformFeeSource?: "recorded_minor" | "recorded_usd" | "recorded_bps" | "unavailable";
   failureReason?: string | null;
+  lineItems?: Array<{ label?: string; priceUsd?: number; qty?: number; quantity?: number }>;
 }
 
 type PdfOrientation = "portrait" | "landscape";
 
-const PDF_COLORS = {
-  ink: [226, 232, 240] as [number, number, number],
-  muted: [148, 163, 184] as [number, number, number],
-  panel: [15, 23, 42] as [number, number, number],
-  panelAlt: [30, 41, 59] as [number, number, number],
-  primary: [59, 130, 246] as [number, number, number],
+const COLORS = {
+  navy: [9, 17, 34] as [number, number, number],
+  slate: [30, 41, 59] as [number, number, number],
+  muted: [100, 116, 139] as [number, number, number],
+  border: [221, 228, 238] as [number, number, number],
+  surface: [246, 248, 252] as [number, number, number],
+  blue: [59, 130, 246] as [number, number, number],
   violet: [139, 92, 246] as [number, number, number],
-  success: [16, 185, 129] as [number, number, number],
-  danger: [225, 29, 72] as [number, number, number]
+  emerald: [16, 185, 129] as [number, number, number],
+  rose: [225, 29, 72] as [number, number, number],
+  amber: [217, 119, 6] as [number, number, number]
 };
 
-function pdfText(value: unknown, maxLength = 240): string {
+function pdfText(value: unknown, maxLength = 300): string {
   const text = String(value ?? "")
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -76,39 +96,61 @@ function pdfText(value: unknown, maxLength = 240): string {
   return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 3))}...` : text;
 }
 
-function sanitizeTableRows(rows: unknown[][]): string[][] {
+function sanitizeRows(rows: unknown[][]): string[][] {
   return rows.map(row => row.map(cell => pdfText(cell)));
 }
 
-function fitPdfText(doc: any, value: unknown, maxWidth: number): string {
-  const text = pdfText(value, 500);
-  if (doc.getTextWidth(text) <= maxWidth) return text;
-  let low = 0;
-  let high = text.length;
-  while (low < high) {
-    const midpoint = Math.ceil((low + high) / 2);
-    if (doc.getTextWidth(`${text.slice(0, midpoint)}...`) <= maxWidth) low = midpoint;
-    else high = midpoint - 1;
-  }
-  return `${text.slice(0, low)}...`;
+function currency(value: number | undefined): string {
+  return `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function setDocumentMetadata(doc: any, title: string, subject: string) {
-  doc.setProperties({
-    title: pdfText(title),
-    subject: pdfText(subject),
-    author: "PortalPay Platform Analytics",
-    creator: "PortalPay Admin",
-    keywords: "PortalPay, analytics, telemetry, audit"
-  });
+function percent(value: number | undefined): string {
+  return `${Number(value || 0).toFixed(1)}%`;
+}
+
+function formatDate(value: string | undefined, timeZone: string): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("en-US", { dateStyle: "short", timeStyle: "short", timeZone });
+}
+
+function isSettledStatus(status: string | undefined): boolean {
+  return [
+    "paid",
+    "paid - ach pending",
+    "ach_pending",
+    "checkout_success",
+    "confirmed",
+    "tx_mined",
+    "reconciled",
+    "recipient_validated",
+    "receipt_claimed"
+  ].includes(String(status || "").toLowerCase());
 }
 
 function reportFilename(stem: string): string {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return `portalpay_${stem}_${timestamp}.pdf`;
+  return `basaltsurge_${stem}_${new Date().toISOString().replace(/[:.]/g, "-")}.pdf`;
 }
 
-// Helper to draw standard header banner and title
+let brandLogoPromise: Promise<Uint8Array | null> | null = null;
+
+function loadBrandLogo(): Promise<Uint8Array | null> {
+  if (brandLogoPromise) return brandLogoPromise;
+  brandLogoPromise = (async () => {
+    if (typeof window === "undefined" || typeof document === "undefined" || typeof fetch === "undefined") return null;
+    try {
+      const response = await fetch("/Surge.png", { cache: "force-cache" });
+      if (!response.ok) return null;
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      return bytes.byteLength ? bytes : null;
+    } catch {
+      return null;
+    }
+  })();
+  return brandLogoPromise;
+}
+
 async function createPdfDoc(orientation: PdfOrientation = "portrait") {
   const jsPDFMod = await import("jspdf");
   const autoTableMod = await import("jspdf-autotable");
@@ -121,381 +163,392 @@ async function createPdfDoc(orientation: PdfOrientation = "portrait") {
     || (typeof autoTableDefault === "function" ? autoTableDefault : autoTableDefault?.autoTable)
     || (autoTableMod as any)["module.exports"]?.autoTable;
 
-  if (typeof jsPDF !== "function") {
-    throw new Error("The PDF document engine could not be initialized. Refresh the page and retry the report.");
-  }
-  if (typeof autoTable !== "function") {
-    throw new Error("The PDF table engine could not be initialized. Refresh the page and retry the report.");
-  }
+  if (typeof jsPDF !== "function") throw new Error("The PDF document engine could not be initialized.");
+  if (typeof autoTable !== "function") throw new Error("The PDF table engine could not be initialized.");
 
   const doc = new jsPDF({ orientation, unit: "mm", format: "a4", compress: true, putOnlyUsedFonts: true });
+  (doc as any).__basaltSurgeLogo = await loadBrandLogo();
   return { doc, autoTable };
 }
 
 function downloadPdf(doc: any, filename: string) {
-  const pdfBytes = doc.output("arraybuffer") as ArrayBuffer;
-  if (!pdfBytes || pdfBytes.byteLength < 1000) {
-    throw new Error("The generated PDF was empty or incomplete. Retry the report.");
-  }
+  const bytes = doc.output("arraybuffer") as ArrayBuffer;
+  if (!bytes || bytes.byteLength < 1000) throw new Error("The generated PDF was empty or incomplete.");
 
-  if (
-    typeof window === "undefined"
-    || typeof document === "undefined"
-    || typeof URL === "undefined"
-    || typeof URL.createObjectURL !== "function"
-  ) {
+  if (typeof window === "undefined" || typeof document === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
     doc.save(filename);
     return;
   }
 
-  const blobUrl = URL.createObjectURL(new Blob([pdfBytes], { type: "application/pdf" }));
-  const downloadLink = document.createElement("a");
-  downloadLink.href = blobUrl;
-  downloadLink.download = filename;
-  downloadLink.style.display = "none";
-  document.body.appendChild(downloadLink);
-
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.style.display = "none";
+  document.body.appendChild(link);
   try {
-    downloadLink.click();
+    link.click();
   } finally {
-    downloadLink.remove();
-    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+}
+
+function setMetadata(doc: any, title: string, scope: string) {
+  doc.setProperties({
+    title: pdfText(title),
+    subject: pdfText(scope),
+    author: "BasaltSurge Platform Analytics",
+    creator: "BasaltSurge Admin",
+    keywords: "BasaltSurge, analytics, audit, reporting"
+  });
 }
 
 function drawHeader(
   doc: any,
   title: string,
   subtitle: string,
-  filterContext: string,
-  orientation: PdfOrientation = "portrait"
-) {
-  const pageWidth = orientation === "landscape" ? 297 : 210;
+  scope: string,
+  orientation: PdfOrientation,
+  compact = false
+): number {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  doc.setFillColor(...COLORS.navy);
+  doc.rect(0, 0, pageWidth, 24, "F");
+  doc.setFillColor(...COLORS.blue);
+  doc.rect(0, 0, 2.5, 24, "F");
+  doc.setFillColor(...COLORS.violet);
+  doc.rect(2.5, 0, 2.5, 24, "F");
+  doc.setFillColor(...COLORS.emerald);
+  doc.rect(5, 0, 2.5, 24, "F");
 
-  // Header background bar
-  doc.setFillColor(...PDF_COLORS.panel);
-  doc.rect(0, 0, pageWidth, 28, "F");
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(13, 5.5, 10, 10, 2, 2, "F");
+  let renderedLogo = false;
+  const brandLogo = (doc as any).__basaltSurgeLogo as Uint8Array | null | undefined;
+  if (brandLogo) {
+    try {
+      doc.addImage(brandLogo, "PNG", 13.7, 6.2, 8.6, 8.6, "basaltsurge-logo", "FAST");
+      renderedLogo = true;
+    } catch {
+      renderedLogo = false;
+    }
+  }
+  if (!renderedLogo) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8.5);
+    doc.setTextColor(...COLORS.navy);
+    doc.text("BS", 18, 12.2, { align: "center" });
+  }
 
-  // Product accent rail echoes the blue/violet/emerald admin HUD.
-  doc.setFillColor(...PDF_COLORS.primary);
-  doc.rect(0, 0, 3, 28, "F");
-  doc.setFillColor(...PDF_COLORS.violet);
-  doc.rect(3, 0, 3, 28, "F");
-  doc.setFillColor(...PDF_COLORS.success);
-  doc.rect(6, 0, 3, 28, "F");
-
-  // Title & Logo mark
   doc.setTextColor(255, 255, 255);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.text("PORTALPAY", 14, 11);
-
-  doc.setFontSize(9);
+  doc.setFontSize(compact ? 11 : 13.5);
+  doc.text(pdfText(title, 72), 28, 10.5);
   doc.setFont("helvetica", "normal");
-  doc.setTextColor(148, 163, 184); // slate-400
-  doc.text("PLATFORM TELEMETRY & ANALYTICS", 46, 11);
+  doc.setFontSize(7.5);
+  doc.setTextColor(174, 188, 211);
+  doc.text(pdfText(subtitle, 92), 28, 16.3);
 
-  // Document Title
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(13);
-  doc.setTextColor(255, 255, 255);
-  doc.text(pdfText(title.toUpperCase(), 58), 14, 21);
-
-  // Metadata / Timestamp on top-right
-  const dateStr = new Date().toLocaleString("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "America/Los_Angeles"
-  });
-  doc.setFontSize(8);
-  doc.setFont("helvetica", "normal");
+  const generated = new Date().toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+  doc.setFontSize(7.2);
   doc.setTextColor(203, 213, 225);
-  const rightColumnWidth = orientation === "landscape" ? 205 : 124;
-  doc.text(fitPdfText(doc, `Generated: ${dateStr} PT`, rightColumnWidth), pageWidth - 14, 11, { align: "right" });
-  doc.text(fitPdfText(doc, `Scope: ${filterContext}`, rightColumnWidth), pageWidth - 14, 17, { align: "right" });
-  doc.text(fitPdfText(doc, subtitle, rightColumnWidth), pageWidth - 14, 23, { align: "right" });
+  doc.text(`Generated ${generated}`, pageWidth - 13, 9.5, { align: "right" });
+  doc.text("BASALTSURGE | INTERNAL", pageWidth - 13, 15.2, { align: "right" });
 
-  // Thin accent line below header
-  doc.setDrawColor(...PDF_COLORS.primary);
-  doc.setLineWidth(0.8);
-  doc.line(0, 28, pageWidth, 28);
+  doc.setFillColor(...COLORS.surface);
+  doc.setDrawColor(...COLORS.border);
+  doc.roundedRect(13, 28, pageWidth - 26, 10, 2, 2, "FD");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.8);
+  doc.setTextColor(...COLORS.muted);
+  doc.text("REPORT SCOPE", 17, 32.3);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(...COLORS.slate);
+  const scopeWidth = orientation === "landscape" ? pageWidth - 55 : pageWidth - 48;
+  const scopeLines = doc.splitTextToSize(pdfText(scope, 500), scopeWidth).slice(0, 2);
+  doc.text(scopeLines, 39, 32.3);
+  return 44;
 }
 
-function continuationHeader(
-  doc: any,
-  title: string,
-  subtitle: string,
-  filterContext: string,
-  orientation: PdfOrientation
-) {
+function continuationHeader(doc: any, title: string, subtitle: string, scope: string, orientation: PdfOrientation) {
   return (hookData: any) => {
-    if (hookData.pageNumber > 1) drawHeader(doc, title, subtitle, filterContext, orientation);
+    if (hookData.pageNumber > 1) drawHeader(doc, title, subtitle, scope, orientation, true);
   };
 }
 
 function drawFooters(doc: any) {
   const pageCount = doc.internal.getNumberOfPages();
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-
-    // Footer line
-    doc.setDrawColor(226, 232, 240); // slate-200
-    doc.setLineWidth(0.3);
-    doc.line(14, pageHeight - 12, pageWidth - 14, pageHeight - 12);
-
-    // Footer text
-    doc.setFontSize(7.5);
+  for (let page = 1; page <= pageCount; page++) {
+    doc.setPage(page);
+    const width = doc.internal.pageSize.getWidth();
+    const height = doc.internal.pageSize.getHeight();
+    doc.setDrawColor(...COLORS.border);
+    doc.setLineWidth(0.25);
+    doc.line(13, height - 11, width - 13, height - 11);
     doc.setFont("helvetica", "normal");
-    doc.setTextColor(148, 163, 184);
-    doc.text("CONFIDENTIAL | PortalPay Platform Internal Report", 14, pageHeight - 7);
-    doc.text(`Page ${i} of ${pageCount}`, pageWidth - 14, pageHeight - 7, { align: "right" });
+    doc.setFontSize(7);
+    doc.setTextColor(...COLORS.muted);
+    doc.text("CONFIDENTIAL | Generated from a snapshot-pinned analytics export", 13, height - 6.5);
+    doc.text(`Page ${page} of ${pageCount}`, width - 13, height - 6.5, { align: "right" });
   }
 }
 
-// ─── 1. Executive Summary Report ─────────────────────────────────────────────
+function drawSectionTitle(doc: any, number: string, title: string, y: number, accent = COLORS.blue): number {
+  doc.setFillColor(...accent);
+  doc.roundedRect(13, y - 3.5, 6, 6, 1.5, 1.5, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7);
+  doc.setTextColor(255, 255, 255);
+  doc.text(number, 16, y + 0.5, { align: "center" });
+  doc.setFontSize(9.5);
+  doc.setTextColor(...COLORS.navy);
+  doc.text(title.toUpperCase(), 22, y + 0.5);
+  return y + 7;
+}
+
+function drawKpiGrid(
+  doc: any,
+  y: number,
+  items: Array<{ label: string; value: string; note: string; color?: [number, number, number] }>,
+  orientation: PdfOrientation
+): number {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const columns = orientation === "landscape" ? 3 : 3;
+  const gap = 4;
+  const cardWidth = (pageWidth - 26 - gap * (columns - 1)) / columns;
+  const cardHeight = 22;
+  items.forEach((item, index) => {
+    const row = Math.floor(index / columns);
+    const col = index % columns;
+    const x = 13 + col * (cardWidth + gap);
+    const cardY = y + row * (cardHeight + gap);
+    doc.setFillColor(250, 251, 253);
+    doc.setDrawColor(...COLORS.border);
+    doc.roundedRect(x, cardY, cardWidth, cardHeight, 2.3, 2.3, "FD");
+    doc.setFillColor(...(item.color || COLORS.blue));
+    doc.roundedRect(x, cardY, 2.2, cardHeight, 1, 1, "F");
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+    doc.setTextColor(...COLORS.muted);
+    doc.text(pdfText(item.label, 34).toUpperCase(), x + 6, cardY + 6);
+    doc.setFontSize(13);
+    doc.setTextColor(...COLORS.navy);
+    doc.text(pdfText(item.value, 24), x + 6, cardY + 13);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6.4);
+    doc.setTextColor(...COLORS.muted);
+    doc.text(pdfText(item.note, 54), x + 6, cardY + 18.2);
+  });
+  return y + Math.ceil(items.length / columns) * (cardHeight + gap);
+}
+
+function standardTableOptions(doc: any, title: string, subtitle: string, scope: string, orientation: PdfOrientation) {
+  return {
+    theme: "plain",
+    headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7.5, cellPadding: 2.2 },
+    bodyStyles: { textColor: COLORS.slate, fontSize: 7.4, cellPadding: 2.1 },
+    alternateRowStyles: { fillColor: COLORS.surface },
+    tableLineColor: COLORS.border,
+    tableLineWidth: 0.15,
+    margin: { top: 43, bottom: 16, left: 13, right: 13 },
+    didDrawPage: continuationHeader(doc, title, subtitle, scope, orientation)
+  };
+}
+
+function reportQuality(stats: AnalyticsReportStat | null, failureReasons: AnalyticsFailureReason[]) {
+  const created = stats?.totalCreated || 0;
+  const paid = stats?.totalPaid || 0;
+  const failed = stats?.totalFailed || 0;
+  const unresolved = Math.max(0, created - paid - failed);
+  const missingFailureDetail = failureReasons
+    .filter(item => item.reason.toLowerCase() === "no recorded failure detail")
+    .reduce((sum, item) => sum + item.count, 0);
+  const failureDetailCoverage = failed > 0 ? ((failed - missingFailureDetail) / failed) * 100 : 100;
+  const feeCoverage = stats?.feeCoveragePct ?? (paid > 0 ? ((stats?.feeKnownCount || 0) / paid) * 100 : 100);
+  return { created, paid, failed, unresolved, missingFailureDetail, failureDetailCoverage, feeCoverage };
+}
+
 export async function exportExecutiveSummaryPDF(
-  stats: Stat | null,
-  brandStats: BrandStat[],
-  failureReasons: FailureReason[],
-  filterContext: string = "All Time • All Brands"
+  stats: AnalyticsReportStat | null,
+  brandStats: AnalyticsBrandStat[],
+  failureReasons: AnalyticsFailureReason[],
+  filterContext = "All Time | All Brands"
 ): Promise<void> {
+  const title = "Executive Analytics Brief";
+  const subtitle = "Performance, conversion, and data-quality review";
   const { doc, autoTable } = await createPdfDoc("portrait");
-  setDocumentMetadata(doc, "PortalPay Executive Analytics Summary", filterContext);
-  drawHeader(doc, "Executive Analytics Summary", "Management & Operations Overview", filterContext, "portrait");
+  setMetadata(doc, title, filterContext);
+  let y = drawHeader(doc, title, subtitle, filterContext, "portrait");
+  const quality = reportQuality(stats, failureReasons);
 
-  let startY = 35;
+  y = drawSectionTitle(doc, "1", "Executive scorecard", y);
+  y = drawKpiGrid(doc, y, [
+    { label: "Settled GMV", value: currency(stats?.totalGmv), note: `${quality.paid.toLocaleString()} settled records`, color: COLORS.emerald },
+    { label: "Recorded platform fees", value: currency(stats?.totalFees), note: `${percent(quality.feeCoverage)} fee-data coverage`, color: COLORS.violet },
+    { label: "Average order value", value: currency(stats?.aov), note: "Settled GMV / settled records", color: COLORS.blue },
+    { label: "Raw receipt conversion", value: percent(stats?.successRate), note: "Settled / all receipt records", color: COLORS.blue },
+    { label: "Estimated intent conversion", value: percent(stats?.trueIntegrationRate), note: "Heuristic session clustering", color: COLORS.violet },
+    { label: "Resolved payment success", value: percent(stats?.trueProcessRate), note: "Settled / (settled + failed)", color: COLORS.emerald }
+  ], "portrait");
 
-  // 1. KPI Scorecard Summary Boxes
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("1. PLATFORM CORE PERFORMANCE METRICS", 14, startY);
-  startY += 4;
-
-  const totalGmv = stats?.totalGmv ? `$${stats.totalGmv.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$0.00";
-  const totalFees = stats?.totalFees ? `$${stats.totalFees.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$0.00";
-  const successRate = stats?.successRate !== undefined ? `${stats.successRate.toFixed(1)}%` : "0.0%";
-  const trueRate = stats?.trueIntegrationRate !== undefined ? `${stats.trueIntegrationRate.toFixed(1)}%` : "N/A";
-  const totalCreated = (stats?.totalCreated || 0).toLocaleString();
-  const totalPaid = (stats?.totalPaid || 0).toLocaleString();
-  const aov = stats?.aov ? `$${stats.aov.toFixed(2)}` : "$0.00";
-
+  y = drawSectionTitle(doc, "2", "Volume reconciliation", y + 1, COLORS.violet);
   autoTable(doc, {
-    startY,
-    head: [["Gross Volume (GMV)", "Platform Fee Revenue", "True Intent Success", "Gross Conversion", "Total Intents", "Settled Orders", "Avg Order Value"]],
-    body: sanitizeTableRows([[totalGmv, totalFees, trueRate, successRate, totalCreated, totalPaid, aov]]),
-    theme: "grid",
-    headStyles: {
-      fillColor: [30, 41, 59],
-      textColor: [255, 255, 255],
-      fontStyle: "bold",
-      fontSize: 8,
-      halign: "center"
-    },
-    bodyStyles: {
-      fontSize: 9,
-      fontStyle: "bold",
-      textColor: [15, 23, 42],
-      halign: "center"
-    },
-    margin: { top: 34, left: 14, right: 14 },
-    didDrawPage: continuationHeader(doc, "Executive Analytics Summary", "Management & Operations Overview", filterContext, "portrait")
-  });
-
-  startY = (doc as any).lastAutoTable.finalY + 8;
-
-  // 2. Brand Breakdown Table
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("2. VOLUME & CONVERSION BY PARTNER BRAND", 14, startY);
-  startY += 4;
-
-  const brandRows = (brandStats || []).map(b => [
-    b.brandName || b.brandKey,
-    b.brandKey,
-    b.total.toLocaleString(),
-    b.paid.toLocaleString(),
-    b.failed.toLocaleString(),
-    `$${b.gmv.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-    `$${b.fees.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-    `${(b.trueSuccessRate ?? b.successRate).toFixed(1)}%`
-  ]);
-
-  autoTable(doc, {
-    startY,
-    head: [["Brand Name", "Slug", "Intents", "Paid", "Failed", "GMV ($)", "Platform Fees ($)", "Success Rate"]],
-    body: sanitizeTableRows(brandRows.length > 0 ? brandRows : [["No brand transactions recorded.", "-", "-", "-", "-", "-", "-", "-"]]),
-    theme: "striped",
-    headStyles: { fillColor: [51, 65, 85], fontSize: 8 },
-    styles: { fontSize: 8 },
-    columnStyles: {
-      2: { halign: "right" },
-      3: { halign: "right" },
-      4: { halign: "right" },
-      5: { halign: "right", fontStyle: "bold" },
-      6: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129] },
-      7: { halign: "right" }
-    },
-    margin: { top: 34, left: 14, right: 14 },
-    didDrawPage: continuationHeader(doc, "Executive Analytics Summary", "Management & Operations Overview", filterContext, "portrait")
-  });
-
-  startY = (doc as any).lastAutoTable.finalY + 8;
-
-  // Check if we have enough room for payment methods & top failure reasons or add page
-  if (startY > 210) {
-    doc.addPage();
-    drawHeader(doc, "Executive Analytics Summary", "Management & Operations Overview", filterContext, "portrait");
-    startY = 35;
-  }
-
-  // 3. Payment Method & Funding Distribution
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("3. PAYMENT METHOD & FUNDING DISTRIBUTION", 14, startY);
-  startY += 4;
-
-  const cardTypes = stats?.cardTypes || { credit: 0, debit: 0, bank: 0, unknown: 0 };
-  const fundingTotal = (cardTypes.credit + cardTypes.debit + cardTypes.bank + cardTypes.unknown) || 1;
-
-  autoTable(doc, {
-    startY,
-    head: [["Payment Instrument", "Count", "Share of Settled Orders"]],
-    body: sanitizeTableRows([
-      ["Credit Cards", cardTypes.credit.toLocaleString(), `${((cardTypes.credit / fundingTotal) * 100).toFixed(1)}%`],
-      ["Debit Cards", cardTypes.debit.toLocaleString(), `${((cardTypes.debit / fundingTotal) * 100).toFixed(1)}%`],
-      ["US Bank Account (ACH Direct)", cardTypes.bank.toLocaleString(), `${((cardTypes.bank / fundingTotal) * 100).toFixed(1)}%`],
-      ["Direct On-Chain / Other", cardTypes.unknown.toLocaleString(), `${((cardTypes.unknown / fundingTotal) * 100).toFixed(1)}%`]
+    ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
+    startY: y,
+    head: [["Population", "Count", "Share", "Definition"]],
+    body: sanitizeRows([
+      ["All receipt records", quality.created.toLocaleString(), "100.0%", "Every stored receipt in the selected scope"],
+      ["Settled", quality.paid.toLocaleString(), quality.created ? percent((quality.paid / quality.created) * 100) : "0.0%", "Recognized completion statuses"],
+      ["Failed", quality.failed.toLocaleString(), quality.created ? percent((quality.failed / quality.created) * 100) : "0.0%", "Records explicitly marked failed"],
+      ["Open / other", quality.unresolved.toLocaleString(), quality.created ? percent((quality.unresolved / quality.created) * 100) : "0.0%", "Pending, expired, refunded, or other statuses"]
     ]),
-    theme: "striped",
-    headStyles: { fillColor: [71, 85, 105], fontSize: 8 },
-    styles: { fontSize: 8 },
-    columnStyles: {
-      1: { halign: "right", fontStyle: "bold" },
-      2: { halign: "right" }
-    },
-    margin: { top: 34, left: 14, right: 14 },
-    didDrawPage: continuationHeader(doc, "Executive Analytics Summary", "Management & Operations Overview", filterContext, "portrait")
+    columnStyles: { 1: { halign: "right", fontStyle: "bold" }, 2: { halign: "right" } }
+  });
+  y = (doc as any).lastAutoTable.finalY + 8;
+
+  y = drawSectionTitle(doc, "3", "Data quality and interpretation", y, COLORS.amber);
+  autoTable(doc, {
+    ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
+    startY: y,
+    head: [["Control", "Result", "Interpretation"]],
+    body: sanitizeRows([
+      ["Status reconciliation", quality.created === quality.paid + quality.failed + quality.unresolved ? "PASS" : "REVIEW", `${quality.paid} settled + ${quality.failed} failed + ${quality.unresolved} other = ${quality.created}`],
+      ["Recorded fee coverage", percent(quality.feeCoverage), "Fee total excludes records without persisted platform-fee evidence"],
+      ["Failure-detail coverage", percent(quality.failureDetailCoverage), `${quality.missingFailureDetail.toLocaleString()} failed records have no stored reason`],
+      ["Intent metric", "ESTIMATED", "Clusters related receipt revisions; raw receipt counts remain authoritative"]
+    ]),
+    columnStyles: { 1: { halign: "center", fontStyle: "bold", cellWidth: 31 } }
   });
 
-  startY = (doc as any).lastAutoTable.finalY + 8;
-
-  // 4. Top Failure Reasons Table
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("4. TOP TRANSACTION FAILURE REASONS & DROP-OFFS", 14, startY);
-  startY += 4;
-
-  const failureRows = (failureReasons || []).slice(0, 8).map(f => [
-    f.reason,
-    f.count.toLocaleString(),
-    stats?.totalFailed ? `${((f.count / stats.totalFailed) * 100).toFixed(1)}%` : "N/A"
+  doc.addPage();
+  y = drawHeader(doc, title, "Partner and failure detail", filterContext, "portrait", true);
+  y = drawSectionTitle(doc, "4", "Partner performance", y);
+  const brandRows = brandStats.map(brand => [
+    brand.brandName || brand.brandKey,
+    brand.brandKey,
+    brand.total.toLocaleString(),
+    (brand.dedupedTotal ?? brand.total).toLocaleString(),
+    brand.paid.toLocaleString(),
+    currency(brand.gmv),
+    currency(brand.fees),
+    percent(brand.feeCoveragePct ?? 100),
+    percent(brand.trueSuccessRate ?? brand.successRate)
   ]);
-
   autoTable(doc, {
-    startY,
-    head: [["Failure Reason / Error Category", "Occurrences", "% of Failed Intents"]],
-    body: sanitizeTableRows(failureRows.length > 0 ? failureRows : [["No failure errors recorded.", "0", "0%"]]),
-    theme: "striped",
-    headStyles: { fillColor: [159, 18, 57], fontSize: 8 }, // rose-900
-    styles: { fontSize: 8 },
+    ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
+    startY: y,
+    head: [["Partner", "Key", "Raw", "Est. intents", "Settled", "GMV", "Recorded fees", "Fee cov.", "Est. conv."]],
+    body: sanitizeRows(brandRows.length ? brandRows : [["No partner data", "-", "0", "0", "0", "$0.00", "$0.00", "100.0%", "0.0%"]]),
+    styles: { fontSize: 6.5, cellPadding: 1.65, textColor: COLORS.slate },
+    headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 6.4, cellPadding: 1.7 },
     columnStyles: {
-      1: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72] },
-      2: { halign: "right" }
-    },
-    margin: { top: 34, left: 14, right: 14 },
-    didDrawPage: continuationHeader(doc, "Executive Analytics Summary", "Management & Operations Overview", filterContext, "portrait")
+      0: { cellWidth: 32 }, 1: { cellWidth: 25 }, 2: { halign: "right", cellWidth: 13 },
+      3: { halign: "right", cellWidth: 18 }, 4: { halign: "right", cellWidth: 15 },
+      5: { halign: "right", cellWidth: 22 }, 6: { halign: "right", cellWidth: 23 },
+      7: { halign: "right", cellWidth: 17 }, 8: { halign: "right", cellWidth: 19 }
+    }
+  });
+  y = (doc as any).lastAutoTable.finalY + 8;
+
+  if (y > 210) {
+    doc.addPage();
+    y = drawHeader(doc, title, "Funding and failure detail", filterContext, "portrait", true);
+  }
+  y = drawSectionTitle(doc, "5", "Settled funding mix", y, COLORS.emerald);
+  const methods = stats?.cardTypes || { credit: 0, debit: 0, bank: 0, unknown: 0 };
+  const methodTotal = methods.credit + methods.debit + methods.bank + methods.unknown;
+  autoTable(doc, {
+    ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
+    startY: y,
+    head: [["Funding classification", "Settled records", "Share of settled"]],
+    body: sanitizeRows([
+      ["Credit card", methods.credit.toLocaleString(), methodTotal ? percent((methods.credit / methodTotal) * 100) : "0.0%"],
+      ["Debit card", methods.debit.toLocaleString(), methodTotal ? percent((methods.debit / methodTotal) * 100) : "0.0%"],
+      ["US bank account / ACH", methods.bank.toLocaleString(), methodTotal ? percent((methods.bank / methodTotal) * 100) : "0.0%"],
+      ["Crypto / unclassified", methods.unknown.toLocaleString(), methodTotal ? percent((methods.unknown / methodTotal) * 100) : "0.0%"]
+    ]),
+    columnStyles: { 1: { halign: "right", fontStyle: "bold" }, 2: { halign: "right" } }
+  });
+  y = (doc as any).lastAutoTable.finalY + 8;
+
+  y = drawSectionTitle(doc, "6", "Complete recorded failure summary", y, COLORS.rose);
+  const failureRows = failureReasons.map((reason, index) => [
+    index + 1,
+    reason.reason,
+    reason.count.toLocaleString(),
+    quality.failed ? percent((reason.count / quality.failed) * 100) : "0.0%"
+  ]);
+  autoTable(doc, {
+    ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
+    startY: y,
+    head: [["#", "Recorded reason", "Count", "Share of failed"]],
+    body: sanitizeRows(failureRows.length ? failureRows : [["-", "No failed records in scope", "0", "0.0%"]]),
+    headStyles: { fillColor: COLORS.rose, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7.5, cellPadding: 2.1 },
+    columnStyles: { 0: { halign: "center", cellWidth: 10 }, 2: { halign: "right", fontStyle: "bold", cellWidth: 22 }, 3: { halign: "right", cellWidth: 27 } }
   });
 
   drawFooters(doc);
-  downloadPdf(doc, reportFilename("executive_summary"));
+  downloadPdf(doc, reportFilename("executive_brief"));
 }
 
-// ─── 2. Transaction Audit Ledger PDF ─────────────────────────────────────────
 export async function exportTransactionLedgerPDF(
-  receipts: ReceiptItem[],
-  stats: Stat | null,
-  queryFilter: string = "All Current Filtered Records",
-  dateRangeStr: string = "All Time",
-  reportTimezone: string = "America/Los_Angeles"
+  receipts: AnalyticsReceiptItem[],
+  stats: AnalyticsReportStat | null,
+  queryFilter = "No search query",
+  scope = "All Time",
+  reportTimezone = "America/Los_Angeles"
 ): Promise<void> {
+  const title = "Transaction Audit Ledger";
+  const subtitle = `${receipts.length.toLocaleString()} complete filtered records | ${queryFilter}`;
   const { doc, autoTable } = await createPdfDoc("landscape");
-  const headerScope = `${dateRangeStr} | Query: ${queryFilter}`;
-  const headerSubtitle = `Complete filtered snapshot | ${receipts.length.toLocaleString()} transactions`;
-  setDocumentMetadata(doc, "PortalPay Transaction Audit Ledger", headerScope);
-  drawHeader(
-    doc,
-    "Transaction Audit Ledger",
-    headerSubtitle,
-    headerScope,
-    "landscape"
-  );
+  setMetadata(doc, title, scope);
+  drawHeader(doc, title, subtitle, scope, "landscape");
 
-  const tableHead = [[
-    "Receipt ID", "Date", "Brand", "Merchant", "Customer Email", "Amount", "Fee",
-    "Status", "Method", "KYC", "Stripe Session", "Tx Hash", "Notes / Error"
-  ]];
-  const chunkSize = 2000;
-  const sourceRows = receipts.length > 0 ? receipts : [null];
-
-  for (let chunkStart = 0; chunkStart < sourceRows.length; chunkStart += chunkSize) {
-    if (chunkStart > 0) {
+  const source = receipts.length ? receipts : [null];
+  const chunkSize = 1500;
+  for (let start = 0; start < source.length; start += chunkSize) {
+    if (start > 0) {
       doc.addPage();
-      drawHeader(doc, "Transaction Audit Ledger", headerSubtitle, headerScope, "landscape");
+      drawHeader(doc, title, subtitle, scope, "landscape", true);
     }
-    const chunk = sourceRows.slice(chunkStart, chunkStart + chunkSize);
-    const rows = chunk.map(receipt => {
-      if (!receipt) return ["No matching transactions found.", "", "", "", "", "", "", "", "", "", "", "", ""];
-      const date = receipt.createdAt
-        ? new Date(receipt.createdAt).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short", timeZone: reportTimezone })
-        : "-";
-      const amount = typeof receipt.totalUsd === "number" ? `$${receipt.totalUsd.toFixed(2)}` : "$0.00";
-      const fee = typeof receipt.platformFee === "number" ? `$${receipt.platformFee.toFixed(2)}` : "-";
-      const transactionHash = receipt.transactionHash
-        ? `${receipt.transactionHash.slice(0, 8)}...${receipt.transactionHash.slice(-6)}`
-        : "-";
-      const sessionId = receipt.stripeSessionId ? `${receipt.stripeSessionId.slice(0, 14)}...` : "-";
+    const rows = source.slice(start, start + chunkSize).map(receipt => {
+      if (!receipt) return ["No matching transactions", "", "", "", "", "", "", "", "", "", "", "", ""];
+      const fee = !isSettledStatus(receipt.status) || receipt.platformFeeSource === "unavailable"
+        ? "N/A"
+        : currency(receipt.platformFee);
+      const tx = receipt.transactionHash ? `${receipt.transactionHash.slice(0, 9)}...${receipt.transactionHash.slice(-6)}` : "-";
+      const session = receipt.stripeSessionId || receipt.paymentId || "-";
       return [
-        receipt.receiptId || "-", date, receipt.brandName || receipt.brandKey || "-",
-        receipt.merchantName || "-", receipt.email || "anonymous", amount, fee,
-        String(receipt.status || "").toUpperCase(), receipt.cardFunding || "crypto/other",
-        receipt.kycLevel || "L0", sessionId, transactionHash, receipt.failureReason || ""
+        receipt.receiptId || "-",
+        formatDate(receipt.createdAt, reportTimezone),
+        receipt.brandName || receipt.brandKey || "-",
+        receipt.merchantName || "-",
+        receipt.email || "anonymous",
+        currency(receipt.totalUsd),
+        fee,
+        isSettledStatus(receipt.status) ? (receipt.platformFeeSource || "legacy") : "not applicable",
+        String(receipt.status || "unknown").toUpperCase(),
+        receipt.cardFunding || "unclassified",
+        receipt.kycLevel || "L0",
+        pdfText(session, 28),
+        receipt.failureReason || tx
       ];
     });
 
     autoTable(doc, {
-      startY: 34,
-      head: tableHead,
-      body: sanitizeTableRows(rows),
-      theme: "striped",
-      headStyles: { fillColor: PDF_COLORS.panel, fontSize: 7, fontStyle: "bold", halign: "left" },
-      alternateRowStyles: { fillColor: [241, 245, 249] },
-      styles: { fontSize: 6.5, cellPadding: 1.5, overflow: "linebreak", textColor: [30, 41, 59] },
+      ...standardTableOptions(doc, title, subtitle, scope, "landscape"),
+      startY: 43,
+      head: [["Receipt ID", "Date / time", "Partner", "Merchant", "Customer", "Amount", "Platform fee", "Fee evidence", "Status", "Funding", "KYC", "Session / payment", "Failure / tx reference"]],
+      body: sanitizeRows(rows),
+      styles: { fontSize: 5.9, cellPadding: 1.35, overflow: "linebreak", textColor: COLORS.slate },
+      headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 6, cellPadding: 1.45 },
       columnStyles: {
-        0: { fontStyle: "bold", cellWidth: 26 },
-        1: { cellWidth: 22 },
-        2: { cellWidth: 20 },
-        3: { cellWidth: 22 },
-        4: { cellWidth: 32 },
-        5: { halign: "right", fontStyle: "bold", cellWidth: 16 },
-        6: { halign: "right", textColor: PDF_COLORS.success, cellWidth: 14 },
-        7: { fontStyle: "bold", cellWidth: 18 },
-        8: { cellWidth: 18 },
-        9: { halign: "center", cellWidth: 10 },
-        10: { cellWidth: 24 },
-        11: { cellWidth: 22 },
-        12: { cellWidth: 25 }
-      },
-      margin: { top: 34, bottom: 16, left: 14, right: 14 },
-      didDrawPage: continuationHeader(doc, "Transaction Audit Ledger", headerSubtitle, headerScope, "landscape")
+        0: { fontStyle: "bold", cellWidth: 24 }, 1: { cellWidth: 23 }, 2: { cellWidth: 19 },
+        3: { cellWidth: 21 }, 4: { cellWidth: 29 }, 5: { halign: "right", cellWidth: 16 },
+        6: { halign: "right", cellWidth: 16 }, 7: { cellWidth: 17 }, 8: { cellWidth: 18 },
+        9: { cellWidth: 16 }, 10: { halign: "center", cellWidth: 9 }, 11: { cellWidth: 24 }, 12: { cellWidth: 39 }
+      }
     });
-
-    // Yield between large table chunks so the admin UI can keep painting.
     await new Promise<void>(resolve => setTimeout(resolve, 0));
   }
 
@@ -503,216 +556,140 @@ export async function exportTransactionLedgerPDF(
   downloadPdf(doc, reportFilename("transaction_ledger"));
 }
 
-// ─── 3. Brand Financial Performance & Fees PDF ──────────────────────────────
 export async function exportBrandFinancialPDF(
-  brandStats: BrandStat[],
-  stats: Stat | null,
-  dateRangeStr: string = "All Time"
+  brandStats: AnalyticsBrandStat[],
+  stats: AnalyticsReportStat | null,
+  scope = "All Time"
 ): Promise<void> {
-  const { doc, autoTable } = await createPdfDoc("portrait");
-  setDocumentMetadata(doc, "PortalPay Brand Financial & Fee Settlement", dateRangeStr);
-  drawHeader(
-    doc,
-    "Brand Financial & Fee Settlement",
-    `Total Brands: ${brandStats.length}`,
-    dateRangeStr,
-    "portrait"
-  );
+  const title = "Partner Financial Performance";
+  const subtitle = "Recorded GMV and platform-fee evidence by partner";
+  const { doc, autoTable } = await createPdfDoc("landscape");
+  setMetadata(doc, title, scope);
+  let y = drawHeader(doc, title, subtitle, scope, "landscape");
+  const quality = reportQuality(stats, []);
 
-  let startY = 35;
+  y = drawSectionTitle(doc, "1", "Financial overview", y);
+  y = drawKpiGrid(doc, y, [
+    { label: "Settled GMV", value: currency(stats?.totalGmv), note: "Gross value of recognized settled records", color: COLORS.emerald },
+    { label: "Recorded platform fees", value: currency(stats?.totalFees), note: "No default fee assumptions applied", color: COLORS.violet },
+    { label: "Fee data coverage", value: percent(quality.feeCoverage), note: `${stats?.feeKnownCount || 0} of ${quality.paid} settled records`, color: quality.feeCoverage < 100 ? COLORS.amber : COLORS.emerald }
+  ], "landscape");
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("1. PLATFORM AGGREGATE FINANCIAL SUMMARY", 14, startY);
-  startY += 4;
-
-  const totalGmv = stats?.totalGmv ? `$${stats.totalGmv.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$0.00";
-  const totalFees = stats?.totalFees ? `$${stats.totalFees.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$0.00";
-  const totalPaid = (stats?.totalPaid || 0).toLocaleString();
-  const effectiveBps = stats?.totalGmv && stats?.totalFees ? `${((stats.totalFees / stats.totalGmv) * 10000).toFixed(0)} BPS (${((stats.totalFees / stats.totalGmv) * 100).toFixed(2)}%)` : "N/A";
-
-  autoTable(doc, {
-    startY,
-    head: [["Total Platform GMV", "Gross Fee Revenue", "Settled Orders", "Effective Platform Take-Rate"]],
-    body: sanitizeTableRows([[totalGmv, totalFees, totalPaid, effectiveBps]]),
-    theme: "grid",
-    headStyles: { fillColor: [30, 41, 59], fontSize: 8, halign: "center" },
-    bodyStyles: { fontSize: 9, fontStyle: "bold", halign: "center" },
-    margin: { top: 34, left: 14, right: 14 },
-    didDrawPage: continuationHeader(doc, "Brand Financial & Fee Settlement", `Total Brands: ${brandStats.length}`, dateRangeStr, "portrait")
-  });
-
-  startY = (doc as any).lastAutoTable.finalY + 8;
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("2. DETAILED PARTNER BRAND FINANCIAL MATRIX", 14, startY);
-  startY += 4;
-
-  const rows = (brandStats || []).map(b => {
-    const gmv = `$${b.gmv.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    const fees = `$${b.fees.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    const netPayout = `$${Math.max(0, b.gmv - b.fees).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    const effectiveBps = b.gmv > 0 ? `${((b.fees / b.gmv) * 10000).toFixed(0)} BPS` : "N/A";
-
-    return [
-      b.brandName || b.brandKey,
-      b.brandKey,
-      b.paid.toLocaleString(),
-      gmv,
-      fees,
-      effectiveBps,
-      netPayout,
-      `${(b.trueSuccessRate ?? b.successRate).toFixed(1)}%`
-    ];
-  });
+  y = drawSectionTitle(doc, "2", "Partner reconciliation matrix", y + 1, COLORS.violet);
+  const rows = brandStats.map(brand => [
+    brand.brandName || brand.brandKey,
+    brand.brandKey,
+    brand.total.toLocaleString(),
+    (brand.dedupedTotal ?? brand.total).toLocaleString(),
+    brand.paid.toLocaleString(),
+    brand.failed.toLocaleString(),
+    Math.max(0, brand.total - brand.paid - brand.failed).toLocaleString(),
+    percent(brand.successRate),
+    percent(brand.trueSuccessRate ?? brand.successRate),
+    currency(brand.gmv),
+    currency(brand.fees),
+    percent(brand.feeCoveragePct ?? 100),
+    brand.gmv > 0 && (brand.feeCoveragePct ?? 100) === 100 ? `${((brand.fees / brand.gmv) * 10000).toFixed(0)} BPS` : "N/A"
+  ]);
 
   autoTable(doc, {
-    startY,
-    head: [["Brand Name", "Slug", "Settled", "Gross Volume", "Platform Fees", "Effective BPS", "GMV Less Platform Fees", "Success Rate"]],
-    body: sanitizeTableRows(rows.length > 0 ? rows : [["No brand financial data found.", "-", "-", "-", "-", "-", "-", "-"]]),
-    theme: "striped",
-    headStyles: { fillColor: [51, 65, 85], fontSize: 8 },
-    styles: { fontSize: 8 },
+    ...standardTableOptions(doc, title, subtitle, scope, "landscape"),
+    startY: y,
+    head: [["Partner", "Key", "Raw", "Est. intents", "Settled", "Failed", "Other", "Raw conv.", "Est. conv.", "GMV", "Recorded fees", "Fee cov.", "Effective rate"]],
+    body: sanitizeRows(rows.length ? rows : [["No partner data", "-", "0", "0", "0", "0", "0", "0.0%", "0.0%", "$0.00", "$0.00", "100.0%", "N/A"]]),
+    styles: { fontSize: 6.4, cellPadding: 1.7, textColor: COLORS.slate },
+    headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 6.3, cellPadding: 1.7 },
     columnStyles: {
-      2: { halign: "right" },
-      3: { halign: "right", fontStyle: "bold" },
-      4: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129] },
-      5: { halign: "center", fontStyle: "bold", textColor: [59, 130, 246] },
-      6: { halign: "right", fontStyle: "bold" },
-      7: { halign: "right" }
-    },
-    margin: { top: 34, bottom: 16, left: 14, right: 14 },
-    didDrawPage: continuationHeader(doc, "Brand Financial & Fee Settlement", `Total Brands: ${brandStats.length}`, dateRangeStr, "portrait")
+      0: { cellWidth: 36 }, 1: { cellWidth: 22 }, 2: { halign: "right", cellWidth: 14 },
+      3: { halign: "right", cellWidth: 20 }, 4: { halign: "right", cellWidth: 15 },
+      5: { halign: "right", cellWidth: 14 }, 6: { halign: "right", cellWidth: 14 },
+      7: { halign: "right", cellWidth: 19 }, 8: { halign: "right", cellWidth: 19 },
+      9: { halign: "right", fontStyle: "bold", cellWidth: 25 },
+      10: { halign: "right", fontStyle: "bold", cellWidth: 27 },
+      11: { halign: "right", cellWidth: 18 }, 12: { halign: "right", cellWidth: 28 }
+    }
   });
+
+  const noteY = Math.min(doc.internal.pageSize.getHeight() - 24, (doc as any).lastAutoTable.finalY + 8);
+  doc.setFillColor(255, 247, 237);
+  doc.setDrawColor(253, 186, 116);
+  doc.roundedRect(13, noteY, doc.internal.pageSize.getWidth() - 26, 11, 2, 2, "FD");
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7);
+  doc.setTextColor(124, 45, 18);
+  doc.text("Recorded fees include only persisted fee amounts or persisted platform BPS. Effective rate is suppressed when fee coverage is incomplete.", 17, noteY + 6.8);
 
   drawFooters(doc);
-  downloadPdf(doc, reportFilename("brand_financials"));
+  downloadPdf(doc, reportFilename("partner_financials"));
 }
 
-// ─── 4. Failure Diagnostics & Error Matrix PDF ──────────────────────────────
 export async function exportFailureDiagnosticsPDF(
-  failureReasons: FailureReason[],
-  stats: Stat | null,
-  receipts: ReceiptItem[],
-  dateRangeStr: string = "All Time",
-  reportTimezone: string = "America/Los_Angeles"
+  failureReasons: AnalyticsFailureReason[],
+  stats: AnalyticsReportStat | null,
+  receipts: AnalyticsReceiptItem[],
+  scope = "All Time",
+  reportTimezone = "America/Los_Angeles"
 ): Promise<void> {
-  const { doc, autoTable } = await createPdfDoc("portrait");
-  const headerTitle = "Failure & Error Diagnostics Report";
-  const headerSubtitle = `Total Failed Intents: ${(stats?.totalFailed || 0).toLocaleString()}`;
-  setDocumentMetadata(doc, "PortalPay Failure & Error Diagnostics", dateRangeStr);
-  drawHeader(
-    doc,
-    headerTitle,
-    headerSubtitle,
-    dateRangeStr,
-    "portrait"
-  );
+  const title = "Failure Diagnostics";
+  const subtitle = "Recorded failure reasons and transaction-level evidence";
+  const { doc, autoTable } = await createPdfDoc("landscape");
+  setMetadata(doc, title, scope);
+  let y = drawHeader(doc, title, subtitle, scope, "landscape");
+  const quality = reportQuality(stats, failureReasons);
 
-  let startY = 35;
+  y = drawSectionTitle(doc, "1", "Failure overview", y, COLORS.rose);
+  y = drawKpiGrid(doc, y, [
+    { label: "Failed records", value: quality.failed.toLocaleString(), note: `${quality.created.toLocaleString()} total receipt records`, color: COLORS.rose },
+    { label: "Recorded failure rate", value: quality.created ? percent((quality.failed / quality.created) * 100) : "0.0%", note: "Failed / all receipt records", color: COLORS.rose },
+    { label: "Failure-detail coverage", value: percent(quality.failureDetailCoverage), note: `${quality.missingFailureDetail.toLocaleString()} records missing a reason`, color: quality.failureDetailCoverage < 100 ? COLORS.amber : COLORS.emerald }
+  ], "landscape");
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("1. ERROR OVERVIEW & DROP-OFF SUMMARY", 14, startY);
-  startY += 4;
-
-  const totalCreated = stats?.totalCreated || 0;
-  const totalFailed = stats?.totalFailed || 0;
-  const totalPaid = stats?.totalPaid || 0;
-  const failRate = totalCreated > 0 ? `${((totalFailed / totalCreated) * 100).toFixed(1)}%` : "0.0%";
-
-  autoTable(doc, {
-    startY,
-    head: [["Total Checkout Intents", "Successful Payments", "Failed Intents", "Recorded Failure Rate"]],
-    body: sanitizeTableRows([[totalCreated.toLocaleString(), totalPaid.toLocaleString(), totalFailed.toLocaleString(), failRate]]),
-    theme: "grid",
-    headStyles: { fillColor: [159, 18, 57], fontSize: 8, halign: "center" },
-    bodyStyles: { fontSize: 9, fontStyle: "bold", halign: "center" },
-    margin: { top: 34, left: 14, right: 14 },
-    didDrawPage: continuationHeader(doc, headerTitle, headerSubtitle, dateRangeStr, "portrait")
-  });
-
-  startY = (doc as any).lastAutoTable.finalY + 8;
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("2. ALL DOCUMENTED FAILURE REASONS", 14, startY);
-  startY += 4;
-
-  const failRows = (failureReasons || []).map((f, idx) => [
-    `#${idx + 1}`,
-    f.reason,
-    f.count.toLocaleString(),
-    totalFailed > 0 ? `${((f.count / totalFailed) * 100).toFixed(1)}%` : "0.0%"
+  y = drawSectionTitle(doc, "2", "Complete recorded failure summary", y + 1, COLORS.rose);
+  const reasonRows = failureReasons.map((reason, index) => [
+    index + 1,
+    reason.reason,
+    reason.count.toLocaleString(),
+    quality.failed ? percent((reason.count / quality.failed) * 100) : "0.0%"
   ]);
-
   autoTable(doc, {
-    startY,
-    head: [["Rank", "Error Description / Failure Reason", "Count", "Failure Impact (%)"]],
-    body: sanitizeTableRows(failRows.length > 0 ? failRows : [["-", "No errors recorded.", "0", "0%"]]),
-    theme: "striped",
-    headStyles: { fillColor: [71, 85, 105], fontSize: 8 },
-    styles: { fontSize: 8 },
-    columnStyles: {
-      0: { halign: "center", cellWidth: 14 },
-      1: { fontStyle: "bold" },
-      2: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 24 },
-      3: { halign: "right", cellWidth: 32 }
-    },
-    margin: { top: 34, bottom: 16, left: 14, right: 14 },
-    didDrawPage: continuationHeader(doc, headerTitle, headerSubtitle, dateRangeStr, "portrait")
+    ...standardTableOptions(doc, title, subtitle, scope, "landscape"),
+    startY: y,
+    head: [["Rank", "Recorded reason", "Count", "Share of failed records"]],
+    body: sanitizeRows(reasonRows.length ? reasonRows : [["-", "No failed records in scope", "0", "0.0%"]]),
+    headStyles: { fillColor: COLORS.rose, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7.5, cellPadding: 2.1 },
+    columnStyles: { 0: { halign: "center", cellWidth: 17 }, 2: { halign: "right", fontStyle: "bold", cellWidth: 27 }, 3: { halign: "right", cellWidth: 38 } }
   });
-
-  startY = (doc as any).lastAutoTable.finalY + 8;
-  if (startY > 240) {
-    doc.addPage();
-    drawHeader(doc, headerTitle, headerSubtitle, dateRangeStr, "portrait");
-    startY = 35;
-  }
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(15, 23, 42);
-  doc.text("3. FAILED TRANSACTION EVIDENCE", 14, startY);
-  startY += 4;
 
   const failedReceipts = receipts.filter(receipt => String(receipt.status || "").toLowerCase() === "failed");
-  const evidenceRows = failedReceipts.map(receipt => [
-    receipt.receiptId || "-",
-    receipt.createdAt
-      ? new Date(receipt.createdAt).toLocaleString("en-US", { dateStyle: "short", timeStyle: "short", timeZone: reportTimezone })
-      : "-",
-    receipt.brandName || receipt.brandKey || "-",
-    receipt.email || "anonymous",
-    `$${Number(receipt.totalUsd || 0).toFixed(2)}`,
-    receipt.failureReason || "Abandoned / Closed Portal"
-  ]);
-
-  autoTable(doc, {
-    startY,
-    head: [["Receipt ID", "Date", "Brand", "Customer", "Amount", "Failure Evidence"]],
-    body: sanitizeTableRows(evidenceRows.length > 0
-      ? evidenceRows
-      : [["-", "-", "-", "-", "$0.00", "No failed transactions in this scope."]]),
-    theme: "striped",
-    headStyles: { fillColor: [71, 85, 105], fontSize: 7.5 },
-    styles: { fontSize: 7, cellPadding: 1.5, overflow: "linebreak" },
-    columnStyles: {
-      0: { fontStyle: "bold", cellWidth: 31 },
-      1: { cellWidth: 25 },
-      2: { cellWidth: 24 },
-      3: { cellWidth: 37 },
-      4: { halign: "right", fontStyle: "bold", cellWidth: 19 },
-      5: { textColor: PDF_COLORS.danger }
-    },
-    margin: { top: 34, bottom: 16, left: 14, right: 14 },
-    didDrawPage: continuationHeader(doc, headerTitle, headerSubtitle, dateRangeStr, "portrait")
-  });
+  const evidenceSource = failedReceipts.length ? failedReceipts : [null];
+  const chunkSize = 1500;
+  for (let start = 0; start < evidenceSource.length; start += chunkSize) {
+    doc.addPage();
+    drawHeader(doc, title, `${failedReceipts.length.toLocaleString()} failed transaction records`, scope, "landscape", true);
+    const rows = evidenceSource.slice(start, start + chunkSize).map(receipt => {
+      if (!receipt) return ["No failed transactions", "", "", "", "", "", "", ""];
+      return [
+        receipt.receiptId || "-",
+        formatDate(receipt.createdAt, reportTimezone),
+        receipt.brandName || receipt.brandKey || "-",
+        receipt.merchantName || "-",
+        receipt.email || "anonymous",
+        currency(receipt.totalUsd),
+        receipt.cardFunding || "unclassified",
+        receipt.failureReason || "No recorded failure detail"
+      ];
+    });
+    autoTable(doc, {
+      ...standardTableOptions(doc, title, subtitle, scope, "landscape"),
+      startY: 43,
+      head: [["Receipt ID", "Date / time", "Partner", "Merchant", "Customer", "Amount", "Funding", "Recorded failure detail"]],
+      body: sanitizeRows(rows),
+      styles: { fontSize: 6.5, cellPadding: 1.65, overflow: "linebreak", textColor: COLORS.slate },
+      headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 6.6, cellPadding: 1.8 },
+      columnStyles: { 0: { fontStyle: "bold", cellWidth: 31 }, 1: { cellWidth: 26 }, 2: { cellWidth: 25 }, 3: { cellWidth: 30 }, 4: { cellWidth: 42 }, 5: { halign: "right", cellWidth: 18 }, 6: { cellWidth: 20 } }
+    });
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+  }
 
   drawFooters(doc);
   downloadPdf(doc, reportFilename("failure_diagnostics"));

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer, type BillingEvent } from "@/lib/cosmos";
 import { getAuthenticatedWallet, isOwnerWallet } from "@/lib/auth";
+import { getReceiptStatusInternalHeaders } from "@/lib/receipt-status-policy";
 /* Defer thirdweb/rpc and client imports to runtime to avoid Turbopack evaluation issues */
 // import { getRpcClient, eth_getTransactionReceipt } from "thirdweb/rpc";
 // import { chain, client } from "@/lib/thirdweb/client";
@@ -60,19 +61,25 @@ export async function POST(req: NextRequest) {
     // Status posting helper to update receipt lifecycle
     const baseOrigin = req.nextUrl.origin;
     async function postStatus(status: string, extra?: any) {
-      try {
-        if (!receiptId || !boundRecipient) return;
-        await fetch(`${baseOrigin}/api/receipts/status`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            receiptId,
-            wallet: boundRecipient, // merchant partition key is the recipient wallet
-            status,
-            ...extra,
-          }),
-        });
-      } catch {}
+      if (!receiptId || !boundRecipient) return;
+      const internalHeaders = getReceiptStatusInternalHeaders();
+      if (!internalHeaders["x-portalpay-internal-secret"]) {
+        throw new Error("receipt_status_internal_secret_not_configured");
+      }
+      const response = await fetch(`${baseOrigin}/api/receipts/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...internalHeaders },
+        body: JSON.stringify({
+          receiptId,
+          wallet: boundRecipient, // merchant partition key is the recipient wallet
+          status,
+          ...extra,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result?.authoritative === false) {
+        throw new Error(`receipt_status_update_failed:${response.status}:${result?.error || "non_authoritative"}`);
+      }
     }
 
     if (!/^0x[a-f0-9]{40}$/i.test(wallet)) {

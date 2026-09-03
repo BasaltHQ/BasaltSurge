@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { getContainer } from "@/lib/cosmos";
+import { buildWebhookHeaders } from "@/lib/webhook-branding";
 
 /**
  * Developer Webhook Dispatch
@@ -13,14 +14,19 @@ import { getContainer } from "@/lib/cosmos";
  * 
  * Headers sent:
  * - Content-Type: application/json
- * - X-PortalPay-Signature: sha256=<hmac_hex>
- * - X-PortalPay-Event: receipt.status_updated
- * - X-PortalPay-Delivery: <uuid>
- * - X-PortalPay-Timestamp: <unix_ms>
+ * - X-{Brand}-Signature: sha256=<hmac_hex>
+ * - X-{Brand}-Event: receipt.status_updated
+ * - X-{Brand}-Delivery: <uuid>
+ * - X-{Brand}-Idempotency-Key: <stable receipt/status/transaction key>
+ * - X-{Brand}-Timestamp: <unix_ms>
+ *
+ * Non-PortalPay brands also receive X-PortalPay-* compatibility aliases so
+ * existing integrations can migrate without interruption.
  */
 
 export type WebhookPayload = {
   event: "receipt.status_updated" | string;
+  idempotencyKey?: string;
   receiptId: string;
   status: string;
   previousStatus?: string;
@@ -41,6 +47,19 @@ export type WebhookPayload = {
   failureAction?: string | null;
 };
 
+export type ReceiptWebhookSource = {
+  transactionHash?: string;
+  buyerWallet?: string;
+  merchantWallet?: string;
+  totalUsd?: number;
+  token?: string;
+  timestamp?: number;
+  brandKey?: string;
+  stripeSessionId?: string | null;
+  transactionId?: string | null;
+  metadata?: Record<string, any> | null;
+};
+
 /**
  * Checks if a given stripeSessionId is unique to a single receipt across the database.
  * Returns `true` if <= 1 receipts share this stripeSessionId, or `false` if multiple receipts share it.
@@ -54,7 +73,7 @@ export async function checkStripeSessionUniqueness(
   }
 
   try {
-    const container = await getContainer(undefined, "surge_events");
+    const container = await getContainer(undefined, "surge_events", { profile: "critical" });
     const querySpec = {
       query: "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'receipt' AND (c.stripeSessionId = @sessionId OR c.stripeOnrampSessionId = @sessionId OR c.sessionId = @sessionId)",
       parameters: [{ name: "@sessionId", value: stripeSessionId.trim() }]
@@ -64,7 +83,9 @@ export async function checkStripeSessionUniqueness(
     return count <= 1;
   } catch (err) {
     console.warn("[WEBHOOK DISPATCH] Failed to query stripeSessionId uniqueness:", err);
-    return true; // Fallback to true if lookup fails
+    // A failed lookup cannot prove uniqueness. Fail closed so downstream
+    // consumers never treat an unverified session/receipt binding as safe.
+    return false;
   }
 }
 
@@ -163,15 +184,14 @@ export async function dispatchDeveloperWebhook(
   };
   const body = JSON.stringify(finalPayload);
   const signature = computeSignature(body, secret);
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "X-PortalPay-Signature": `sha256=${signature}`,
-    "X-PortalPay-Event": payload.event,
-    "X-PortalPay-Delivery": deliveryId,
-    "X-PortalPay-Timestamp": String(timestamp),
-    "User-Agent": "PortalPay-Webhook/1.0",
-  };
+  const headers = buildWebhookHeaders({
+    brandKey: payload.brandKey,
+    signature,
+    event: payload.event,
+    deliveryId,
+    timestamp,
+    idempotencyKey: payload.idempotencyKey,
+  });
 
   const attempt = async (retryNum: number): Promise<{ ok: boolean; statusCode?: number; error?: string }> => {
     try {
@@ -225,6 +245,53 @@ export async function dispatchDeveloperWebhook(
   }
 
   return retryResult;
+}
+
+/**
+ * Build and synchronously deliver the canonical receipt-status event. Callers
+ * must persist the receipt first so a consumer can immediately read the same
+ * status it received in the webhook.
+ */
+export async function dispatchReceiptStatusWebhook(
+  receipt: Record<string, any>,
+  status: string,
+  previousStatus: string,
+  source: ReceiptWebhookSource = {}
+): Promise<{ ok: boolean; statusCode?: number; error?: string }> {
+  const webhookUrl = String(receipt?.webhookUrl || "").trim();
+  if (!webhookUrl) return { ok: true };
+
+  const receiptId = String(receipt?.receiptId || receipt?.id || "").replace(/^receipt:/, "");
+  const merchantWallet = String(source.merchantWallet || receipt?.wallet || receipt?.merchantWallet || "").toLowerCase();
+  if (!receiptId || !merchantWallet) {
+    return { ok: false, error: "missing_receipt_webhook_identity" };
+  }
+
+  const transactionHash = source.transactionHash || receipt?.transactionHash || receipt?.txHash;
+  const stripeSessionId = source.stripeSessionId || receipt?.stripeSessionId || null;
+  return dispatchDeveloperWebhook(webhookUrl, {
+    event: "receipt.status_updated",
+    idempotencyKey: `receipt-status:${receiptId}:${status}:${transactionHash || stripeSessionId || "no-transaction"}`,
+    receiptId,
+    status,
+    previousStatus,
+    transactionHash,
+    buyerWallet: source.buyerWallet || receipt?.buyerWallet,
+    merchantWallet,
+    totalUsd: source.totalUsd ?? receipt?.totalUsd,
+    token: source.token || receipt?.expectedToken,
+    timestamp: source.timestamp || Date.now(),
+    // The receipt's creation-time brand is authoritative when a status update
+    // is processed later by a shared/platform worker.
+    brandKey: receipt?.brandKey || source.brandKey,
+    stripeSessionId,
+    transactionId: source.transactionId || receipt?.transactionId || null,
+    metadata: source.metadata || receipt?.metadata || null,
+    failureCode: receipt?.failureCode || null,
+    failureReason: receipt?.failureReason || null,
+    failureCategory: receipt?.failureCategory || null,
+    failureAction: receipt?.failureAction || null,
+  }, receipt?.webhookSigningSecret || receipt?.webhookSecret || undefined);
 }
 
 /**

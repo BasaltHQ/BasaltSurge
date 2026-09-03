@@ -63,6 +63,7 @@ import {
   exportBrandFinancialPDF,
   exportFailureDiagnosticsPDF
 } from "@/lib/reporting/analytics-pdf";
+import { exportAnalyticsXLSX } from "@/lib/reporting/analytics-excel";
 
 const SYSTEM_TIMEZONE = "America/Los_Angeles";
 const DYNAMIC_TIMEZONE = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
@@ -189,6 +190,9 @@ interface Stat {
   trueProcessRate?: number;
   totalGmv: number;
   totalFees: number;
+  feeKnownCount?: number;
+  feeUnknownCount?: number;
+  feeCoveragePct?: number;
   aov: number;
   cardTypes: { credit: number; debit: number; bank: number; unknown: number };
   kycLevels?: { none: number; l1: number; l2: number };
@@ -212,6 +216,9 @@ interface BrandStat {
   dedupedPaid?: number;
   dedupedFailed?: number;
   trueSuccessRate?: number;
+  feeKnownCount?: number;
+  feeUnknownCount?: number;
+  feeCoveragePct?: number;
 }
 
 interface ReceiptLog {
@@ -247,6 +254,7 @@ interface ReceiptInfo {
   kycLevel?: "L0" | "L1" | "L2" | string;
   kycOccurred?: boolean;
   platformFee?: number;
+  platformFeeSource?: "recorded_minor" | "recorded_usd" | "recorded_bps" | "unavailable";
   lineItems?: { label: string; priceUsd: number; qty?: number }[];
   items?: { label?: string; priceUsd?: number; quantity?: number; qty?: number }[];
   parentUrl?: string | null;
@@ -310,24 +318,26 @@ interface ReceiptInfo {
   quoteSummary?: any;
 }
 
-type PdfReportType = "executive" | "ledger" | "brands" | "diagnostics";
+type AnalyticsReportType = "executive" | "ledger" | "brands" | "diagnostics";
+type AnalyticsReportFormat = "pdf" | "xlsx";
 
-interface PdfExportError {
-  reportType: PdfReportType;
+interface ReportExportError {
+  reportType: AnalyticsReportType;
+  format: AnalyticsReportFormat;
   reportName: string;
   message: string;
   guidance: string;
   occurredAt: string;
 }
 
-const PDF_REPORT_NAMES: Record<PdfReportType, string> = {
-  executive: "Executive Analytics Summary",
+const REPORT_NAMES: Record<AnalyticsReportType, string> = {
+  executive: "Executive Analytics Brief",
   ledger: "Transaction Audit Ledger",
   brands: "Brand Financial & Fee Settlement",
   diagnostics: "Failure & Error Diagnostics"
 };
 
-function getPdfErrorGuidance(message: string): string {
+function getReportErrorGuidance(message: string, format: AnalyticsReportFormat): string {
   const normalized = message.toLowerCase();
   if (normalized.includes("duplicate") || normalized.includes("snapshot")) {
     return "The analytics snapshot changed or repeated a storage record while it was being collected. Retry to start a fresh, pinned snapshot.";
@@ -335,10 +345,10 @@ function getPdfErrorGuidance(message: string): string {
   if (normalized.includes("ended early") || normalized.includes("batch") || normalized.includes("network") || normalized.includes("fetch")) {
     return "The complete data set could not be collected. Check the connection and retry; the report will restart from the first batch.";
   }
-  if (normalized.includes("pdf") || normalized.includes("document engine") || normalized.includes("table engine")) {
+  if (normalized.includes("pdf") || normalized.includes("excel") || normalized.includes("document engine") || normalized.includes("table engine") || normalized.includes("workbook engine")) {
     return "The report renderer did not initialize or return a complete file. Refresh the admin page if retrying does not resolve it.";
   }
-  return "The report was not downloaded. Retry once; if the issue persists, copy the technical detail below for investigation.";
+  return `The ${format === "pdf" ? "PDF" : "Excel workbook"} was not downloaded. Retry once; if the issue persists, copy the technical detail below for investigation.`;
 }
 
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
@@ -351,27 +361,30 @@ const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
     }
   }
 
-  if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1" || r.kycOccurred === true || (r as any).kyc_occurred === true) return "L1";
+  if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1") return "L1";
   if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
     for (const s of r.customerSessions) {
       const sKyc = String(s?.kycLevel || s?.kyc_level || "").toUpperCase().trim();
-      if (sKyc === "L1" || (s as any)?.kycOccurred === true) return "L1";
+      if (sKyc === "L1") return "L1";
     }
   }
 
-  if (kyc === "L0") return "L0";
-
-  const amt = Number(r.totalUsd || r.amountUsd || r.onChainAmountUsd || 0);
-  const status = String(r.status || "").toLowerCase();
-  if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
-    if (amt >= 100) return "L2";
-    if (amt >= 15) return "L1";
-  }
-
+  // A payment amount or KYC trigger does not prove verification completed.
+  // Only persisted receipt/session tiers are shown as verified.
   return "L0";
 };
 
-const isSettledStatus = (s?: string | null) => ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(String(s || "").toLowerCase());
+const isSettledStatus = (s?: string | null) => [
+  "paid",
+  "paid - ach pending",
+  "ach_pending",
+  "checkout_success",
+  "confirmed",
+  "tx_mined",
+  "reconciled",
+  "recipient_validated",
+  "receipt_claimed"
+].includes(String(s || "").toLowerCase());
 const isFailedStatus = (s?: string | null) => String(s || "").toLowerCase() === "failed";
 
 export function deduplicateReceipts<T extends Partial<ReceiptInfo> & Record<string, any>>(receiptList: T[]): {
@@ -548,6 +561,8 @@ function calculateReceiptStats(receipts: ReceiptInfo[]): Stat {
   let totalFailed = 0;
   let totalGmv = 0;
   let totalFees = 0;
+  let feeKnownCount = 0;
+  let feeUnknownCount = 0;
   const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
   const kycLevels = { none: 0, l1: 0, l2: 0 };
 
@@ -555,7 +570,15 @@ function calculateReceiptStats(receipts: ReceiptInfo[]): Stat {
     if (isSettledStatus(receipt.status)) {
       totalPaid += 1;
       totalGmv += Number(receipt.totalUsd || 0);
-      totalFees += Number(receipt.platformFee || 0);
+      const hasKnownFee = receipt.platformFeeSource
+        ? receipt.platformFeeSource !== "unavailable"
+        : typeof receipt.platformFee === "number";
+      if (hasKnownFee) {
+        totalFees += Number(receipt.platformFee || 0);
+        feeKnownCount += 1;
+      } else {
+        feeUnknownCount += 1;
+      }
       const funding = String(receipt.detectedCardFunding || receipt.cardFunding || receipt.funding || "").toLowerCase();
       if (["bank", "ach", "us_bank_account"].includes(funding)) cardTypes.bank += 1;
       else if (funding === "credit") cardTypes.credit += 1;
@@ -584,10 +607,38 @@ function calculateReceiptStats(receipts: ReceiptInfo[]): Stat {
     trueProcessRate: deduped.trueProcessRate,
     totalGmv: +totalGmv.toFixed(2),
     totalFees: +totalFees.toFixed(2),
+    feeKnownCount,
+    feeUnknownCount,
+    feeCoveragePct: totalPaid > 0 ? +((feeKnownCount / totalPaid) * 100).toFixed(1) : 100,
     aov: totalPaid > 0 ? +(totalGmv / totalPaid).toFixed(2) : 0,
     cardTypes,
     kycLevels
   };
+}
+
+function resolveReportBrandName(brandKey: string, rows: ReceiptInfo[]): string {
+  const normalizedKey = String(brandKey || "unknown").toLowerCase().trim();
+  const knownNames: Record<string, string> = {
+    basaltsurge: "BasaltSurge",
+    portalpay: "BasaltSurge",
+    aipowerpay: "AI PowerPay",
+    lucky13: "Lucky 13",
+    "data-opt": "Data-Opt",
+    dataopt: "Data-Opt",
+    xoinpay: "XoinPay"
+  };
+  if (knownNames[normalizedKey]) return knownNames[normalizedKey];
+
+  const candidate = rows
+    .map(row => String(row.brandName || "").trim())
+    .find(name => name && !["basaltsurge", "portalpay"].includes(name.toLowerCase()));
+  if (candidate) return candidate;
+
+  return normalizedKey
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ") || "Unknown";
 }
 
 function calculateBrandReportStats(receipts: ReceiptInfo[]): BrandStat[] {
@@ -603,7 +654,7 @@ function calculateBrandReportStats(receipts: ReceiptInfo[]): BrandStat[] {
     const stats = calculateReceiptStats(rows);
     return {
       brandKey,
-      brandName: rows.find(row => row.brandName)?.brandName || brandKey,
+      brandName: resolveReportBrandName(brandKey, rows),
       total: stats.totalCreated,
       paid: stats.totalPaid,
       failed: stats.totalFailed,
@@ -613,7 +664,10 @@ function calculateBrandReportStats(receipts: ReceiptInfo[]): BrandStat[] {
       dedupedTotal: stats.dedupedTotalCreated,
       dedupedPaid: stats.dedupedTotalPaid,
       dedupedFailed: stats.dedupedTotalFailed,
-      trueSuccessRate: stats.trueIntegrationRate
+      trueSuccessRate: stats.trueIntegrationRate,
+      feeKnownCount: stats.feeKnownCount,
+      feeUnknownCount: stats.feeUnknownCount,
+      feeCoveragePct: stats.feeCoveragePct
     };
   }).sort((a, b) => b.gmv - a.gmv);
 }
@@ -622,7 +676,7 @@ function calculateFailureReportReasons(receipts: ReceiptInfo[]): FailureReason[]
   const counts = new Map<string, number>();
   receipts.forEach(receipt => {
     if (!isFailedStatus(receipt.status)) return;
-    const reason = String(receipt.failureReason || "Abandoned / Closed Portal").trim() || "Unknown Error";
+    const reason = String(receipt.failureReason || "No recorded failure detail").trim() || "No recorded failure detail";
     counts.set(reason, (counts.get(reason) || 0) + 1);
   });
   return Array.from(counts, ([reason, count]) => ({ reason, count }))
@@ -1117,10 +1171,11 @@ export default function PlatformAnalyticsPanel() {
   const exportAbortRef = useRef<AbortController | null>(null);
   const [exportProgress, setExportProgress] = useState<number>(0);
 
-  // PDF Export Menu State
+  // Analytics report export state
   const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
-  const [isExportingPdf, setIsExportingPdf] = useState<boolean>(false);
-  const [exportError, setExportError] = useState<PdfExportError | null>(null);
+  const [isExportingReport, setIsExportingReport] = useState<boolean>(false);
+  const [activeExportFormat, setActiveExportFormat] = useState<AnalyticsReportFormat | null>(null);
+  const [exportError, setExportError] = useState<ReportExportError | null>(null);
 
   const [kycFilter, setKycFilter] = useState<string>("all");
   const [isCardFundingFlipped, setIsCardFundingFlipped] = useState<boolean>(false);
@@ -1666,8 +1721,8 @@ export default function PlatformAnalyticsPanel() {
   // Base Filter & Search Receipts (excluding selected combo)
   const baseFilteredReceipts = useMemo(() => {
     return recentReceipts.filter(r => {
-      const matchesBrand = selectedBrand === "all" || r.brandKey === selectedBrand;
-      const matchesStatus = statusFilter === "all" || r.status === statusFilter;
+      const matchesBrand = selectedBrand === "all" || String(r.brandKey || "").toLowerCase() === selectedBrand.toLowerCase();
+      const matchesStatus = statusFilter === "all" || String(r.status || "").toLowerCase() === statusFilter.toLowerCase();
 
       const q = searchQuery.toLowerCase().trim();
       const includes = (value?: string | null) => String(value || "").toLowerCase().includes(q);
@@ -1728,7 +1783,7 @@ export default function PlatformAnalyticsPanel() {
     if (N === 0) return { topReasons, matrix };
 
     baseFilteredReceipts.forEach(r => {
-      if (r.status !== "failed" && !r.failureReason) return;
+      if (!isFailedStatus(r.status) && !r.failureReason) return;
       
       const reasonsSet = new Set<string>();
       if (r.failureReason) {
@@ -1851,7 +1906,7 @@ export default function PlatformAnalyticsPanel() {
           totalPaid++;
           totalGmv += r.totalUsd;
           totalFees += r.platformFee || 0;
-        } else if (r.status === "failed") {
+        } else if (isFailedStatus(r.status)) {
           totalFailed++;
         }
 
@@ -1861,7 +1916,6 @@ export default function PlatformAnalyticsPanel() {
         else if (rawFunding === "credit") funding = "credit";
         else if (rawFunding === "debit") funding = "debit";
         else if (r.isCreditCard === true) funding = "credit";
-        else if (r.isCreditCard === false) funding = "debit";
         else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
           const pm = r.customerSessions[0]?.paymentMethodDetails;
           if (pm?.type === "us_bank_account") funding = "bank";
@@ -1991,7 +2045,6 @@ export default function PlatformAnalyticsPanel() {
       else if (rawFunding === "credit") funding = "credit";
       else if (rawFunding === "debit") funding = "debit";
       else if (r.isCreditCard === true) funding = "credit";
-      else if (r.isCreditCard === false) funding = "debit";
       else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
         const pm = r.customerSessions[0]?.paymentMethodDetails;
         if (pm?.type === "us_bank_account") funding = "bank";
@@ -2075,12 +2128,13 @@ export default function PlatformAnalyticsPanel() {
     }
   }, [searchMode]);
 
-  const handleExportPdf = useCallback(async (type: PdfReportType) => {
+  const handleExportReport = useCallback(async (type: AnalyticsReportType, format: AnalyticsReportFormat) => {
     exportAbortRef.current?.abort();
     const controller = new AbortController();
     exportAbortRef.current = controller;
     setExportError(null);
-    setIsExportingPdf(true);
+    setIsExportingReport(true);
+    setActiveExportFormat(format);
     setExportProgress(0);
     setIsExportMenuOpen(false);
     try {
@@ -2100,7 +2154,7 @@ export default function PlatformAnalyticsPanel() {
       });
 
       const reportReceipts = collected.receipts.filter(receipt => {
-        if (statusFilter !== "all" && receipt.status !== statusFilter) return false;
+        if (statusFilter !== "all" && String(receipt.status || "").toLowerCase() !== statusFilter.toLowerCase()) return false;
         if (kycFilter !== "all" && getKycLevel(receipt) !== kycFilter) return false;
         if (selectedErrorCombo) {
           const [reasonA, reasonB] = selectedErrorCombo.map(reason => reason.toLowerCase());
@@ -2125,35 +2179,50 @@ export default function PlatformAnalyticsPanel() {
       const searchLabel = appliedSearch
         ? `${searchModeLabel}: ${appliedSearch}`
         : "No search query";
-      const filterContext = `${dateRangeStr} | Brand: ${selectedBrand.toUpperCase()} | Status: ${statusFilter.toUpperCase()} | KYC: ${kycFilter.toUpperCase()} | Search: ${searchLabel} | TZ: ${timezoneLabel}`;
+      const partnerLabel = selectedBrand === "all"
+        ? "ALL"
+        : resolveReportBrandName(selectedBrand, reportReceipts);
+      const filterContext = `${dateRangeStr} | Partner: ${partnerLabel} | Status: ${statusFilter.toUpperCase()} | KYC: ${kycFilter.toUpperCase()} | Search: ${searchLabel} | TZ: ${timezoneLabel}`;
       setExportProgress(82);
 
-      if (type === "executive") {
+      if (format === "xlsx") {
+        await exportAnalyticsXLSX(
+          type,
+          reportStats,
+          reportBrandStats,
+          reportFailureReasons,
+          reportReceipts,
+          filterContext,
+          timezoneLabel
+        );
+      } else if (type === "executive") {
         await exportExecutiveSummaryPDF(reportStats, reportBrandStats, reportFailureReasons, filterContext);
       } else if (type === "ledger") {
         await exportTransactionLedgerPDF(reportReceipts, reportStats, searchLabel, filterContext, timezoneLabel);
       } else if (type === "brands") {
         await exportBrandFinancialPDF(reportBrandStats, reportStats, filterContext);
-      } else if (type === "diagnostics") {
+      } else {
         await exportFailureDiagnosticsPDF(reportFailureReasons, reportStats, reportReceipts, filterContext, timezoneLabel);
       }
       setExportProgress(100);
     } catch (err: any) {
       if (err?.name !== "AbortError") {
-        console.error("[PDF EXPORT ERROR]:", err);
+        console.error(`[${format.toUpperCase()} EXPORT ERROR]:`, err);
         const message = err?.message || "An unknown report generation error occurred.";
         setExportError({
           reportType: type,
-          reportName: PDF_REPORT_NAMES[type],
+          format,
+          reportName: REPORT_NAMES[type],
           message,
-          guidance: getPdfErrorGuidance(message),
+          guidance: getReportErrorGuidance(message, format),
           occurredAt: new Date().toISOString()
         });
       }
     } finally {
       if (exportAbortRef.current === controller) {
         exportAbortRef.current = null;
-        setIsExportingPdf(false);
+        setIsExportingReport(false);
+        setActiveExportFormat(null);
       }
     }
   }, [collectAnalyticsReceipts, timeRange, customStartDate, customEndDate, selectedBrand, statusFilter, kycFilter, selectedErrorCombo, timezoneMode, appliedSearch, searchModeLabel]);
@@ -2514,7 +2583,7 @@ export default function PlatformAnalyticsPanel() {
 
     baseFilteredReceipts.forEach(r => {
       if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) paidCount++;
-      else if (r.status === "failed") failedCount++;
+      else if (isFailedStatus(r.status)) failedCount++;
       else pendingCount++;
     });
 
@@ -2845,7 +2914,6 @@ export default function PlatformAnalyticsPanel() {
                 else if (rawFunding === "credit") funding = "credit";
                 else if (rawFunding === "debit") funding = "debit";
                 else if (r.isCreditCard === true) funding = "credit";
-                else if (r.isCreditCard === false) funding = "debit";
                 else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
                   const pm = r.customerSessions[0]?.paymentMethodDetails;
                   if (pm?.type === "us_bank_account") funding = "bank";
@@ -4034,20 +4102,20 @@ export default function PlatformAnalyticsPanel() {
                 <option value="all" className="bg-neutral-900">All Records (Batched)</option>
               </select>
 
-              {/* PDF Report Export Dropdown Menu */}
+              {/* Complete PDF and Excel report export menu */}
               <div className="relative">
                 <button
                   onClick={() => setIsExportMenuOpen(prev => !prev)}
-                  disabled={isExportingPdf}
+                  disabled={isExportingReport}
                   className="h-10 px-3.5 rounded-xl bg-gradient-to-r from-primary/20 via-purple-500/20 to-emerald-500/20 hover:from-primary/30 hover:to-emerald-500/30 border border-primary/40 text-xs font-bold text-white transition-all flex items-center gap-2 shadow-lg shadow-primary/10 active:scale-95 disabled:opacity-50"
-                  title="Export styled PDF analytics reports"
+                  title="Export complete analytics reports"
                 >
-                  {isExportingPdf ? (
+                  {isExportingReport ? (
                     <RefreshCw className="w-3.5 h-3.5 text-primary animate-spin" />
                   ) : (
                     <Download className="w-3.5 h-3.5 text-primary" />
                   )}
-                  <span>{isExportingPdf ? `Preparing ${exportProgress}%` : "Export PDF"}</span>
+                  <span>{isExportingReport ? `Preparing ${activeExportFormat?.toUpperCase() || "report"} ${exportProgress}%` : "Export Reports"}</span>
                   <ChevronDown className={`w-3.5 h-3.5 text-white/60 transition-transform ${isExportMenuOpen ? "rotate-180" : ""}`} />
                 </button>
 
@@ -4057,84 +4125,77 @@ export default function PlatformAnalyticsPanel() {
                       className="fixed inset-0 z-40"
                       onClick={() => setIsExportMenuOpen(false)}
                     />
-                    <div className="absolute right-0 top-12 z-50 w-72 rounded-2xl bg-zinc-950/95 border border-white/15 p-2 shadow-2xl backdrop-blur-2xl space-y-1 animate-in fade-in zoom-in-95 duration-150 text-left">
+                    <div className="absolute right-0 top-12 z-50 w-[min(92vw,25rem)] rounded-2xl bg-zinc-950/95 border border-white/15 p-2 shadow-2xl backdrop-blur-2xl space-y-1 animate-in fade-in zoom-in-95 duration-150 text-left">
                       <div className="px-3 py-2 border-b border-white/10">
                         <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-primary flex items-center gap-1.5">
                           <FileText className="w-3.5 h-3.5 text-primary" />
-                          <span>PDF Report Exporter</span>
+                          <span>Analytics Report Center</span>
                         </div>
                         <div className="text-[11px] text-muted-foreground mt-0.5">
-                          Generate high-grade telemetry and audit reports
+                          Each format uses the same complete, filtered, snapshot-pinned data set.
                         </div>
                       </div>
 
-                      <button
-                        onClick={() => handleExportPdf("executive")}
-                        className="w-full p-2.5 rounded-xl hover:bg-white/[0.08] transition-colors flex items-start gap-2.5 text-left group"
-                      >
-                        <div className="w-7 h-7 rounded-lg bg-blue-500/15 border border-blue-500/30 flex items-center justify-center shrink-0 mt-0.5 text-blue-400 group-hover:scale-105 transition-transform">
-                          <BarChart2 className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white group-hover:text-blue-300 transition-colors">
-                            Executive Summary Report
-                          </div>
-                          <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">
-                            High-level KPIs, GMV volume, platform fees, and brand distributions.
-                          </div>
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => handleExportPdf("ledger")}
-                        className="w-full p-2.5 rounded-xl hover:bg-white/[0.08] transition-colors flex items-start gap-2.5 text-left group"
-                      >
-                        <div className="w-7 h-7 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0 mt-0.5 text-emerald-400 group-hover:scale-105 transition-transform">
-                          <FileSpreadsheet className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white group-hover:text-emerald-300 transition-colors">
-                            Transaction Audit Ledger
-                          </div>
-                          <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">
-                            Receipts table of all current filtered records ({tableReceipts.length} rows).
-                          </div>
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => handleExportPdf("brands")}
-                        className="w-full p-2.5 rounded-xl hover:bg-white/[0.08] transition-colors flex items-start gap-2.5 text-left group"
-                      >
-                        <div className="w-7 h-7 rounded-lg bg-purple-500/15 border border-purple-500/30 flex items-center justify-center shrink-0 mt-0.5 text-purple-400 group-hover:scale-105 transition-transform">
-                          <Building2 className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white group-hover:text-purple-300 transition-colors">
-                            Brand Financial & Fee Report
-                          </div>
-                          <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">
-                            Multi-brand volume matrix, platform take-rate, and merchant payouts.
-                          </div>
-                        </div>
-                      </button>
-
-                      <button
-                        onClick={() => handleExportPdf("diagnostics")}
-                        className="w-full p-2.5 rounded-xl hover:bg-white/[0.08] transition-colors flex items-start gap-2.5 text-left group"
-                      >
-                        <div className="w-7 h-7 rounded-lg bg-rose-500/15 border border-rose-500/30 flex items-center justify-center shrink-0 mt-0.5 text-rose-400 group-hover:scale-105 transition-transform">
-                          <AlertCircle className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <div className="text-xs font-bold text-white group-hover:text-rose-300 transition-colors">
-                            Failure Diagnostics Report
-                          </div>
-                          <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">
-                            Error breakdown, drop-off matrix, and failure impact percentages.
+                      {([
+                        {
+                          type: "executive" as AnalyticsReportType,
+                          title: "Executive Analytics Brief",
+                          description: "Reconciled KPIs, partner performance, funding mix, failures, and quality controls.",
+                          Icon: BarChart2,
+                          iconClass: "bg-blue-500/15 border-blue-500/30 text-blue-400"
+                        },
+                        {
+                          type: "ledger" as AnalyticsReportType,
+                          title: "Transaction Audit Ledger",
+                          description: "Complete receipt-level audit data with identifiers, wallets, fees, and failure evidence.",
+                          Icon: FileSpreadsheet,
+                          iconClass: "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
+                        },
+                        {
+                          type: "brands" as AnalyticsReportType,
+                          title: "Partner Financial Performance",
+                          description: "Resolved partner names, conversion reconciliation, GMV, and recorded fee coverage.",
+                          Icon: Building2,
+                          iconClass: "bg-purple-500/15 border-purple-500/30 text-purple-400"
+                        },
+                        {
+                          type: "diagnostics" as AnalyticsReportType,
+                          title: "Failure Diagnostics",
+                          description: "Complete recorded reason distribution plus transaction-level evidence.",
+                          Icon: AlertCircle,
+                          iconClass: "bg-rose-500/15 border-rose-500/30 text-rose-400"
+                        }
+                      ]).map(({ type, title, description, Icon, iconClass }) => (
+                        <div key={type} className="rounded-xl p-2.5 transition-colors hover:bg-white/[0.05]">
+                          <div className="flex items-start gap-2.5">
+                            <div className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 mt-0.5 ${iconClass}`}>
+                              <Icon className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-bold text-white">{title}</div>
+                              <div className="text-[10px] text-muted-foreground leading-snug mt-0.5">{description}</div>
+                              <div className="flex items-center gap-2 mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleExportReport(type, "pdf")}
+                                  className="h-7 px-2.5 rounded-lg border border-primary/30 bg-primary/10 text-[10px] font-extrabold text-primary hover:bg-primary/20 transition-colors flex items-center gap-1.5"
+                                >
+                                  <FileText className="w-3 h-3" />
+                                  PDF
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleExportReport(type, "xlsx")}
+                                  className="h-7 px-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-extrabold text-emerald-300 hover:bg-emerald-500/20 transition-colors flex items-center gap-1.5"
+                                >
+                                  <FileSpreadsheet className="w-3 h-3" />
+                                  Excel
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </div>
-                      </button>
+                      ))}
                     </div>
                   </>
                 )}
@@ -6775,8 +6836,8 @@ export default function PlatformAnalyticsPanel() {
           className="fixed inset-0 z-[100000] flex items-center justify-center p-4 sm:p-6"
           role="alertdialog"
           aria-modal="true"
-          aria-labelledby="pdf-export-error-title"
-          aria-describedby="pdf-export-error-description"
+          aria-labelledby="report-export-error-title"
+          aria-describedby="report-export-error-description"
         >
           <button
             type="button"
@@ -6801,10 +6862,10 @@ export default function PlatformAnalyticsPanel() {
                       {new Date(exportError.occurredAt).toLocaleTimeString()}
                     </span>
                   </div>
-                  <h3 id="pdf-export-error-title" className="text-base font-extrabold tracking-tight text-white sm:text-lg">
-                    {exportError.reportName} was not downloaded
+                  <h3 id="report-export-error-title" className="text-base font-extrabold tracking-tight text-white sm:text-lg">
+                    {exportError.reportName} {exportError.format === "pdf" ? "PDF" : "workbook"} was not downloaded
                   </h3>
-                  <p id="pdf-export-error-description" className="mt-2 text-sm leading-relaxed text-white/65">
+                  <p id="report-export-error-description" className="mt-2 text-sm leading-relaxed text-white/65">
                     {exportError.guidance}
                   </p>
                 </div>
@@ -6824,13 +6885,13 @@ export default function PlatformAnalyticsPanel() {
                   <button
                     type="button"
                     onClick={() => handleCopy(
-                      `${exportError.reportName}\n${exportError.message}\n${exportError.occurredAt}`,
-                      "pdf-export-error"
+                      `${exportError.reportName} (${exportError.format.toUpperCase()})\n${exportError.message}\n${exportError.occurredAt}`,
+                      "report-export-error"
                     )}
                     className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] font-bold text-white/50 transition-colors hover:bg-white/[0.06] hover:text-white"
                   >
-                    {copySuccess["pdf-export-error"] ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-                    <span>{copySuccess["pdf-export-error"] ? "Copied" : "Copy"}</span>
+                    {copySuccess["report-export-error"] ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                    <span>{copySuccess["report-export-error"] ? "Copied" : "Copy"}</span>
                   </button>
                 </div>
                 <p className="break-words font-mono text-[11px] leading-relaxed text-rose-200/80">
@@ -6850,8 +6911,9 @@ export default function PlatformAnalyticsPanel() {
                   type="button"
                   onClick={() => {
                     const reportType = exportError.reportType;
+                    const format = exportError.format;
                     setExportError(null);
-                    void handleExportPdf(reportType);
+                    void handleExportReport(reportType, format);
                   }}
                   className="flex h-10 items-center justify-center gap-2 rounded-xl border border-primary/40 bg-gradient-to-r from-primary/25 via-purple-500/20 to-emerald-500/20 px-4 text-xs font-extrabold text-white shadow-lg shadow-primary/10 transition-all hover:border-primary/60 hover:from-primary/35 active:scale-[0.98]"
                 >
@@ -7089,7 +7151,7 @@ export default function PlatformAnalyticsPanel() {
                     </span>
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    How PortalPay clusters rapid checkout revisions to measure true buyer conversion.
+                    How BasaltSurge clusters rapid checkout revisions to measure true buyer conversion.
                   </p>
                 </div>
               </div>

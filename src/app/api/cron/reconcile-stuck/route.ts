@@ -11,6 +11,13 @@ import { readContract } from "thirdweb";
 import { base } from "thirdweb/chains";
 import { inAppWallet } from "thirdweb/wallets";
 import * as crypto from "node:crypto";
+import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
+import { dispatchReceiptStatusWebhook } from "@/lib/webhook-dispatch";
+import {
+  normalizeSettlementFunding,
+  resolveSettlementSplitAddress,
+  resolveStripeOnrampFunding,
+} from "@/lib/payment-split-routing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +51,46 @@ async function logCronError(errorDetails: {
   }
 }
 
+async function persistReceiptAndNotify(
+  container: any,
+  receipt: any,
+  nextStatus: string,
+  previousStatus: string,
+  source: Record<string, any> = {}
+): Promise<void> {
+  const transactionHash = source.transactionHash || receipt.transactionHash;
+  const shouldDeliver = previousStatus !== nextStatus ||
+    receipt.webhookLastStatus !== nextStatus ||
+    receipt.webhookLastDeliveryOk !== true ||
+    (transactionHash && receipt.webhookLastTransactionHash !== transactionHash);
+  if (receipt.webhookUrl && shouldDeliver) {
+    receipt.webhookLastStatus = nextStatus;
+    receipt.webhookLastPreviousStatus = previousStatus || "pending";
+    receipt.webhookLastDeliveryOk = false;
+    receipt.webhookLastAttemptAt = Date.now();
+    if (transactionHash) receipt.webhookLastTransactionHash = transactionHash;
+  }
+  await container.items.upsert(receipt);
+  if (!receipt.webhookUrl || !shouldDeliver) return;
+
+  const delivery = await dispatchReceiptStatusWebhook(receipt, nextStatus, previousStatus, {
+    ...source,
+    transactionHash,
+  });
+  await container.item(receipt.id, receipt.wallet).patch([
+    { op: "set", path: "/webhookLastStatus", value: nextStatus },
+    { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus || "pending" },
+    { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
+    { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
+    ...(transactionHash ? [{ op: "set" as const, path: "/webhookLastTransactionHash", value: transactionHash }] : []),
+    ...(delivery.statusCode ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }] : []),
+    { op: "set", path: "/webhookLastError", value: delivery.error || null },
+  ] as any);
+  if (!delivery.ok) {
+    throw new Error(`developer_webhook_delivery_failed:${delivery.error || delivery.statusCode}`);
+  }
+}
+
 export async function GET(req: NextRequest) {
   return POST(req);
 }
@@ -74,8 +121,10 @@ export async function POST(req: NextRequest) {
       } catch {}
     }
 
-    if ((envSecret && cronSecret === envSecret) || cronSecret === "default_cron_secret_temp_key_portalpay" || !envSecret) {
-      isAuthorized = true;
+    if (envSecret && cronSecret) {
+      const expected = Buffer.from(envSecret);
+      const provided = Buffer.from(cronSecret);
+      isAuthorized = expected.length === provided.length && crypto.timingSafeEqual(expected, provided);
     }
 
     if (!isAuthorized) {
@@ -120,7 +169,9 @@ export async function POST(req: NextRequest) {
     // 2. Fetch pending/failed receipts from Cosmos DB within the last 7 days that have a stripeSessionId
     const minTime = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const minTimeStr = new Date(minTime).toISOString();
-    const container = await getContainer();
+    // Reconciliation decisions are financial writes; use primary reads so a
+    // lagging replica cannot reintroduce stale receipt state.
+    const container = await getContainer(undefined, undefined, { profile: "critical" });
     
     let targetReceiptId = "";
     try {
@@ -233,8 +284,8 @@ export async function POST(req: NextRequest) {
             receipt.stripeSessionId = sessionId;
             receipt.customerEmail = receipt.customerEmail || receipt.email || null;
             receipt.onrampAmount = receipt.onrampAmount || receipt.totalUsd || event.transactionDetails?.sourceAmount || 0;
-            receipt.splitAddress = receipt.splitAddress || event.splitAddress;
-            receipt.splitAddressCredit = receipt.splitAddressCredit || null;
+            receipt.splitAddress = receipt.splitAddress || event.splitAddressPrimary || event.splitAddress;
+            receipt.splitAddressCredit = receipt.splitAddressCredit || event.splitAddressCredit || null;
             receipt.brandKey = receipt.brandKey || event.brandKey || "";
             
             await container.items.upsert(receipt);
@@ -263,6 +314,43 @@ export async function POST(req: NextRequest) {
     let skipped = 0;
     const results: any[] = [];
     const eligibleReceipts: any[] = [];
+
+    // Retry canonical status webhooks that were persisted but could not be
+    // delivered. Payment state and merchant notification are separate durable
+    // concerns: a transient merchant outage must not lose the notification.
+    try {
+      const retryQuery = {
+        query: "SELECT TOP 100 * FROM c WHERE c.type = 'receipt' AND c.webhookLastDeliveryOk = false AND IS_DEFINED(c.webhookUrl)",
+      };
+      const { resources: webhookRetries } = await container.items.query(retryQuery).fetchAll();
+      for (const retryReceipt of webhookRetries || []) {
+        const retryStatus = String(retryReceipt.webhookLastStatus || retryReceipt.status || "").trim();
+        if (!retryStatus) continue;
+
+        const previousStatus = String(retryReceipt.webhookLastPreviousStatus || retryReceipt.status || "pending");
+        const delivery = await dispatchReceiptStatusWebhook(retryReceipt, retryStatus, previousStatus, {
+          transactionHash: retryReceipt.webhookLastTransactionHash || retryReceipt.transactionHash,
+          merchantWallet: retryReceipt.wallet || retryReceipt.merchantWallet,
+          stripeSessionId: retryReceipt.stripeSessionId,
+          brandKey: retryReceipt.brandKey,
+        });
+        await container.item(retryReceipt.id, retryReceipt.wallet).patch([
+          { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
+          { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
+          ...(delivery.statusCode
+            ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
+            : []),
+          { op: "set", path: "/webhookLastError", value: delivery.error || null },
+        ] as any);
+        results.push({
+          receiptId: retryReceipt.receiptId || retryReceipt.id,
+          status: delivery.ok ? "webhook_retry_succeeded" : "webhook_retry_failed",
+        });
+      }
+    } catch (retryErr: any) {
+      console.error("[cron/reconcile-stuck] Developer webhook retry phase failed:", retryErr);
+      results.push({ status: "webhook_retry_phase_failed", error: retryErr?.message || String(retryErr) });
+    }
 
     // Phase 1: Stripe Polling & Failure handling (filters out receipts that aren't completed yet)
     for (const receipt of stuckReceipts) {
@@ -430,13 +518,22 @@ export async function POST(req: NextRequest) {
                            onrampData.transaction_details?.last_error === "location_not_supported" ||
                            onrampData.transaction_details?.last_error === "transaction_limit_reached";
 
-        const isCardFulfilled = !isAch && (stripeStatus === "fulfillment_complete" || stripeStatus === "fulfillment_processing");
-        const isReadyForTransfer = stripeStatus === "fulfillment_complete" || isCardFulfilled;
+        const isReadyForTransfer = stripeStatus === "fulfillment_complete";
 
         if (!isReadyForTransfer) {
           receipt.lastUpdatedAt = Date.now(); // Register the 1 hour polling cooldown
 
           if (isRejected || isExpired) {
+            if (isProtectedPaymentStatus(receipt.status)) {
+              await container.item(receipt.id, receipt.wallet).patch([
+                { op: "set", path: "/stripeSessionStatus", value: stripeStatus },
+                { op: "set", path: "/lastPolledAt", value: receipt.lastPolledAt },
+                { op: "set", path: "/lastUpdatedAt", value: receipt.lastUpdatedAt },
+              ] as any);
+              skipped++;
+              results.push({ receiptId, status: "skipped", reason: "already_settled" });
+              continue;
+            }
             console.warn(`[cron/reconcile-stuck] Definitively failing receipt ${receiptId}. Status: ${stripeStatus}, Expired: ${isExpired}`);
             
             receipt.status = "failed";
@@ -493,93 +590,87 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
-          // If Stripe session is fulfillment_processing, update status to paid (for card) or paid - ach pending (for ACH).
-          // NEVER downgrade or revert a receipt that is already marked 'paid' or 'paid - ach pending'.
           if (stripeStatus === "fulfillment_processing") {
-            const isSettled = receipt.status === "paid" || receipt.status === "checkout_success" || receipt.status === "reconciled";
-            if (!isSettled) {
-              const paymentDetailsType = String(onrampData.payment_details?.type || onrampData.payment_method_details?.type || "").toLowerCase();
-              const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
-              const isAchSession = paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach");
-              const targetStatus = isAchSession ? "paid - ach pending" : "paid";
+            const paymentDetailsType = String(onrampData.payment_details?.type || onrampData.payment_method_details?.type || "").toLowerCase();
+            const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
+            const isAchSession = isAch || paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach");
+            const targetStatus = isAchSession ? "paid - ach pending" : "paid";
+            const previousStatus = String(receipt.status || "pending");
 
-              if (receipt.status !== targetStatus) {
-                console.log(`[cron/reconcile-stuck] Updating receipt ${receiptId} status from '${receipt.status}' to '${targetStatus}' (Stripe status: ${stripeStatus})`);
-                receipt.status = targetStatus;
-                if (isAchSession) {
-                  receipt.detectedCardFunding = "us_bank_account";
-                } else {
-                  receipt.ttl = -1;
-                }
-                receipt.statusHistory = Array.isArray(receipt.statusHistory)
-                  ? [...receipt.statusHistory, { status: targetStatus, ts: Date.now() }]
-                  : [{ status: targetStatus, ts: Date.now() }];
+            receipt.checkoutStatus = stripeStatus;
+            receipt.checkoutStatusSource = "stripe_reconciler";
+            receipt.checkoutStatusUpdatedAt = Date.now();
+            receipt.stripeSessionStatus = stripeStatus;
+            receipt.lastUpdatedAt = Date.now();
+            if (previousStatus !== targetStatus && !isProtectedPaymentStatus(previousStatus)) {
+              receipt.status = targetStatus;
+              receipt.statusHistory = Array.isArray(receipt.statusHistory)
+                ? [...receipt.statusHistory, { status: targetStatus, ts: Date.now() }]
+                : [{ status: targetStatus, ts: Date.now() }];
+              if (isAchSession) {
+                receipt.detectedCardFunding = "us_bank_account";
+              } else {
+                receipt.ttl = -1;
               }
             }
+
+            if (receipt.status === targetStatus) {
+              await persistReceiptAndNotify(container, receipt, targetStatus, previousStatus, {
+                merchantWallet,
+                stripeSessionId: sessionId,
+                brandKey,
+              });
+            } else {
+              await container.items.upsert(receipt);
+            }
+
+            skipped++;
+            results.push({ receiptId, status: targetStatus, reason: "stripe_fulfillment_processing" });
+            continue;
           }
 
-          // Persist the polling details to database (lastPolledAt and stripeSessionStatus)
-          await container.items.upsert(receipt);
+          // Record provider progress without replacing canonical payment state.
+          // A full-document upsert here can replay a stale pending snapshot over
+          // a concurrent paid write.
+          await container.item(receipt.id, receipt.wallet).patch([
+            { op: "set", path: "/stripeSessionStatus", value: stripeStatus },
+            { op: "set", path: "/checkoutStatus", value: stripeStatus },
+            { op: "set", path: "/checkoutStatusSource", value: "stripe_reconciler" },
+            { op: "set", path: "/checkoutStatusUpdatedAt", value: Date.now() },
+            { op: "set", path: "/lastPolledAt", value: receipt.lastPolledAt },
+            { op: "set", path: "/lastUpdatedAt", value: receipt.lastUpdatedAt },
+          ] as any);
 
           skipped++;
           results.push({ receiptId, status: "skipped", reason: `stripe_status_${stripeStatus}` });
           continue;
         }
 
-        // Verify card funding type
-        const paymentDetailsType = String(onrampData.payment_details?.type || onrampData.payment_method_details?.type || "").toLowerCase();
-        const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
-        const cardFundingDetail = String(onrampData.payment_details?.card?.funding || "").toLowerCase();
-        let cardFunding = receipt.detectedCardFunding || "";
-        if (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
-          cardFunding = "us_bank_account";
-        } else if (cardFundingDetail) {
-          cardFunding = cardFundingDetail;
-        } else if (paymentMethod.includes("debit")) {
-          cardFunding = "debit";
-        } else if (paymentMethod.includes("credit")) {
-          cardFunding = "credit";
-        }
-
-        if (!cardFunding && Array.isArray(receipt.customerSessions)) {
+        // Prefer Stripe's completed session, then the persisted session funding.
+        let persistedFunding = receipt.detectedCardFunding || "";
+        if (!persistedFunding && Array.isArray(receipt.customerSessions)) {
           for (const s of receipt.customerSessions) {
             const funding = s.paymentMethodDetails?.card?.funding;
             if (funding) {
-              cardFunding = funding;
+              persistedFunding = funding;
               break;
             }
           }
         }
+        const cardFunding = resolveStripeOnrampFunding(
+          onrampData,
+          persistedFunding,
+          receipt.isCreditCard === true
+        );
 
-        const isCredit = cardFunding === "us_bank_account" || cardFunding === "credit" || receipt.isCreditCard === true;
-
-        // Resolve target split address
-        let targetSplitAddress = "";
-        try {
-          const eventQuery = {
-            query: "SELECT * FROM c WHERE c.type = 'payment_event_stripe_onramp' AND c.sessionId = @sessionId AND c.status = 'fulfillment_complete'",
-            parameters: [{ name: "@sessionId", value: sessionId }]
-          };
-          const { resources: events } = await container.items.query(eventQuery).fetchAll();
-          const eventDoc = events?.[0];
-          if (eventDoc && eventDoc.splitAddress) {
-            targetSplitAddress = eventDoc.splitAddress;
-            console.log(`[cron/reconcile-stuck] Resolved target split address from Stripe webhook event: ${targetSplitAddress}`);
-          }
-        } catch (eventErr) {
-          console.warn(`[cron/reconcile-stuck] Failed to query webhook event for split address:`, eventErr);
-        }
-
-        if (!targetSplitAddress || targetSplitAddress === merchantWallet) {
-          const isCreditCardType = cardFunding === "credit" || isCredit;
-          const isDual = !!splitAddressCredit && splitAddressCredit !== splitAddress;
-          
-          if (isDual && !isCreditCardType && splitAddressCredit) {
-            targetSplitAddress = splitAddressCredit;
-          } else {
-            targetSplitAddress = splitAddress || merchantWallet;
-          }
-        }
+        // Never trust an older event's preselected address here. Recompute from
+        // authoritative funding so every recovery path uses the same inversion.
+        const targetSplitAddress = resolveSettlementSplitAddress({
+          funding: cardFunding,
+          splitAddress,
+          splitAddressCredit,
+          fallbackAddress: merchantWallet,
+        });
 
         // Add to eligible candidates list for Phase 2 processing
         eligibleReceipts.push({
@@ -594,8 +685,7 @@ export async function POST(req: NextRequest) {
           brandTwClient,
           authEndpointSecret,
           onrampData,
-          cardFunding,
-          isCredit
+          cardFunding
         });
 
       } catch (err: any) {
@@ -716,6 +806,7 @@ export async function POST(req: NextRequest) {
             // Update all receipts in this sub-group to paid
             for (const er of subGroupReceipts) {
               const r = er.receipt;
+              const previousStatus = String(r.status || "pending");
               r.status = "paid";
               r.transactionHash = txHash;
               r.transactionTimestamp = Date.now();
@@ -731,9 +822,7 @@ export async function POST(req: NextRequest) {
                 const { readBrandOverridesCached } = await import("@/lib/brand-config");
                 const siteConfig = await getSiteConfigForWallet(er.merchantWallet, er.brandKey);
                 const brandConfigDoc = er.brandKey ? await readBrandOverridesCached(er.brandKey) : null;
-                const funding = (er.cardFunding === "credit" || er.isCredit === true)
-                  ? "credit"
-                  : (er.cardFunding === "us_bank_account" ? "us_bank_account" : "debit");
+                const funding = normalizeSettlementFunding(er.cardFunding, r.isCreditCard === true);
                 
                 if (siteConfig) {
                   finalReceipt = recalculateReceiptForCardFunding(r, funding, siteConfig, brandConfigDoc);
@@ -742,7 +831,12 @@ export async function POST(req: NextRequest) {
                 console.error(`[cron/reconcile-stuck] Recalc error for ${er.receiptId}:`, recalcErr);
               }
 
-              await container.items.upsert(finalReceipt);
+              await persistReceiptAndNotify(container, finalReceipt, "paid", previousStatus, {
+                transactionHash: txHash,
+                merchantWallet: er.merchantWallet,
+                stripeSessionId: er.sessionId,
+                brandKey: er.brandKey,
+              });
               succeeded++;
 
               // Send confirmation email
@@ -816,6 +910,7 @@ export async function POST(req: NextRequest) {
 
             // Check Base RPC on-chain logs directly if DB self-healing has no matches
             let onChainTxHashFound = "";
+            let onChainLeg2Amount = 0;
             let onChainLeg1TxHash = "";
             if (guestAddress) {
               try {
@@ -823,6 +918,7 @@ export async function POST(req: NextRequest) {
                 const rpc = getRpcClient({ client: brandTwClient, chain: base });
                 const usdcTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
                 const guestTopic = "0x000000000000000000000000" + guestAddress.toLowerCase().replace(/^0x/, "");
+                const splitTopic = "0x000000000000000000000000" + targetSplitAddress.toLowerCase().replace(/^0x/, "");
                 
                 let fromBlockBigInt: bigint | undefined;
                 try {
@@ -836,7 +932,7 @@ export async function POST(req: NextRequest) {
                 // Leg 2 (OUT from guest EOA to merchant split)
                 const leg2Params: any = {
                   address: BASE_USDC_ADDRESS as `0x${string}`,
-                  topics: [usdcTopic as `0x${string}`, guestTopic as `0x${string}`],
+                  topics: [usdcTopic as `0x${string}`, guestTopic as `0x${string}`, splitTopic as `0x${string}`],
                 };
                 if (fromBlockBigInt !== undefined) {
                   leg2Params.fromBlock = fromBlockBigInt;
@@ -848,7 +944,8 @@ export async function POST(req: NextRequest) {
                   const latestLog = leg2Logs[leg2Logs.length - 1];
                   if (latestLog && latestLog.transactionHash) {
                     onChainTxHashFound = latestLog.transactionHash;
-                    console.log(`[cron/reconcile-stuck] Recovered Leg 2 on-chain transaction hash from Base logs: ${onChainTxHashFound}`);
+                    onChainLeg2Amount = latestLog.data ? Number(BigInt(latestLog.data)) / 1_000_000 : 0;
+                    console.log(`[cron/reconcile-stuck] Recovered Leg 2 transaction to expected split: ${onChainTxHashFound} ($${onChainLeg2Amount})`);
                   }
                 }
 
@@ -926,6 +1023,7 @@ export async function POST(req: NextRequest) {
 
                     for (const er of subGroupReceipts) {
                       const r = er.receipt;
+                      const previousStatus = String(r.status || "pending");
                       r.status = "paid";
                       r.transactionHash = txHash;
                       r.transactionTimestamp = txTimestamp;
@@ -941,9 +1039,7 @@ export async function POST(req: NextRequest) {
                         const { readBrandOverridesCached } = await import("@/lib/brand-config");
                         const siteConfig = await getSiteConfigForWallet(er.merchantWallet, er.brandKey);
                         const brandConfigDoc = er.brandKey ? await readBrandOverridesCached(er.brandKey) : null;
-                        const funding = (er.cardFunding === "credit" || er.isCredit === true)
-                          ? "credit"
-                          : (er.cardFunding === "us_bank_account" ? "us_bank_account" : "debit");
+                        const funding = normalizeSettlementFunding(er.cardFunding, r.isCreditCard === true);
                         
                         if (siteConfig) {
                           finalReceipt = recalculateReceiptForCardFunding(r, funding, siteConfig, brandConfigDoc);
@@ -952,7 +1048,12 @@ export async function POST(req: NextRequest) {
                         console.error(`[cron/reconcile-stuck] Recalc error for ${er.receiptId}:`, recalcErr);
                       }
 
-                      await container.items.upsert(finalReceipt);
+                      await persistReceiptAndNotify(container, finalReceipt, "paid", previousStatus, {
+                        transactionHash: txHash,
+                        merchantWallet: er.merchantWallet,
+                        stripeSessionId: er.sessionId,
+                        brandKey: er.brandKey,
+                      });
                       succeeded++;
 
                       // Send email confirmation
@@ -1008,10 +1109,11 @@ export async function POST(req: NextRequest) {
               }
             }
 
-            if (!healed && onChainTxHashFound) {
+            if (!healed && onChainTxHashFound && onChainLeg2Amount >= totalAmount * 0.95) {
               console.log(`[cron/reconcile-stuck] Self-healing receipt using recovered Base RPC txHash (Leg 2: ${onChainTxHashFound}, Leg 1: ${onChainLeg1TxHash || "N/A"})`);
               for (const er of subGroupReceipts) {
                 const r = er.receipt;
+                const previousStatus = String(r.status || "pending");
                 r.status = "paid";
                 r.transactionHash = onChainTxHashFound;
                 r.leg2TxHash = onChainTxHashFound;
@@ -1032,15 +1134,18 @@ export async function POST(req: NextRequest) {
                   const { readBrandOverridesCached } = await import("@/lib/brand-config");
                   const siteConfig = await getSiteConfigForWallet(er.merchantWallet, er.brandKey);
                   const brandConfigDoc = er.brandKey ? await readBrandOverridesCached(er.brandKey) : null;
-                  const funding = (er.cardFunding === "credit" || er.isCredit === true)
-                    ? "credit"
-                    : (er.cardFunding === "us_bank_account" ? "us_bank_account" : "debit");
+                  const funding = normalizeSettlementFunding(er.cardFunding, r.isCreditCard === true);
                   if (siteConfig) {
                     finalReceipt = recalculateReceiptForCardFunding(r, funding, siteConfig, brandConfigDoc);
                   }
                 } catch {}
 
-                await container.items.upsert(finalReceipt);
+                await persistReceiptAndNotify(container, finalReceipt, "paid", previousStatus, {
+                  transactionHash: onChainTxHashFound,
+                  merchantWallet: er.merchantWallet,
+                  stripeSessionId: er.sessionId,
+                  brandKey: er.brandKey,
+                });
                 succeeded++;
                 results.push({ receiptId: er.receiptId, status: "success", txHash: onChainTxHashFound, note: "reconciled_via_base_rpc_logs" });
               }
@@ -1066,7 +1171,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Phase 3: Proactive User Wallet Balance Sweeper (Check recent user custom auth wallets via free read-only RPC)
+    // Phase 3: Proactive wallet recovery. This path is intentionally strict:
+    // never assign a balance to a receipt using email alone, and never sweep an
+    // unbounded balance unless exactly one completed Stripe session identifies
+    // the receipt.
     try {
       const userScanQuery = {
         query: "SELECT TOP 50 c.wallet, c.contact.email, c.brandKey FROM c WHERE c.type = 'user' AND IS_DEFINED(c.wallet) AND IS_DEFINED(c.contact.email) AND (c.lastSeen > @minTime OR c.firstSeen > @minTime)",
@@ -1091,41 +1199,88 @@ export async function POST(req: NextRequest) {
 
           if (uBalance > BigInt(0)) {
             console.log(`[cron/reconcile-stuck] Phase 3 proactive sweeper found un-swept ${uBalance.toString()} units in user wallet ${uWallet} (${uEmail})`);
-            
+
             const rQuery = {
-              query: "SELECT TOP 1 * FROM c WHERE c.type = 'receipt' AND (c.customerEmail = @email OR c.email = @email) AND (c.status != 'paid' AND c.status != 'checkout_success')",
-              parameters: [{ name: "@email", value: uEmail }]
+              query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.customerEmail = @email OR c.email = @email) AND IS_DEFINED(c.stripeSessionId) AND (NOT IS_DEFINED(c.transactionHash) OR c.transactionHash = null OR c.transactionHash = '' OR c.transactionHash = 'ecommerce_pending') AND c.brandKey = @brandKey",
+              parameters: [
+                { name: "@email", value: uEmail },
+                { name: "@brandKey", value: uBrand }
+              ]
             };
             const { resources: pendingR } = await container.items.query(rQuery).fetchAll();
-            let targetSplit = "";
-            let matchedReceipt = pendingR?.[0];
-
-            if (matchedReceipt) {
-              targetSplit = matchedReceipt.splitAddress || matchedReceipt.splitAddressCredit || matchedReceipt.wallet;
-            } else {
-              const defaultSiteConfig = await getSiteConfigForWallet(undefined, uBrand);
-              targetSplit = defaultSiteConfig?.splitAddress || defaultSiteConfig?.split?.address || "";
+            if (!pendingR || pendingR.length !== 1) {
+              console.warn(`[cron/reconcile-stuck] Refusing proactive sweep for ${uEmail}: expected one receipt candidate, found ${pendingR?.length || 0}.`);
+              continue;
             }
 
-            if (targetSplit) {
-              const sweepTx = await executeGaslessTransferServer(
-                uEmail,
-                targetSplit,
-                0, // sweepAll
-                uBrand,
-                true
-              );
-
-              if (sweepTx && matchedReceipt) {
-                matchedReceipt.status = "paid";
-                matchedReceipt.transactionHash = sweepTx;
-                matchedReceipt.transactionTimestamp = Date.now();
-                matchedReceipt.lastUpdatedAt = Date.now();
-                matchedReceipt.ttl = -1;
-                await container.items.upsert(matchedReceipt);
-                succeeded++;
-                results.push({ receiptId: matchedReceipt.id, status: "success", txHash: sweepTx, note: "proactive_user_wallet_sweep" });
+            const matchedReceipt = pendingR[0];
+            const stripeSessionId = String(matchedReceipt.stripeSessionId || "");
+            const stripeResponse = await fetch(
+              `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(stripeSessionId)}`,
+              {
+                method: "GET",
+                headers: {
+                  "Authorization": `Bearer ${stripeKey}`,
+                  "Stripe-Version": STRIPE_API_VERSION,
+                },
               }
+            );
+            if (!stripeResponse.ok) continue;
+
+            const stripeSession = await stripeResponse.json();
+            const matchedReceiptId = String(matchedReceipt.receiptId || matchedReceipt.id || "").replace(/^receipt:/, "").toLowerCase();
+            const stripeReceiptId = String(stripeSession.metadata?.receiptId || "").replace(/^receipt:/, "").toLowerCase();
+            const stripeWallet = String(stripeSession.transaction_details?.wallet_address || stripeSession.wallet_address || "").toLowerCase();
+            if (stripeSession.status !== "fulfillment_complete" ||
+                (stripeReceiptId && stripeReceiptId !== matchedReceiptId) ||
+                (stripeWallet && stripeWallet !== uWallet)) {
+              console.warn(`[cron/reconcile-stuck] Proactive sweep binding check failed for ${matchedReceipt.id}.`);
+              continue;
+            }
+
+            const recoveredFunding = resolveStripeOnrampFunding(
+              stripeSession,
+              matchedReceipt.detectedCardFunding,
+              matchedReceipt.isCreditCard === true
+            );
+            const targetSplit = resolveSettlementSplitAddress({
+              funding: recoveredFunding,
+              splitAddress: matchedReceipt.splitAddress,
+              splitAddressCredit: matchedReceipt.splitAddressCredit,
+            });
+            const receiptAmount = Number(matchedReceipt.onrampAmount || matchedReceipt.totalUsd || 0);
+            if (!/^0x[a-f0-9]{40}$/i.test(targetSplit) || receiptAmount <= 0 || Number(uBalance) / 1_000_000 < receiptAmount * 0.95) {
+              continue;
+            }
+
+            const sweepTx = await executeGaslessTransferServer(
+              uEmail,
+              targetSplit,
+              receiptAmount,
+              uBrand,
+              false
+            );
+
+            if (sweepTx) {
+              const previousStatus = String(matchedReceipt.status || "pending");
+              matchedReceipt.status = "paid";
+              matchedReceipt.transactionHash = sweepTx;
+              matchedReceipt.detectedCardFunding = recoveredFunding;
+              matchedReceipt.isCreditCard = recoveredFunding === "credit";
+              matchedReceipt.transactionTimestamp = Date.now();
+              matchedReceipt.lastUpdatedAt = Date.now();
+              matchedReceipt.ttl = -1;
+              matchedReceipt.statusHistory = Array.isArray(matchedReceipt.statusHistory)
+                ? [...matchedReceipt.statusHistory, { status: "paid", ts: Date.now() }]
+                : [{ status: "paid", ts: Date.now() }];
+              await persistReceiptAndNotify(container, matchedReceipt, "paid", previousStatus, {
+                transactionHash: sweepTx,
+                merchantWallet: matchedReceipt.wallet,
+                stripeSessionId,
+                brandKey: uBrand,
+              });
+              succeeded++;
+              results.push({ receiptId: matchedReceipt.id, status: "success", txHash: sweepTx, note: "verified_proactive_user_wallet_sweep" });
             }
           }
         } catch (userSweepErr) {

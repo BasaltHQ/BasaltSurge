@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth } from "@/lib/auth";
-import { isPlatformSuperAdmin } from "@/lib/authz";
+import { resolveAdminRole } from "@/lib/authz-server";
 import { getBrandKey } from "@/config/brands";
 import { POST as runAutoclose } from "../../cron/autoclose/route";
+import { resolveSettlementSplitAddress, resolveStripeOnrampFunding } from "@/lib/payment-split-routing";
+import {
+  getTimestampMs,
+  needsReceiptSettlement,
+  normalizeAutocloseBrandKey,
+  parseAutocloseBrandKeys,
+} from "@/lib/autoclose-policy";
+import { dispatchReceiptStatusWebhook } from "@/lib/webhook-dispatch";
+import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -16,24 +25,28 @@ export async function GET(req: NextRequest) {
     }
 
     // 2. Resolve brand context
-    const brandKey = getBrandKey(req);
-    if (!brandKey) {
+    const rawBrandKey = getBrandKey(req);
+    if (!rawBrandKey) {
       return NextResponse.json({ error: "No brand context found" }, { status: 500 });
     }
-
-    const isPlatform = brandKey === "portalpay" || brandKey === "basaltsurge";
+    const brandKey = normalizeAutocloseBrandKey(rawBrandKey);
+    const adminRole = await resolveAdminRole(caller.wallet, brandKey);
+    if (!adminRole) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const isPlatform = adminRole.startsWith("platform_");
 
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action");
     if (action === "inspect") {
       const brandsParam = searchParams.get("brands") || "";
-      const selectedBrands = brandsParam.split(",").map(b => b.trim().toLowerCase()).filter(Boolean);
+      const selectedBrands = isPlatform ? parseAutocloseBrandKeys(brandsParam) : [brandKey];
       if (selectedBrands.length === 0) {
         return NextResponse.json({ ok: true, splitsCount: 0, balances: { USDC: 0, USDT: 0, ETH: 0 }, totalUsdcEquivalent: 0 });
       }
 
       // Query site configs to find splits for these brands
-      const siteConfigContainer = await getContainer();
+      const siteConfigContainer = await getContainer(undefined, undefined, { profile: "critical" });
       const querySpec = {
         query: "SELECT c.id, c.brandKey, c.config, c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.splitHistory FROM c WHERE c.type = 'site_config' OR c.type = 'wallet_config' OR c.type = 'client_request'",
       };
@@ -49,10 +62,7 @@ export async function GET(req: NextRequest) {
           const match = /^site:config:(.+)$/.exec(doc.id);
           if (match) docBrand = match[1];
         }
-        docBrand = String(docBrand || "").trim().toLowerCase();
-        if (!docBrand || docBrand === "portalpay") {
-          docBrand = "basaltsurge";
-        }
+        docBrand = normalizeAutocloseBrandKey(docBrand);
 
         if (selectedBrands.includes(docBrand)) {
           const addMapping = (addr: any) => {
@@ -91,34 +101,48 @@ export async function GET(req: NextRequest) {
         "000000000000000000000000" + addr.replace(/^0x/, "");
 
       const erc20BalanceOf = async (token: string, targetWallet: string): Promise<bigint> => {
-        try {
-          const data = ("0x70a08231" + addrToTopic(targetWallet)) as `0x${string}`;
-          const { eth_call } = await import("thirdweb/rpc");
-          const r = await eth_call(rpc, { to: token as `0x${string}`, data });
-          const h = (String(r || "0x0")).startsWith("0x") ? String(r) : ("0x" + String(r));
-          return BigInt(h);
-        } catch {
-          return BigInt(0);
-        }
+        const data = ("0x70a08231" + addrToTopic(targetWallet)) as `0x${string}`;
+        const { eth_call } = await import("thirdweb/rpc");
+        const r = await eth_call(rpc, { to: token as `0x${string}`, data });
+        const h = (String(r || "0x0")).startsWith("0x") ? String(r) : ("0x" + String(r));
+        return BigInt(h);
       };
 
       let totalUsdc = BigInt(0);
       let totalUsdt = BigInt(0);
       let totalEth = BigInt(0);
+      const inspectionErrors: Array<{ splitAddress: string; error: string }> = [];
 
       // Check balances in parallel
       await Promise.all(
         uniqueSplits.map(async (splitAddr) => {
-          const [usdcBal, usdtBal, ethWei] = await Promise.all([
-            erc20BalanceOf(USDC, splitAddr),
-            erc20BalanceOf(USDT, splitAddr),
-            eth_getBalance(rpc, { address: splitAddr as `0x${string}` }).catch(() => "0x0").then(BigInt)
-          ]);
-          totalUsdc += usdcBal;
-          totalUsdt += usdtBal;
-          totalEth += ethWei;
+          try {
+            const [usdcBal, usdtBal, ethWei] = await Promise.all([
+              erc20BalanceOf(USDC, splitAddr),
+              erc20BalanceOf(USDT, splitAddr),
+              eth_getBalance(rpc, { address: splitAddr as `0x${string}` }).then(BigInt),
+            ]);
+            totalUsdc += usdcBal;
+            totalUsdt += usdtBal;
+            totalEth += ethWei;
+          } catch (error: any) {
+            inspectionErrors.push({ splitAddress: splitAddr, error: error?.message || String(error) });
+          }
         })
       );
+
+      if (inspectionErrors.length > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "One or more split balances could not be verified",
+            splitsCount: uniqueSplits.length,
+            failedSplits: inspectionErrors.length,
+            inspectionErrors,
+          },
+          { status: 502 }
+        );
+      }
 
       // Format balances
       const usdcFormatted = Number(totalUsdc) / 1e6;
@@ -143,7 +167,7 @@ export async function GET(req: NextRequest) {
 
     // 3. Query the runs from Cosmos DB
     // Partition key is the SCA address: 0x6c28067a2D4F10013FbBb8534aCd76Ab43A4fF9f
-    const container = await getContainer(undefined, "autoclose_runs");
+    const container = await getContainer(undefined, "autoclose_runs", { profile: "critical" });
     const querySpec = {
       query: `SELECT * FROM c WHERE c.type = 'autoclose_run' ORDER BY c.timestamp DESC`,
     };
@@ -154,7 +178,7 @@ export async function GET(req: NextRequest) {
     // 4. Query pending ACH transactions
     let pendingAch: any[] = [];
     try {
-      const containerEvents = await getContainer(undefined, "payportal_events");
+      const containerEvents = await getContainer(undefined, "payportal_events", { profile: "critical" });
       const achQuery = {
         query: `SELECT c.receiptId, c.wallet, c.totalUsd, c.status, c.createdAt, c.lastPolledAt, c.stripeSessionStatus, c.brandName, c.brandKey FROM c WHERE c.type = 'receipt' AND (c.status = 'paid - ach pending' OR c.status = 'ach_pending') ORDER BY c.createdAt DESC`
       };
@@ -164,7 +188,7 @@ export async function GET(req: NextRequest) {
       // Filter by brandKey if not platform
       if (!isPlatform) {
         pendingAch = pendingAch.filter(
-          (r: any) => String(r.brandKey || "").toLowerCase() === brandKey.toLowerCase()
+          (r: any) => normalizeAutocloseBrandKey(r.brandKey) === brandKey
         );
       }
     } catch (achErr) {
@@ -172,16 +196,19 @@ export async function GET(req: NextRequest) {
     }
 
     // 5. Map and filter runs depending on partner or platform context
-    const filteredRuns = runsList.map((run: any) => {
+    const filteredRuns = runsList.flatMap((run: any) => {
       if (isPlatform) {
         // Platform views see all details
-        return run;
+        return [run];
       }
 
       // Partner views see only distributions associated with their brandKey
       const brandDistributions = (run.distributions || []).filter(
-        (d: any) => String(d.brandKey || "").toLowerCase() === brandKey.toLowerCase()
+        (d: any) => normalizeAutocloseBrandKey(d.brandKey) === brandKey
       );
+
+      const runBelongsToBrand = normalizeAutocloseBrandKey(run.brandKey) === brandKey;
+      if (!runBelongsToBrand && brandDistributions.length === 0) return [];
 
       // Re-calculate statistics for the partner's merchant distributions
       const succeeded = brandDistributions.filter((d: any) => d.status === "success").length;
@@ -195,19 +222,22 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      return {
+      return [{
         ...run,
         processedSplits,
         succeeded,
         failed,
         totals,
         distributions: brandDistributions,
-      };
+      }];
     });
 
-    let allBrands: string[] = [];
+    let allBrands: string[] = isPlatform ? [] : [brandKey];
     try {
-      const siteConfigContainer = await getContainer();
+      if (!isPlatform) {
+        return NextResponse.json({ ok: true, runs: filteredRuns, pendingAch, allBrands });
+      }
+      const siteConfigContainer = await getContainer(undefined, undefined, { profile: "critical" });
       const brandsQuery = {
         query: "SELECT DISTINCT VALUE c.brandKey FROM c WHERE c.type = 'site_config'"
       };
@@ -238,6 +268,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const requestBrandKey = normalizeAutocloseBrandKey(getBrandKey(req));
+    const adminRole = await resolveAdminRole(caller.wallet, requestBrandKey);
+    if (!adminRole) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const isPlatformAdmin = adminRole.startsWith("platform_");
+
     const body = await req.json().catch(() => ({}));
     const action = body?.action;
 
@@ -247,13 +284,19 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Missing receiptId" }, { status: 400 });
       }
 
-      const containerEvents = await getContainer(undefined, "payportal_events");
+      const containerEvents = await getContainer(undefined, "payportal_events", { profile: "critical" });
       const querySpec = {
         query: "SELECT * FROM c WHERE c.type = 'receipt' AND c.receiptId = @receiptId",
         parameters: [{ name: "@receiptId", value: receiptId }]
       };
       const { resources } = await containerEvents.items.query(querySpec).fetchAll();
-      const receipt = resources?.[0];
+      const matchingReceipts = (resources || []).filter(
+        (candidate: any) => isPlatformAdmin || normalizeAutocloseBrandKey(candidate.brandKey) === requestBrandKey
+      );
+      if (matchingReceipts.length > 1) {
+        return NextResponse.json({ error: "Receipt ID is ambiguous across merchants" }, { status: 409 });
+      }
+      const receipt = matchingReceipts[0];
       if (!receipt) {
         return NextResponse.json({ error: "Receipt not found" }, { status: 404 });
       }
@@ -288,6 +331,26 @@ export async function POST(req: NextRequest) {
       const onrampData = await stripeRes.json();
       const stripeStatus = onrampData.status;
 
+      const expectedReceiptId = String(receipt.receiptId || receipt.id || "")
+        .replace(/^receipt:/, "")
+        .toLowerCase();
+      const stripeReceiptId = String(onrampData.metadata?.receiptId || "")
+        .replace(/^receipt:/, "")
+        .toLowerCase();
+      if (stripeReceiptId && stripeReceiptId !== expectedReceiptId) {
+        return NextResponse.json({ error: "Stripe metadata does not match this receipt" }, { status: 409 });
+      }
+      const receiptMerchantWallet = String(receipt.wallet || "").trim().toLowerCase();
+      if (!/^0x[a-f0-9]{40}$/i.test(receiptMerchantWallet)) {
+        return NextResponse.json({ error: "Receipt merchant wallet is invalid" }, { status: 409 });
+      }
+      const stripeMerchantWallet = String(
+        onrampData.metadata?.merchantWallet || onrampData.metadata?.wallet || ""
+      ).trim().toLowerCase();
+      if (stripeMerchantWallet && stripeMerchantWallet !== receiptMerchantWallet) {
+        return NextResponse.json({ error: "Stripe metadata does not match this merchant" }, { status: 409 });
+      }
+
       try {
         const { enrichReceiptFromStripeData } = await import("@/lib/receipts");
         enrichReceiptFromStripeData(receipt, onrampData);
@@ -306,7 +369,8 @@ export async function POST(req: NextRequest) {
                     ));
 
       const expirationLimit = isAch ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-      const isExpired = Date.now() - (receipt.createdAt || 0) > expirationLimit;
+      const receiptCreatedAt = getTimestampMs(receipt.createdAt);
+      const isExpired = receiptCreatedAt > 0 && Date.now() - receiptCreatedAt > expirationLimit;
       const isRejected = stripeStatus === "rejected" || 
                          onrampData.transaction_details?.last_error === "transaction_failed" ||
                          onrampData.transaction_details?.last_error === "location_not_supported" ||
@@ -314,12 +378,31 @@ export async function POST(req: NextRequest) {
 
       let swept = false;
       let txHash: string | null = null;
+      let webhookPreviousStatus = String(receipt.status || "pending");
 
-      if (stripeStatus === "fulfillment_complete" && receipt.status !== "paid") {
-        const email = receipt.customerEmail || receipt.email || onrampData.customer_information?.email;
-        const merchantWallet = receipt.wallet;
-        const amount = receipt.onrampAmount || receipt.totalUsd;
-        const brandKey = receipt.brandKey || "";
+      if (stripeStatus === "fulfillment_complete" && needsReceiptSettlement(receipt.transactionHash)) {
+        const stripeEmail = String(
+          onrampData.customer_information?.email || onrampData.customer_details?.email || ""
+        ).trim().toLowerCase();
+        const storedEmail = String(receipt.customerEmail || receipt.email || "").trim().toLowerCase();
+        if (!stripeEmail) {
+          return NextResponse.json({ error: "Verified Stripe customer email is required" }, { status: 409 });
+        }
+        if (storedEmail && storedEmail !== stripeEmail) {
+          return NextResponse.json({ error: "Stripe customer does not match this receipt" }, { status: 409 });
+        }
+
+        const email = stripeEmail;
+        const merchantWallet = receiptMerchantWallet;
+        const amount = Number(receipt.totalUsd || receipt.onrampAmount || 0);
+        const brandKey = normalizeAutocloseBrandKey(receipt.brandKey || requestBrandKey);
+        if (!Number.isFinite(amount) || amount <= 0) {
+          return NextResponse.json({ error: "Receipt has an invalid settlement amount" }, { status: 409 });
+        }
+        const stripeSourceAmount = Number(onrampData.transaction_details?.source_amount || 0);
+        if (stripeSourceAmount > 0 && stripeSourceAmount + 0.01 < amount * 0.95) {
+          return NextResponse.json({ error: "Stripe amount is below the receipt total" }, { status: 409 });
+        }
 
         // Resolve split address
         const { getSiteConfigForWallet } = await import("@/lib/site-config");
@@ -334,28 +417,19 @@ export async function POST(req: NextRequest) {
           splitAddress = merchantWallet;
         }
 
-        const paymentDetailsType = String(onrampData.payment_details?.type || onrampData.payment_method_details?.type || "").toLowerCase();
-        const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
-        const cardFundingDetail = String(onrampData.payment_details?.card?.funding || "").toLowerCase();
-        let cardFunding = receipt.detectedCardFunding || "";
-        if (paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach")) {
-          cardFunding = "us_bank_account";
-        } else if (cardFundingDetail) {
-          cardFunding = cardFundingDetail;
-        } else if (paymentMethod.includes("debit")) {
-          cardFunding = "debit";
-        } else if (paymentMethod.includes("credit")) {
-          cardFunding = "credit";
-        }
-        const isCredit = cardFunding === "us_bank_account" || cardFunding === "credit" || receipt.isCreditCard === true;
-
-        let targetSplitAddress = splitAddress;
-        const isCreditCardType = cardFunding === "credit" || isCredit;
-        const isDual = !!splitAddressCredit && splitAddressCredit !== splitAddress;
-        if (isDual && !isCreditCardType && splitAddressCredit) {
-          targetSplitAddress = splitAddressCredit;
-        } else {
-          targetSplitAddress = splitAddress || merchantWallet;
+        const cardFunding = resolveStripeOnrampFunding(
+          onrampData,
+          receipt.detectedCardFunding,
+          receipt.isCreditCard === true
+        );
+        const targetSplitAddress = resolveSettlementSplitAddress({
+          funding: cardFunding,
+          splitAddress,
+          splitAddressCredit,
+          fallbackAddress: merchantWallet,
+        });
+        if (!/^0x[a-f0-9]{40}$/i.test(targetSplitAddress)) {
+          return NextResponse.json({ error: "Verified settlement split address is invalid" }, { status: 409 });
         }
 
         const { markEmailVerified } = await import("@/app/api/auth/thirdweb-verify/route");
@@ -365,7 +439,7 @@ export async function POST(req: NextRequest) {
 
         let clientId = process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
         let secretKey = process.env.THIRDWEB_SECRET_KEY || "";
-        let authEndpointSecret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "default_auth_secret_temp_key_portalpay";
+        let authEndpointSecret = process.env.THIRDWEB_AUTH_ENDPOINT_SECRET || "";
 
         if (brandKey) {
           const bKey = String(brandKey).trim().toUpperCase();
@@ -375,6 +449,20 @@ export async function POST(req: NextRequest) {
           if (envClientId) clientId = envClientId;
           if (envSecretKey) secretKey = envSecretKey;
           if (envAuthSecret) authEndpointSecret = envAuthSecret;
+        }
+
+        try {
+          const { readBrandOverridesCached } = await import("@/lib/brand-config");
+          const brandConfig = await readBrandOverridesCached(brandKey);
+          if (brandConfig?.thirdwebClientId) clientId = brandConfig.thirdwebClientId;
+          if (brandConfig?.thirdwebSecretKey) secretKey = brandConfig.thirdwebSecretKey;
+          if (brandConfig?.thirdwebAuthEndpointSecret) authEndpointSecret = brandConfig.thirdwebAuthEndpointSecret;
+        } catch (brandError) {
+          console.warn("[poll_single] Failed to read brand Thirdweb credentials:", brandError);
+        }
+
+        if (!clientId || !secretKey || !authEndpointSecret) {
+          return NextResponse.json({ error: "Thirdweb settlement credentials are not configured" }, { status: 500 });
         }
 
         const brandTwClient = createThirdwebClient({ clientId, secretKey });
@@ -392,6 +480,15 @@ export async function POST(req: NextRequest) {
         });
 
         const guestAddress = account.address;
+        const stripeWalletAddress = String(
+          onrampData.wallet_address ||
+          onrampData.wallet_addresses?.base_network ||
+          onrampData.transaction_details?.wallet_address ||
+          ""
+        ).trim().toLowerCase();
+        if (stripeWalletAddress && stripeWalletAddress !== guestAddress.toLowerCase()) {
+          return NextResponse.json({ error: "Stripe destination wallet does not match the verified customer wallet" }, { status: 409 });
+        }
         const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
         const usdcContract = getContract({
           client: brandTwClient,
@@ -405,34 +502,108 @@ export async function POST(req: NextRequest) {
           params: [guestAddress],
         });
 
-        if (balance > BigInt(0)) {
+        const requiredUnits = BigInt(Math.floor(amount * 1_000_000));
+        if (balance >= requiredUnits) {
           const { executeGaslessTransferServer } = await import("@/app/api/stripe/background-poll/route");
-          txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey);
+          txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey, false);
           if (txHash) {
+            webhookPreviousStatus = String(receipt.status || "pending");
             receipt.status = "paid";
             receipt.transactionHash = txHash;
             receipt.transactionTimestamp = Date.now();
+            receipt.lastUpdatedAt = Date.now();
+            receipt.detectedCardFunding = cardFunding;
+            receipt.isCreditCard = cardFunding === "credit";
             receipt.ttl = -1;
             receipt.statusHistory = Array.isArray(receipt.statusHistory)
-              ? [...receipt.statusHistory, { status: "paid", ts: Date.now(), note: "Manually polled and swept" }]
-              : [{ status: "paid", ts: Date.now(), note: "Manually polled and swept" }];
+              ? [...receipt.statusHistory, { status: "paid", ts: Date.now(), note: "Manual settlement completed" }]
+              : [{ status: "paid", ts: Date.now(), note: "Manual settlement completed" }];
+            receipt.webhookLastStatus = "paid";
+            receipt.webhookLastPreviousStatus = webhookPreviousStatus;
+            receipt.webhookLastDeliveryOk = false;
+            receipt.webhookLastAttemptAt = Date.now();
+            receipt.webhookLastTransactionHash = txHash;
             swept = true;
+          } else {
+            return NextResponse.json(
+              { error: "Settlement transaction could not be submitted" },
+              { status: 503 }
+            );
           }
+        } else {
+          return NextResponse.json(
+            { error: "Verified customer wallet does not yet contain the full settlement amount" },
+            { status: 409 }
+          );
         }
-      } else if (stripeStatus !== "fulfillment_complete" && (isRejected || isExpired)) {
+      } else if (
+        stripeStatus !== "fulfillment_complete" &&
+        (isRejected || isExpired) &&
+        needsReceiptSettlement(receipt.transactionHash) &&
+        !isProtectedPaymentStatus(receipt.status)
+      ) {
+        webhookPreviousStatus = String(receipt.status || "pending");
         receipt.status = "failed";
         receipt.statusHistory = Array.isArray(receipt.statusHistory)
           ? [...receipt.statusHistory, { status: "failed", ts: Date.now(), note: "Marked failed on manual poll due to timeout/rejection" }]
           : [{ status: "failed", ts: Date.now(), note: "Marked failed on manual poll due to timeout/rejection" }];
+        receipt.webhookLastStatus = "failed";
+        receipt.webhookLastPreviousStatus = webhookPreviousStatus;
+        receipt.webhookLastDeliveryOk = false;
+        receipt.webhookLastAttemptAt = Date.now();
       }
 
       await containerEvents.items.upsert(receipt);
-      return NextResponse.json({ ok: true, status: receipt.status, stripeSessionStatus: stripeStatus, swept, txHash });
+
+      const finalTxHash = needsReceiptSettlement(receipt.transactionHash)
+        ? ""
+        : String(receipt.transactionHash || "");
+      const webhookStatus = String(receipt.status || "");
+      const shouldDeliverWebhook = Boolean(
+        receipt.webhookUrl &&
+        (webhookStatus === "paid" || webhookStatus === "failed") &&
+        (
+          receipt.webhookLastStatus !== webhookStatus ||
+          receipt.webhookLastDeliveryOk !== true ||
+          (finalTxHash && receipt.webhookLastTransactionHash !== finalTxHash)
+        )
+      );
+      if (shouldDeliverWebhook) {
+        const previousStatus = String(receipt.webhookLastPreviousStatus || webhookPreviousStatus || "pending");
+        const delivery = await dispatchReceiptStatusWebhook(receipt, webhookStatus, previousStatus, {
+          transactionHash: finalTxHash || undefined,
+          merchantWallet: receiptMerchantWallet,
+          stripeSessionId: sessionId,
+          brandKey: normalizeAutocloseBrandKey(receipt.brandKey || requestBrandKey),
+        });
+        await containerEvents.item(receipt.id, receipt.wallet).patch([
+          { op: "set", path: "/webhookLastStatus", value: webhookStatus },
+          { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
+          { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
+          { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
+          { op: "set", path: "/webhookLastTransactionHash", value: finalTxHash || null },
+          ...(delivery.statusCode
+            ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
+            : []),
+          { op: "set", path: "/webhookLastError", value: delivery.error || null },
+        ] as any);
+        if (!delivery.ok) {
+          return NextResponse.json(
+            { ok: false, error: "Settlement saved but merchant webhook delivery failed", status: webhookStatus, swept, txHash: txHash || finalTxHash || null },
+            { status: 502 }
+          );
+        }
+      }
+      return NextResponse.json({
+        ok: true,
+        status: receipt.status,
+        stripeSessionStatus: stripeStatus,
+        swept,
+        txHash: txHash || finalTxHash || null,
+      });
     }
 
     // 2. Gate manually triggering to Platform Super Admins only
-    const { resolveAdminRole } = await import("@/lib/authz-server");
-    const adminRole = await resolveAdminRole(caller.wallet);
     if (adminRole !== "platform_super_admin") {
       return NextResponse.json(
         { error: "Forbidden: Only platform master administrators can trigger manual runs." },
@@ -441,39 +612,43 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Trigger close by calling the cron endpoint internally
-    const cronSecret = process.env.CRON_SECRET || process.env.NEXT_PUBLIC_CRON_SECRET || "portalpay_cron_internal_default";
+    const cronSecret = process.env.CRON_SECRET;
+    if (!cronSecret) {
+      return NextResponse.json({ error: "Autoclose cron is not configured" }, { status: 500 });
+    }
 
     const { searchParams: postParams } = new URL(req.url);
     let brandKeysStr = postParams.get("brandKeys") || postParams.get("brand_keys") || "";
     if (!brandKeysStr && (body?.brandKeys || body?.brand_keys)) {
       brandKeysStr = String(body.brandKeys || body.brand_keys || "").trim();
     }
+    const brandKeys = parseAutocloseBrandKeys(brandKeysStr);
 
-    let cronUrl = `${req.nextUrl.origin}/api/cron/autoclose?cronSecret=${encodeURIComponent(cronSecret)}&manual=true&force=true`;
-    if (brandKeysStr) {
-      cronUrl += `&brandKeys=${encodeURIComponent(brandKeysStr)}`;
-    }
-    console.log(`[api/admin/autoclose] Manual close trigger by ${caller.wallet}. Requesting: ${cronUrl}`);
+    const cronUrl = `${req.nextUrl.origin}/api/cron/autoclose`;
+    const cronBody = JSON.stringify({ manual: true, force: true, brandKeys: brandKeys.join(",") });
+    console.log(`[api/admin/autoclose] Manual close trigger by ${caller.wallet} for ${brandKeys.length || 1} brand scope(s).`);
 
     let res;
     try {
       // Try direct function invocation first to bypass loopback DNS/SSL/network restrictions
       const mockReq = new NextRequest(cronUrl, {
-        method: "GET",
+        method: "POST",
         headers: {
           "x-cron-secret": cronSecret,
-          "x-internal-admin-authorized": "true"
-        }
+          "content-type": "application/json",
+        },
+        body: cronBody,
       });
       res = await runAutoclose(mockReq);
     } catch (directErr: any) {
       console.warn(`[api/admin/autoclose] Direct invocation failed, falling back to fetch:`, directErr);
       res = await fetch(cronUrl, {
-        method: "GET",
+        method: "POST",
         headers: {
           "x-cron-secret": cronSecret,
-          "x-internal-admin-authorized": "true"
-        }
+          "content-type": "application/json",
+        },
+        body: cronBody,
       });
     }
 

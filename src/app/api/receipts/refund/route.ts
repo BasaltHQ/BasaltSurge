@@ -8,6 +8,7 @@ import { requireThirdwebAuth, assertOwnershipOrAdmin } from "@/lib/auth";
 import { requireCsrf, rateLimitOrThrow, rateKey } from "@/lib/security";
 import { auditEvent } from "@/lib/audit";
 import crypto from "node:crypto";
+import { getReceiptStatusInternalHeaders } from "@/lib/receipt-status-policy";
 
 // Force Node runtime + dynamic to avoid edge evaluation quirks
 export const runtime = 'nodejs';
@@ -93,18 +94,24 @@ export async function POST(req: NextRequest) {
     // Helper to post status updates for the receipt
     const baseOrigin = req.nextUrl.origin;
     async function postStatus(status: string, extra?: any) {
-      try {
-        await fetch(`${baseOrigin}/api/receipts/status`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            receiptId,
-            wallet, // merchant partition key
-            status,
-            ...extra,
-          }),
-        });
-      } catch {}
+      const internalHeaders = getReceiptStatusInternalHeaders();
+      if (!internalHeaders["x-portalpay-internal-secret"]) {
+        throw new Error("receipt_status_internal_secret_not_configured");
+      }
+      const response = await fetch(`${baseOrigin}/api/receipts/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...internalHeaders },
+        body: JSON.stringify({
+          receiptId,
+          wallet, // merchant partition key
+          status,
+          ...extra,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result?.authoritative === false) {
+        throw new Error(`receipt_status_update_failed:${response.status}:${result?.error || "non_authoritative"}`);
+      }
     }
 
     // Mark refund initiated

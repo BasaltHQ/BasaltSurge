@@ -1,14 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
-import { updateReceiptStatus } from "@/lib/receipts-mem";
 import { requireThirdwebAuth, assertOwnershipOrAdmin } from "@/lib/auth";
 import { requireCsrf, rateLimitOrThrow, rateKey } from "@/lib/security";
 import { auditEvent } from "@/lib/audit";
 import { requireApimOrJwt } from "@/lib/gateway-auth";
 import * as crypto from "crypto";
 import { getBrandKey } from "@/config/brands";
-import { dispatchWebhookAsync, type WebhookPayload } from "@/lib/webhook-dispatch";
+import { dispatchReceiptStatusWebhook } from "@/lib/webhook-dispatch";
 import { resolveMerchantErrorInfo } from "@/lib/errors/merchant-error-taxonomy";
+import {
+  getReceiptStatusInternalSecret,
+  isAuthoritativePaymentStatus,
+  isCheckoutTelemetryStatus,
+  isProtectedPaymentStatus,
+  normalizeReceiptStatus,
+  shouldIgnoreCanonicalStatusTransition,
+} from "@/lib/receipt-status-policy";
+
+function hasValidInternalStatusSecret(req: NextRequest): boolean {
+  const expected = getReceiptStatusInternalSecret();
+  const provided = String(req.headers.get("x-portalpay-internal-secret") || "").trim();
+  if (!expected || !provided) return false;
+
+  const expectedBuffer = Buffer.from(expected);
+  const providedBuffer = Buffer.from(provided);
+  return expectedBuffer.length === providedBuffer.length && crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+}
 
 /**
  * POST /api/receipts/status
@@ -101,8 +118,7 @@ export async function POST(req: NextRequest) {
     const receiptId = String(body.receiptId || "").trim();
     const wallet = String(body.wallet || "").toLowerCase();
     const rawStatus = String(body.status || "").trim();
-    // Standardize checkout_success to paid for consistent reporting across system
-    const status = rawStatus === "checkout_success" ? "paid" : rawStatus;
+    const status = normalizeReceiptStatus(rawStatus);
     const buyerWallet = typeof body.buyerWallet === "string" ? String(body.buyerWallet).toLowerCase() : undefined;
     const shopSlug = typeof body.shopSlug === "string" ? String(body.shopSlug).toLowerCase() : undefined;
     // Optional tx hash from client/webhook (accept txHash, transactionHash, hash, onChainTxHash, tx)
@@ -186,13 +202,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // AuthZ: Allow unauthenticated status updates for tracking (link_opened, buyer_logged_in, checkout_initialized, receipt_claimed, checkout_success, paid)
-    // Require JWT auth only for sensitive status updates (refund, etc.)
-    const trackingStatuses = ["link_opened", "buyer_logged_in", "checkout_initialized", "receipt_claimed", "checkout_success", "paid", "paid - ach pending", "ach_pending", "error", "failed", "pending", "onramp_completed", "fulfillment_processing", "onramp_session_created", "checkout_ready"];
-    const isTrackingStatus = trackingStatuses.includes(status) || status.startsWith("onramp_");
+    // Browser lifecycle reports are useful telemetry, but they are not proof of
+    // payment. Only verified server-side processors may mutate canonical
+    // financial status.
+    const isTrustedInternal = hasValidInternalStatusSecret(req);
+    const isTelemetryStatus = isCheckoutTelemetryStatus(status);
+    const isAuthoritativeStatus = isAuthoritativePaymentStatus(status);
+    const isPublicStatusReport = isTelemetryStatus || isAuthoritativeStatus;
 
     let caller: any = null;
-    if (!isTrackingStatus) {
+    if (!isTrustedInternal && !isPublicStatusReport) {
       // Require auth for non-tracking statuses
       try {
         caller = await requireThirdwebAuth(req);
@@ -207,10 +226,12 @@ export async function POST(req: NextRequest) {
 
     // CSRF and rate limiting (more lenient for tracking statuses)
     try {
-      if (!isTrackingStatus) {
+      if (!isTrustedInternal && !isPublicStatusReport) {
         requireCsrf(req);
       }
-      rateLimitOrThrow(req, rateKey(req, "receipt_status_update", wallet), isTrackingStatus ? 100 : 50, 60_000);
+      if (!isTrustedInternal) {
+        rateLimitOrThrow(req, rateKey(req, "receipt_status_update", wallet), isPublicStatusReport ? 100 : 50, 60_000);
+      }
     } catch (e: any) {
       const resetAt = typeof e?.resetAt === "number" ? e.resetAt : undefined;
       try {
@@ -230,7 +251,58 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Update Cosmos doc: id = receipt:{receiptId}, partition key = wallet
+    // Checkout/provider progress is telemetry regardless of caller. Keeping it
+    // on separate fields makes any delayed progress update incapable of racing
+    // a verified event and replacing `status: paid` with `onramp_*` or `error`.
+    if (isTelemetryStatus || (!isTrustedInternal && isAuthoritativeStatus)) {
+      const id = `receipt:${receiptId}`;
+      const checkoutStatus = !isTrustedInternal && isAuthoritativeStatus ? `client_reported_${status}` : status;
+      const ts = Date.now();
+      try {
+        const container = await getContainer();
+        const patchResult = await container.item(id, wallet).patch([
+          { op: "set", path: "/checkoutStatus", value: checkoutStatus },
+          { op: "set", path: "/checkoutStatusUpdatedAt", value: ts },
+          { op: "set", path: "/checkoutStatusSource", value: isTrustedInternal ? "verified_processor_progress" : "browser" },
+          ...(!isTrustedInternal && isAuthoritativeStatus
+            ? [{ op: "set" as const, path: "/paymentVerificationRequired", value: true }]
+            : []),
+        ] as any);
+
+        if (!patchResult?.resource) {
+          return NextResponse.json(
+            { ok: false, error: "receipt_not_found" },
+            { status: 404, headers: { "x-correlation-id": correlationId } }
+          );
+        }
+
+        try {
+          await auditEvent(req, {
+            who: isTrustedInternal ? "system" : "anonymous",
+            roles: isTrustedInternal ? ["system"] : [],
+            what: "receipt_checkout_status_reported",
+            target: wallet,
+            correlationId,
+            ok: true,
+            metadata: { receiptId, checkoutStatus, authoritative: false }
+          });
+        } catch { }
+
+        return NextResponse.json({
+          ok: true,
+          tracked: true,
+          authoritative: false,
+          paymentStatus: String(patchResult.resource.status || "generated"),
+        }, { headers: { "x-correlation-id": correlationId } });
+      } catch (e: any) {
+        return NextResponse.json(
+          { ok: false, error: "status_telemetry_unavailable", reason: e?.message || "database_unavailable" },
+          { status: 503, headers: { "x-correlation-id": correlationId } }
+        );
+      }
+    }
+
+    // Update canonical receipt state: id = receipt:{receiptId}, partition key = wallet
     const id = `receipt:${receiptId}`;
     let resource: any = null;
     try {
@@ -242,43 +314,8 @@ export async function POST(req: NextRequest) {
         resource = null;
       }
 
-      // Prevent overwriting settled/paid status with checkout_initialized or pending
-      // This happens if a user opens the portal page on an already-paid receipt and the frontend fires "checkout_initialized" before realizing it's paid.
       const currentStatus = String(resource?.status || "").toLowerCase();
-      const isSettled =
-        currentStatus === "paid" ||
-        currentStatus === "paid - ach pending" ||
-        currentStatus === "ach_pending" ||
-        currentStatus === "checkout_success" ||
-        currentStatus === "confirmed" ||
-        currentStatus === "reconciled" ||
-        currentStatus === "tx_mined" ||
-        currentStatus === "recipient_validated" ||
-        currentStatus === "receipt_claimed" ||
-        currentStatus.includes("refund");
-
-      const hasOnChainTx = !!(resource?.transactionHash || resource?.txHash || resource?.onChainTxHash);
-      const isClientJsRuntimeError = typeof failureReason === "string" && (
-        failureReason.toLowerCase().includes("chunkloaderror") ||
-        failureReason.toLowerCase().includes("unhandled runtime error")
-      );
-
-      const isDowngrade =
-        isSettled &&
-        (status === "checkout_initialized" ||
-          status === "pending" ||
-          status === "link_opened" ||
-          status === "buyer_logged_in" ||
-          status === "checkout_ready" ||
-          status === "generated" ||
-          status === "error" ||
-          status === "failed" ||
-          status.startsWith("onramp_") ||
-          status === "collecting_kyc" ||
-          status === "authenticating" ||
-          (status === "failed" && (hasOnChainTx || isClientJsRuntimeError)));
-
-      if (isDowngrade) {
+      if (shouldIgnoreCanonicalStatusTransition(currentStatus, status)) {
         // Return success but do not update DB
         return NextResponse.json({ ok: true, ignored: true, reason: "already_settled" }, { headers: { "x-correlation-id": correlationId } });
       }
@@ -300,9 +337,11 @@ export async function POST(req: NextRequest) {
         ? {
           ...resource,
           status,
-          statusHistory: Array.isArray(resource.statusHistory)
-            ? [...resource.statusHistory, { status, ts }]
-            : [{ status, ts }],
+          statusHistory: currentStatus === status
+            ? (Array.isArray(resource.statusHistory) ? resource.statusHistory : [])
+            : (Array.isArray(resource.statusHistory)
+              ? [...resource.statusHistory, { status, ts }]
+              : [{ status, ts }]),
           lastUpdatedAt: ts,
           brandKey,
           ipAddress: resource.ipAddress || ipAddress,
@@ -414,6 +453,14 @@ export async function POST(req: NextRequest) {
           ...(thirdwebMetadata ? { thirdwebMetadata } : {}),
         };
 
+      if (isProtectedPaymentStatus(status)) {
+        delete next.failureReason;
+        delete next.failureCode;
+        delete next.failureCategory;
+        delete next.failureAction;
+        next.paymentVerificationRequired = false;
+      }
+
       // Track customerSessions if stripeSessionId or customerEmail or buyerWallet is available
       if (stripeSessionId || customerEmail || buyerWallet) {
         let sessions = Array.isArray(next.customerSessions || (resource && resource.customerSessions)) 
@@ -495,6 +542,20 @@ export async function POST(req: NextRequest) {
         console.error("[STATUS API] Failed to run Shopify sync:", shopifyErr);
       }
 
+      const previousStatus = resource ? String(resource.status || "pending") : "pending";
+      const shouldDeliver = Boolean(next?.webhookUrl) && (
+        previousStatus !== status ||
+        next?.webhookLastStatus !== status ||
+        next?.webhookLastDeliveryOk !== true ||
+        (next?.transactionHash && next?.webhookLastTransactionHash !== next.transactionHash)
+      );
+      if (shouldDeliver) {
+        next.webhookLastStatus = status;
+        next.webhookLastPreviousStatus = previousStatus;
+        next.webhookLastDeliveryOk = false;
+        next.webhookLastAttemptAt = Date.now();
+        if (next.transactionHash) next.webhookLastTransactionHash = next.transactionHash;
+      }
       await container.items.upsert(next as any);
       try {
         await auditEvent(req, {
@@ -504,47 +565,46 @@ export async function POST(req: NextRequest) {
           target: wallet,
           correlationId,
           ok: true,
-          metadata: { receiptId, status, tracking: isTrackingStatus }
+          metadata: { receiptId, status, trustedInternal: isTrustedInternal }
         });
       } catch { }
 
-      // Dispatch developer webhook if configured on the receipt
-      const webhookTarget = next?.webhookUrl || resource?.webhookUrl;
-      if (webhookTarget) {
-        const previousStatus = resource ? String(resource.status || "pending") : "pending";
-        // Use the signing secret stored on the receipt at creation time (container-stable)
-        const signingSecret = next?.webhookSigningSecret || resource?.webhookSigningSecret;
-        const activeStripeSessionId = stripeSessionId || next?.stripeSessionId || resource?.stripeSessionId;
-        const activeTxId = next?.transactionId || resource?.transactionId || null;
-        const activeMeta = next?.metadata || resource?.metadata || null;
-        dispatchWebhookAsync(webhookTarget, {
-          event: "receipt.status_updated",
-          receiptId,
-          status,
-          previousStatus,
+      // Deliver only authoritative state, and wait for the result so serverless
+      // execution cannot terminate before the request leaves the process.
+      if (shouldDeliver) {
+        const delivery = await dispatchReceiptStatusWebhook(next, status, previousStatus, {
           transactionHash: txHash || next?.transactionHash,
           buyerWallet: buyerWallet || next?.buyerWallet,
           merchantWallet: wallet,
-          totalUsd: next?.totalUsd,
-          token: next?.expectedToken,
-          timestamp: Date.now(),
           brandKey,
-          stripeSessionId: activeStripeSessionId,
-          transactionId: activeTxId,
-          metadata: activeMeta,
-          failureCode: next?.failureCode || resource?.failureCode || failureCode || null,
-          failureReason: next?.failureReason || resource?.failureReason || failureReason || null,
-          failureCategory: next?.failureCategory || resource?.failureCategory || failureCategory || null,
-          failureAction: next?.failureAction || resource?.failureAction || failureAction || null,
-        } as WebhookPayload, signingSecret);
+          stripeSessionId: stripeSessionId || next?.stripeSessionId || resource?.stripeSessionId,
+        });
+        await container.item(id, wallet).patch([
+          { op: "set", path: "/webhookLastStatus", value: status },
+          { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
+          { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
+          { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
+          ...(next?.transactionHash
+            ? [{ op: "set" as const, path: "/webhookLastTransactionHash", value: next.transactionHash }]
+            : []),
+          ...(delivery.statusCode
+            ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
+            : []),
+          ...(delivery.error
+            ? [{ op: "set" as const, path: "/webhookLastError", value: delivery.error }]
+            : [{ op: "set" as const, path: "/webhookLastError", value: null }]),
+        ] as any);
+
+        if (!delivery.ok) {
+          return NextResponse.json(
+            { ok: false, persisted: true, error: "webhook_delivery_failed", reason: delivery.error },
+            { status: 502, headers: { "x-correlation-id": correlationId } }
+          );
+        }
       }
 
       return NextResponse.json({ ok: true }, { headers: { "x-correlation-id": correlationId } });
     } catch (e: any) {
-      // Degraded mode: update in-memory store
-      try {
-        updateReceiptStatus(receiptId, wallet, status);
-      } catch { }
       try {
         await auditEvent(req, {
           who: caller?.wallet || "",
@@ -552,13 +612,13 @@ export async function POST(req: NextRequest) {
           what: "receipt_status_update",
           target: wallet,
           correlationId,
-          ok: true,
-          metadata: { degraded: true, reason: e?.message || "cosmos_unavailable", receiptId, status }
+          ok: false,
+          metadata: { reason: e?.message || "database_unavailable", receiptId, status }
         });
       } catch { }
       return NextResponse.json(
-        { ok: true, degraded: true, reason: e?.message || "cosmos_unavailable" },
-        { status: 200, headers: { "x-correlation-id": correlationId } }
+        { ok: false, error: "status_persistence_failed", reason: e?.message || "database_unavailable" },
+        { status: 503, headers: { "x-correlation-id": correlationId } }
       );
     }
   } catch (e: any) {

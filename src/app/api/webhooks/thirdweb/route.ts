@@ -4,6 +4,7 @@ import { getBrandKey } from "@/config/brands";
 import { auditEvent } from "@/lib/audit";
 import crypto from "node:crypto";
 import { Bridge } from "thirdweb";
+import { getReceiptStatusInternalHeaders } from "@/lib/receipt-status-policy";
 
 // Force dynamic rendering to avoid build-time evaluation
 export const dynamic = 'force-dynamic';
@@ -122,6 +123,23 @@ function extractReceiptIdFromPurchaseData(purchaseData: any, data?: any): string
     if (match) return match[0].toUpperCase();
   } catch {}
   return null;
+}
+
+async function postVerifiedReceiptStatus(baseOrigin: string, body: Record<string, any>): Promise<void> {
+  const internalHeaders = getReceiptStatusInternalHeaders();
+  if (!internalHeaders["x-portalpay-internal-secret"]) {
+    throw new Error("receipt_status_internal_secret_not_configured");
+  }
+
+  const response = await fetch(`${baseOrigin}/api/receipts/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...internalHeaders },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`receipt_status_update_failed:${response.status}:${detail.slice(0, 300)}`);
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -312,18 +330,15 @@ async function handleOnchainTransaction(
     if (receiptId && merchantWallet) {
       console.log(`[WEBHOOK] Thirdweb onchain transaction ${transactionId} failed (${normStatus}). Updating receipt ${receiptId} status to 'failed'`);
       try {
-        await fetch(`${baseOrigin}/api/receipts/status`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            receiptId,
-            wallet: merchantWallet,
-            status: 'failed',
-            error: `Thirdweb transaction ${normStatus.toLowerCase()}`
-          })
+        await postVerifiedReceiptStatus(baseOrigin, {
+          receiptId,
+          wallet: merchantWallet,
+          status: 'failed',
+          error: `Thirdweb transaction ${normStatus.toLowerCase()}`
         });
       } catch (e) {
         console.error('[WEBHOOK] Error updating receipt to failed:', e);
+        throw e;
       }
     }
   }
@@ -363,34 +378,27 @@ async function handleOnchainTransaction(
         
         // Post tx_mined status if tx hash is present
         if (baseTxHashes.length > 0) {
-          await fetch(`${baseOrigin}/api/receipts/status`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              receiptId,
-              wallet: merchantWallet,
-              status: 'tx_mined',
-              buyerWallet: sender?.toLowerCase(),
-              txHash: baseTxHashes[0]
-            })
+          await postVerifiedReceiptStatus(baseOrigin, {
+            receiptId,
+            wallet: merchantWallet,
+            status: 'tx_mined',
+            buyerWallet: sender?.toLowerCase(),
+            txHash: baseTxHashes[0]
           });
         }
         
         // Post reconciled/paid status after indexing
-        await fetch(`${baseOrigin}/api/receipts/status`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            receiptId,
-            wallet: merchantWallet,
-            status: 'reconciled',
-            buyerWallet: sender?.toLowerCase(),
-            txHash: baseTxHashes[0] || undefined
-          })
+        await postVerifiedReceiptStatus(baseOrigin, {
+          receiptId,
+          wallet: merchantWallet,
+          status: 'reconciled',
+          buyerWallet: sender?.toLowerCase(),
+          txHash: baseTxHashes[0] || undefined
         });
       }
     } catch (e) {
       console.error('[WEBHOOK] Error triggering split indexing:', e);
+      throw e;
     }
   }
   
@@ -489,34 +497,28 @@ async function handleOnrampTransaction(
     if (receiptId && merchantWallet) {
       console.log(`[WEBHOOK] Thirdweb onramp transaction ${id} failed (${normStatus}). Updating receipt ${receiptId} status to 'failed'`);
       try {
-        await fetch(`${baseOrigin}/api/receipts/status`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            receiptId,
-            wallet: merchantWallet,
-            status: 'failed',
-            error: `Thirdweb onramp transaction ${normStatus.toLowerCase()}`
-          })
+        await postVerifiedReceiptStatus(baseOrigin, {
+          receiptId,
+          wallet: merchantWallet,
+          status: 'failed',
+          error: `Thirdweb onramp transaction ${normStatus.toLowerCase()}`
         });
       } catch (e) {
         console.error('[WEBHOOK] Error updating receipt to failed:', e);
+        throw e;
       }
     }
   } else if (normStatus === 'PENDING' && receiptId && merchantWallet) {
     // Update receipt to pending
     try {
-      await fetch(`${baseOrigin}/api/receipts/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          receiptId,
-          wallet: merchantWallet,
-          status: 'pending'
-        })
+      await postVerifiedReceiptStatus(baseOrigin, {
+        receiptId,
+        wallet: merchantWallet,
+        status: 'pending'
       });
     } catch (e) {
       console.error('[WEBHOOK] Error updating receipt to pending:', e);
+      throw e;
     }
   } else if (["COMPLETED", "SUCCESS"].includes(normStatus) && splitAddress && merchantWallet) {
     // Trigger split indexing and reconciliation
@@ -535,18 +537,15 @@ async function handleOnrampTransaction(
       });
       
       if (receiptId) {
-        await fetch(`${baseOrigin}/api/receipts/status`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            receiptId,
-            wallet: merchantWallet,
-            status: 'reconciled'
-          })
+        await postVerifiedReceiptStatus(baseOrigin, {
+          receiptId,
+          wallet: merchantWallet,
+          status: 'reconciled'
         });
       }
     } catch (e) {
       console.error('[WEBHOOK] Error triggering split indexing for onramp:', e);
+      throw e;
     }
   }
   
