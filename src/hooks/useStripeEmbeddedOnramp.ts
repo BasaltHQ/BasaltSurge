@@ -3,6 +3,7 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { isDualSplitEnabled } from "@/lib/env";
 import { maskSensitiveData } from "@/lib/sanitize-logs";
+import { resolveSettlementSplitAddress } from "@/lib/payment-split-routing";
 
 // Safe sessionStorage decorator that redirects persistent user tokens to localStorage to minimize OTP prompts
 const sessionStorageDecorator = {
@@ -1912,7 +1913,9 @@ export function useStripeEmbeddedOnramp({
         updateStep("awaiting_funds");
         onSuccessRef.current?.({ sessionId, txHash: "ach_pending", kycLevel: resolvedKycLevel });
       } else {
-        updateStep("completed");
+        // Checkout submission is not merchant settlement. The verified
+        // webhook/background reconciler owns the transition to completed.
+        updateStep("awaiting_funds");
         onSuccessRef.current?.({ sessionId, txHash: "ecommerce_pending", kycLevel: resolvedKycLevel });
       }
       return;
@@ -1991,9 +1994,12 @@ export function useStripeEmbeddedOnramp({
 
     updateStep("transferring");
 
-    const targetSplitAddress = (isCreditCard || fundingTypeToUse === "credit" || (fundingTypeToUse as any) === "us_bank_account")
-      ? (splitAddress || "")
-      : (splitAddressCredit || splitAddress || "");
+    const targetSplitAddress = resolveSettlementSplitAddress({
+      funding: fundingTypeToUse,
+      isCreditCard,
+      splitAddress,
+      splitAddressCredit,
+    });
 
     const finalAmount = getOnrampAmount(fundingTypeToUse || (isCreditCard ? "credit" : "debit"));
     const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, finalAmount);

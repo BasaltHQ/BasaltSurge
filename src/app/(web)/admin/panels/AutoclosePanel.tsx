@@ -140,7 +140,7 @@ export default function AutoclosePanel() {
 
   const [filterDate, setFilterDate] = useState("");
 
-  // Time till next close (UTC 00:00)
+  // Time until the configured 08:00 UTC daily close.
   const [timeLeft, setTimeLeft] = useState("00:00:00");
 
   // Stuck Payments reconciliation state
@@ -212,18 +212,9 @@ export default function AutoclosePanel() {
 
   const getNextCloseTime = () => {
     const now = new Date();
-    const ptString = now.toLocaleString("en-US", { timeZone: "America/Los_Angeles", hour12: false });
-    const match = /(\d+)\/(\d+)\/(\d+)[,\s]+(\d+):(\d+):(\d+)/.exec(ptString);
-    if (match) {
-      const [, , , , hr, min, sec] = match;
-      const currentPtMs = ((Number(hr) * 60 + Number(min)) * 60 + Number(sec)) * 1000;
-      const msInDay = 24 * 60 * 60 * 1000;
-      return now.getTime() + (msInDay - currentPtMs);
-    }
-    // Fallback to 8:00 AM UTC (Midnight Pacific Standard Time)
-    const nextUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 8, 0, 0, 0));
-    if (nextUTC.getTime() < now.getTime()) {
-      nextUTC.setDate(nextUTC.getDate() + 1);
+    const nextUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 8, 0, 0, 0));
+    if (nextUTC.getTime() <= now.getTime()) {
+      nextUTC.setUTCDate(nextUTC.getUTCDate() + 1);
     }
     return nextUTC.getTime();
   };

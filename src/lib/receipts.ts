@@ -1,6 +1,8 @@
 // Shared helpers for constructing receipt endpoints and fetch options
 // Ensures TEST receipts include merchant context so branding/themes load consistently.
 
+import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
+
 export function isValidHexAddress(addr: string): boolean {
   try {
     return /^0x[a-fA-F0-9]{40}$/.test(String(addr || "").trim());
@@ -52,7 +54,7 @@ export function buildPortalUrlForTest(recipient?: string): string {
 }
 
 /**
- * Recalculates receipt line items for transactions based on the actual card funding type (credit vs. debit).
+ * Recalculates receipt line items using the same funding-to-split policy as settlement.
  * Returns the modified receipt document.
  */
 export function recalculateReceiptForCardFunding(
@@ -67,9 +69,11 @@ export function recalculateReceiptForCardFunding(
   const isCredit = detectedCardFunding === "credit";
 
   let basePlatformFeePct = 0.5; // fallback
-  const splitCfg = isCredit
-    ? (brandConfigDoc?.splitConfig || siteConfig.splitConfig || brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit)
-    : (brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit || brandConfigDoc?.splitConfig || siteConfig.splitConfig);
+  const splitCfg = resolveSettlementSplitConfig({
+    funding: detectedCardFunding,
+    splitConfig: brandConfigDoc?.splitConfig || siteConfig.splitConfig,
+    splitConfigCredit: brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit,
+  });
 
   // Resolve basePresentedBps to determine the presented fee component
   const basePresentedBps = isCredit

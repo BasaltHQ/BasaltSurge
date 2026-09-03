@@ -22,6 +22,7 @@ import { useStripeEmbeddedOnramp } from "@/hooks/useStripeEmbeddedOnramp";
 import { PortalPayAccordionCheckoutV2 } from "@/components/checkout/PortalPayAccordionCheckoutV2";
 import { usePortalLogger } from "@/hooks/usePortalLogger";
 import { extractThirdwebTxHash, extractThirdwebTransactionMetadata } from "@/lib/thirdweb/tx-extractor";
+import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
 // Embedded mode (embedded=1 or iframe) removes page background to fit seamlessly in host modals.
@@ -2010,11 +2011,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
 
   const effectiveBasePlatformFeePct = useMemo(() => {
-    // If credit card is detected and splitConfig is present, calculate using credit config
+    // Keep fee calculation on the same inverted split mapping as settlement.
     const isCredit = detectedCardFunding === "credit";
-    const activeSplitConfig = isCredit
-      ? (splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit)
-      : (splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig);
+    const activeSplitConfig = resolveSettlementSplitConfig({
+      funding: detectedCardFunding,
+      splitConfig: splitConfig && typeof splitConfig === "object" ? splitConfig : null,
+      splitConfigCredit: splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : null,
+    });
 
     const partnerBps = activeSplitConfig && typeof activeSplitConfig.partnerBps === "number"
       ? activeSplitConfig.partnerBps
@@ -2076,9 +2079,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // on-chain matches the smart contract split configuration.
   const actualSplitFeePct = useMemo(() => {
     const isCredit = detectedCardFunding === "credit";
-    const activeSplitConfig = isCredit
-      ? (splitConfig && typeof splitConfig === "object" ? splitConfig : splitConfigCredit)
-      : (splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : splitConfig);
+    const activeSplitConfig = resolveSettlementSplitConfig({
+      funding: detectedCardFunding,
+      splitConfig: splitConfig && typeof splitConfig === "object" ? splitConfig : null,
+      splitConfigCredit: splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : null,
+    });
 
     const partnerBps = activeSplitConfig && typeof activeSplitConfig.partnerBps === "number"
       ? activeSplitConfig.partnerBps
@@ -3607,12 +3612,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   useEffect(() => {
     let active = true;
+    let isChecking = false;
     let timer: NodeJS.Timeout;
 
     const activeAmount = Number(widgetAmount) > 0 ? Number(widgetAmount) : Number(stripeWidgetAmount);
     if (!receipt || paymentConfirmed || isSettled(receipt.status) || loadingReceipt || !merchantWallet || !receiptId || !token || isNaN(activeAmount) || activeAmount <= 0) return;
 
     const checkPayment = async () => {
+      if (isChecking) return;
+      isChecking = true;
       try {
         const queryParams = new URLSearchParams({
           wallet: String(merchantWallet || ""),
@@ -3683,6 +3691,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         }
       } catch (e) {
         console.error("Poll error", e);
+      } finally {
+        isChecking = false;
       }
     };
 
@@ -4095,12 +4105,30 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       });
     },
     onSuccess: (result) => {
-      console.log("[STRIPE HEADLESS] ✓ Onramp + transfer completed:", result);
-      console.log("[STRIPE HEADLESS SUCCESS] Checkout completed with no issues. Session:", result.sessionId, "Tx:", result.txHash);
-      // Funds are now in the split contract — receipt can be marked paid
+      console.log("[STRIPE HEADLESS] Checkout handoff completed:", result);
+      console.log("[STRIPE HEADLESS SUCCESS] Stripe accepted the checkout handoff. Session:", result.sessionId, "Tx:", result.txHash);
+      // A real on-chain transaction is authoritative here. ECommerce
+      // placeholders remain pending until signed Stripe status is reconciled.
       const txHash = result.txHash || "";
       const isAch = txHash === "ach_pending" || stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account" || receipt?.detectedCardFunding === "us_bank_account";
-      const statusToPost = isAch ? "paid - ach pending" : "paid";
+      const isPendingSettlement = txHash === "ecommerce_pending" || txHash === "ach_pending" || !/^0x[a-f0-9]{64}$/i.test(txHash);
+      const statusToPost = isAch ? "ach_pending" : (isPendingSettlement ? "fulfillment_processing" : "paid");
+
+      // eCommerce mode returns after Stripe checkout submission while the
+      // merchant sweep continues asynchronously. Never present that placeholder
+      // as proof of payment or emit a paid webhook from the browser.
+      if (isPendingSettlement) {
+        postStatus(statusToPost, {
+          paymentMethod: "stripe_headless",
+          stripeSessionId: result.sessionId,
+          customerEmail: shipEmail || headlessEmailInput || undefined,
+          detectedCardFunding: isAch ? "us_bank_account" : (result.detectedCardFunding || stripeDetectedFunding || undefined),
+          kycLevel: result.kycLevel || (headlessKycLevel === "REQUIRES_KYC" ? "L0" : headlessKycLevel) || "L0",
+          kycOccurred: true,
+        });
+        return;
+      }
+
       setPaymentConfirmed({
         txHash,
         amount: totalUsd,

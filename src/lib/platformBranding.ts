@@ -5,6 +5,8 @@
  * (portalpay, api.pay.ledger1.ai) with dynamic brand-aware values.
  */
 
+import { getWebhookBrandProtocol } from "@/lib/webhook-branding";
+
 /**
  * Replace all platform-specific references in content with brand-aware values.
  * 
@@ -27,6 +29,25 @@ export function replacePlatformReferences(
     if (!content) return content;
 
     let result = content;
+    const webhookProtocol = getWebhookBrandProtocol(brandKey);
+    const webhookTokens = {
+        signature: '__PP_WEBHOOK_SIGNATURE_HEADER__',
+        event: '__PP_WEBHOOK_EVENT_HEADER__',
+        delivery: '__PP_WEBHOOK_DELIVERY_HEADER__',
+        idempotency: '__PP_WEBHOOK_IDEMPOTENCY_HEADER__',
+        timestamp: '__PP_WEBHOOK_TIMESTAMP_HEADER__',
+        userAgent: '__PP_WEBHOOK_USER_AGENT__',
+    };
+
+    // Protect protocol identifiers from the generic display-brand replacement.
+    // A display name may contain spaces and is not necessarily a valid header token.
+    result = result
+        .replace(/X-PortalPay-Signature/gi, webhookTokens.signature)
+        .replace(/X-PortalPay-Event/gi, webhookTokens.event)
+        .replace(/X-PortalPay-Delivery/gi, webhookTokens.delivery)
+        .replace(/X-PortalPay-Idempotency-Key/gi, webhookTokens.idempotency)
+        .replace(/X-PortalPay-Timestamp/gi, webhookTokens.timestamp)
+        .replace(/PortalPay-Webhook\/1\.0/gi, webhookTokens.userAgent);
 
     // Determine the base URL to use - prefer currentOrigin, fall back to env
     const baseUrl = currentOrigin ||
@@ -71,6 +92,14 @@ export function replacePlatformReferences(
     // - portalpay.git (repo links)
     // NOTE: These exceptions are kept for backwards compatibility until April 30, 2026
     result = result.replace(/(?<![a-zA-Z])portalpay(?!(?:-card-|-preferred-height|\.git)|[a-zA-Z])/gi, brandKey);
+
+    result = result
+        .replaceAll(webhookTokens.signature, `${webhookProtocol.headerPrefix}-Signature`)
+        .replaceAll(webhookTokens.event, `${webhookProtocol.headerPrefix}-Event`)
+        .replaceAll(webhookTokens.delivery, `${webhookProtocol.headerPrefix}-Delivery`)
+        .replaceAll(webhookTokens.idempotency, `${webhookProtocol.headerPrefix}-Idempotency-Key`)
+        .replaceAll(webhookTokens.timestamp, `${webhookProtocol.headerPrefix}-Timestamp`)
+        .replaceAll(webhookTokens.userAgent, webhookProtocol.userAgent);
 
     return result;
 }

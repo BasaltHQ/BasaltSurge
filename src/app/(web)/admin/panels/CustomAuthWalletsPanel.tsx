@@ -14,6 +14,8 @@ interface AuthWalletMapping {
   firstSeen?: number;
   lastSeen?: number;
   xp?: number;
+  usdcBalance?: number;
+  brandKey?: string;
 }
 
 export default function CustomAuthWalletsPanel() {
@@ -24,6 +26,8 @@ export default function CustomAuthWalletsPanel() {
   const [searchQuery, setSearchQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [sweepingWallet, setSweepingWallet] = useState<string | null>(null);
+  const [sweepMsg, setSweepMsg] = useState<string | null>(null);
 
   // Modal State
   const [unlinkTarget, setUnlinkTarget] = useState<AuthWalletMapping | null>(null);
@@ -61,6 +65,33 @@ export default function CustomAuthWalletsPanel() {
       setTimeout(() => setCopiedId(null), 2000);
     } catch {}
   }, []);
+
+  const handleSweep = useCallback(async (item: AuthWalletMapping) => {
+    setSweepingWallet(item.wallet);
+    setSweepMsg(null);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/admin/custom-auth-wallets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: item.email,
+          brandKey: item.brandKey || brand?.key
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Sweep failed");
+      const targetDisplay = data.targetSplitAddress ? ` to ${data.targetSplitAddress.slice(0, 8)}...` : "";
+      setSweepMsg(`Successfully swept funds! Tx: ${data.txHash}${targetDisplay}`);
+      fetchMappings(true);
+      setTimeout(() => setSweepMsg(null), 6000);
+    } catch (err: any) {
+      setError(err?.message || "Sweep failed");
+    } finally {
+      setSweepingWallet(null);
+    }
+  }, [brand?.key, fetchMappings]);
 
   const handleUnlink = useCallback(async () => {
     if (!unlinkTarget) return;
@@ -112,6 +143,10 @@ export default function CustomAuthWalletsPanel() {
     );
   }, [mappings, searchQuery, brand?.key]);
 
+  const totalStrandedUsdc = useMemo(() => {
+    return mappings.reduce((sum, m) => sum + (m.usdcBalance || 0), 0);
+  }, [mappings]);
+
   return (
     <div className="w-full space-y-6 pb-24 admin-panel-enter">
       {/* Header Area */}
@@ -119,23 +154,37 @@ export default function CustomAuthWalletsPanel() {
         <div>
           <h2 className="text-xl font-bold tracking-tight text-white/90">Custom Auth Wallets</h2>
           <p className="text-xs text-white/40 tracking-wide mt-1">
-            Manage deterministic smart wallet mappings generated via Stripe Link authentication.
+            Deterministic buyer wallets generated on Base via email authentication. Zero Thirdweb auth cost balance tracking.
           </p>
         </div>
-        <button
-          onClick={() => fetchMappings(true)}
-          disabled={loading || refreshing}
-          className="h-9 px-4 rounded-xl border border-white/10 bg-white/[0.02] text-xs font-semibold hover:bg-white/[0.05] transition-all text-white/80 hover:text-white disabled:opacity-50 inline-flex items-center justify-center gap-1.5 shadow-md"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
-          <span>{refreshing ? "Refreshing..." : "Refresh"}</span>
-        </button>
+        <div className="flex items-center gap-3">
+          {totalStrandedUsdc > 0 && (
+            <div className="px-3 py-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-mono font-bold flex items-center gap-1.5">
+              <span>⚠️ ${totalStrandedUsdc.toFixed(2)} USDC Unswept</span>
+            </div>
+          )}
+          <button
+            onClick={() => fetchMappings(true)}
+            disabled={loading || refreshing}
+            className="h-9 px-4 rounded-xl border border-white/10 bg-white/[0.02] text-xs font-semibold hover:bg-white/[0.05] transition-all text-white/80 hover:text-white disabled:opacity-50 inline-flex items-center justify-center gap-1.5 shadow-md"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            <span>{refreshing ? "Refreshing..." : "Refresh"}</span>
+          </button>
+        </div>
       </div>
 
       {/* Success Toast */}
       {unlinkSuccessMsg && (
         <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 text-xs font-medium animate-in slide-in-from-top-4 duration-300">
           ✓ {unlinkSuccessMsg}
+        </div>
+      )}
+
+      {/* Sweep Success Toast */}
+      {sweepMsg && (
+        <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 text-xs font-mono font-medium animate-in slide-in-from-top-4 duration-300">
+          ✓ {sweepMsg}
         </div>
       )}
 
@@ -169,6 +218,7 @@ export default function CustomAuthWalletsPanel() {
               <tr className="border-b border-white/5 bg-white/[0.02] text-white/40 text-[10px] font-bold uppercase tracking-wider">
                 <th className="py-4 px-6">Buyer Identity</th>
                 <th className="py-4 px-6">Smart Wallet Address</th>
+                <th className="py-4 px-6">On-Chain Balance</th>
                 <th className="py-4 px-6 hidden sm:table-cell">Activity Log</th>
                 <th className="py-4 px-6 text-right">Actions</th>
               </tr>
@@ -185,6 +235,9 @@ export default function CustomAuthWalletsPanel() {
                     <td className="py-4 px-6">
                       <div className="h-4 bg-white/5 rounded w-40" />
                     </td>
+                    <td className="py-4 px-6">
+                      <div className="h-4 bg-white/5 rounded w-20" />
+                    </td>
                     <td className="py-4 px-6 hidden sm:table-cell">
                       <div className="h-3 bg-white/5 rounded w-24 mb-1" />
                       <div className="h-3 bg-white/5 rounded w-20" />
@@ -196,7 +249,7 @@ export default function CustomAuthWalletsPanel() {
                 ))
               ) : filteredMappings.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="py-12 px-6 text-center text-white/30 text-xs">
+                  <td colSpan={5} className="py-12 px-6 text-center text-white/30 text-xs">
                     {searchQuery ? "No mappings match your search query." : "No Custom Auth Wallet mappings found."}
                   </td>
                 </tr>
@@ -248,6 +301,30 @@ export default function CustomAuthWalletsPanel() {
                           </a>
                         </div>
                       </div>
+                    </td>
+
+                    {/* On-Chain Balance */}
+                    <td className="py-4 px-6">
+                      {typeof item.usdcBalance === "number" ? (
+                        item.usdcBalance > 0 ? (
+                          <div className="inline-flex items-center gap-2">
+                            <span className="text-xs font-mono font-bold text-amber-400 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
+                              ${item.usdcBalance.toFixed(2)} USDC
+                            </span>
+                            <button
+                              onClick={() => handleSweep(item)}
+                              disabled={sweepingWallet === item.wallet}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-[10px] font-bold text-emerald-300 hover:bg-emerald-500/30 transition-all disabled:opacity-50"
+                            >
+                              {sweepingWallet === item.wallet ? "Sweeping..." : "Sweep Now"}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-xs font-mono text-white/30">$0.00 USDC</span>
+                        )
+                      ) : (
+                        <span className="text-xs font-mono text-white/20">—</span>
+                      )}
                     </td>
 
                     {/* Activity Log */}

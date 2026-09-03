@@ -2,6 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 
+// Plesk scheduled commands do not always inherit the Node application's
+// environment. Load the deployment .env without overriding variables Plesk did
+// provide, so CRON_SECRET and PORT resolve consistently in either mode.
+require('dotenv').config({ path: path.join(__dirname, '..', '.env'), override: false, quiet: true });
+
 const lockFile = path.join(__dirname, '..', 'cron.lock');
 const stateFile = path.join(__dirname, '..', 'cron-state.json');
 
@@ -48,15 +53,14 @@ function triggerEndpoint(pathname, method = 'POST') {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
     console.warn(`[cron-scheduler] Skip triggering ${pathname}: CRON_SECRET env var is not set`);
-    return;
+    return Promise.resolve({ ok: false, statusCode: 0, body: '', error: 'cron_secret_not_configured' });
   }
 
-  const port = process.env.PORT || 3000;
-  const hasQuery = pathname.includes('?');
+  const port = process.env.PORT || 3001;
   const options = {
     hostname: '127.0.0.1',
     port: port,
-    path: hasQuery ? `${pathname}&cronSecret=${encodeURIComponent(secret)}` : `${pathname}?cronSecret=${encodeURIComponent(secret)}`,
+    path: pathname,
     method: method,
     headers: {
       'x-cron-secret': secret,
@@ -64,22 +68,42 @@ function triggerEndpoint(pathname, method = 'POST') {
     }
   };
 
-  const req = http.request(options, (res) => {
-    let data = '';
-    res.on('data', (chunk) => { data += chunk; });
-    res.on('end', () => {
-      console.log(`[cron-scheduler] Triggered ${pathname} (${method}) - Status: ${res.statusCode}`);
+  return new Promise((resolve) => {
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        if (data.length < 65536) data += chunk;
+      });
+      res.on('end', () => {
+        let payload = null;
+        try { payload = data ? JSON.parse(data) : null; } catch (e) {}
+        const statusCode = Number(res.statusCode || 0);
+        const ok = statusCode >= 200 && statusCode < 300 && payload !== null && payload?.success !== false && payload?.ok !== false;
+        console.log(`[cron-scheduler] Triggered ${pathname} (${method}) - Status: ${statusCode}, Success: ${ok}`);
+        resolve({ ok, statusCode, body: data });
+      });
     });
-  });
 
-  req.on('error', (e) => {
-    console.error(`[cron-scheduler] Failed to trigger ${pathname} (${method}):`, e.message);
-  });
+    req.setTimeout(330000, () => {
+      req.destroy(new Error('request_timeout'));
+    });
 
-  req.end();
+    req.on('error', (e) => {
+      console.error(`[cron-scheduler] Failed to trigger ${pathname} (${method}):`, e.message);
+      resolve({ ok: false, statusCode: 0, body: '', error: e.message });
+    });
+
+    req.end();
+  });
 }
 
-function checkAndRun() {
+let checkInProgress = false;
+
+async function checkAndRun() {
+  if (checkInProgress) return;
+  checkInProgress = true;
+
+  try {
   const now = new Date();
   const state = getCronState();
   const nowMs = now.getTime();
@@ -90,27 +114,36 @@ function checkAndRun() {
 
   if (currentHourUtc >= 8 && state.lastAutocloseDate !== todayStr) {
     console.log(`[cron-scheduler] Time is ${now.toISOString()} - Triggering Autoclose...`);
-    state.lastAutocloseDate = todayStr;
-    saveCronState(state);
-    triggerEndpoint('/api/cron/autoclose', 'POST');
+    const result = await triggerEndpoint('/api/cron/autoclose', 'POST');
+    if (result.ok) {
+      state.lastAutocloseDate = todayStr;
+      saveCronState(state);
+    }
   }
 
   // 2. Reindex-all: every 6 hours (6h elapsed since last run)
   const sixHoursMs = 6 * 60 * 60 * 1000;
   if (nowMs - state.lastReindexTime >= sixHoursMs) {
     console.log(`[cron-scheduler] Time is ${now.toISOString()} - Triggering Reindex All...`);
-    state.lastReindexTime = nowMs;
-    saveCronState(state);
-    triggerEndpoint('/api/split/reindex-all', 'GET');
+    const result = await triggerEndpoint('/api/split/reindex-all', 'GET');
+    if (result.ok) {
+      state.lastReindexTime = nowMs;
+      saveCronState(state);
+    }
   }
 
   // 3. Reconcile-stuck: every 10 minutes (10m elapsed since last run)
   const tenMinutesMs = 10 * 60 * 1000;
   if (nowMs - (state.lastReconcileTime || 0) >= tenMinutesMs) {
     console.log(`[cron-scheduler] Time is ${now.toISOString()} - Triggering Reconcile Stuck Payments...`);
-    state.lastReconcileTime = nowMs;
-    saveCronState(state);
-    triggerEndpoint('/api/cron/reconcile-stuck', 'POST');
+    const result = await triggerEndpoint('/api/cron/reconcile-stuck', 'POST');
+    if (result.ok) {
+      state.lastReconcileTime = nowMs;
+      saveCronState(state);
+    }
+  }
+  } finally {
+    checkInProgress = false;
   }
 }
 
@@ -122,10 +155,10 @@ function init() {
   console.log(`[cron-scheduler] Initialized scheduler daemon on PID ${process.pid}`);
 
   // Run initial check after a short startup delay
-  setTimeout(checkAndRun, 15000);
+  setTimeout(() => void checkAndRun(), 15000);
 
   // Check every 10 minutes
-  setInterval(checkAndRun, 10 * 60 * 1000);
+  setInterval(() => void checkAndRun(), 10 * 60 * 1000);
 }
 
 // Start scheduler

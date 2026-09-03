@@ -47,12 +47,23 @@ import {
   ArrowRightLeft,
   ArrowRight,
   ArrowLeft,
-  Wallet
+  Wallet,
+  Mail,
+  Download,
+  FileSpreadsheet,
+  ChevronDown
 } from "lucide-react";
 import { DonutChart, MultiLineChart } from "@/components/admin/ReportCharts";
 import RollercoasterOverlay from "../components/RollercoasterOverlay";
 import SideScrollerRollercoaster from "../components/SideScrollerRollercoaster";
 import { formatYMDInTimeZone, getDayRangeForYmdInTz, zonedTimeToUtcDate } from "@/lib/timezone";
+import {
+  exportExecutiveSummaryPDF,
+  exportTransactionLedgerPDF,
+  exportBrandFinancialPDF,
+  exportFailureDiagnosticsPDF
+} from "@/lib/reporting/analytics-pdf";
+import { exportAnalyticsXLSX } from "@/lib/reporting/analytics-excel";
 
 const SYSTEM_TIMEZONE = "America/Los_Angeles";
 const DYNAMIC_TIMEZONE = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
@@ -179,6 +190,9 @@ interface Stat {
   trueProcessRate?: number;
   totalGmv: number;
   totalFees: number;
+  feeKnownCount?: number;
+  feeUnknownCount?: number;
+  feeCoveragePct?: number;
   aov: number;
   cardTypes: { credit: number; debit: number; bank: number; unknown: number };
   kycLevels?: { none: number; l1: number; l2: number };
@@ -202,6 +216,9 @@ interface BrandStat {
   dedupedPaid?: number;
   dedupedFailed?: number;
   trueSuccessRate?: number;
+  feeKnownCount?: number;
+  feeUnknownCount?: number;
+  feeCoveragePct?: number;
 }
 
 interface ReceiptLog {
@@ -213,6 +230,7 @@ interface ReceiptLog {
 }
 
 interface ReceiptInfo {
+  storageId?: string;
   id?: string;
   receiptId: string;
   brandKey: string;
@@ -236,6 +254,7 @@ interface ReceiptInfo {
   kycLevel?: "L0" | "L1" | "L2" | string;
   kycOccurred?: boolean;
   platformFee?: number;
+  platformFeeSource?: "recorded_minor" | "recorded_usd" | "recorded_bps" | "unavailable";
   lineItems?: { label: string; priceUsd: number; qty?: number }[];
   items?: { label?: string; priceUsd?: number; quantity?: number; qty?: number }[];
   parentUrl?: string | null;
@@ -299,6 +318,39 @@ interface ReceiptInfo {
   quoteSummary?: any;
 }
 
+type AnalyticsReportType = "executive" | "ledger" | "brands" | "diagnostics";
+type AnalyticsReportFormat = "pdf" | "xlsx";
+
+interface ReportExportError {
+  reportType: AnalyticsReportType;
+  format: AnalyticsReportFormat;
+  reportName: string;
+  message: string;
+  guidance: string;
+  occurredAt: string;
+}
+
+const REPORT_NAMES: Record<AnalyticsReportType, string> = {
+  executive: "Executive Analytics Brief",
+  ledger: "Transaction Audit Ledger",
+  brands: "Brand Financial & Fee Settlement",
+  diagnostics: "Failure & Error Diagnostics"
+};
+
+function getReportErrorGuidance(message: string, format: AnalyticsReportFormat): string {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("duplicate") || normalized.includes("snapshot")) {
+    return "The analytics snapshot changed or repeated a storage record while it was being collected. Retry to start a fresh, pinned snapshot.";
+  }
+  if (normalized.includes("ended early") || normalized.includes("batch") || normalized.includes("network") || normalized.includes("fetch")) {
+    return "The complete data set could not be collected. Check the connection and retry; the report will restart from the first batch.";
+  }
+  if (normalized.includes("pdf") || normalized.includes("excel") || normalized.includes("document engine") || normalized.includes("table engine") || normalized.includes("workbook engine")) {
+    return "The report renderer did not initialize or return a complete file. Refresh the admin page if retrying does not resolve it.";
+  }
+  return `The ${format === "pdf" ? "PDF" : "Excel workbook"} was not downloaded. Retry once; if the issue persists, copy the technical detail below for investigation.`;
+}
+
 const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
   const kyc = String(r.kycLevel || r.kyc || "").toUpperCase().trim();
   if (kyc === "L2" || kyc === "LEVEL 2" || kyc === "LEVEL2") return "L2";
@@ -309,27 +361,30 @@ const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
     }
   }
 
-  if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1" || r.kycOccurred === true || (r as any).kyc_occurred === true) return "L1";
+  if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1") return "L1";
   if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
     for (const s of r.customerSessions) {
       const sKyc = String(s?.kycLevel || s?.kyc_level || "").toUpperCase().trim();
-      if (sKyc === "L1" || (s as any)?.kycOccurred === true) return "L1";
+      if (sKyc === "L1") return "L1";
     }
   }
 
-  if (kyc === "L0") return "L0";
-
-  const amt = Number(r.totalUsd || r.amountUsd || r.onChainAmountUsd || 0);
-  const status = String(r.status || "").toLowerCase();
-  if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(status)) {
-    if (amt >= 100) return "L2";
-    if (amt >= 15) return "L1";
-  }
-
+  // A payment amount or KYC trigger does not prove verification completed.
+  // Only persisted receipt/session tiers are shown as verified.
   return "L0";
 };
 
-const isSettledStatus = (s?: string | null) => ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(String(s || "").toLowerCase());
+const isSettledStatus = (s?: string | null) => [
+  "paid",
+  "paid - ach pending",
+  "ach_pending",
+  "checkout_success",
+  "confirmed",
+  "tx_mined",
+  "reconciled",
+  "recipient_validated",
+  "receipt_claimed"
+].includes(String(s || "").toLowerCase());
 const isFailedStatus = (s?: string | null) => String(s || "").toLowerCase() === "failed";
 
 export function deduplicateReceipts<T extends Partial<ReceiptInfo> & Record<string, any>>(receiptList: T[]): {
@@ -498,6 +553,134 @@ export function deduplicateReceipts<T extends Partial<ReceiptInfo> & Record<stri
     trueProcessRate,
     clusterSizeMap
   };
+}
+
+function calculateReceiptStats(receipts: ReceiptInfo[]): Stat {
+  const deduped = deduplicateReceipts(receipts);
+  let totalPaid = 0;
+  let totalFailed = 0;
+  let totalGmv = 0;
+  let totalFees = 0;
+  let feeKnownCount = 0;
+  let feeUnknownCount = 0;
+  const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
+  const kycLevels = { none: 0, l1: 0, l2: 0 };
+
+  receipts.forEach(receipt => {
+    if (isSettledStatus(receipt.status)) {
+      totalPaid += 1;
+      totalGmv += Number(receipt.totalUsd || 0);
+      const hasKnownFee = receipt.platformFeeSource
+        ? receipt.platformFeeSource !== "unavailable"
+        : typeof receipt.platformFee === "number";
+      if (hasKnownFee) {
+        totalFees += Number(receipt.platformFee || 0);
+        feeKnownCount += 1;
+      } else {
+        feeUnknownCount += 1;
+      }
+      const funding = String(receipt.detectedCardFunding || receipt.cardFunding || receipt.funding || "").toLowerCase();
+      if (["bank", "ach", "us_bank_account"].includes(funding)) cardTypes.bank += 1;
+      else if (funding === "credit") cardTypes.credit += 1;
+      else if (funding === "debit") cardTypes.debit += 1;
+      else cardTypes.unknown += 1;
+    } else if (isFailedStatus(receipt.status)) {
+      totalFailed += 1;
+    }
+
+    const kyc = getKycLevel(receipt);
+    if (kyc === "L2") kycLevels.l2 += 1;
+    else if (kyc === "L1") kycLevels.l1 += 1;
+    else kycLevels.none += 1;
+  });
+
+  const totalCreated = receipts.length;
+  return {
+    totalCreated,
+    totalPaid,
+    totalFailed,
+    successRate: totalCreated > 0 ? +((totalPaid / totalCreated) * 100).toFixed(1) : 0,
+    dedupedTotalCreated: deduped.dedupedTotalCreated,
+    dedupedTotalPaid: deduped.dedupedTotalPaid,
+    dedupedTotalFailed: deduped.dedupedTotalFailed,
+    trueIntegrationRate: deduped.trueIntegrationRate,
+    trueProcessRate: deduped.trueProcessRate,
+    totalGmv: +totalGmv.toFixed(2),
+    totalFees: +totalFees.toFixed(2),
+    feeKnownCount,
+    feeUnknownCount,
+    feeCoveragePct: totalPaid > 0 ? +((feeKnownCount / totalPaid) * 100).toFixed(1) : 100,
+    aov: totalPaid > 0 ? +(totalGmv / totalPaid).toFixed(2) : 0,
+    cardTypes,
+    kycLevels
+  };
+}
+
+function resolveReportBrandName(brandKey: string, rows: ReceiptInfo[]): string {
+  const normalizedKey = String(brandKey || "unknown").toLowerCase().trim();
+  const knownNames: Record<string, string> = {
+    basaltsurge: "BasaltSurge",
+    portalpay: "BasaltSurge",
+    aipowerpay: "AI PowerPay",
+    lucky13: "Lucky 13",
+    "data-opt": "Data-Opt",
+    dataopt: "Data-Opt",
+    xoinpay: "XoinPay"
+  };
+  if (knownNames[normalizedKey]) return knownNames[normalizedKey];
+
+  const candidate = rows
+    .map(row => String(row.brandName || "").trim())
+    .find(name => name && !["basaltsurge", "portalpay"].includes(name.toLowerCase()));
+  if (candidate) return candidate;
+
+  return normalizedKey
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ") || "Unknown";
+}
+
+function calculateBrandReportStats(receipts: ReceiptInfo[]): BrandStat[] {
+  const grouped = new Map<string, ReceiptInfo[]>();
+  receipts.forEach(receipt => {
+    const key = receipt.brandKey || "unknown";
+    const bucket = grouped.get(key);
+    if (bucket) bucket.push(receipt);
+    else grouped.set(key, [receipt]);
+  });
+
+  return Array.from(grouped.entries()).map(([brandKey, rows]) => {
+    const stats = calculateReceiptStats(rows);
+    return {
+      brandKey,
+      brandName: resolveReportBrandName(brandKey, rows),
+      total: stats.totalCreated,
+      paid: stats.totalPaid,
+      failed: stats.totalFailed,
+      gmv: stats.totalGmv,
+      fees: stats.totalFees,
+      successRate: stats.successRate,
+      dedupedTotal: stats.dedupedTotalCreated,
+      dedupedPaid: stats.dedupedTotalPaid,
+      dedupedFailed: stats.dedupedTotalFailed,
+      trueSuccessRate: stats.trueIntegrationRate,
+      feeKnownCount: stats.feeKnownCount,
+      feeUnknownCount: stats.feeUnknownCount,
+      feeCoveragePct: stats.feeCoveragePct
+    };
+  }).sort((a, b) => b.gmv - a.gmv);
+}
+
+function calculateFailureReportReasons(receipts: ReceiptInfo[]): FailureReason[] {
+  const counts = new Map<string, number>();
+  receipts.forEach(receipt => {
+    if (!isFailedStatus(receipt.status)) return;
+    const reason = String(receipt.failureReason || "No recorded failure detail").trim() || "No recorded failure detail";
+    counts.set(reason, (counts.get(reason) || 0) + 1);
+  });
+  return Array.from(counts, ([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 }
 
 const LOADING_STAGES = [
@@ -970,6 +1153,30 @@ export default function PlatformAnalyticsPanel() {
   const [selectedWeekOffset, setSelectedWeekOffset] = useState<number>(0);
   const [selectedMonthOffset, setSelectedMonthOffset] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [appliedSearch, setAppliedSearch] = useState<string>("");
+  const [searchMode, setSearchMode] = useState<"all" | "receiptId" | "email" | "session" | "wallet">("all");
+  const [totalServerMatches, setTotalServerMatches] = useState<number>(0);
+
+  // Batched Large Query Loading State
+  const [isBatchLoading, setIsBatchLoading] = useState<boolean>(false);
+  const [batchProgress, setBatchProgress] = useState<number>(0);
+  const [batchCurrent, setBatchCurrent] = useState<number>(0);
+  const [batchTotal, setBatchTotal] = useState<number>(0);
+  const [batchLoadedCount, setBatchLoadedCount] = useState<number>(0);
+  const [batchTargetCount, setBatchTargetCount] = useState<number>(0);
+  const batchRunningRef = useRef<boolean>(false);
+  const batchGenerationRef = useRef<number>(0);
+  const batchAbortRef = useRef<AbortController | null>(null);
+  const analyticsAbortRef = useRef<AbortController | null>(null);
+  const exportAbortRef = useRef<AbortController | null>(null);
+  const [exportProgress, setExportProgress] = useState<number>(0);
+
+  // Analytics report export state
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
+  const [isExportingReport, setIsExportingReport] = useState<boolean>(false);
+  const [activeExportFormat, setActiveExportFormat] = useState<AnalyticsReportFormat | null>(null);
+  const [exportError, setExportError] = useState<ReportExportError | null>(null);
+
   const [kycFilter, setKycFilter] = useState<string>("all");
   const [isCardFundingFlipped, setIsCardFundingFlipped] = useState<boolean>(false);
 
@@ -1066,7 +1273,26 @@ export default function PlatformAnalyticsPanel() {
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedBrand, statusFilter, timeRange, searchQuery, kycFilter, sortKey, sortDirection, fetchLimit]);
+  }, [selectedBrand, statusFilter, timeRange, searchQuery, appliedSearch, searchMode, kycFilter, sortKey, sortDirection, fetchLimit]);
+
+  useEffect(() => {
+    if (!exportError) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExportError(null);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [exportError]);
+
+  // Debounced server search sync (auto-queries backend after 500ms of typing)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchQuery.trim() !== appliedSearch.trim()) {
+        setAppliedSearch(searchQuery.trim());
+      }
+    }, 550);
+    return () => clearTimeout(timer);
+  }, [searchQuery, appliedSearch]);
 
   const fetchReceiptLogs = useCallback(async (receiptId: string) => {
     if (expandedLogs[receiptId]) return; // Already loaded
@@ -1119,8 +1345,167 @@ export default function PlatformAnalyticsPanel() {
     setExpandedReceiptIds(new Set());
   };
 
+  const buildAnalyticsParams = useCallback((
+    limit: number,
+    offset: number,
+    snapshotEnd?: string,
+    continuationToken?: string,
+    includeAggregates = offset === 0
+  ) => {
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+      timezoneMode,
+      timeRange,
+      weekOffset: String(selectedWeekOffset),
+      monthOffset: String(selectedMonthOffset),
+      brandKey: selectedBrand,
+      includeAggregates: includeAggregates ? "true" : "false"
+    });
+    if (customStartDate) params.set("customStart", customStartDate);
+    if (customEndDate) params.set("customEnd", customEndDate);
+    if (snapshotEnd) params.set("snapshotEnd", snapshotEnd);
+    if (continuationToken) params.set("continuationToken", continuationToken);
+    if (appliedSearch.trim()) {
+      params.set("search", appliedSearch.trim());
+      params.set("searchMode", searchMode);
+    }
+    return params;
+  }, [timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, customStartDate, customEndDate, appliedSearch, searchMode]);
+
+  const fetchAnalyticsPage = useCallback(async (
+    limit: number,
+    offset: number,
+    signal: AbortSignal,
+    snapshotEnd?: string,
+    continuationToken?: string,
+    includeAggregates = offset === 0
+  ) => {
+    const clientTz = typeof window !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : "America/Los_Angeles";
+    const params = buildAnalyticsParams(limit, offset, snapshotEnd, continuationToken, includeAggregates);
+    const response = await fetch(`/api/platform/analytics?${params.toString()}`, {
+      headers: { "x-wallet": wallet, "x-client-timezone": clientTz },
+      cache: "no-store",
+      signal
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `Analytics batch failed at offset ${offset}`);
+    return data;
+  }, [buildAnalyticsParams, wallet]);
+
+  const collectAnalyticsReceipts = useCallback(async ({
+    signal,
+    seedData,
+    targetLimit = "all",
+    includeAggregates = true,
+    onProgress
+  }: {
+    signal: AbortSignal;
+    seedData?: any;
+    targetLimit?: number | "all";
+    includeAggregates?: boolean;
+    onProgress?: (receipts: ReceiptInfo[], loaded: number, target: number, batch: number, totalBatches: number) => void;
+  }) => {
+    const batchSize = 500;
+    const firstData = seedData || await fetchAnalyticsPage(batchSize, 0, signal, undefined, undefined, includeAggregates);
+    let accumulated: ReceiptInfo[] = [...(firstData.recentReceipts || [])];
+    const totalMatching = firstData.pagination?.totalMatchingCount ?? accumulated.length;
+    const targetCount = targetLimit === "all" ? totalMatching : Math.min(totalMatching, targetLimit);
+    const snapshotEnd = firstData.pagination?.snapshotEnd;
+    let continuationToken = firstData.pagination?.continuationToken;
+    const totalBatches = Math.max(1, Math.ceil(targetCount / batchSize));
+    let batchNumber = 1;
+
+    onProgress?.([...accumulated], accumulated.length, targetCount, batchNumber, totalBatches);
+
+    while (accumulated.length < targetCount) {
+      if (signal.aborted) throw new DOMException("Analytics batching cancelled", "AbortError");
+      const remaining = targetCount - accumulated.length;
+      const pageSize = Math.min(batchSize, remaining);
+      const pageData = await fetchAnalyticsPage(pageSize, accumulated.length, signal, snapshotEnd, continuationToken, false);
+      const pageReceipts: ReceiptInfo[] = pageData.recentReceipts || [];
+      if (pageReceipts.length === 0) {
+        throw new Error(`Analytics snapshot ended early: loaded ${accumulated.length} of ${targetCount} records`);
+      }
+      accumulated = [...accumulated, ...pageReceipts];
+      continuationToken = pageData.pagination?.continuationToken;
+      batchNumber += 1;
+      onProgress?.([...accumulated], accumulated.length, targetCount, batchNumber, totalBatches);
+    }
+
+    const uniqueKeys = new Set(accumulated.map(receipt =>
+      receipt.storageId || `${receipt.receiptId || "missing"}:${receipt.createdAt || "unknown"}`
+    ));
+    if (uniqueKeys.size !== accumulated.length) {
+      throw new Error("Analytics snapshot contained duplicate records; retry the export to avoid an inconsistent report");
+    }
+
+    return { firstData, receipts: accumulated, totalMatching, targetCount, snapshotEnd };
+  }, [fetchAnalyticsPage]);
+
+  const cancelBatchLoad = useCallback(() => {
+    batchGenerationRef.current += 1;
+    batchRunningRef.current = false;
+    batchAbortRef.current?.abort();
+    batchAbortRef.current = null;
+    setIsBatchLoading(false);
+  }, []);
+
+  // Streams the complete, snapshot-pinned result set in deterministic batches.
+  const loadAllBatched = useCallback(async (targetLimit: number | "all" = "all", seedData?: any) => {
+    if (!wallet || batchRunningRef.current) return;
+    const generation = ++batchGenerationRef.current;
+    const controller = new AbortController();
+    batchAbortRef.current = controller;
+    batchRunningRef.current = true;
+    setIsBatchLoading(true);
+    setBatchProgress(0);
+
+    try {
+      const result = await collectAnalyticsReceipts({
+        signal: controller.signal,
+        seedData,
+        targetLimit,
+        onProgress: (receipts, loaded, target, batch, totalBatches) => {
+          if (generation !== batchGenerationRef.current) return;
+          setRecentReceipts(receipts);
+          setBatchLoadedCount(loaded);
+          setBatchTargetCount(target);
+          setBatchCurrent(batch);
+          setBatchTotal(totalBatches);
+          setBatchProgress(target === 0 ? 100 : Math.min(100, Math.round((loaded / target) * 100)));
+        }
+      });
+
+      if (generation !== batchGenerationRef.current) return;
+      setStats(result.firstData.stats);
+      setFailureReasons(result.firstData.failureReasons || []);
+      setBrandStats(result.firstData.brandStats || []);
+      setDailySeries(result.firstData.dailySeries || []);
+      setTotalServerMatches(result.totalMatching);
+      setBatchProgress(100);
+    } catch (err: any) {
+      if (err?.name !== "AbortError" && generation === batchGenerationRef.current) {
+        console.error("[BATCHED LOAD ERROR]:", err);
+        setError(err?.message || "Failed during batched load");
+      }
+    } finally {
+      if (generation === batchGenerationRef.current) {
+        batchRunningRef.current = false;
+        batchAbortRef.current = null;
+        setIsBatchLoading(false);
+      }
+    }
+  }, [wallet, collectAnalyticsReceipts]);
+
   const fetchAnalytics = useCallback(async () => {
     if (!wallet) return;
+    cancelBatchLoad();
+    analyticsAbortRef.current?.abort();
+    const controller = new AbortController();
+    analyticsAbortRef.current = controller;
     if (!initialLoadDoneRef.current) {
       setLoading(true);
     } else {
@@ -1128,42 +1513,33 @@ export default function PlatformAnalyticsPanel() {
     }
     setError(null);
     try {
-      const clientTz = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
-      const params = new URLSearchParams({
-        limit: String(fetchLimit),
-        timezoneMode,
-        timeRange,
-        weekOffset: String(selectedWeekOffset),
-        monthOffset: String(selectedMonthOffset),
-        brandKey: selectedBrand
-      });
-      if (customStartDate) params.set("customStart", customStartDate);
-      if (customEndDate) params.set("customEnd", customEndDate);
-
-      const res = await fetch(`/api/platform/analytics?${params.toString()}`, {
-        headers: {
-          "x-wallet": wallet,
-          "x-client-timezone": clientTz
-        },
-        cache: "no-store",
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to load platform analytics");
-      }
+      const data = await fetchAnalyticsPage(fetchLimit === "all" ? 500 : fetchLimit, 0, controller.signal);
       setStats(data.stats);
       setFailureReasons(data.failureReasons);
       setBrandStats(data.brandStats);
-      setRecentReceipts(data.recentReceipts);
+      setRecentReceipts(data.recentReceipts || []);
       setDailySeries(data.dailySeries || []);
+      setTotalServerMatches(data.pagination?.totalMatchingCount ?? (data.stats?.totalCreated || 0));
       initialLoadDoneRef.current = true;
+
+      // Continue through short Cosmos pages, or stream the entire snapshot when
+      // "all" is selected. Mongo pages that already met the requested limit stop here.
+      const firstPageCount = data.recentReceipts?.length || 0;
+      const shouldContinueBatch = data.pagination?.hasMore &&
+        (fetchLimit === "all" || firstPageCount < fetchLimit);
+      if (shouldContinueBatch) {
+        void loadAllBatched(fetchLimit, data);
+      }
     } catch (e: any) {
-      setError(e?.message || "An unexpected error occurred");
+      if (e?.name !== "AbortError") setError(e?.message || "An unexpected error occurred");
     } finally {
-      setLoading(false);
-      setIsRefetching(false);
+      if (analyticsAbortRef.current === controller) {
+        analyticsAbortRef.current = null;
+        setLoading(false);
+        setIsRefetching(false);
+      }
     }
-  }, [wallet, fetchLimit, timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, customStartDate, customEndDate]);
+  }, [wallet, fetchLimit, fetchAnalyticsPage, loadAllBatched, cancelBatchLoad]);
 
   const handleTargetedReconcile = useCallback(async (receiptId: string) => {
     setActionLoading(prev => ({ ...prev, [receiptId]: true }));
@@ -1288,6 +1664,12 @@ export default function PlatformAnalyticsPanel() {
     fetchGitCommits();
   }, [fetchAnalytics, fetchSafeBalances, fetchGitCommits]);
 
+  useEffect(() => () => {
+    analyticsAbortRef.current?.abort();
+    batchAbortRef.current?.abort();
+    exportAbortRef.current?.abort();
+  }, []);
+
   // Unique brandkeys for filtering dropdown (omitting "unknown")
   const allBrandKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -1339,24 +1721,33 @@ export default function PlatformAnalyticsPanel() {
   // Base Filter & Search Receipts (excluding selected combo)
   const baseFilteredReceipts = useMemo(() => {
     return recentReceipts.filter(r => {
-      const matchesBrand = selectedBrand === "all" || r.brandKey === selectedBrand;
-      const matchesStatus = statusFilter === "all" || r.status === statusFilter;
+      const matchesBrand = selectedBrand === "all" || String(r.brandKey || "").toLowerCase() === selectedBrand.toLowerCase();
+      const matchesStatus = statusFilter === "all" || String(r.status || "").toLowerCase() === statusFilter.toLowerCase();
 
       const q = searchQuery.toLowerCase().trim();
-      const matchesQuery = !q ||
-        r.receiptId.toLowerCase().includes(q) ||
-        r.email.toLowerCase().includes(q) ||
-        (r.stripeSessionId && r.stripeSessionId.toLowerCase().includes(q)) ||
-        (r.transactionHash && r.transactionHash.toLowerCase().includes(q)) ||
-        (r.merchantName && r.merchantName.toLowerCase().includes(q)) ||
-        (r.shopName && r.shopName.toLowerCase().includes(q)) ||
-        (r.shopSlug && r.shopSlug.toLowerCase().includes(q)) ||
-        (r.wallet && r.wallet.toLowerCase().includes(q)) ||
-        r.brandKey.toLowerCase().includes(q);
+      const includes = (value?: string | null) => String(value || "").toLowerCase().includes(q);
+      let matchesQuery = !q;
+      if (q) {
+        if (searchMode === "receiptId") {
+          matchesQuery = includes(r.receiptId) || includes(r.id);
+        } else if (searchMode === "email") {
+          matchesQuery = includes(r.email) || includes(r.customerEmail) || includes(r.stripeEmail);
+        } else if (searchMode === "wallet") {
+          matchesQuery = includes(r.buyerWallet) || includes(r.wallet) || includes(r.merchantWallet);
+        } else if (searchMode === "session") {
+          matchesQuery = includes(r.stripeSessionId) || includes(r.paymentId);
+        } else {
+          matchesQuery = includes(r.receiptId) || includes(r.id) || includes(r.email) ||
+            includes(r.customerEmail) || includes(r.stripeEmail) || includes(r.stripeSessionId) ||
+            includes(r.paymentId) || includes(r.transactionHash) || includes(r.merchantName) ||
+            includes(r.shopName) || includes(r.shopSlug) || includes(r.buyerWallet) ||
+            includes(r.wallet) || includes(r.merchantWallet) || includes(r.brandKey);
+        }
+      }
 
       return matchesBrand && matchesStatus && matchesQuery;
     });
-  }, [recentReceipts, selectedBrand, statusFilter, searchQuery]);
+  }, [recentReceipts, selectedBrand, statusFilter, searchQuery, searchMode]);
 
   // Final filtered receipts (including selected error combo filter)
   const filteredReceipts = useMemo(() => {
@@ -1392,7 +1783,7 @@ export default function PlatformAnalyticsPanel() {
     if (N === 0) return { topReasons, matrix };
 
     baseFilteredReceipts.forEach(r => {
-      if (r.status !== "failed" && !r.failureReason) return;
+      if (!isFailedStatus(r.status) && !r.failureReason) return;
       
       const reasonsSet = new Set<string>();
       if (r.failureReason) {
@@ -1515,7 +1906,7 @@ export default function PlatformAnalyticsPanel() {
           totalPaid++;
           totalGmv += r.totalUsd;
           totalFees += r.platformFee || 0;
-        } else if (r.status === "failed") {
+        } else if (isFailedStatus(r.status)) {
           totalFailed++;
         }
 
@@ -1525,7 +1916,6 @@ export default function PlatformAnalyticsPanel() {
         else if (rawFunding === "credit") funding = "credit";
         else if (rawFunding === "debit") funding = "debit";
         else if (r.isCreditCard === true) funding = "credit";
-        else if (r.isCreditCard === false) funding = "debit";
         else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
           const pm = r.customerSessions[0]?.paymentMethodDetails;
           if (pm?.type === "us_bank_account") funding = "bank";
@@ -1655,7 +2045,6 @@ export default function PlatformAnalyticsPanel() {
       else if (rawFunding === "credit") funding = "credit";
       else if (rawFunding === "debit") funding = "debit";
       else if (r.isCreditCard === true) funding = "credit";
-      else if (r.isCreditCard === false) funding = "debit";
       else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
         const pm = r.customerSessions[0]?.paymentMethodDetails;
         if (pm?.type === "us_bank_account") funding = "bank";
@@ -1709,9 +2098,134 @@ export default function PlatformAnalyticsPanel() {
       statusFilter !== "all" ||
       timeRange !== "all" ||
       searchQuery.trim() !== "" ||
+      appliedSearch.trim() !== "" ||
       kycFilter !== "all"
     );
-  }, [selectedBrand, statusFilter, timeRange, searchQuery, kycFilter]);
+  }, [selectedBrand, statusFilter, timeRange, searchQuery, appliedSearch, kycFilter]);
+
+  const searchPlaceholder = useMemo(() => {
+    switch (searchMode) {
+      case "receiptId":
+        return "Search by Receipt ID (e.g. rec_... or 0x...)";
+      case "email":
+        return "Search by Customer or Stripe Email (e.g. user@domain.com)...";
+      case "session":
+        return "Search by Stripe Session ID or Payment ID...";
+      case "wallet":
+        return "Search by Buyer or Merchant Wallet (0x...)...";
+      default:
+        return "Search receipt ID, email, session ID, tx hash, wallet, brand...";
+    }
+  }, [searchMode]);
+
+  const searchModeLabel = useMemo(() => {
+    switch (searchMode) {
+      case "receiptId": return "Receipt ID";
+      case "email": return "Customer Email";
+      case "session": return "Session / Payment ID";
+      case "wallet": return "Wallet Address";
+      default: return "All Fields";
+    }
+  }, [searchMode]);
+
+  const handleExportReport = useCallback(async (type: AnalyticsReportType, format: AnalyticsReportFormat) => {
+    exportAbortRef.current?.abort();
+    const controller = new AbortController();
+    exportAbortRef.current = controller;
+    setExportError(null);
+    setIsExportingReport(true);
+    setActiveExportFormat(format);
+    setExportProgress(0);
+    setIsExportMenuOpen(false);
+    try {
+      const dateRangeStr = timeRange === "today" ? "Today" :
+        timeRange === "yesterday" ? "Yesterday" :
+        timeRange === "weekly" ? "Weekly Range" :
+        timeRange === "monthly" ? "Monthly Range" :
+        timeRange === "custom" ? `${customStartDate} to ${customEndDate}` : "All Time";
+
+      const collected = await collectAnalyticsReceipts({
+        signal: controller.signal,
+        targetLimit: "all",
+        includeAggregates: false,
+        onProgress: (_receipts, loaded, target) => {
+          setExportProgress(target === 0 ? 70 : Math.min(70, Math.round((loaded / target) * 70)));
+        }
+      });
+
+      const reportReceipts = collected.receipts.filter(receipt => {
+        if (statusFilter !== "all" && String(receipt.status || "").toLowerCase() !== statusFilter.toLowerCase()) return false;
+        if (kycFilter !== "all" && getKycLevel(receipt) !== kycFilter) return false;
+        if (selectedErrorCombo) {
+          const [reasonA, reasonB] = selectedErrorCombo.map(reason => reason.toLowerCase());
+          const errors = new Set<string>();
+          if (receipt.failureReason) errors.add(receipt.failureReason.toLowerCase());
+          receipt.customerSessions?.forEach(session => {
+            if (session?.lastError) errors.add(String(session.lastError).toLowerCase());
+            if (session?.status === "failed" && session?.error) errors.add(String(session.error).toLowerCase());
+          });
+          const errorList = Array.from(errors);
+          const hasA = errorList.some(error => error.includes(reasonA) || reasonA.includes(error));
+          const hasB = errorList.some(error => error.includes(reasonB) || reasonB.includes(error));
+          if (!hasA || !hasB) return false;
+        }
+        return true;
+      });
+
+      const reportStats = calculateReceiptStats(reportReceipts);
+      const reportBrandStats = calculateBrandReportStats(reportReceipts);
+      const reportFailureReasons = calculateFailureReportReasons(reportReceipts);
+      const timezoneLabel = timezoneMode === "dynamic" ? DYNAMIC_TIMEZONE : SYSTEM_TIMEZONE;
+      const searchLabel = appliedSearch
+        ? `${searchModeLabel}: ${appliedSearch}`
+        : "No search query";
+      const partnerLabel = selectedBrand === "all"
+        ? "ALL"
+        : resolveReportBrandName(selectedBrand, reportReceipts);
+      const filterContext = `${dateRangeStr} | Partner: ${partnerLabel} | Status: ${statusFilter.toUpperCase()} | KYC: ${kycFilter.toUpperCase()} | Search: ${searchLabel} | TZ: ${timezoneLabel}`;
+      setExportProgress(82);
+
+      if (format === "xlsx") {
+        await exportAnalyticsXLSX(
+          type,
+          reportStats,
+          reportBrandStats,
+          reportFailureReasons,
+          reportReceipts,
+          filterContext,
+          timezoneLabel
+        );
+      } else if (type === "executive") {
+        await exportExecutiveSummaryPDF(reportStats, reportBrandStats, reportFailureReasons, filterContext);
+      } else if (type === "ledger") {
+        await exportTransactionLedgerPDF(reportReceipts, reportStats, searchLabel, filterContext, timezoneLabel);
+      } else if (type === "brands") {
+        await exportBrandFinancialPDF(reportBrandStats, reportStats, filterContext);
+      } else {
+        await exportFailureDiagnosticsPDF(reportFailureReasons, reportStats, reportReceipts, filterContext, timezoneLabel);
+      }
+      setExportProgress(100);
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.error(`[${format.toUpperCase()} EXPORT ERROR]:`, err);
+        const message = err?.message || "An unknown report generation error occurred.";
+        setExportError({
+          reportType: type,
+          format,
+          reportName: REPORT_NAMES[type],
+          message,
+          guidance: getReportErrorGuidance(message, format),
+          occurredAt: new Date().toISOString()
+        });
+      }
+    } finally {
+      if (exportAbortRef.current === controller) {
+        exportAbortRef.current = null;
+        setIsExportingReport(false);
+        setActiveExportFormat(null);
+      }
+    }
+  }, [collectAnalyticsReceipts, timeRange, customStartDate, customEndDate, selectedBrand, statusFilter, kycFilter, selectedErrorCombo, timezoneMode, appliedSearch, searchModeLabel]);
 
   const displayStats = useMemo(() => {
     if (!stats) return null;
@@ -2069,7 +2583,7 @@ export default function PlatformAnalyticsPanel() {
 
     baseFilteredReceipts.forEach(r => {
       if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) paidCount++;
-      else if (r.status === "failed") failedCount++;
+      else if (isFailedStatus(r.status)) failedCount++;
       else pendingCount++;
     });
 
@@ -2400,7 +2914,6 @@ export default function PlatformAnalyticsPanel() {
                 else if (rawFunding === "credit") funding = "credit";
                 else if (rawFunding === "debit") funding = "debit";
                 else if (r.isCreditCard === true) funding = "credit";
-                else if (r.isCreditCard === false) funding = "debit";
                 else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
                   const pm = r.customerSessions[0]?.paymentMethodDetails;
                   if (pm?.type === "us_bank_account") funding = "bank";
@@ -3379,16 +3892,79 @@ export default function PlatformAnalyticsPanel() {
           {/* Filter Toolbar */}
           <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3 sm:gap-4">
 
-            {/* Search Bar */}
-            <div className="relative flex-1 w-full">
-              <Search className="absolute left-3.5 top-3 w-4 h-4 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Search receipt ID, email, session ID, tx hash..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full h-10 pl-10 pr-4 rounded-xl bg-white/[0.04] border border-white/10 focus:border-primary/60 text-xs text-white placeholder:text-muted-foreground focus:outline-none transition-all shadow-sm"
-              />
+            {/* Enhanced Search Bar & Target Mode Selector */}
+            <div className="flex flex-col gap-2 flex-1 w-full">
+              {/* Dedicated search scopes keep receipt, customer, and wallet investigations explicit. */}
+              <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/25 p-1 overflow-x-auto">
+                {([
+                  { value: "receiptId", label: "Receipt ID", icon: FileText },
+                  { value: "email", label: "User Email", icon: Mail },
+                  { value: "wallet", label: "User Wallet", icon: Wallet },
+                  { value: "session", label: "Session", icon: Database },
+                  { value: "all", label: "All Fields", icon: Search }
+                ] as const).map(({ value, label, icon: ModeIcon }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setSearchMode(value)}
+                    aria-pressed={searchMode === value}
+                    className={`h-8 px-2.5 rounded-lg text-[10px] sm:text-[11px] font-bold whitespace-nowrap flex items-center gap-1.5 border transition-all ${
+                      searchMode === value
+                        ? "bg-primary/20 border-primary/45 text-primary shadow-[0_0_18px_rgba(59,130,246,0.14)]"
+                        : "border-transparent text-white/50 hover:text-white hover:bg-white/[0.06]"
+                    }`}
+                  >
+                    <ModeIcon className="w-3.5 h-3.5" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Search Input Field */}
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-3 w-4 h-4 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  aria-label={`Search platform analytics by ${searchModeLabel}`}
+                  placeholder={searchPlaceholder}
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") {
+                      setAppliedSearch(searchQuery.trim());
+                    }
+                  }}
+                  className="w-full h-10 pl-10 pr-20 rounded-xl bg-white/[0.04] border border-white/10 focus:border-primary/60 text-xs text-white placeholder:text-muted-foreground focus:outline-none transition-all shadow-sm"
+                />
+
+                <div className="absolute right-2 top-1.5 flex items-center gap-1">
+                  {searchQuery && (
+                    <button
+                      onClick={() => {
+                        setSearchQuery("");
+                        setAppliedSearch("");
+                      }}
+                      className="p-1.5 hover:bg-white/10 rounded-lg text-white/50 hover:text-white transition-colors"
+                      title="Clear search"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setAppliedSearch(searchQuery.trim())}
+                    disabled={isRefetching || isBatchLoading}
+                    className="px-2.5 py-1 rounded-lg bg-primary/20 hover:bg-primary/30 border border-primary/40 text-[11px] font-bold text-primary flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
+                    title="Query platform database"
+                  >
+                    {isRefetching ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                    ) : (
+                      <Database className="w-3 h-3 text-primary" />
+                    )}
+                    <span>Query</span>
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Filters Dropdown */}
@@ -3515,39 +4091,221 @@ export default function PlatformAnalyticsPanel() {
                 value={fetchLimit}
                 onChange={e => {
                   const val = e.target.value;
-                  setFetchLimit(val === "all" ? "all" : Number(val));
+                  const newLimit = val === "all" ? "all" : Number(val);
+                  setFetchLimit(newLimit);
                 }}
                 className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
               >
                 <option value={500} className="bg-neutral-900">500 Records</option>
                 <option value={1000} className="bg-neutral-900">1000 Records</option>
                 <option value={2500} className="bg-neutral-900">2500 Records</option>
-                <option value="all" className="bg-neutral-900">All Records</option>
+                <option value="all" className="bg-neutral-900">All Records (Batched)</option>
               </select>
+
+              {/* Complete PDF and Excel report export menu */}
+              <div className="relative">
+                <button
+                  onClick={() => setIsExportMenuOpen(prev => !prev)}
+                  disabled={isExportingReport}
+                  className="h-10 px-3.5 rounded-xl bg-gradient-to-r from-primary/20 via-purple-500/20 to-emerald-500/20 hover:from-primary/30 hover:to-emerald-500/30 border border-primary/40 text-xs font-bold text-white transition-all flex items-center gap-2 shadow-lg shadow-primary/10 active:scale-95 disabled:opacity-50"
+                  title="Export complete analytics reports"
+                >
+                  {isExportingReport ? (
+                    <RefreshCw className="w-3.5 h-3.5 text-primary animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5 text-primary" />
+                  )}
+                  <span>{isExportingReport ? `Preparing ${activeExportFormat?.toUpperCase() || "report"} ${exportProgress}%` : "Export Reports"}</span>
+                  <ChevronDown className={`w-3.5 h-3.5 text-white/60 transition-transform ${isExportMenuOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {isExportMenuOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setIsExportMenuOpen(false)}
+                    />
+                    <div className="absolute right-0 top-12 z-50 w-[min(92vw,25rem)] rounded-2xl bg-zinc-950/95 border border-white/15 p-2 shadow-2xl backdrop-blur-2xl space-y-1 animate-in fade-in zoom-in-95 duration-150 text-left">
+                      <div className="px-3 py-2 border-b border-white/10">
+                        <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-primary flex items-center gap-1.5">
+                          <FileText className="w-3.5 h-3.5 text-primary" />
+                          <span>Analytics Report Center</span>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">
+                          Each format uses the same complete, filtered, snapshot-pinned data set.
+                        </div>
+                      </div>
+
+                      {([
+                        {
+                          type: "executive" as AnalyticsReportType,
+                          title: "Executive Analytics Brief",
+                          description: "Reconciled KPIs, partner performance, funding mix, failures, and quality controls.",
+                          Icon: BarChart2,
+                          iconClass: "bg-blue-500/15 border-blue-500/30 text-blue-400"
+                        },
+                        {
+                          type: "ledger" as AnalyticsReportType,
+                          title: "Transaction Audit Ledger",
+                          description: "Complete receipt-level audit data with identifiers, wallets, fees, and failure evidence.",
+                          Icon: FileSpreadsheet,
+                          iconClass: "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
+                        },
+                        {
+                          type: "brands" as AnalyticsReportType,
+                          title: "Partner Financial Performance",
+                          description: "Resolved partner names, conversion reconciliation, GMV, and recorded fee coverage.",
+                          Icon: Building2,
+                          iconClass: "bg-purple-500/15 border-purple-500/30 text-purple-400"
+                        },
+                        {
+                          type: "diagnostics" as AnalyticsReportType,
+                          title: "Failure Diagnostics",
+                          description: "Complete recorded reason distribution plus transaction-level evidence.",
+                          Icon: AlertCircle,
+                          iconClass: "bg-rose-500/15 border-rose-500/30 text-rose-400"
+                        }
+                      ]).map(({ type, title, description, Icon, iconClass }) => (
+                        <div key={type} className="rounded-xl p-2.5 transition-colors hover:bg-white/[0.05]">
+                          <div className="flex items-start gap-2.5">
+                            <div className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 mt-0.5 ${iconClass}`}>
+                              <Icon className="w-4 h-4" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-bold text-white">{title}</div>
+                              <div className="text-[10px] text-muted-foreground leading-snug mt-0.5">{description}</div>
+                              <div className="flex items-center gap-2 mt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleExportReport(type, "pdf")}
+                                  className="h-7 px-2.5 rounded-lg border border-primary/30 bg-primary/10 text-[10px] font-extrabold text-primary hover:bg-primary/20 transition-colors flex items-center gap-1.5"
+                                >
+                                  <FileText className="w-3 h-3" />
+                                  PDF
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleExportReport(type, "xlsx")}
+                                  className="h-7 px-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-extrabold text-emerald-300 hover:bg-emerald-500/20 transition-colors flex items-center gap-1.5"
+                                >
+                                  <FileSpreadsheet className="w-3 h-3" />
+                                  Excel
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
           </div>
 
+          {/* Active Database Query Filter Telemetry Banner */}
+          {appliedSearch.trim() !== "" && (
+            <div className="flex flex-col sm:flex-row items-center justify-between bg-primary/10 border border-primary/30 rounded-xl px-4 py-2.5 gap-2 text-xs animate-in fade-in duration-200">
+              <div className="flex items-center gap-2.5">
+                <span className="w-2 h-2 rounded-full bg-primary animate-ping" />
+                <span className="font-mono text-white/90">
+                  <span className="font-bold text-primary">DATABASE QUERY ACTIVE:</span>{" "}
+                  Filtering by <span className="text-white font-bold">{searchModeLabel}</span> for{" "}
+                  <span className="text-white font-mono bg-white/10 px-2 py-0.5 rounded border border-white/20">&quot;{appliedSearch}&quot;</span>
+                </span>
+                <span className="text-xs font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                  {recentReceipts.length.toLocaleString()} loaded / {totalServerMatches.toLocaleString()} found
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setSearchQuery("");
+                  setAppliedSearch("");
+                }}
+                className="text-xs font-bold text-muted-foreground hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1 rounded-lg border border-white/10 transition-all flex items-center gap-1.5"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Reset Query</span>
+              </button>
+            </div>
+          )}
+
+          {/* Batched Large Query Telemetry Progress Bar */}
+          {isBatchLoading && (
+            <div className="p-4 rounded-2xl bg-zinc-900/90 border border-primary/40 shadow-2xl space-y-2.5 animate-in fade-in zoom-in-95 duration-200">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-6 h-6 rounded-lg bg-primary/20 border border-primary/40 flex items-center justify-center">
+                    <RefreshCw className="w-3.5 h-3.5 text-primary animate-spin" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white flex items-center gap-2">
+                      <span>STREAMING DATABASE RECORDS IN BATCHES</span>
+                      <span className="text-[10px] font-mono text-primary bg-primary/10 border border-primary/30 px-2 py-0.2 rounded-full">
+                        BATCH {batchCurrent} OF {batchTotal || 1}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground font-mono mt-0.5">
+                      Progressively loading records ({batchLoadedCount.toLocaleString()} / {batchTargetCount.toLocaleString()} intents synced)
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-xs font-black text-primary">
+                    {batchProgress}%
+                  </span>
+                  <button
+                    onClick={() => {
+                      cancelBatchLoad();
+                    }}
+                    className="px-3 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 text-xs font-bold transition-all"
+                  >
+                    Stop Batching
+                  </button>
+                </div>
+              </div>
+
+              {/* Animated Glowing Progress Track */}
+              <div className="h-2.5 w-full bg-zinc-950 rounded-full border border-white/10 overflow-hidden p-0.5">
+                <div
+                  className="h-full bg-gradient-to-r from-primary via-purple-500 to-emerald-400 rounded-full transition-all duration-300 shadow-[0_0_15px_rgba(59,130,246,0.8)] relative"
+                  style={{ width: `${Math.max(3, batchProgress)}%` }}
+                >
+                  <div className="absolute right-0 top-0 bottom-0 w-2 bg-white rounded-full animate-pulse shadow-[0_0_8px_#fff]" />
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Receipts Table */}
           <div className="border border-white/10 rounded-2xl overflow-hidden bg-zinc-950/80 shadow-2xl">
-            {fetchLimit !== "all" && stats && stats.totalCreated > recentReceipts.length && (
+            {!isBatchLoading && totalServerMatches > recentReceipts.length && (
               <div className="flex flex-col sm:flex-row items-center justify-between bg-amber-500/10 border-b border-white/10 px-4 py-3 gap-2 text-xs text-amber-400 font-semibold">
                 <span className="flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                  <span>Showing {recentReceipts.length} records of {stats.totalCreated} total intents.</span>
+                  <span>Showing {recentReceipts.length.toLocaleString()} records of {totalServerMatches.toLocaleString()} matching intents.</span>
                 </span>
                 <div className="flex items-center gap-2.5">
+                  {fetchLimit !== "all" && (
+                    <button
+                      onClick={() => setFetchLimit(prev => (prev === "all" ? "all" : prev + 500))}
+                      disabled={isBatchLoading}
+                      className="hover:text-white transition-colors bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg border border-white/10 text-xs font-bold disabled:opacity-50"
+                    >
+                      Load More (+500)
+                    </button>
+                  )}
                   <button
-                    onClick={() => setFetchLimit(prev => (prev === "all" ? "all" : prev + 500))}
-                    className="hover:text-white transition-colors bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg border border-white/10 text-xs font-bold"
+                    onClick={() => {
+                      if (fetchLimit === "all") void loadAllBatched("all");
+                      else setFetchLimit("all");
+                    }}
+                    disabled={isBatchLoading}
+                    className="hover:text-white transition-colors bg-primary/20 hover:bg-primary/30 border border-primary/40 text-primary px-3 py-1 rounded-lg text-xs font-bold disabled:opacity-50"
                   >
-                    Load More (+500)
-                  </button>
-                  <button
-                    onClick={() => setFetchLimit("all")}
-                    className="hover:text-white transition-colors bg-white/10 hover:bg-white/20 px-3 py-1 rounded-lg border border-white/10 text-xs font-bold"
-                  >
-                    Load All
+                    {fetchLimit === "all" ? "Restart Full Stream" : `Stream All (${totalServerMatches.toLocaleString()})`}
                   </button>
                 </div>
               </div>
@@ -6072,6 +6830,103 @@ export default function PlatformAnalyticsPanel() {
 
       </div>
 
+      {/* Report export errors are mounted above the analytics HUD so they remain visible on long ledgers. */}
+      {exportError && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed inset-0 z-[100000] flex items-center justify-center p-4 sm:p-6"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="report-export-error-title"
+          aria-describedby="report-export-error-description"
+        >
+          <button
+            type="button"
+            aria-label="Close report error"
+            className="absolute inset-0 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+            onClick={() => setExportError(null)}
+          />
+
+          <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-3xl border border-rose-500/30 bg-zinc-950 shadow-[0_30px_100px_rgba(0,0,0,0.7)] animate-in fade-in zoom-in-95 duration-200">
+            <div className="h-1 w-full bg-gradient-to-r from-rose-500 via-purple-500 to-primary" />
+            <div className="p-5 sm:p-6">
+              <div className="flex items-start gap-4">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-rose-500/30 bg-rose-500/15 shadow-[0_0_24px_rgba(244,63,94,0.14)]">
+                  <AlertCircle className="h-5 w-5 text-rose-400" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-rose-500/25 bg-rose-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-rose-300">
+                      Export interrupted
+                    </span>
+                    <span className="text-[10px] font-mono text-white/35">
+                      {new Date(exportError.occurredAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <h3 id="report-export-error-title" className="text-base font-extrabold tracking-tight text-white sm:text-lg">
+                    {exportError.reportName} {exportError.format === "pdf" ? "PDF" : "workbook"} was not downloaded
+                  </h3>
+                  <p id="report-export-error-description" className="mt-2 text-sm leading-relaxed text-white/65">
+                    {exportError.guidance}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExportError(null)}
+                  className="shrink-0 rounded-xl border border-white/10 bg-white/[0.04] p-2 text-white/45 transition-colors hover:bg-white/[0.08] hover:text-white"
+                  title="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-white/10 bg-black/35 p-3.5">
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <span className="text-[9px] font-bold uppercase tracking-[0.16em] text-white/35">Technical detail</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(
+                      `${exportError.reportName} (${exportError.format.toUpperCase()})\n${exportError.message}\n${exportError.occurredAt}`,
+                      "report-export-error"
+                    )}
+                    className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] font-bold text-white/50 transition-colors hover:bg-white/[0.06] hover:text-white"
+                  >
+                    {copySuccess["report-export-error"] ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                    <span>{copySuccess["report-export-error"] ? "Copied" : "Copy"}</span>
+                  </button>
+                </div>
+                <p className="break-words font-mono text-[11px] leading-relaxed text-rose-200/80">
+                  {exportError.message}
+                </p>
+              </div>
+
+              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setExportError(null)}
+                  className="h-10 rounded-xl border border-white/10 bg-white/[0.04] px-4 text-xs font-bold text-white/65 transition-colors hover:bg-white/[0.08] hover:text-white"
+                >
+                  Dismiss
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const reportType = exportError.reportType;
+                    const format = exportError.format;
+                    setExportError(null);
+                    void handleExportReport(reportType, format);
+                  }}
+                  className="flex h-10 items-center justify-center gap-2 rounded-xl border border-primary/40 bg-gradient-to-r from-primary/25 via-purple-500/20 to-emerald-500/20 px-4 text-xs font-extrabold text-white shadow-lg shadow-primary/10 transition-all hover:border-primary/60 hover:from-primary/35 active:scale-[0.98]"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Retry report
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* Mobile Full-Screen Slide-Over Investigation Drawer Modal mounted via React Portal onto document.body */}
       {mobileDrawerReceipt && typeof document !== "undefined" && createPortal(
         (() => {
@@ -6296,7 +7151,7 @@ export default function PlatformAnalyticsPanel() {
                     </span>
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    How PortalPay clusters rapid checkout revisions to measure true buyer conversion.
+                    How BasaltSurge clusters rapid checkout revisions to measure true buyer conversion.
                   </p>
                 </div>
               </div>
