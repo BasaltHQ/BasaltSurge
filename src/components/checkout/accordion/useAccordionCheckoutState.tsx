@@ -21,6 +21,11 @@ import {
 import { resolveCustomerKycTier, KycTierEntry } from "./kycTierEngine";
 import { parseOnrampError, formatOnrampErrorMessage } from "./errorTaxonomy";
 import { useStepProgressionGuard } from "./useStepProgressionGuard";
+import { isValidIsoCountryCode } from "@/lib/stripe-kyc-tracking";
+import type {
+  AccordionStepNumber,
+  AccordionTransitionTrigger,
+} from "@/lib/checkout-flow-tracking";
 
 export function useAccordionCheckoutState(
   props: PortalPayAccordionCheckoutV2Props
@@ -60,6 +65,10 @@ export function useAccordionCheckoutState(
     onHeadlessSubmitEmailPhone,
     onSubmitPhone,
     onSubmitKycInfo,
+    onSubmitKycIdentifiers,
+    missingKycIdentifiers = [],
+    kycIdentifierAlternatives = [],
+    attestationElement,
     onVerifyDocuments,
     onSelectPaymentMethod,
     onCompleteCheckout,
@@ -72,11 +81,19 @@ export function useAccordionCheckoutState(
     detectedCardBrand: propDetectedCardBrand,
     detectedCardLast4: propDetectedCardLast4,
     onEmailReceipt,
+    onAccordionStepTransition,
   } = props;
 
   const primaryColor = theme?.primaryColor || "#635BFF";
 
-  const [activeStep, setActiveStep] = useState<number>(1);
+  const [activeStep, setActiveStepState] = useState<number>(1);
+  const activeStepRef = useRef<number>(1);
+  const stepTransitionHandlerRef = useRef(onAccordionStepTransition);
+  const accordionJourneyIdRef = useRef<string>(
+    `journey-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  );
+  const transitionSequenceRef = useRef(0);
+  const initialTransitionReportedRef = useRef(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [manualEditAddress, setManualEditAddress] = useState<boolean>(false);
 
@@ -197,6 +214,8 @@ export function useAccordionCheckoutState(
     isAllKycCompleted ||
     effectiveStatus === "verified" ||
     headlessStep === "collecting_kyc" ||
+    headlessStep === "collecting_identifiers" ||
+    headlessStep === "accepting_terms" ||
     headlessStep === "verifying_identity" ||
     headlessStep === "collecting_payment" ||
     headlessStep === "verifying_wallet_ownership" ||
@@ -319,6 +338,9 @@ export function useAccordionCheckoutState(
   const [zipCode, setZipCode] = useState(initialZipCode || "");
   const [ssn, setSsn] = useState("");
   const [dob, setDob] = useState(initialDob || "");
+  const [nationalities, setNationalities] = useState("");
+  const [birthCountry, setBirthCountry] = useState("");
+  const [birthCity, setBirthCity] = useState("");
   const [micaIdentifierValue, setMicaIdentifierValue] = useState("");
   const [micaIdentifierType, setMicaIdentifierType] = useState<string>("");
 
@@ -398,6 +420,10 @@ export function useAccordionCheckoutState(
   const countryConfig = getCountryAddressConfig(country);
   const isUS = countryConfig.isUS;
   const isEU = countryConfig.isEU;
+  const nationalityCodes = nationalities
+    .split(/[\s,]+/)
+    .map((code) => code.trim().toUpperCase())
+    .filter(Boolean);
 
   // Step-up (DOB + SSN required): user is at L0 (name & address verified) but requires L1 (e.g. order exceeds L0 tier limit or Stripe API requested L1)
   const showStepUpForm =
@@ -442,6 +468,9 @@ export function useAccordionCheckoutState(
     zipCode: (zipCode || "").trim().length >= 2,
     dob: showDobField ? dobStatus.valid : true,
     ssn: showSsnField ? ssnDigits.length === 9 : true,
+    nationalities: !isEU || (nationalityCodes.length > 0 && nationalityCodes.every(isValidIsoCountryCode)),
+    birthCountry: !isEU || isValidIsoCountryCode(birthCountry),
+    birthCity: !isEU || birthCity.trim().length >= 2,
     micaIdentifier: countryConfig.micaIdentifier ? (micaIdentifierValue || "").trim().length >= 3 : true,
   };
 
@@ -454,6 +483,58 @@ export function useAccordionCheckoutState(
 
   const effectiveHeadlessStep = isSimulationMode ? (simulatedHeadlessStep || headlessStep) : headlessStep;
   const effectiveHeadlessStatus = isSimulationMode ? (simulatedHeadlessStatus || headlessStatus) : headlessStatus;
+
+  useEffect(() => {
+    stepTransitionHandlerRef.current = onAccordionStepTransition;
+  }, [onAccordionStepTransition]);
+
+  const reportAccordionTransition = useCallback((
+    fromStep: number,
+    toStep: AccordionStepNumber,
+    reason: string,
+    trigger: AccordionTransitionTrigger
+  ) => {
+    const actualFromStep = fromStep === 0 ? 0 : activeStepRef.current;
+    if (actualFromStep === toStep) return;
+    transitionSequenceRef.current += 1;
+    const now = Date.now();
+    const eventId = `${accordionJourneyIdRef.current}-${transitionSequenceRef.current}-${now}`;
+    activeStepRef.current = toStep;
+    stepTransitionHandlerRef.current?.({
+      eventId,
+      journeyId: accordionJourneyIdRef.current,
+      fromStep: actualFromStep,
+      toStep,
+      trigger,
+      reason,
+      headlessStep: effectiveHeadlessStep || null,
+    });
+  }, [effectiveHeadlessStep]);
+
+  const transitionToStep = useCallback((
+    toStep: AccordionStepNumber,
+    reason: string,
+    trigger: AccordionTransitionTrigger = "programmatic"
+  ) => {
+    const fromStep = activeStepRef.current;
+    if (fromStep === toStep) return;
+    reportAccordionTransition(fromStep, toStep, reason, trigger);
+    setActiveStepState(toStep);
+  }, [reportAccordionTransition]);
+
+  const setActiveStep = useCallback<React.Dispatch<React.SetStateAction<number>>>((next) => {
+    const resolved = typeof next === "function" ? next(activeStepRef.current) : next;
+    if (!Number.isInteger(resolved) || resolved < 1 || resolved > 4) return;
+    transitionToStep(resolved as AccordionStepNumber, "Programmatic accordion step change", "programmatic");
+  }, [transitionToStep]);
+
+  useEffect(() => {
+    if (initialTransitionReportedRef.current) return;
+    initialTransitionReportedRef.current = true;
+    reportAccordionTransition(0, 1, "Accordion checkout initialized", "initial");
+    // A journey entry is emitted exactly once for this mounted checkout instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Canonical payment completion status
   const effectivePaymentConfirmed = propPaymentConfirmed || simulatedPaymentConfirmed;
@@ -586,6 +667,8 @@ export function useAccordionCheckoutState(
       "registering_link",
       "initializing",
       "collecting_kyc",
+      "collecting_identifiers",
+      "accepting_terms",
       "submitting_kyc",
       "verifying_identity",
       "creating_session",
@@ -703,6 +786,9 @@ export function useAccordionCheckoutState(
     if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
     if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
     if (isEU && !fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
+    if (isEU && !fieldValidation.nationalities) missingIdentityFields.push({ key: "nationalities", label: "Nationality country code" });
+    if (isEU && !fieldValidation.birthCountry) missingIdentityFields.push({ key: "birthCountry", label: "Birth country" });
+    if (isEU && !fieldValidation.birthCity) missingIdentityFields.push({ key: "birthCity", label: "Birth city" });
     if (isEU && countryConfig.micaIdentifier && !fieldValidation.micaIdentifier) {
       missingIdentityFields.push({
         key: "micaIdentifier",
@@ -723,7 +809,7 @@ export function useAccordionCheckoutState(
   // Dedicated Modular Reactive Step Controller Hook
   useStepProgressionGuard({
     activeStep,
-    setActiveStep,
+    setActiveStep: setActiveStepState,
     headlessStep: effectiveHeadlessStep,
     headlessStatus: effectiveHeadlessStatus,
     isPaid,
@@ -748,6 +834,16 @@ export function useAccordionCheckoutState(
           : reason
       );
     },
+    onStepAutoAdvanced: (fromStep, toStep, reason) => {
+      reportAccordionTransition(
+        fromStep,
+        toStep as AccordionStepNumber,
+        reason,
+        /declin|escalat|required|return/.test(reason.toLowerCase())
+          ? "recovery"
+          : "automatic"
+      );
+    },
   });
 
   // Step 1 Submit
@@ -760,9 +856,9 @@ export function useAccordionCheckoutState(
     // If email is already locked/authorized or OTP verified, proceed to appropriate step without re-authenticating
     if (isEmailLocked || isLinkOtpVerified) {
       if (simulatedPath === "skip_kyc" || effectiveStatus === "verified" || isAllKycCompleted || isStep2Satisfied) {
-        setActiveStep(3);
+        transitionToStep(3, "Authenticated customer already satisfies KYC", "submission");
       } else {
-        setActiveStep(2);
+        transitionToStep(2, "Authenticated customer requires identity verification", "submission");
       }
       return;
     }
@@ -806,9 +902,9 @@ export function useAccordionCheckoutState(
         }
 
         if (simulatedPath === "skip_kyc" || effectiveStatus === "verified" || isAllKycCompleted || isStep2Satisfied) {
-          setActiveStep(3);
+          transitionToStep(3, "Simulated authentication completed with KYC satisfied", "simulation");
         } else {
-          setActiveStep(2);
+          transitionToStep(2, "Simulated authentication completed; KYC required", "simulation");
         }
         setIsSubmittingContact(false);
       }
@@ -828,7 +924,7 @@ export function useAccordionCheckoutState(
       const res = await onVerifyDocuments();
       if (res || res === undefined) {
         setDocVerificationSuccess(true);
-        setActiveStep(3);
+        transitionToStep(3, "Document verification completed", isSimulationMode ? "simulation" : "submission");
       }
     } catch (vErr: any) {
       console.warn("[ACCORDION] Document verification error:", vErr);
@@ -902,7 +998,7 @@ export function useAccordionCheckoutState(
 
       if (!isUnsupportedState && (isL1Approved || isL0Approved || isAllKycCompleted || effectiveStatus === "verified") && !showStepUpForm && (!isL2Requirement || isL2Approved)) {
         setIsSubmittingIdentity(false);
-        setActiveStep(3);
+        transitionToStep(3, "Existing KYC verification satisfies the transaction", "submission");
         return;
       }
 
@@ -925,7 +1021,7 @@ export function useAccordionCheckoutState(
                   line1: line1.trim(),
                   ...(line2 ? { line2: line2.trim() } : {}),
                   city: city.trim(),
-                  ...(isNorthAmerica && stateCode ? { state: stateCode.trim() } : {}),
+                  ...((isNorthAmerica || targetCountry === "IE") && stateCode ? { state: stateCode.trim() } : {}),
                   postal_code: zipCode.trim(),
                   country: targetCountry,
                 },
@@ -935,9 +1031,9 @@ export function useAccordionCheckoutState(
           ...(isUS && ssnDigits ? { id_number: { type: "us_ssn", value: ssnDigits } } : {}),
           ...(isEU
             ? {
-                nationalities: [targetCountry],
-                birth_city: city.trim(),
-                birth_country: targetCountry,
+                nationalities: nationalityCodes,
+                birth_city: birthCity.trim(),
+                birth_country: birthCountry.trim().toUpperCase(),
                 ...(countryConfig.micaIdentifier && micaIdentifierValue.trim()
                   ? {
                       id_number: {
@@ -949,6 +1045,10 @@ export function useAccordionCheckoutState(
               }
             : {}),
         });
+        // The headless coordinator owns the EU sequence after demographics:
+        // missing identifiers -> CARF attestation -> L2 documents -> provider
+        // confirmation. Do not launch a second document flow from this layer.
+        if (isEU) return;
       }
 
       // Post-KYC Step Routing Discrimination:
@@ -957,15 +1057,15 @@ export function useAccordionCheckoutState(
       // - Otherwise proceed to Step 3 payment method selection
       if (!propError && headlessStep !== "error") {
         if (effectivePaymentConfirmed || headlessStep === "checking_out" || headlessStep === "confirming_fees") {
-          setActiveStep(4);
+          transitionToStep(4, "KYC completed; resuming checkout already in fulfillment", "submission");
         } else if ((isL2Requirement || showVerifyDocs || isEU) && !isL2Approved && !docVerificationSuccess) {
           if (onVerifyDocuments) {
             await handleVerifyDocuments();
           } else {
-            setActiveStep(2);
+            transitionToStep(2, "L2 document verification is still required", "recovery");
           }
         } else {
-          setActiveStep(3);
+          transitionToStep(3, "Identity verification completed", "submission");
         }
       }
     } catch (err: any) {
@@ -977,8 +1077,12 @@ export function useAccordionCheckoutState(
   };
 
   const handleStepChange = (step: number) => {
-    if (!isPaid) {
-      setActiveStep(step);
+    if (!isPaid && Number.isInteger(step) && step >= 1 && step <= 4) {
+      transitionToStep(
+        step as AccordionStepNumber,
+        `Customer opened Step ${step} from Step ${activeStepRef.current}`,
+        "manual"
+      );
     }
   };
 
@@ -999,9 +1103,9 @@ export function useAccordionCheckoutState(
           setIsLinkOtpVerified(true);
           setShowSimOtp(false);
           if (simulatedPath === "skip_kyc" || effectiveStatus === "verified" || isAllKycCompleted || isStep2Satisfied) {
-            setActiveStep(3);
+            transitionToStep(3, "Simulated OTP completed with KYC satisfied", "simulation");
           } else {
-            setActiveStep(2);
+            transitionToStep(2, "Simulated OTP completed; KYC required", "simulation");
           }
         }}
       />
@@ -1017,7 +1121,7 @@ export function useAccordionCheckoutState(
           simulatedError={effectiveError}
           onSuccess={() => {
             setDocVerificationSuccess(true);
-            setActiveStep(3);
+            transitionToStep(3, "Simulated document verification completed", "simulation");
           }}
           onError={(err) => setLocalError(err)}
         />
@@ -1046,7 +1150,7 @@ export function useAccordionCheckoutState(
             simFulfillmentTimersRef.current = [];
 
             // Step 1: Open Step 4 immediately in active processing state
-            setActiveStep(4);
+            transitionToStep(4, "Payment method submitted for fulfillment", "simulation");
             setFulfillmentStage("processing");
             setSimulatedHeadlessStep("checking_out");
             setSimulatedHeadlessStatus("Authorizing payment method with Stripe...");
@@ -1146,6 +1250,12 @@ export function useAccordionCheckoutState(
       setDob,
       ssn,
       setSsn,
+      nationalities,
+      setNationalities,
+      birthCountry,
+      setBirthCountry,
+      birthCity,
+      setBirthCity,
       micaIdentifierValue,
       setMicaIdentifierValue,
       micaIdentifierType,
@@ -1183,6 +1293,10 @@ export function useAccordionCheckoutState(
       onSelectSuggestion: handleSelectSuggestion,
       onSubmit: handleIdentitySubmit,
       onVerifyDocuments: handleVerifyDocuments,
+      onSubmitKycIdentifiers,
+      missingKycIdentifiers,
+      kycIdentifierAlternatives,
+      attestationElement,
       onHeaderClick: () => handleStepChange(2),
       onContinueToStep3: () => handleIdentitySubmit(),
     },
@@ -1216,7 +1330,7 @@ export function useAccordionCheckoutState(
       selectedPaymentType,
       paymentConfirmed: effectivePaymentConfirmed,
       onEmailReceipt,
-      onBackToPayment: () => setActiveStep(3),
+      onBackToPayment: () => transitionToStep(3, "Customer returned to payment method from fulfillment", "manual"),
     },
   };
 }

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { getContainer } from "@/lib/cosmos";
 import { buildWebhookHeaders } from "@/lib/webhook-branding";
+import { resolveReceiptWebhookAmounts } from "@/lib/webhook-amounts";
 
 /**
  * Developer Webhook Dispatch
@@ -34,6 +35,8 @@ export type WebhookPayload = {
   buyerWallet?: string;
   merchantWallet: string;
   totalUsd?: number;
+  customerTotalUsd?: number;
+  stripeSourceAmountUsd?: number;
   token?: string;
   timestamp: number;
   brandKey?: string;
@@ -51,13 +54,22 @@ export type ReceiptWebhookSource = {
   transactionHash?: string;
   buyerWallet?: string;
   merchantWallet?: string;
+  /** Trusted override for the merchant order total exposed as `totalUsd`. */
   totalUsd?: number;
+  customerTotalUsd?: number;
+  stripeSourceAmountUsd?: number;
   token?: string;
   timestamp?: number;
   brandKey?: string;
   stripeSessionId?: string | null;
   transactionId?: string | null;
   metadata?: Record<string, any> | null;
+};
+
+export type WebhookDeliveryResult = {
+  ok: boolean;
+  statusCode?: number;
+  error?: string;
 };
 
 /**
@@ -269,6 +281,7 @@ export async function dispatchReceiptStatusWebhook(
 
   const transactionHash = source.transactionHash || receipt?.transactionHash || receipt?.txHash;
   const stripeSessionId = source.stripeSessionId || receipt?.stripeSessionId || null;
+  const amounts = resolveReceiptWebhookAmounts(receipt, source);
   return dispatchDeveloperWebhook(webhookUrl, {
     event: "receipt.status_updated",
     idempotencyKey: `receipt-status:${receiptId}:${status}:${transactionHash || stripeSessionId || "no-transaction"}`,
@@ -278,7 +291,7 @@ export async function dispatchReceiptStatusWebhook(
     transactionHash,
     buyerWallet: source.buyerWallet || receipt?.buyerWallet,
     merchantWallet,
-    totalUsd: source.totalUsd ?? receipt?.totalUsd,
+    ...amounts,
     token: source.token || receipt?.expectedToken,
     timestamp: source.timestamp || Date.now(),
     // The receipt's creation-time brand is authoritative when a status update
@@ -292,6 +305,59 @@ export async function dispatchReceiptStatusWebhook(
     failureCategory: receipt?.failureCategory || null,
     failureAction: receipt?.failureAction || null,
   }, receipt?.webhookSigningSecret || receipt?.webhookSecret || undefined);
+}
+
+/**
+ * Deliver a merchant receipt webhook and persist its delivery result without
+ * allowing a downstream merchant outage to interrupt payment reconciliation.
+ *
+ * The caller must persist the canonical receipt state (with
+ * webhookLastDeliveryOk=false) before invoking this helper. Failed deliveries
+ * remain eligible for the Plesk reconciliation job's retry phase.
+ */
+export async function dispatchReceiptStatusWebhookBestEffort(
+  container: any,
+  receipt: Record<string, any>,
+  status: string,
+  previousStatus: string,
+  source: ReceiptWebhookSource = {}
+): Promise<WebhookDeliveryResult> {
+  let delivery: WebhookDeliveryResult;
+  try {
+    delivery = await dispatchReceiptStatusWebhook(receipt, status, previousStatus, source);
+  } catch (error: any) {
+    delivery = { ok: false, error: error?.message || String(error || "webhook_delivery_failed") };
+  }
+
+  try {
+    const transactionHash = source.transactionHash || receipt?.transactionHash || receipt?.txHash;
+    await container.item(receipt.id, receipt.wallet).patch([
+      { op: "set", path: "/webhookLastStatus", value: status },
+      { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus || "pending" },
+      { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
+      { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
+      ...(transactionHash
+        ? [{ op: "set" as const, path: "/webhookLastTransactionHash", value: transactionHash }]
+        : []),
+      ...(delivery.statusCode
+        ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
+        : []),
+      { op: "set", path: "/webhookLastError", value: delivery.error || null },
+    ] as any);
+  } catch (trackingError) {
+    // The receipt already contains webhookLastDeliveryOk=false. A tracking
+    // patch failure must not turn a successfully persisted payment into a
+    // failed reconciliation result; the Plesk job can retry it later.
+    console.error("[WEBHOOK DISPATCH] Failed to persist delivery result:", trackingError);
+  }
+
+  if (!delivery.ok) {
+    console.warn(
+      `[WEBHOOK DISPATCH] Merchant notification deferred for receipt ${receipt?.receiptId || receipt?.id || "unknown"}:`,
+      delivery.error || delivery.statusCode || "delivery_failed"
+    );
+  }
+  return delivery;
 }
 
 /**

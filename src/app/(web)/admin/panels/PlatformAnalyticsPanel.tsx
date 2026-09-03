@@ -64,6 +64,12 @@ import {
   exportFailureDiagnosticsPDF
 } from "@/lib/reporting/analytics-pdf";
 import { exportAnalyticsXLSX } from "@/lib/reporting/analytics-excel";
+import {
+  accordionStepForOnrampState,
+  buildAccordionJourneyPath,
+  hasAccordionTransition,
+  type AccordionStepTransition,
+} from "@/lib/checkout-flow-tracking";
 
 const SYSTEM_TIMEZONE = "America/Los_Angeles";
 const DYNAMIC_TIMEZONE = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
@@ -253,6 +259,28 @@ interface ReceiptInfo {
   logs?: ReceiptLog[];
   kycLevel?: "L0" | "L1" | "L2" | string;
   kycOccurred?: boolean;
+  kycInitialLevel?: string | null;
+  kycInitialStatus?: string | null;
+  kycInitialVerifiedLevel?: string | null;
+  kycRequiredLevel?: string | null;
+  kycCompletedLevel?: string | null;
+  kycCompletedDuringTransaction?: boolean;
+  kycFinalLevel?: string | null;
+  kycFinalStatus?: string | null;
+  kycVerifiedLevel?: string | null;
+  kycRegion?: string | null;
+  kycIdentifiersSatisfied?: boolean;
+  kycAttestationAccepted?: boolean;
+  kycEuFullyVerified?: boolean;
+  kycFinalSnapshot?: Record<string, any> | null;
+  kycVerificationErrors?: Array<{ tier: string; code: string }>;
+  kycHistory?: Array<Record<string, any>>;
+  checkoutStatus?: string | null;
+  checkoutStatusHistory?: { status: string; ts: number; source?: string; failureCode?: string }[];
+  accordionCurrentStep?: number | null;
+  accordionStepHistory?: AccordionStepTransition[];
+  canonicalStatusHistory?: { status: string; ts: number; reason?: string }[];
+  lifecycleHistory?: { status: string; ts: number; reason?: string; source?: string }[];
   platformFee?: number;
   platformFeeSource?: "recorded_minor" | "recorded_usd" | "recorded_bps" | "unavailable";
   lineItems?: { label: string; priceUsd: number; qty?: number }[];
@@ -351,8 +379,15 @@ function getReportErrorGuidance(message: string, format: AnalyticsReportFormat):
   return `The ${format === "pdf" ? "PDF" : "Excel workbook"} was not downloaded. Retry once; if the issue persists, copy the technical detail below for investigation.`;
 }
 
-const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
-  const kyc = String(r.kycLevel || r.kyc || "").toUpperCase().trim();
+const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" | "Unknown" => {
+  const kyc = String(
+    r.kycVerifiedLevel
+    || r.kycCompletedLevel
+    || r.kycFinalLevel
+    || r.kycLevel
+    || r.kyc
+    || ""
+  ).toUpperCase().trim();
   if (kyc === "L2" || kyc === "LEVEL 2" || kyc === "LEVEL2") return "L2";
   if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
     for (const s of r.customerSessions) {
@@ -371,7 +406,8 @@ const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" => {
 
   // A payment amount or KYC trigger does not prove verification completed.
   // Only persisted receipt/session tiers are shown as verified.
-  return "L0";
+  if (kyc === "L0" || kyc === "LEVEL 0" || kyc === "LEVEL0") return "L0";
+  return "Unknown";
 };
 
 const isSettledStatus = (s?: string | null) => [
@@ -1545,12 +1581,15 @@ export default function PlatformAnalyticsPanel() {
     setActionLoading(prev => ({ ...prev, [receiptId]: true }));
     setActionFeedback(prev => ({ ...prev, [receiptId]: "Connecting to reconciliation engine..." }));
     try {
-      const cronSecret = process.env.NEXT_PUBLIC_CRON_SECRET || "default_cron_secret_temp_key_portalpay";
-      const res = await fetch(`/api/cron/reconcile-stuck?receiptId=${encodeURIComponent(receiptId)}&cronSecret=${encodeURIComponent(cronSecret)}`, {
+      // Manual reconciliation is authorized by the logged-in admin session.
+      // CRON_SECRET is server-only and must never be embedded in the browser.
+      const res = await fetch(`/api/cron/reconcile-stuck?receiptId=${encodeURIComponent(receiptId)}`, {
+        method: "POST",
         headers: {
+          "Content-Type": "application/json",
           "x-wallet": wallet || "",
-          "x-cron-secret": cronSecret
         },
+        body: JSON.stringify({ receiptId }),
         cache: "no-store"
       });
       const text = await res.text();
@@ -4009,6 +4048,7 @@ export default function PlatformAnalyticsPanel() {
                 <option value="L0" className="bg-neutral-900">L0 (Base)</option>
                 <option value="L1" className="bg-neutral-900">L1 (Demographics)</option>
                 <option value="L2" className="bg-neutral-900">L2 (ID Verified)</option>
+                <option value="Unknown" className="bg-neutral-900">Unknown / Legacy Untracked</option>
               </select>
 
               <select
@@ -4429,11 +4469,11 @@ export default function PlatformAnalyticsPanel() {
                             <div className="flex items-center justify-between text-[11px] font-mono pt-0.5">
                               <span className="text-white/40">KYC Verification:</span>
                               <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] border ${
-                                r.kycLevel === "L2" ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
-                                r.kycLevel === "L1" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+                                getKycLevel(r) === "L2" ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
+                                getKycLevel(r) === "L1" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
                                 "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
                               }`}>
-                                Level {r.kycLevel}
+                                {getKycLevel(r)}{r.kycCompletedLevel ? " (upgraded here)" : r.kycInitialVerifiedLevel && r.kycInitialVerifiedLevel !== "UNVERIFIED" ? " (preverified)" : ""}
                               </span>
                             </div>
                           </div>
@@ -4729,7 +4769,15 @@ export default function PlatformAnalyticsPanel() {
                                 {(activeSubTab === "logs" || activeSubTab === "customers") && (
                                   <div className="my-2 p-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-[10px] font-mono text-white/70 space-y-1">
                                     <div className="text-white font-bold">Email: {r.email || "N/A"}</div>
-                                    <div className="text-white/50">KYC Status: Level {r.kycLevel}</div>
+                                    <div className="text-white/50">Initial KYC: {r.kycInitialVerifiedLevel || r.kycInitialLevel || "Unknown"} ({r.kycInitialStatus || "untracked"})</div>
+                                    <div className="text-white/50">Required / completed here: {r.kycRequiredLevel || "None"} / {r.kycCompletedLevel || "None"}</div>
+                                    <div className="text-white/50">Final provider KYC: {r.kycVerifiedLevel || r.kycFinalLevel || getKycLevel(r)} ({r.kycFinalStatus || "untracked"})</div>
+                                    {r.kycRegion === "eu" && (
+                                      <div className="text-white/50">EU checks: identifiers {r.kycIdentifiersSatisfied ? "yes" : "no"}, attestation {r.kycAttestationAccepted ? "yes" : "no"}</div>
+                                    )}
+                                    {Boolean(r.kycVerificationErrors?.length) && (
+                                      <div className="text-rose-300">Provider KYC errors: {r.kycVerificationErrors!.map((error) => `${error.tier}:${error.code}`).join(", ")}</div>
+                                    )}
                                     <div className="text-primary font-bold mt-1">Tap Full Drawer to view live logs & detailed telemetry payload.</div>
                                   </div>
                                 )}
@@ -4934,15 +4982,21 @@ export default function PlatformAnalyticsPanel() {
                             {(() => {
                               const statusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
                               const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
-                              const kycSessionRequired = r.kycOccurred === true ||
+                              const kycSessionRequired = Boolean(r.kycRequiredLevel) || r.kycOccurred === true ||
                                 statusList.some(s => s.includes("kyc") || s.includes("verifying")) ||
                                 String(r.failureReason || "").toLowerCase().includes("verification") ||
                                 String(r.failureReason || "").toLowerCase().includes("kyc");
-                              const displayTag = kycSessionRequired ? (r.kycLevel && r.kycLevel !== "L0" ? r.kycLevel : "L1") : "None";
+                              const displayTag = r.kycCompletedLevel
+                                ? `${r.kycCompletedLevel} upgraded`
+                                : (r.kycInitialVerifiedLevel && r.kycInitialVerifiedLevel !== "UNVERIFIED")
+                                ? `${r.kycInitialVerifiedLevel} preverified`
+                                : kycSessionRequired
+                                ? (r.kycFinalStatus === "rejected" ? "Rejected" : "In progress")
+                                : getKycLevel(r);
                               return (
                                 <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${
-                                  displayTag === "L2" ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
-                                  displayTag === "L1" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
+                                  displayTag.startsWith("L2") ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
+                                  displayTag.startsWith("L1") ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
                                   "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
                                 }`}>
                                   {displayTag}
@@ -5426,6 +5480,23 @@ export default function PlatformAnalyticsPanel() {
                                     const statusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
                                     const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
                                     const currentStatus = String(r.status || "").toLowerCase();
+                                    const accordionStepHistory = Array.isArray(r.accordionStepHistory)
+                                      ? [...r.accordionStepHistory].sort((a, b) => Number(a?.ts || 0) - Number(b?.ts || 0))
+                                      : [];
+                                    const hasRecordedAccordionFlow = accordionStepHistory.length > 0;
+                                    const accordionJourneyPath = buildAccordionJourneyPath(accordionStepHistory);
+                                    const mappedHeadlessSteps = statusHistory
+                                      .map((entry: any) => accordionStepForOnrampState(entry?.status))
+                                      .filter((step): step is 1 | 2 | 3 | 4 => step !== null);
+                                    const visitedAccordionSteps = new Set<number>(
+                                      hasRecordedAccordionFlow
+                                        ? accordionStepHistory.flatMap((entry) => [entry.fromStep, entry.toStep]).filter((step) => step >= 1 && step <= 4)
+                                        : mappedHeadlessSteps
+                                    );
+                                    const currentAccordionStep = hasRecordedAccordionFlow
+                                      ? Number(accordionStepHistory[accordionStepHistory.length - 1]?.toStep || r.accordionCurrentStep || 1)
+                                      : Number(mappedHeadlessSteps[mappedHeadlessSteps.length - 1] || r.accordionCurrentStep || 1);
+                                    const recordedBacktracks = accordionStepHistory.filter((entry) => entry.direction === "backward");
 
                                     const hasSessionId = !!r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.stripeSessionId));
                                     const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
@@ -5442,22 +5513,17 @@ export default function PlatformAnalyticsPanel() {
                                       statusList.includes("onramp_checking_out") ||
                                       (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.paymentMethodDetails));
 
-                                    const kycTriggered = statusList.some(s => s.includes("kyc") || s.includes("verifying")) ||
+                                    const kycTriggered = r.kycOccurred === true || Boolean(r.kycRequiredLevel) || statusList.some(s => s.includes("kyc") || s.includes("verifying")) ||
                                       String(r.failureReason || "").toLowerCase().includes("verification") ||
                                       String(r.failureReason || "").toLowerCase().includes("kyc");
 
-                                    const kycCompleted = (kycTriggered && (
-                                      statusList.includes("onramp_checking_out") ||
-                                      statusList.includes("onramp_awaiting_funds") ||
-                                      statusList.includes("onramp_completed") ||
-                                      ["paid", "paid - ach pending", "checkout_success", "confirmed", "reconciled"].includes(currentStatus)
-                                    )) && !String(r.failureReason || "").toLowerCase().includes("verification") && !String(r.failureReason || "").toLowerCase().includes("kyc");
+                                    const kycCompleted = r.kycCompletedDuringTransaction === true || Boolean(r.kycCompletedLevel);
 
-                                    const kycFailed = kycTriggered &&
+                                    const kycFailed = r.kycFinalStatus === "rejected" || (kycTriggered &&
                                       currentStatus === "failed" &&
                                       (String(r.failureReason || "").toLowerCase().includes("verification") ||
                                         String(r.failureReason || "").toLowerCase().includes("kyc") ||
-                                        statusList.includes("onramp_verifying_identity"));
+                                        statusList.includes("onramp_verifying_identity")));
 
                                     const settlementSuccess = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined"].includes(currentStatus);
                                     const settlementAwaiting = ["paid - ach pending", "ach_pending", "awaiting_funds", "onramp_awaiting_funds"].includes(currentStatus);
@@ -5496,19 +5562,22 @@ export default function PlatformAnalyticsPanel() {
                                      const hasL1SessionReq = sessionList.some((s: any) => String(s?.kycTierRequired || s?.kycTargetTier || "").toLowerCase() === "l1");
 
                                      // Determine active level string safely as upper-case string ("L0" | "L1" | "L2")
-                                     const userKycLevel: string = String((r as any).kycLevel || (r as any).kyc || "L0").toUpperCase();
+                                     const userKycLevel: string = String(r.kycVerifiedLevel || r.kycFinalLevel || getKycLevel(r)).toUpperCase();
 
                                      // Check if L2 or L1 step up is needed
-                                     const isL2Required = String((r as any).kycTierRequired || "").toLowerCase() === "l2" || hasL2SessionReq;
-                                     const isL1Required = String((r as any).kycTierRequired || "").toLowerCase() === "l1" || hasL1SessionReq;
+                                     const isL2Required = String(r.kycRequiredLevel || r.kycTierRequired || "").toLowerCase() === "l2" || hasL2SessionReq;
+                                     const isL1Required = String(r.kycRequiredLevel || r.kycTierRequired || "").toLowerCase() === "l1" || hasL1SessionReq;
 
-                                     let kycStepDesc = "L0 Name & Address";
+                                     const initialKyc = String(r.kycInitialVerifiedLevel || r.kycInitialLevel || "UNVERIFIED").toUpperCase();
+                                     let kycStepDesc = `${initialKyc} at checkout start`;
                                      if (kycFailed) {
                                        kycStepDesc = "KYC Rejected";
+                                     } else if (r.kycCompletedLevel) {
+                                       kycStepDesc = `${initialKyc} initially â†’ ${r.kycCompletedLevel} completed during payment`;
                                      } else if (userKycLevel === "L2") {
-                                       kycStepDesc = "L2 Photo ID Verified";
+                                       kycStepDesc = initialKyc === "L2" ? "L2 preverified before payment" : "L2 verified";
                                      } else if (isL2Required && userKycLevel !== "L2") {
-                                       kycStepDesc = "L2 Photo ID Scan Required";
+                                       kycStepDesc = r.kycRegion === "eu" ? "EU L2 + MiCA + attestation required" : "L2 Photo ID Scan Required";
                                      } else if (userKycLevel === "L1") {
                                        kycStepDesc = "L1 DOB/SSN Verified";
                                      } else if (isL1Required && userKycLevel === "L0") {
@@ -5519,7 +5588,7 @@ export default function PlatformAnalyticsPanel() {
                                        kycStepDesc = "Reviewing KYC...";
                                      }
 
-                                     const steps = [
+                                     const inferredSteps = [
                                        {
                                          id: "step1",
                                          label: "1. Contact & Auth",
@@ -5568,6 +5637,43 @@ export default function PlatformAnalyticsPanel() {
                                        }
                                      ];
 
+                                     const steps = inferredSteps.map((step, index) => {
+                                       if (!hasRecordedAccordionFlow) return step;
+                                       const stepNumber = index + 1;
+                                       const wasVisited = visitedAccordionSteps.has(stepNumber);
+                                       const wasSkipped = accordionStepHistory.some(
+                                         (entry) => entry.direction === "forward" && entry.fromStep < stepNumber && entry.toStep > stepNumber
+                                       );
+                                       let trackedStatus = step.status;
+                                       if (stepNumber === currentAccordionStep && !settlementSuccess) {
+                                         trackedStatus = step.status === "failed" ? "failed" : "active";
+                                       } else if (settlementSuccess && (wasVisited || stepNumber === 4)) {
+                                         trackedStatus = "completed";
+                                       } else if (wasSkipped) {
+                                         trackedStatus = "skipped";
+                                       } else if (wasVisited && stepNumber < currentAccordionStep) {
+                                         trackedStatus = "completed";
+                                       } else if (wasVisited && stepNumber > currentAccordionStep) {
+                                         trackedStatus = "returned";
+                                       } else if (!wasVisited) {
+                                         trackedStatus = "upcoming";
+                                       }
+
+                                       const trackedDescription = trackedStatus === "skipped"
+                                         ? "Skipped by verified-customer path"
+                                         : trackedStatus === "returned"
+                                         ? `Visited; customer returned to Step ${currentAccordionStep}`
+                                         : step.description;
+                                       return { ...step, status: trackedStatus, description: trackedDescription };
+                                     });
+
+                                     const hasStep3To2Return = hasRecordedAccordionFlow
+                                       ? hasAccordionTransition(accordionStepHistory, 3, 2)
+                                       : (isL1Required || isL2Required || kycTriggered);
+                                     const hasStep4To3Return = hasRecordedAccordionFlow
+                                       ? hasAccordionTransition(accordionStepHistory, 4, 3)
+                                       : settlementFailed;
+
                                      return (
                                        <div className="space-y-5 animate-in fade-in duration-200">
                                          {/* Funnel Progress Stepper Panel */}
@@ -5603,10 +5709,53 @@ export default function PlatformAnalyticsPanel() {
                                               }`}>
                                                 {intentLevel} Intent Level
                                               </span>
-                                            </div>
-                                          </div>
+                                             </div>
+                                           </div>
 
-                                          {/* Stepper progress track with Responsive Forward Connectors & Orthogonal Return Loops */}
+                                           <div className="relative z-10 mb-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 font-mono">
+                                             <div className="flex flex-wrap items-center justify-between gap-2">
+                                               <span className="text-[9px] font-bold uppercase tracking-wider text-white/45">
+                                                 {hasRecordedAccordionFlow ? "Recorded customer path" : "Legacy inferred path"}
+                                               </span>
+                                               {hasRecordedAccordionFlow && (
+                                                 <span className="text-[9px] text-white/45">
+                                                   {accordionStepHistory.length} transitions · {recordedBacktracks.length} backtracks
+                                                 </span>
+                                               )}
+                                             </div>
+                                             <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] font-bold text-white/80">
+                                               {(hasRecordedAccordionFlow ? accordionJourneyPath : Array.from(visitedAccordionSteps)).map((stepNumber, index, path) => (
+                                                 <React.Fragment key={`${stepNumber}-${index}`}>
+                                                   <span className={`rounded-md border px-2 py-0.5 ${
+                                                     stepNumber === currentAccordionStep
+                                                       ? "border-amber-500/40 bg-amber-500/15 text-amber-300"
+                                                       : "border-white/10 bg-white/[0.04] text-white/70"
+                                                   }`}>
+                                                     Step {stepNumber}
+                                                   </span>
+                                                   {index < path.length - 1 && (
+                                                     path[index + 1] < stepNumber
+                                                       ? <ArrowLeft className="h-3 w-3 text-rose-400" />
+                                                       : <ArrowRight className="h-3 w-3 text-emerald-400" />
+                                                   )}
+                                                 </React.Fragment>
+                                               ))}
+                                             </div>
+                                             {hasRecordedAccordionFlow && accordionStepHistory.length > 1 && (
+                                               <div className="mt-2 space-y-1 border-t border-white/5 pt-2">
+                                                 {accordionStepHistory.slice(-6).map((entry) => (
+                                                   <div key={entry.eventId} className="flex items-start justify-between gap-3 text-[9px] text-white/50">
+                                                     <span className={entry.direction === "backward" ? "text-rose-300" : entry.direction === "forward" ? "text-emerald-300" : "text-blue-300"}>
+                                                       {entry.fromStep === 0 ? "Entry" : `${entry.fromStep} → ${entry.toStep}`} · {entry.trigger}
+                                                     </span>
+                                                     <span className="min-w-0 flex-1 truncate text-right" title={entry.reason}>{entry.reason}</span>
+                                                   </div>
+                                                 ))}
+                                               </div>
+                                             )}
+                                           </div>
+
+                                           {/* Stepper progress track with Responsive Forward Connectors & Orthogonal Return Loops */}
                                           <div className="relative z-10 overflow-x-auto scrollbar-none py-6">
                                             <div className="flex items-center justify-between min-w-[760px] w-full relative px-10">
                                               {steps.map((step, idx) => {
@@ -5622,11 +5771,19 @@ export default function PlatformAnalyticsPanel() {
                                                   nodeStyle = "bg-gradient-to-br from-amber-400 to-amber-600 text-white border-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.6)] animate-pulse scale-110";
                                                   badgeStyle = "bg-amber-500/15 text-amber-300 border-amber-500/30 font-bold";
                                                   icon = <RefreshCw className="w-4 h-4 animate-spin text-white" />;
-                                                } else if (step.status === "failed") {
-                                                  nodeStyle = "bg-gradient-to-br from-rose-500 to-rose-700 text-white border-rose-400 shadow-[0_0_18px_rgba(244,63,94,0.6)] scale-105";
-                                                  badgeStyle = "bg-rose-500/15 text-rose-300 border-rose-500/30 font-bold";
-                                                  icon = <XCircle className="w-4 h-4 text-white" />;
-                                                }
+                                                 } else if (step.status === "failed") {
+                                                   nodeStyle = "bg-gradient-to-br from-rose-500 to-rose-700 text-white border-rose-400 shadow-[0_0_18px_rgba(244,63,94,0.6)] scale-105";
+                                                   badgeStyle = "bg-rose-500/15 text-rose-300 border-rose-500/30 font-bold";
+                                                   icon = <XCircle className="w-4 h-4 text-white" />;
+                                                 } else if (step.status === "returned") {
+                                                   nodeStyle = "bg-purple-500/15 text-purple-300 border-purple-500/50 shadow-[0_0_12px_rgba(168,85,247,0.25)]";
+                                                   badgeStyle = "bg-purple-500/15 text-purple-300 border-purple-500/30 font-bold";
+                                                   icon = <RotateCcw className="w-4 h-4 text-purple-300" />;
+                                                 } else if (step.status === "skipped") {
+                                                   nodeStyle = "bg-blue-500/10 text-blue-300 border-blue-500/40 border-dashed";
+                                                   badgeStyle = "bg-blue-500/10 text-blue-300 border-blue-500/30 font-bold";
+                                                   icon = <ArrowRight className="w-4 h-4 text-blue-300" />;
+                                                 }
 
                                                 return (
                                                   <React.Fragment key={step.id}>
@@ -5643,12 +5800,14 @@ export default function PlatformAnalyticsPanel() {
 
                                                     {/* Inter-Node Forward Connector (Non-stretching Crisp Arrow) */}
                                                     {idx < steps.length - 1 && (() => {
-                                                      const isForwardCompleted =
-                                                        idx === 0
-                                                          ? true
-                                                          : idx === 1
-                                                          ? paymentMethodSelected
-                                                          : settlementSuccess;
+                                                       const isForwardCompleted =
+                                                         hasRecordedAccordionFlow
+                                                           ? hasAccordionTransition(accordionStepHistory, idx + 1, idx + 2)
+                                                           : idx === 0
+                                                             ? true
+                                                             : idx === 1
+                                                               ? paymentMethodSelected
+                                                               : settlementSuccess;
 
                                                       return (
                                                         <div className="flex-1 flex items-center justify-center px-2 relative z-10 -mt-6 min-w-[90px]">
@@ -5672,10 +5831,12 @@ export default function PlatformAnalyticsPanel() {
                                               })}
 
                                               {/* Orthogonal Return Loop Pathways (Shoot Down -> Over -> Up) */}
-                                              {(isL1Required || isL2Required || kycTriggered) && (
+                                              {hasStep3To2Return && (
                                                 <div
                                                   className="absolute left-[31%] right-[42%] top-[20px] h-[55px] pointer-events-auto z-0 group/stepup cursor-help"
-                                                  title={`Step 3 ➔ Step 2 Step-Up Return Loop: Order amount ($${receiptAmountUsd.toLocaleString()}) or Stripe API required ${isL2Required ? "L2 Photo ID Scan" : "L1 DOB + SSN"}. Stepped back from Step 3 to Step 2.`}
+                                                  title={hasRecordedAccordionFlow
+                                                    ? `Recorded Step 3 → Step 2 return (${accordionStepHistory.filter((entry) => entry.fromStep === 3 && entry.toStep === 2).length} time(s)).`
+                                                    : `Inferred Step 3 → Step 2 step-up: order amount ($${receiptAmountUsd.toLocaleString()}) or Stripe API required ${isL2Required ? "L2 Photo ID Scan" : "L1 DOB + SSN"}.`}
                                                 >
                                                   <svg className="w-full h-full overflow-visible">
                                                     <defs>
@@ -5702,15 +5863,17 @@ export default function PlatformAnalyticsPanel() {
                                                     />
                                                   </svg>
                                                   <div className="absolute left-1/2 -translate-x-1/2 bottom-[-6px] bg-zinc-950/90 border border-amber-500/50 text-amber-300 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full shadow-[0_0_12px_rgba(251,191,36,0.3)] whitespace-nowrap">
-                                                    Step 3 ➔ 2 Step-Up Loop
+                                                    Step 3 → 2 {hasRecordedAccordionFlow ? "Recorded" : "Inferred"} Loop
                                                   </div>
                                                 </div>
                                               )}
 
-                                              {settlementFailed && (
+                                              {hasStep4To3Return && (
                                                 <div
                                                   className="absolute left-[64%] right-[9%] top-[20px] h-[55px] pointer-events-auto z-0 group/decline cursor-help"
-                                                  title="Step 4 ➔ Step 3 Decline Loop: Payment failed during settlement. Stepped back from Step 4 to Step 3 to re-select payment method."
+                                                  title={hasRecordedAccordionFlow
+                                                    ? `Recorded Step 4 → Step 3 return (${accordionStepHistory.filter((entry) => entry.fromStep === 4 && entry.toStep === 3).length} time(s)).`
+                                                    : "Inferred Step 4 → Step 3 decline loop from legacy settlement failure data."}
                                                 >
                                                   <svg className="w-full h-full overflow-visible">
                                                     <defs>
@@ -5737,7 +5900,7 @@ export default function PlatformAnalyticsPanel() {
                                                     />
                                                   </svg>
                                                   <div className="absolute left-1/2 -translate-x-1/2 bottom-[-6px] bg-zinc-950/90 border border-rose-500/50 text-rose-300 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full shadow-[0_0_12px_rgba(244,63,94,0.3)] whitespace-nowrap">
-                                                    Step 4 ➔ 3 Decline Loop
+                                                    Step 4 → 3 {hasRecordedAccordionFlow ? "Recorded" : "Inferred"} Loop
                                                   </div>
                                                 </div>
                                               )}
@@ -6935,6 +7098,13 @@ export default function PlatformAnalyticsPanel() {
           const statusHistory = Array.isArray(mr.statusHistory) ? mr.statusHistory : [];
           const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
           const currentStatus = String(mr.status || "").toLowerCase();
+          const mobileAccordionHistory = Array.isArray(mr.accordionStepHistory)
+            ? [...mr.accordionStepHistory].sort((a, b) => Number(a?.ts || 0) - Number(b?.ts || 0))
+            : [];
+          const mobileAccordionPath = buildAccordionJourneyPath(mobileAccordionHistory);
+          const mobileCurrentStep = Number(
+            mobileAccordionHistory[mobileAccordionHistory.length - 1]?.toStep || mr.accordionCurrentStep || 1
+          );
 
           const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
           const customerIdentified = statusList.includes("buyer_logged_in") || statusList.includes("checkout_session_created") || !!mr.email;
@@ -6943,7 +7113,7 @@ export default function PlatformAnalyticsPanel() {
           const kycCompleted = (kycTriggered && isSettled);
           const kycFailed = kycTriggered && currentStatus === "failed";
 
-          const steps = [
+          const legacySteps = [
             { id: "opened", label: "Link Opened", status: linkOpened ? "completed" : "upcoming", desc: "Checkout opened" },
             { id: "identified", label: "Identified", status: customerIdentified ? "completed" : (linkOpened ? "active" : "upcoming"), desc: mr.email || "Guest" },
             { id: "payment", label: "Payment Method", status: paymentMethodSelected ? "completed" : (customerIdentified ? "active" : "upcoming"), desc: mr.cardFunding || "Card/Bank" },
@@ -6967,6 +7137,30 @@ export default function PlatformAnalyticsPanel() {
             },
             { id: "settlement", label: "Settlement", status: isSettled ? "completed" : (currentStatus === "failed" ? "failed" : "active"), desc: isSettled ? "Funds Delivered" : "In Progress" }
           ];
+          const mobileVisitedSteps = new Set(
+            mobileAccordionHistory.flatMap((entry) => [entry.fromStep, entry.toStep]).filter((step) => step >= 1 && step <= 4)
+          );
+          const steps = mobileAccordionHistory.length > 0
+            ? ["Contact", "Identity", "Payment", "Fulfillment"].map((label, index) => {
+                const stepNumber = index + 1;
+                const wasVisited = mobileVisitedSteps.has(stepNumber);
+                const wasSkipped = mobileAccordionHistory.some(
+                  (entry) => entry.direction === "forward" && entry.fromStep < stepNumber && entry.toStep > stepNumber
+                );
+                const status = isSettled && (wasVisited || stepNumber === 4)
+                  ? "completed"
+                  : stepNumber === mobileCurrentStep
+                    ? "active"
+                    : wasSkipped
+                      ? "skipped"
+                      : wasVisited && stepNumber < mobileCurrentStep
+                        ? "completed"
+                        : wasVisited && stepNumber > mobileCurrentStep
+                          ? "returned"
+                          : "upcoming";
+                return { id: `accordion-step-${stepNumber}`, label, status, desc: `Step ${stepNumber}` };
+              })
+            : legacySteps;
 
           return (
             <div className="fixed inset-0 z-[99999] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 text-left font-sans animate-in fade-in duration-200">
@@ -7014,7 +7208,9 @@ export default function PlatformAnalyticsPanel() {
                     <div className="relative z-10 flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
                         <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
-                        <span className="text-xs font-bold font-mono text-white tracking-tight uppercase">User Funnel Trajectory</span>
+                        <span className="text-xs font-bold font-mono text-white tracking-tight uppercase">
+                          {mobileAccordionHistory.length > 0 ? "Recorded Accordion Trajectory" : "User Funnel Trajectory"}
+                        </span>
                       </div>
                       <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
                         {isSettled ? "100% COMPLETE" : "ACTIVE DIAGNOSTIC"}
@@ -7039,6 +7235,20 @@ export default function PlatformAnalyticsPanel() {
                         </div>
                       ))}
                     </div>
+                    {mobileAccordionHistory.length > 0 && (
+                      <div className="mt-3 flex flex-wrap items-center gap-1 border-t border-white/5 pt-2 font-mono text-[9px] text-white/60">
+                        {mobileAccordionPath.map((stepNumber, index, path) => (
+                          <React.Fragment key={`${stepNumber}-${index}`}>
+                            <span className={stepNumber === mobileCurrentStep ? "text-amber-300" : "text-white/60"}>S{stepNumber}</span>
+                            {index < path.length - 1 && (
+                              path[index + 1] < stepNumber
+                                ? <ArrowLeft className="h-2.5 w-2.5 text-rose-400" />
+                                : <ArrowRight className="h-2.5 w-2.5 text-emerald-400" />
+                            )}
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Technical Breakdown Cards */}

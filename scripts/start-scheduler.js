@@ -3,9 +3,16 @@ const path = require('path');
 const http = require('http');
 
 // Plesk scheduled commands do not always inherit the Node application's
-// environment. Load the deployment .env without overriding variables Plesk did
-// provide, so CRON_SECRET and PORT resolve consistently in either mode.
-require('dotenv').config({ path: path.join(__dirname, '..', '.env'), override: false, quiet: true });
+// environment. Mirror Next's production file precedence without overriding
+// variables Plesk did provide, so CRON_SECRET and PORT resolve consistently
+// whether this module is loaded by server.js or launched by Plesk.
+for (const envFile of ['.env.production.local', '.env.local', '.env.production', '.env']) {
+  require('dotenv').config({
+    path: path.join(__dirname, '..', envFile),
+    override: false,
+    quiet: true,
+  });
+}
 
 const lockFile = path.join(__dirname, '..', 'cron.lock');
 const stateFile = path.join(__dirname, '..', 'cron-state.json');
@@ -56,7 +63,9 @@ function triggerEndpoint(pathname, method = 'POST') {
     return Promise.resolve({ ok: false, statusCode: 0, body: '', error: 'cron_secret_not_configured' });
   }
 
-  const port = process.env.PORT || 3001;
+  // Must match server.js's production default. server.js also writes the
+  // selected port into process.env before loading this scheduler.
+  const port = process.env.PORT || 3000;
   const options = {
     hostname: '127.0.0.1',
     port: port,

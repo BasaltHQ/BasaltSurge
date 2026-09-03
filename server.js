@@ -39,6 +39,10 @@ app.prepare().then(() => {
             // Start background cron scheduler in production or when START_SCHEDULER is enabled
             if (process.env.NODE_ENV === 'production' || process.env.START_SCHEDULER === 'true') {
                 try {
+                    // Keep the in-process scheduler on the exact port selected
+                    // by this server. This also covers deployments where Plesk
+                    // does not explicitly inject PORT.
+                    process.env.PORT = String(port);
                     require('./scripts/start-scheduler.js');
                 } catch (e) {
                     console.error('Failed to load startup scheduler:', e);

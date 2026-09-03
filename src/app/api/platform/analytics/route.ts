@@ -249,6 +249,26 @@ export async function GET(req: NextRequest) {
               kyc: 1,
               kycOccurred: 1,
               kyc_occurred: 1,
+              kycInitialLevel: 1,
+              kycInitialStatus: 1,
+              kycInitialVerifiedLevel: 1,
+              kycRequiredLevel: 1,
+              kycCompletedLevel: 1,
+              kycCompletedDuringTransaction: 1,
+              kycFinalLevel: 1,
+              kycFinalStatus: 1,
+              kycVerifiedLevel: 1,
+              kycRegion: 1,
+              kycIdentifiersSatisfied: 1,
+              kycAttestationAccepted: 1,
+              kycEuFullyVerified: 1,
+              kycFinalSnapshot: 1,
+              kycVerificationErrors: 1,
+              kycHistory: 1,
+              checkoutStatus: 1,
+              checkoutStatusHistory: 1,
+              accordionCurrentStep: 1,
+              accordionStepHistory: 1,
               statusHistory: 1,
               customerEmail: 1,
               stripeEmail: 1,
@@ -300,6 +320,26 @@ export async function GET(req: NextRequest) {
             kyc: 1,
             kycOccurred: 1,
             kyc_occurred: 1,
+            kycInitialLevel: 1,
+            kycInitialStatus: 1,
+            kycInitialVerifiedLevel: 1,
+            kycRequiredLevel: 1,
+            kycCompletedLevel: 1,
+            kycCompletedDuringTransaction: 1,
+            kycFinalLevel: 1,
+            kycFinalStatus: 1,
+            kycVerifiedLevel: 1,
+            kycRegion: 1,
+            kycIdentifiersSatisfied: 1,
+            kycAttestationAccepted: 1,
+            kycEuFullyVerified: 1,
+            kycFinalSnapshot: 1,
+            kycVerificationErrors: 1,
+            kycHistory: 1,
+            checkoutStatus: 1,
+            checkoutStatusHistory: 1,
+            accordionCurrentStep: 1,
+            accordionStepHistory: 1,
             transactionHash: 1,
             txHash: 1,
             leg2TxHash: 1,
@@ -487,7 +527,14 @@ export async function GET(req: NextRequest) {
     // Resolve only persisted KYC tiers. Transaction amount and the presence of
     // a KYC-related log do not prove that verification completed.
     const getKycLevel = (receipt: any) => {
-      const rawKyc = String(receipt.kycLevel || receipt.kyc || "").toUpperCase().trim();
+      const rawKyc = String(
+        receipt.kycVerifiedLevel
+        || receipt.kycCompletedLevel
+        || receipt.kycFinalLevel
+        || receipt.kycLevel
+        || receipt.kyc
+        || ""
+      ).toUpperCase().trim();
       if (rawKyc === "L2" || rawKyc === "LEVEL 2" || rawKyc === "LEVEL2") return "L2";
 
       if (Array.isArray(receipt.customerSessions) && receipt.customerSessions.length > 0) {
@@ -506,7 +553,8 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      return "L0";
+      if (rawKyc === "L0" || rawKyc === "LEVEL 0" || rawKyc === "LEVEL0") return "L0";
+      return "Unknown";
     };
 
     // Group logs by receiptId for fast in-memory lookup
@@ -867,6 +915,13 @@ export async function GET(req: NextRequest) {
       const derivedShopSlug = r.shopSlug || resolvedConfig.slug || null;
       const feeData = getReceiptFeeData(r);
       const feeUsd = feeData.amount;
+      const canonicalStatusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
+      const checkoutStatusHistory = Array.isArray(r.checkoutStatusHistory) ? r.checkoutStatusHistory : [];
+      const accordionStepHistory = Array.isArray(r.accordionStepHistory)
+        ? [...r.accordionStepHistory].sort((a: any, b: any) => Number(a?.ts || 0) - Number(b?.ts || 0))
+        : [];
+      const lifecycleHistory = [...canonicalStatusHistory, ...checkoutStatusHistory]
+        .sort((a: any, b: any) => Number(a?.ts || 0) - Number(b?.ts || 0));
 
       return {
         storageId: String(r._id || r.id || `${rId}:${r.createdAt || "unknown"}`),
@@ -890,6 +945,28 @@ export async function GET(req: NextRequest) {
         failureReason: isFailedStatus(status) ? getFailureReason(r, rLogs) : null,
         kycLevel: getKycLevel(r),
         kycOccurred: !!(r.kycOccurred || r.kyc_occurred),
+        kycInitialLevel: r.kycInitialLevel || null,
+        kycInitialStatus: r.kycInitialStatus || null,
+        kycInitialVerifiedLevel: r.kycInitialVerifiedLevel || null,
+        kycRequiredLevel: r.kycRequiredLevel || null,
+        kycCompletedLevel: r.kycCompletedLevel || null,
+        kycCompletedDuringTransaction: r.kycCompletedDuringTransaction === true,
+        kycFinalLevel: r.kycFinalLevel || null,
+        kycFinalStatus: r.kycFinalStatus || null,
+        kycVerifiedLevel: r.kycVerifiedLevel || null,
+        kycRegion: r.kycRegion || null,
+        kycIdentifiersSatisfied: r.kycIdentifiersSatisfied === true,
+        kycAttestationAccepted: r.kycAttestationAccepted === true,
+        kycEuFullyVerified: r.kycEuFullyVerified === true,
+        kycFinalSnapshot: r.kycFinalSnapshot || null,
+        kycVerificationErrors: Array.isArray(r.kycVerificationErrors) ? r.kycVerificationErrors : [],
+        kycHistory: r.kycHistory || [],
+        checkoutStatus: r.checkoutStatus || null,
+        checkoutStatusHistory,
+        accordionCurrentStep: Number.isInteger(Number(r.accordionCurrentStep))
+          ? Number(r.accordionCurrentStep)
+          : (accordionStepHistory.length > 0 ? Number(accordionStepHistory[accordionStepHistory.length - 1]?.toStep) : null),
+        accordionStepHistory,
         platformFee: feeUsd,
         platformFeeSource: feeData.source,
         lineItems: r.lineItems || [],
@@ -900,7 +977,9 @@ export async function GET(req: NextRequest) {
         lastPolledAt: r.lastPolledAt || null,
         stripeSessionStatus: r.stripeSessionStatus || null,
         ipAddress: r.ipAddress || null,
-        statusHistory: r.statusHistory || [],
+        canonicalStatusHistory,
+        lifecycleHistory,
+        statusHistory: lifecycleHistory,
         customerEmail: r.customerEmail || null,
         stripeEmail: r.stripeEmail || null,
         thirdwebMetadata: r.thirdwebMetadata || null,

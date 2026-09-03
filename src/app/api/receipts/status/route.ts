@@ -6,7 +6,7 @@ import { auditEvent } from "@/lib/audit";
 import { requireApimOrJwt } from "@/lib/gateway-auth";
 import * as crypto from "crypto";
 import { getBrandKey } from "@/config/brands";
-import { dispatchReceiptStatusWebhook } from "@/lib/webhook-dispatch";
+import { dispatchReceiptStatusWebhookBestEffort } from "@/lib/webhook-dispatch";
 import { resolveMerchantErrorInfo } from "@/lib/errors/merchant-error-taxonomy";
 import {
   getReceiptStatusInternalSecret,
@@ -16,6 +16,11 @@ import {
   normalizeReceiptStatus,
   shouldIgnoreCanonicalStatusTransition,
 } from "@/lib/receipt-status-policy";
+import { highestKycTier, normalizeKycTier } from "@/lib/stripe-kyc-tracking";
+import {
+  appendAccordionStepTransition,
+  normalizeAccordionStepTransition,
+} from "@/lib/checkout-flow-tracking";
 
 function hasValidInternalStatusSecret(req: NextRequest): boolean {
   const expected = getReceiptStatusInternalSecret();
@@ -260,14 +265,102 @@ export async function POST(req: NextRequest) {
       const ts = Date.now();
       try {
         const container = await getContainer();
-        const patchResult = await container.item(id, wallet).patch([
-          { op: "set", path: "/checkoutStatus", value: checkoutStatus },
-          { op: "set", path: "/checkoutStatusUpdatedAt", value: ts },
-          { op: "set", path: "/checkoutStatusSource", value: isTrustedInternal ? "verified_processor_progress" : "browser" },
-          ...(!isTrustedInternal && isAuthoritativeStatus
-            ? [{ op: "set" as const, path: "/paymentVerificationRequired", value: true }]
-            : []),
-        ] as any);
+        const checkoutStatusSource = isTrustedInternal ? "verified_processor_progress" : "browser";
+        const reportedRequiredTier = normalizeKycTier(body.kycRequiredLevel);
+        const kycEvent = typeof body.kycEvent === "string"
+          ? String(body.kycEvent).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 64)
+          : "";
+        const accordionTransition = normalizeAccordionStepTransition(body.accordionTransition, {
+          ts,
+          source: checkoutStatusSource,
+        });
+        let patchResult: any = null;
+        let receiptExists = false;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          let existing: any = null;
+          try {
+            const read = await container.item(id, wallet).read<any>();
+            existing = read.resource || null;
+          } catch { }
+          if (!existing) break;
+          receiptExists = true;
+
+          const priorHistory = Array.isArray(existing.checkoutStatusHistory)
+            ? existing.checkoutStatusHistory.slice(-199)
+            : [];
+          const previousEntry = priorHistory[priorHistory.length - 1];
+          const historyEntry = {
+            status: checkoutStatus,
+            ts,
+            source: checkoutStatusSource,
+            ...(failureCode ? { failureCode } : {}),
+            ...(failureCategory ? { failureCategory } : {}),
+          };
+          const checkoutStatusHistory = previousEntry?.status === historyEntry.status
+            && previousEntry?.source === historyEntry.source
+            && previousEntry?.failureCode === historyEntry.failureCode
+            ? priorHistory
+            : [...priorHistory, historyEntry];
+
+          const kycHistory = Array.isArray(existing.kycHistory) ? existing.kycHistory.slice(-99) : [];
+          const kycHistoryEntry = kycEvent ? {
+            event: kycEvent,
+            ...(reportedRequiredTier ? { requiredTier: reportedRequiredTier } : {}),
+            source: checkoutStatusSource,
+            ts,
+          } : null;
+          const previousKycEntry = kycHistory[kycHistory.length - 1];
+          const nextKycHistory = kycHistoryEntry
+            && !(previousKycEntry?.event === kycHistoryEntry.event
+              && previousKycEntry?.requiredTier === kycHistoryEntry.requiredTier)
+            ? [...kycHistory, kycHistoryEntry]
+            : kycHistory;
+          const accordionStepHistory = accordionTransition
+            ? appendAccordionStepTransition(existing.accordionStepHistory, accordionTransition)
+            : (Array.isArray(existing.accordionStepHistory) ? existing.accordionStepHistory : []);
+
+          try {
+            patchResult = await container.item(id, wallet).patch([
+              { op: "set", path: "/checkoutStatus", value: checkoutStatus },
+              { op: "set", path: "/checkoutStatusUpdatedAt", value: ts },
+              { op: "set", path: "/checkoutStatusSource", value: checkoutStatusSource },
+              { op: "set", path: "/checkoutStatusHistory", value: checkoutStatusHistory },
+              ...(reportedRequiredTier
+                ? [{ op: "set" as const, path: "/kycRequiredLevel", value: highestKycTier(existing.kycRequiredLevel, reportedRequiredTier) }]
+                : []),
+              ...(body.kycOccurred === true
+                ? [{ op: "set" as const, path: "/kycOccurred", value: true }]
+                : []),
+              ...(kycHistoryEntry
+                ? [{ op: "set" as const, path: "/kycHistory", value: nextKycHistory }]
+                : []),
+              ...(accordionTransition
+                ? [
+                    { op: "set" as const, path: "/accordionStepHistory", value: accordionStepHistory },
+                    { op: "set" as const, path: "/accordionCurrentStep", value: accordionTransition.toStep },
+                    { op: "set" as const, path: "/accordionStepUpdatedAt", value: ts },
+                  ]
+                : []),
+              ...(!isTrustedInternal && isAuthoritativeStatus
+                ? [{ op: "set" as const, path: "/paymentVerificationRequired", value: true }]
+                : []),
+            ] as any, existing._etag
+              ? { accessCondition: { type: "IfMatch", condition: existing._etag } }
+              : undefined);
+            break;
+          } catch (patchError: any) {
+            const statusCode = Number(patchError?.code || patchError?.statusCode || patchError?.status || 0);
+            if (statusCode === 412 && attempt < 2) continue;
+            throw patchError;
+          }
+        }
+
+        if (!receiptExists) {
+          return NextResponse.json(
+            { ok: false, error: "receipt_not_found" },
+            { status: 404, headers: { "x-correlation-id": correlationId } }
+          );
+        }
 
         if (!patchResult?.resource) {
           return NextResponse.json(
@@ -320,15 +413,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true, ignored: true, reason: "already_settled" }, { headers: { "x-correlation-id": correlationId } });
       }
 
-      const incomingKyc = body.kycLevel ? String(body.kycLevel).trim() : undefined;
+      const incomingKyc = normalizeKycTier(body.kycLevel) || undefined;
       const existingKyc = resource?.kycLevel;
       const resolveKycTier = (incoming?: string, existing?: string) => {
-        const inc = (incoming || "").toUpperCase();
-        const ext = (existing || "").toUpperCase();
-        if (inc === "L2" || ext === "L2") return "L2";
-        if (inc === "L1" || ext === "L1") return "L1";
-        if (inc === "L0" || ext === "L0") return "L0";
-        return incoming || existing || undefined;
+        return highestKycTier(incoming, existing) || incoming || existing || undefined;
       };
       const mergedKycLevel = resolveKycTier(incomingKyc, existingKyc);
 
@@ -382,7 +470,7 @@ export async function POST(req: NextRequest) {
           ...(failureCategory ? { failureCategory } : {}),
           ...(failureAction ? { failureAction } : {}),
           ...(mergedKycLevel ? { kycLevel: mergedKycLevel } : {}),
-          ...(typeof body.kycOccurred === "boolean" ? { kycOccurred: body.kycOccurred } : resource?.kycOccurred ? { kycOccurred: true } : {}),
+          ...(body.kycOccurred === true || resource?.kycOccurred === true ? { kycOccurred: true } : {}),
           // Persist Thirdweb transaction and bridge metadata for platform analytics
           ...(paymentId ? { paymentId } : {}),
           ...(transactions && transactions.length > 0 ? { transactions } : {}),
@@ -569,38 +657,17 @@ export async function POST(req: NextRequest) {
         });
       } catch { }
 
-      // Deliver only authoritative state, and wait for the result so serverless
-      // execution cannot terminate before the request leaves the process.
+      // Deliver only authoritative state. The receipt was persisted first and
+      // a failed merchant delivery stays queued for the Plesk retry job; it
+      // must never turn a successful payment-state write into an HTTP error.
       if (shouldDeliver) {
-        const delivery = await dispatchReceiptStatusWebhook(next, status, previousStatus, {
+        void dispatchReceiptStatusWebhookBestEffort(container, next, status, previousStatus, {
           transactionHash: txHash || next?.transactionHash,
           buyerWallet: buyerWallet || next?.buyerWallet,
           merchantWallet: wallet,
           brandKey,
           stripeSessionId: stripeSessionId || next?.stripeSessionId || resource?.stripeSessionId,
         });
-        await container.item(id, wallet).patch([
-          { op: "set", path: "/webhookLastStatus", value: status },
-          { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
-          { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
-          { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
-          ...(next?.transactionHash
-            ? [{ op: "set" as const, path: "/webhookLastTransactionHash", value: next.transactionHash }]
-            : []),
-          ...(delivery.statusCode
-            ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
-            : []),
-          ...(delivery.error
-            ? [{ op: "set" as const, path: "/webhookLastError", value: delivery.error }]
-            : [{ op: "set" as const, path: "/webhookLastError", value: null }]),
-        ] as any);
-
-        if (!delivery.ok) {
-          return NextResponse.json(
-            { ok: false, persisted: true, error: "webhook_delivery_failed", reason: delivery.error },
-            { status: 502, headers: { "x-correlation-id": correlationId } }
-          );
-        }
       }
 
       return NextResponse.json({ ok: true }, { headers: { "x-correlation-id": correlationId } });

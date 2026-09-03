@@ -23,6 +23,7 @@ import { PortalPayAccordionCheckoutV2 } from "@/components/checkout/PortalPayAcc
 import { usePortalLogger } from "@/hooks/usePortalLogger";
 import { extractThirdwebTxHash, extractThirdwebTransactionMetadata } from "@/lib/thirdweb/tx-extractor";
 import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
+import { isValidIsoCountryCode, micaIdentifierLabel, normalizeMicaIdentifier, validateMicaIdentifier } from "@/lib/stripe-kyc-tracking";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
 // Embedded mode (embedded=1 or iframe) removes page background to fit seamlessly in host modals.
@@ -778,6 +779,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const lastPreferredHeightRef = useRef<number>(0);
   const loadedMerchantWalletRef = useRef<string>("");
   const autoEmailSentRef = useRef<boolean>(false);
+  const statusPostQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
   // ── Playground PostMessage bridge ──
   // Injects a <style> tag with !important rules to override ALL portal styling.
@@ -2199,8 +2201,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
               if (b.zip || b.postalCode) setKycZip((prev) => prev || b.zip || b.postalCode || "");
               if (b.country) {
                 setKycCountry((prev) => prev || b.country || "");
-                setKycNationalities((prev) => prev || b.country || "");
-                setKycBirthCountry((prev) => prev || b.country || "");
               }
             }
             try {
@@ -2601,10 +2601,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [kycState, setKycState] = useState("");
   const [kycZip, setKycZip] = useState("");
   const [kycCountry, setKycCountry] = useState("US");
-  const [kycNationalities, setKycNationalities] = useState("US");
-  const [kycBirthCountry, setKycBirthCountry] = useState("US");
+  const [kycNationalities, setKycNationalities] = useState("");
+  const [kycBirthCountry, setKycBirthCountry] = useState("");
   const [kycBirthCity, setKycBirthCity] = useState("");
   const [kycSameAsShipping, setKycSameAsShipping] = useState(false);
+  const [kycIdentifierValues, setKycIdentifierValues] = useState<Record<string, string>>({});
+  const [kycIdentifierError, setKycIdentifierError] = useState("");
+  const [kycSelectedIdentifierTypes, setKycSelectedIdentifierTypes] = useState<string[]>([]);
 
   // ── Address Autocomplete State & Handlers ──
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
@@ -2661,8 +2664,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           if (data.zip) setKycZip(data.zip);
           if (data.country) {
             setKycCountry(data.country);
-            setKycNationalities(data.country);
-            setKycBirthCountry(data.country);
           }
         }
       } catch (err) {
@@ -2690,8 +2691,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       setKycState(shipState);
       setKycZip(shipZip);
       setKycCountry(shipCountry || "US");
-      setKycNationalities(shipCountry || "US");
-      setKycBirthCountry(shipCountry || "US");
     }
   }, [kycSameAsShipping, shipName, shipLine1, shipLine2, shipCity, shipState, shipZip, shipCountry]);
 
@@ -3468,24 +3467,29 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     try {
       if (!receiptId) return;
       const parentUrl = typeof document !== "undefined" && document.referrer ? document.referrer : undefined;
-      await fetch("/api/receipts/status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          receiptId,
-          wallet: merchantWallet || recipient,
-          status,
-          parentUrl,
-          totalUsd: typeof totalUsd === "number" && totalUsd > 0 ? totalUsd : undefined,
-          lineItems: Array.isArray(items) && items.length > 0 ? items : undefined,
-          shippingCostUsd: typeof shippingCostUsd === "number" ? shippingCostUsd : undefined,
-          taxUsd: typeof taxUsd === "number" ? taxUsd : undefined,
-          tipUsd: typeof tipUsd === "number" ? tipUsd : undefined,
-          discountUsd: typeof (receipt as any)?.discountUsd === "number" ? (receipt as any).discountUsd : undefined,
-          ...(shopSlugParam ? { shopSlug: shopSlugParam } : {}),
-          ...extra,
-        }),
-      });
+      const payload = {
+        receiptId,
+        wallet: merchantWallet || recipient,
+        status,
+        parentUrl,
+        totalUsd: typeof totalUsd === "number" && totalUsd > 0 ? totalUsd : undefined,
+        lineItems: Array.isArray(items) && items.length > 0 ? items : undefined,
+        shippingCostUsd: typeof shippingCostUsd === "number" ? shippingCostUsd : undefined,
+        taxUsd: typeof taxUsd === "number" ? taxUsd : undefined,
+        tipUsd: typeof tipUsd === "number" ? tipUsd : undefined,
+        discountUsd: typeof (receipt as any)?.discountUsd === "number" ? (receipt as any).discountUsd : undefined,
+        ...(shopSlugParam ? { shopSlug: shopSlugParam } : {}),
+        ...extra,
+      };
+      const queuedPost = statusPostQueueRef.current
+        .catch(() => undefined)
+        .then(() => fetch("/api/receipts/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }));
+      statusPostQueueRef.current = queuedPost;
+      await queuedPost;
 
       // Auto-email receipt if customer email is available and status is successfully posted as paid
       const customerEmail = extra?.customerEmail || shipEmail;
@@ -4012,6 +4016,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     buyerWalletAddress: headlessBuyerWallet,
     sessionId: headlessSessionId,
     submitKycInfo,
+    submitKycIdentifiers: headlessSubmitKycIdentifiers,
+    missingKycIdentifiers: headlessMissingKycIdentifiers,
+    kycIdentifierAlternatives: headlessKycIdentifierAlternatives,
+    attestationElement: headlessAttestationElement,
     reset: resetHeadlessOnramp,
     kycTierRequired,
     kycLevel: headlessKycLevel,
@@ -4108,23 +4116,46 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       console.log("[STRIPE HEADLESS] Checkout handoff completed:", result);
       console.log("[STRIPE HEADLESS SUCCESS] Stripe accepted the checkout handoff. Session:", result.sessionId, "Tx:", result.txHash);
       // A real on-chain transaction is authoritative here. ECommerce
-      // placeholders remain pending until signed Stripe status is reconciled.
+      // placeholders can represent an already-paid order while the separate
+      // settlement transfer continues in the background.
       const txHash = result.txHash || "";
       const isAch = txHash === "ach_pending" || stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account" || receipt?.detectedCardFunding === "us_bank_account";
       const isPendingSettlement = txHash === "ecommerce_pending" || txHash === "ach_pending" || !/^0x[a-f0-9]{64}$/i.test(txHash);
-      const statusToPost = isAch ? "ach_pending" : (isPendingSettlement ? "fulfillment_processing" : "paid");
+      const providerAccepted = result.paymentAccepted === true;
+      const statusToPost = providerAccepted
+        ? (result.stripeStatus || "fulfillment_processing")
+        : (isAch ? "awaiting_funds" : (isPendingSettlement ? "settlement_pending" : "paid"));
 
-      // eCommerce mode returns after Stripe checkout submission while the
-      // merchant sweep continues asynchronously. Never present that placeholder
-      // as proof of payment or emit a paid webhook from the browser.
+      // The hook only sets paymentAccepted after the server-side Stripe status
+      // read observes fulfillment_processing/complete. That is the eCommerce
+      // paid boundary for every funding type, including ACH. The placeholder
+      // means the on-chain sweep is pending; it does not mean the order is
+      // unpaid. Canonical persistence/webhook delivery remains server-owned.
       if (isPendingSettlement) {
+        if (isEcommerceMode && providerAccepted) {
+          setPaymentConfirmed({
+            txHash,
+            amount: totalUsd,
+            token: "USDC",
+            funding: isAch ? "us_bank_account" : undefined,
+          });
+        }
         postStatus(statusToPost, {
           paymentMethod: "stripe_headless",
           stripeSessionId: result.sessionId,
+          checkoutMode: isEcommerceMode ? "ecommerce" : "full",
           customerEmail: shipEmail || headlessEmailInput || undefined,
           detectedCardFunding: isAch ? "us_bank_account" : (result.detectedCardFunding || stripeDetectedFunding || undefined),
-          kycLevel: result.kycLevel || (headlessKycLevel === "REQUIRES_KYC" ? "L0" : headlessKycLevel) || "L0",
-          kycOccurred: true,
+          kycLevel: result.kycVerifiedLevel || result.kycFinalLevel || result.kycLevel,
+          kycInitialLevel: result.kycInitialLevel,
+          kycInitialStatus: result.kycInitialStatus,
+          kycInitialVerifiedLevel: result.kycInitialVerifiedLevel,
+          kycRequiredLevel: result.kycRequiredLevel,
+          kycCompletedLevel: result.kycCompletedLevel,
+          kycFinalLevel: result.kycFinalLevel,
+          kycFinalStatus: result.kycFinalStatus,
+          kycVerifiedLevel: result.kycVerifiedLevel,
+          kycOccurred: result.kycOccurred === true,
         });
         return;
       }
@@ -4139,11 +4170,20 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         txHash,
         paymentMethod: "stripe_headless",
         stripeSessionId: result.sessionId,
+        checkoutMode: isEcommerceMode ? "ecommerce" : "full",
         customerEmail: shipEmail || headlessEmailInput || undefined,
         detectedCardFunding: isAch ? "us_bank_account" : (result.detectedCardFunding || stripeDetectedFunding || undefined),
         isCreditCard: typeof result.isCreditCard === "boolean" ? result.isCreditCard : (stripeDetectedFunding === "credit" ? true : (stripeDetectedFunding === "debit" ? false : undefined)),
-        kycLevel: result.kycLevel || (headlessKycLevel === "REQUIRES_KYC" ? "L0" : headlessKycLevel) || "L0",
-        kycOccurred: true,
+        kycLevel: result.kycVerifiedLevel || result.kycFinalLevel || result.kycLevel,
+        kycInitialLevel: result.kycInitialLevel,
+        kycInitialStatus: result.kycInitialStatus,
+        kycInitialVerifiedLevel: result.kycInitialVerifiedLevel,
+        kycRequiredLevel: result.kycRequiredLevel,
+        kycCompletedLevel: result.kycCompletedLevel,
+        kycFinalLevel: result.kycFinalLevel,
+        kycFinalStatus: result.kycFinalStatus,
+        kycVerifiedLevel: result.kycVerifiedLevel,
+        kycOccurred: result.kycOccurred === true,
       });
     },
     onError: (error) => {
@@ -4257,6 +4297,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       }
     };
   }, [headlessPaymentElement]);
+
+  useEffect(() => {
+    const attestationEl = headlessAttestationElement;
+    return () => {
+      if (attestationEl) {
+        try {
+          (attestationEl as any).unmount?.();
+          (attestationEl as any).destroy?.();
+          attestationEl.remove();
+        } catch (error) {
+          console.warn("[PORTAL] Failed to clean up Stripe attestation element:", error);
+        }
+      }
+    };
+  }, [headlessAttestationElement]);
 
   // Manually find and remove/hide any leftover iframe components or global Stripe overlays
   // Only clean up external overlays/iframes if we are in a terminal state (idle, error, completed)
@@ -4870,6 +4925,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           onHeadlessSubmitEmailPhone={(email, phone, country, isForceRetry, fullName) => startHeadlessOnramp(email, phone, country, isForceRetry, fullName)}
           onSubmitPhone={headlessSubmitPhone}
           onSubmitKycInfo={submitKycInfo}
+          onSubmitKycIdentifiers={headlessSubmitKycIdentifiers}
+          missingKycIdentifiers={headlessMissingKycIdentifiers}
+          kycIdentifierAlternatives={headlessKycIdentifierAlternatives}
+          attestationElement={headlessAttestationElement}
           onVerifyDocuments={headlessVerifyDocuments}
           paymentElement={headlessPaymentElement}
           authElement={headlessAuthElement}
@@ -4880,6 +4939,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           detectedCardBrand={detectedCardBrand}
           detectedCardLast4={detectedCardLast4}
           onEmailReceipt={() => setEmailModalOpen(true)}
+          onAccordionStepTransition={(transition) => {
+            postStatus(`onramp_accordion_step_${transition.toStep}`, {
+              stripeSessionId: headlessSessionId || undefined,
+              customerEmail: shipEmail || headlessEmailInput || undefined,
+              accordionTransition: transition,
+            });
+          }}
         />
       ) : headlessEmailPrompt ? (
         <form
@@ -5165,7 +5231,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 <p className={`text-xs ${shipEmail ? 'mb-2' : 'mb-6'} max-w-xs ${isLightText ? 'text-white/60' : 'text-black/60'}`}>
                   {stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account"
                     ? "Funds will be deducted from your bank account within 2–3 business days. USDC settles upon clearance."
-                    : "USDC has been transferred successfully."}
+                    : "Stripe accepted your payment and fulfillment is in progress."}
                 </p>
                 {shipEmail && (
                   <p className="text-[11px] text-emerald-400 font-medium animate-pulse mb-6">
@@ -5193,6 +5259,86 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 >
                   Done
                 </button>
+              </div>
+            ) : headlessStep === "collecting_identifiers" ? (
+              <form
+                className="w-full p-2 space-y-3.5 text-left"
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const types = kycSelectedIdentifierTypes.length > 0
+                    ? kycSelectedIdentifierTypes
+                    : headlessMissingKycIdentifiers.map((item) => item.type);
+                  const payload = Object.fromEntries(types.map((type) => [
+                    type,
+                    normalizeMicaIdentifier(type, kycIdentifierValues[type] || ""),
+                  ]));
+                  const invalid = types.filter((type) => !validateMicaIdentifier(type, payload[type]));
+                  if (invalid.length > 0) {
+                    setKycIdentifierError(`Check the format of: ${invalid.map(micaIdentifierLabel).join(", ")}.`);
+                    return;
+                  }
+                  setKycIdentifierError("");
+                  try {
+                    await headlessSubmitKycIdentifiers(payload);
+                  } catch (error: any) {
+                    setKycIdentifierError(error?.message || "Stripe could not verify these identifiers.");
+                  }
+                }}
+              >
+                <h3 className={`text-base font-bold ${isLightText ? "text-white" : "text-black"}`}>EU MiCA Identifier</h3>
+                <p className={`text-xs ${isLightText ? "text-white/65" : "text-black/65"}`}>Stripe requires the following national identifier before L2 verification can continue.</p>
+                {headlessKycIdentifierAlternatives.map((alternative, index) => (
+                  <div key={index} className="flex flex-wrap gap-3 text-xs">
+                    <button type="button" className="underline" onClick={() => setKycSelectedIdentifierTypes(headlessMissingKycIdentifiers.map((item) => item.type))}>
+                      Use {alternative.original_missing_identifiers.map(micaIdentifierLabel).join(" + ")}
+                    </button>
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={() => setKycSelectedIdentifierTypes([
+                        ...headlessMissingKycIdentifiers
+                          .map((item) => item.type)
+                          .filter((type) => !alternative.original_missing_identifiers.includes(type)),
+                        ...alternative.alternative_missing_identifiers,
+                      ])}
+                    >
+                      Use {alternative.alternative_missing_identifiers.map(micaIdentifierLabel).join(" + ")}
+                    </button>
+                  </div>
+                ))}
+                {(kycSelectedIdentifierTypes.length > 0
+                  ? kycSelectedIdentifierTypes
+                  : headlessMissingKycIdentifiers.map((item) => item.type)
+                ).map((type) => (
+                  <div key={type}>
+                    <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? "text-white/60" : "text-black/60"}`}>{micaIdentifierLabel(type)}</label>
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      value={kycIdentifierValues[type] || ""}
+                      onChange={(event) => setKycIdentifierValues((current) => ({ ...current, [type]: event.target.value }))}
+                      className={`w-full h-10 px-3 rounded-xl border text-xs font-mono ${isLightText ? "bg-white/5 border-white/10 text-white" : "bg-black/5 border-black/10 text-black"}`}
+                    />
+                  </div>
+                ))}
+                {kycIdentifierError && <p className="text-xs text-red-400">{kycIdentifierError}</p>}
+                <button type="submit" className="w-full py-2.5 rounded-xl font-semibold text-xs text-white" style={{ backgroundColor: theme.primaryColor || "#635BFF" }}>
+                  Verify identifier & continue
+                </button>
+              </form>
+            ) : headlessStep === "accepting_terms" ? (
+              <div className="w-full p-2 space-y-3 text-left">
+                <h3 className={`text-base font-bold ${isLightText ? "text-white" : "text-black"}`}>EU CARF Attestation</h3>
+                <p className={`text-xs ${isLightText ? "text-white/65" : "text-black/65"}`}>Review and confirm Stripe's regulatory attestation to continue.</p>
+                <div
+                  className="w-full min-h-[180px]"
+                  ref={(element) => {
+                    if (element && headlessAttestationElement && !element.contains(headlessAttestationElement)) {
+                      element.innerHTML = "";
+                      element.appendChild(headlessAttestationElement);
+                    }
+                  }}
+                />
               </div>
             ) : headlessStep === "collecting_kyc" ? (
               <div className="w-full flex flex-col items-stretch justify-start p-1 md:p-2 animate-in zoom-in duration-300 pr-1 text-left">
@@ -5295,8 +5441,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           value={kycCountry}
                           onChange={(e) => {
                             setKycCountry(e.target.value);
-                            setKycNationalities(e.target.value);
-                            setKycBirthCountry(e.target.value);
                           }}
                         >
                           <option value="US">United States</option>
@@ -5587,8 +5731,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               value={kycCountry}
                               onChange={(e) => {
                                 setKycCountry(e.target.value);
-                                setKycNationalities(e.target.value);
-                                setKycBirthCountry(e.target.value);
                               }}
                             >
                               <option value="US">United States</option>
@@ -5962,14 +6104,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               <label className={`block text-[10.5px] font-bold uppercase tracking-wider mb-1 ${isLightText ? 'text-white/50' : 'text-black/50'}`}>Nationality</label>
                               <input
                                 type="text"
-                                placeholder="e.g. DE, FR"
-                                maxLength={2}
+                                placeholder="e.g. DE, EE"
+                                maxLength={35}
                                 className={`w-full h-10 px-3 rounded-xl focus:outline-none transition-all text-xs font-medium uppercase ${isLightText
                                   ? 'bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-white/20 focus:bg-white/10'
                                   : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                                   }`}
                                 value={kycNationalities}
-                                onChange={(e) => setKycNationalities(e.target.value.toUpperCase())}
+                                onChange={(e) => setKycNationalities(e.target.value.toUpperCase().replace(/[^A-Z,\s]/g, ""))}
                               />
                             </div>
                             <div>
@@ -5983,7 +6125,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   : 'bg-black/5 border border-black/10 text-black placeholder-black/40 focus:border-black/20 focus:bg-black/10'
                                   }`}
                                 value={kycBirthCountry}
-                                onChange={(e) => setKycBirthCountry(e.target.value.toUpperCase())}
+                                onChange={(e) => setKycBirthCountry(e.target.value.toUpperCase().replace(/[^A-Z]/g, ""))}
                               />
                             </div>
                           </div>
@@ -6036,15 +6178,18 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
                     if (!kycLine1.trim()) missingFields.push("Address Line 1");
                     if (!kycCity.trim()) missingFields.push("City");
-                    if (!kycState.trim()) missingFields.push("State/Region");
+                    if (["US", "CA", "IE"].includes(targetCountry) && !kycState.trim()) missingFields.push(targetCountry === "IE" ? "County" : "State/Region");
                     if (!kycZip.trim()) missingFields.push("Zip Code");
 
                     if (targetCountry !== "US" || isEuRegion) {
                       const hasDob = kycDobDay && kycDobMonth && kycDobYear.length === 4;
                       if (!hasDob) missingFields.push("Date of Birth");
                       if (!kycBirthCity.trim()) missingFields.push("Birth City");
-                      if (!kycBirthCountry.trim()) missingFields.push("Birth Country");
-                      if (!kycNationalities.trim()) missingFields.push("Nationality");
+                      if (!isValidIsoCountryCode(kycBirthCountry)) missingFields.push("Valid Birth Country");
+                      const nationalityCodes = kycNationalities.split(/[\s,]+/).map((code) => code.trim().toUpperCase()).filter(Boolean);
+                      if (nationalityCodes.length === 0 || nationalityCodes.some((code) => !isValidIsoCountryCode(code))) {
+                        missingFields.push("Valid Nationality Code(s)");
+                      }
                     }
 
                     if ((kycTierRequired as string) !== "l0" && targetCountry === "US") {
@@ -6109,10 +6254,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             const addressObj: Record<string, string> = {
                               line1: kycLine1.trim(),
                               city: kycCity.trim(),
-                              state: normalizedState,
                               postal_code: kycZip.trim().toUpperCase(),
                               country: safeCountry
                             };
+                            if (["US", "CA", "IE"].includes(safeCountry) && normalizedState) {
+                              addressObj.state = normalizedState;
+                            }
                             if (kycLine2 && kycLine2.trim()) {
                               addressObj.line2 = kycLine2.trim();
                             }
@@ -6127,7 +6274,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               if (safeCountry !== "US" || isEuRegion) {
                                 l0Payload.birth_city = (kycBirthCity || kycCity).trim();
                                 l0Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
-                                l0Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
+                                l0Payload.nationalities = kycNationalities.split(/[\s,]+/).map((code) => code.trim().toUpperCase()).filter(Boolean);
                                 if (hasValidDob) {
                                   l0Payload.date_of_birth = {
                                     day: dobDay,
@@ -6158,7 +6305,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     year: dobYear
                                   };
                                 }
-                                l1Payload.nationalities = [(kycNationalities || safeCountry).trim().toUpperCase()];
+                                l1Payload.nationalities = kycNationalities.split(/[\s,]+/).map((code) => code.trim().toUpperCase()).filter(Boolean);
                                 l1Payload.birth_country = (kycBirthCountry || safeCountry).trim().toUpperCase();
                                 l1Payload.birth_city = (kycBirthCity || kycCity).trim();
                               }

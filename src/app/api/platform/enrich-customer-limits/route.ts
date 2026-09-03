@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { resolveWalletRole } from "@/lib/authz";
+import { isPublicIpAddress } from "@/lib/request-client-ip";
+import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -101,7 +103,8 @@ export async function POST(req: NextRequest) {
         let freshLimits: any[] = [];
 
         // 1. Attempt to fetch live limits endpoint if customer ID is present
-        if (custId) {
+        const customerIp = String(receipt.customerIpAddress || receipt.ipAddress || "").trim();
+        if (custId && isPublicIpAddress(customerIp)) {
           try {
             const { getOAuthToken, refreshOAuthToken } = await import(
               "@/app/api/stripe/link-auth-tokens/route"
@@ -112,11 +115,15 @@ export async function POST(req: NextRequest) {
             }
 
             const limitsUrl = new URL("https://api.stripe.com/v1/crypto/onramp_transaction_limits");
-            limitsUrl.searchParams.append("destination_network", txDetails.destination_network || "base");
+            const destinationNetwork = String(txDetails.destination_network || "base").toLowerCase();
+            limitsUrl.searchParams.append("destination_network", destinationNetwork);
             if (walletAddress) {
-              limitsUrl.searchParams.append("wallet_address", String(walletAddress).toLowerCase());
+              limitsUrl.searchParams.append(
+                "wallet_address",
+                destinationNetwork === "solana" ? String(walletAddress) : String(walletAddress).toLowerCase(),
+              );
             }
-            limitsUrl.searchParams.append("customer_ip_address", "72.229.28.185");
+            limitsUrl.searchParams.append("customer_ip_address", customerIp);
 
             const limitsHeaders: Record<string, string> = {
               Authorization: `Bearer ${stripeKey}`,
@@ -153,23 +160,21 @@ export async function POST(req: NextRequest) {
           } catch (limitsErr) {
             console.warn(`[ENRICH LIMITS] Failed to fetch customer limits endpoint for ${custId}:`, limitsErr);
           }
+        } else if (custId) {
+          console.warn(`[ENRICH LIMITS] Skipping live limits for ${custId}: original public customer IP was not recorded.`);
         }
 
-        // 2. Preserve existing session limits entries (or default set) so no method types are dropped
+        // 2. Preserve previously observed entries, but never invent limits when
+        // Stripe has not supplied them.
         const existingSession = customerSessions.find(
           (s: any) =>
             s.stripeSessionId === sessionId ||
             (s.email && custEmail && s.email.toLowerCase() === custEmail.toLowerCase())
         );
 
-        const mergedLimits: any[] = Array.isArray(existingSession?.limits) && existingSession.limits.length > 0
+        const mergedLimits: any[] = Array.isArray(existingSession?.limits)
           ? JSON.parse(JSON.stringify(existingSession.limits))
-          : [
-              { amount: 0, currency: "eur", payment_method_type: "card", speed: "instant" },
-              { amount: 50000, currency: "usd", payment_method_type: "card", speed: "instant" },
-              { amount: 50000, currency: "usd", payment_method_type: "us_bank_account", speed: "standard" },
-              { amount: 0, currency: "usd", payment_method_type: "us_bank_account", speed: "instant" },
-            ];
+          : [];
 
         // Merge live limits from Stripe
         for (const fl of freshLimits) {
@@ -177,7 +182,7 @@ export async function POST(req: NextRequest) {
             (l) => l.payment_method_type === fl.payment_method_type && l.speed === fl.speed && l.currency === fl.currency
           );
           if (matchIdx > -1) {
-            mergedLimits[matchIdx].amount = Math.max(mergedLimits[matchIdx].amount, fl.amount);
+            mergedLimits[matchIdx] = fl;
           } else {
             mergedLimits.push(fl);
           }
@@ -193,7 +198,7 @@ export async function POST(req: NextRequest) {
             (l) => (l.payment_method_type === targetType || l.payment_method_type.includes(targetType)) && l.speed === speed
           );
           if (targetIdx > -1) {
-            mergedLimits[targetIdx].amount = Math.max(mergedLimits[targetIdx].amount, sessionTxLimitCents);
+            mergedLimits[targetIdx].amount = sessionTxLimitCents;
           } else {
             mergedLimits.push({
               amount: sessionTxLimitCents,
@@ -252,9 +257,36 @@ export async function POST(req: NextRequest) {
     }
 
     if (updatedAny) {
-      receipt.customerSessions = customerSessions;
-      receipt.lastUpdatedAt = Date.now();
-      await container.item(receipt.id, receipt.wallet).replace(receipt);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const latestRead = await container.item(receipt.id, receipt.wallet).read<any>();
+        const latest = latestRead.resource;
+        if (!latest) throw new Error("receipt_not_found");
+        const mayApplyRecoveredPayment = receipt.status === "paid" && !isProtectedPaymentStatus(latest.status);
+        const next = {
+          ...latest,
+          customerSessions: customerSessions.slice(-100),
+          ...(mayApplyRecoveredPayment ? {
+            status: "paid",
+            transactionHash: receipt.transactionHash,
+            transactionTimestamp: receipt.transactionTimestamp,
+            statusHistory: receipt.statusHistory,
+            ttl: -1,
+          } : {}),
+          lastUpdatedAt: Date.now(),
+        };
+        try {
+          await container.item(latest.id, latest.wallet).replace(
+            next,
+            latest._etag
+              ? { accessCondition: { type: "IfMatch", condition: latest._etag } }
+              : undefined,
+          );
+          break;
+        } catch (writeError: any) {
+          const statusCode = Number(writeError?.code || writeError?.statusCode || 0);
+          if (statusCode !== 412 || attempt === 2) throw writeError;
+        }
+      }
       console.log(`[ENRICH LIMITS] Successfully enriched receipt ${receiptId} with updated Stripe customer limits.`);
     }
 

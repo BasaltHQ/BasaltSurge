@@ -59,6 +59,12 @@ export function useStepProgressionGuard({
 }: StepProgressionGuardProps) {
   const lastLoggedTransitionRef = useRef<string>("");
 
+  useEffect(() => {
+    // Deduplicate repeated effect evaluation for the same render, but allow the
+    // same legitimate route to occur again after the customer changes steps.
+    lastLoggedTransitionRef.current = "";
+  }, [activeStep]);
+
   const logTransition = (fromStep: number, toStep: number, reason: string) => {
     const key = `${fromStep}->${toStep}:${reason}`;
     if (lastLoggedTransitionRef.current !== key) {
@@ -198,6 +204,8 @@ export function useStepProgressionGuard({
 
     const needsKycStep =
       (!isStep2Satisfied && headlessStep === "collecting_kyc" && !isPaymentReady) ||
+      headlessStep === "collecting_identifiers" ||
+      headlessStep === "accepting_terms" ||
       (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
       (showStepUpForm && !kyc.isL1Verified) ||
       (isL2Requirement && !kyc.isL2Verified) ||
@@ -274,6 +282,8 @@ export function useStepProgressionGuard({
     // Case B: Explicit KYC or Document Verification step from Onramp
     if (
       (!isStep2Satisfied && headlessStep === "collecting_kyc" && !isPaymentReady) ||
+      headlessStep === "collecting_identifiers" ||
+      headlessStep === "accepting_terms" ||
       (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
       showStepUpForm ||
       (isL2Requirement && !kyc.isL2Verified)
@@ -294,6 +304,8 @@ export function useStepProgressionGuard({
           "exchanging_tokens",
           "checking_kyc",
           "collecting_kyc",
+          "collecting_identifiers",
+          "accepting_terms",
           "submitting_kyc",
           "verifying_identity",
           "creating_wallet",

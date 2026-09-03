@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   User,
   MapPin,
@@ -26,6 +26,8 @@ import { AddressAutocomplete } from "../AddressAutocomplete";
 import { AccordionCard } from "../AccordionCard";
 import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step2IdentityProps } from "../types";
+import { StripeEmbedContainer } from "../StripeEmbedContainer";
+import { isValidIsoCountryCode, micaIdentifierLabel, normalizeMicaIdentifier, validateMicaIdentifier } from "@/lib/stripe-kyc-tracking";
 
 export function Step2Identity({
   isOpen,
@@ -53,6 +55,12 @@ export function Step2Identity({
   setDob,
   ssn,
   setSsn,
+  nationalities = "",
+  setNationalities,
+  birthCountry = "",
+  setBirthCountry,
+  birthCity = "",
+  setBirthCity,
   micaIdentifierValue = "",
   setMicaIdentifierValue,
   micaIdentifierType,
@@ -90,9 +98,17 @@ export function Step2Identity({
   onSelectSuggestion,
   onSubmit,
   onVerifyDocuments,
+  onSubmitKycIdentifiers,
+  missingKycIdentifiers = [],
+  kycIdentifierAlternatives = [],
+  attestationElement,
   onHeaderClick,
   onContinueToStep3,
 }: Step2IdentityProps) {
+  const [dynamicIdentifierValues, setDynamicIdentifierValues] = useState<Record<string, string>>({});
+  const [selectedIdentifierTypes, setSelectedIdentifierTypes] = useState<string[]>([]);
+  const [isSubmittingIdentifiers, setIsSubmittingIdentifiers] = useState(false);
+  const [identifierError, setIdentifierError] = useState<string | null>(null);
   const countryConfig = getCountryAddressConfig(country);
   const subdivisions = getSubdivisionsForCountry(country);
   const hasSubdivisions = subdivisions.length > 0;
@@ -103,6 +119,19 @@ export function Step2Identity({
   const showDobField = showStepUpForm || isL2Requirement || isEU;
   const showSsnField = isUS && (showStepUpForm || isL2Requirement);
   const showMicaField = Boolean(countryConfig.micaIdentifier);
+  const nationalityCodes = nationalities
+    .split(/[\s,]+/)
+    .map((code) => code.trim().toUpperCase())
+    .filter(Boolean);
+  const defaultIdentifierTypes = useMemo(
+    () => missingKycIdentifiers.map((item) => item.type),
+    [missingKycIdentifiers]
+  );
+  useEffect(() => {
+    if (defaultIdentifierTypes.length > 0) setSelectedIdentifierTypes(defaultIdentifierTypes);
+  }, [defaultIdentifierTypes.join("|")]);
+  const isIdentifierStage = headlessStep === "collecting_identifiers";
+  const isAttestationStage = headlessStep === "accepting_terms";
 
   const isFieldValid = (field: string): boolean => {
     switch (field) {
@@ -122,6 +151,12 @@ export function Step2Identity({
         return showDobField ? dobStatus.valid : true;
       case "ssn":
         return showSsnField ? ssnDigits.length === 9 : true;
+      case "nationalities":
+        return !isEU || (nationalityCodes.length > 0 && nationalityCodes.every(isValidIsoCountryCode));
+      case "birthCountry":
+        return !isEU || isValidIsoCountryCode(birthCountry);
+      case "birthCity":
+        return !isEU || birthCity.trim().length >= 2;
       case "micaIdentifier":
         return showMicaField ? (micaIdentifierValue || "").trim().length >= 3 : true;
       default:
@@ -214,7 +249,93 @@ export function Step2Identity({
 
       {/* Step 2 Expanded Body */}
       <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 transition-all duration-300 ease-out ${isOpen ? "opacity-100" : "h-0 opacity-0 overflow-visible pointer-events-none p-0 border-0"}`}>
-        {isDocVerifyRequired ? (
+        {isIdentifierStage ? (
+          <form
+            className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-3.5 mt-2 text-left"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (!onSubmitKycIdentifiers) return;
+              const payload = Object.fromEntries(selectedIdentifierTypes.map((type) => [
+                type,
+                normalizeMicaIdentifier(type, dynamicIdentifierValues[type] || ""),
+              ]));
+              const invalid = selectedIdentifierTypes.filter((type) => !validateMicaIdentifier(type, payload[type]));
+              if (invalid.length > 0) {
+                setIdentifierError(`Check the format of: ${invalid.map(micaIdentifierLabel).join(", ")}.`);
+                return;
+              }
+              setIdentifierError(null);
+              setIsSubmittingIdentifiers(true);
+              try {
+                await onSubmitKycIdentifiers(payload);
+              } catch (error: any) {
+                setIdentifierError(error?.message || "Stripe could not verify these identifiers.");
+              } finally {
+                setIsSubmittingIdentifiers(false);
+              }
+            }}
+          >
+            <div className="flex items-start gap-2.5 text-amber-300">
+              <Lock className="w-5 h-5 shrink-0 mt-0.5" />
+              <div>
+                <h5 className="text-sm font-bold uppercase tracking-wider">EU MiCA Identifier Required</h5>
+                <p className="text-xs opacity-80 mt-1">Stripe requires these country-specific identifiers before L2 verification can continue.</p>
+              </div>
+            </div>
+            {kycIdentifierAlternatives.map((alternative, index) => (
+              <div key={index} className="flex flex-wrap gap-2">
+                <button type="button" className="text-xs underline opacity-80" onClick={() => setSelectedIdentifierTypes(defaultIdentifierTypes)}>
+                  Use {alternative.original_missing_identifiers.map(micaIdentifierLabel).join(" + ")}
+                </button>
+                <button
+                  type="button"
+                  className="text-xs underline opacity-80"
+                  onClick={() => setSelectedIdentifierTypes([
+                    ...defaultIdentifierTypes.filter((type) => !alternative.original_missing_identifiers.includes(type)),
+                    ...alternative.alternative_missing_identifiers,
+                  ])}
+                >
+                  Use {alternative.alternative_missing_identifiers.map(micaIdentifierLabel).join(" + ")}
+                </button>
+              </div>
+            ))}
+            {selectedIdentifierTypes.map((type) => (
+              <div key={type}>
+                <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/70" : "text-black/70"}`}>
+                  {micaIdentifierLabel(type)}
+                </label>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  value={dynamicIdentifierValues[type] || ""}
+                  onChange={(event) => setDynamicIdentifierValues((current) => ({ ...current, [type]: event.target.value }))}
+                  className={`w-full h-11 px-3.5 font-mono text-sm rounded-xl border focus:outline-none ${isLightText ? "bg-white/5 border-white/15 text-white" : "bg-black/5 border-black/15 text-black"}`}
+                />
+              </div>
+            ))}
+            {identifierError && <p className="text-xs text-red-400">{identifierError}</p>}
+            <button type="submit" disabled={isSubmittingIdentifiers || selectedIdentifierTypes.length === 0} className="w-full h-11 rounded-xl font-bold text-sm disabled:opacity-50" style={{ backgroundColor: primaryColor, color: buttonTextColor }}>
+              {isSubmittingIdentifiers ? "Verifying identifiers..." : "Verify identifiers & continue"}
+            </button>
+          </form>
+        ) : isAttestationStage ? (
+          <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/25 space-y-3.5 mt-2 text-left">
+            <div className="flex items-start gap-2.5 text-blue-300">
+              <Shield className="w-5 h-5 shrink-0 mt-0.5" />
+              <div>
+                <h5 className="text-sm font-bold uppercase tracking-wider">EU CARF Attestation</h5>
+                <p className="text-xs opacity-80 mt-1">Review and confirm Stripe's regulatory attestation to continue.</p>
+              </div>
+            </div>
+            <StripeEmbedContainer
+              element={attestationElement}
+              isVisible
+              loadingMessage="Loading Stripe attestation..."
+              isLightText={isLightText}
+              minHeight={180}
+            />
+          </div>
+        ) : isDocVerifyRequired ? (
           /* Level 2 Document Verification Card */
           <div className="p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/20 space-y-3.5 animate-in fade-in duration-200 mt-2 text-left">
             <div className="flex items-start gap-2.5 text-cyan-400">
@@ -604,6 +725,59 @@ export function Step2Identity({
                     />
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Stripe EU KYC requires actual nationality and birthplace data;
+                residence must not be silently reused as identity data. */}
+            {isEU && showFullForm && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-3 border-t border-dashed border-white/10 text-left">
+                <div className="sm:col-span-2">
+                  <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+                    Nationality country code(s)
+                  </label>
+                  <input
+                    type="text"
+                    autoComplete="country"
+                    placeholder="DE, EE (comma-separated if more than one)"
+                    value={nationalities}
+                    onBlur={() => markFieldTouched("nationalities")}
+                    onChange={(event) => setNationalities?.(event.target.value.toUpperCase().replace(/[^A-Z,\s]/g, ""))}
+                    className={`w-full h-11 px-3.5 font-mono text-sm font-semibold rounded-xl focus:outline-none transition-all ${getFieldInputClass("nationalities")}`}
+                  />
+                  <p className={`text-[11px] mt-1.5 ${isLightText ? "text-white/40" : "text-black/40"}`}>
+                    Use ISO two-letter codes for every nationality; Stripe uses these to determine MiCA identifiers.
+                  </p>
+                </div>
+                <div>
+                  <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+                    Birth country
+                  </label>
+                  <input
+                    type="text"
+                    autoComplete="country"
+                    maxLength={2}
+                    placeholder="DE"
+                    value={birthCountry}
+                    onBlur={() => markFieldTouched("birthCountry")}
+                    onChange={(event) => setBirthCountry?.(event.target.value.toUpperCase().replace(/[^A-Z]/g, ""))}
+                    className={`w-full h-11 px-3.5 font-mono text-sm font-semibold rounded-xl focus:outline-none transition-all ${getFieldInputClass("birthCountry")}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs font-bold uppercase tracking-wider mb-1.5 ${isLightText ? "text-white/60" : "text-black/60"}`}>
+                    Birth city
+                  </label>
+                  <input
+                    type="text"
+                    autoComplete="address-level2"
+                    placeholder="Berlin"
+                    value={birthCity}
+                    onBlur={() => markFieldTouched("birthCity")}
+                    onChange={(event) => setBirthCity?.(event.target.value)}
+                    className={`w-full h-11 px-3.5 text-sm font-semibold rounded-xl focus:outline-none transition-all ${getFieldInputClass("birthCity")}`}
+                  />
+                </div>
               </div>
             )}
 

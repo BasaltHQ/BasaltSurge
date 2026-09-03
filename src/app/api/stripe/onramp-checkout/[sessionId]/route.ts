@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getPublicClientIp } from "@/lib/request-client-ip";
 
 export const dynamic = 'force-dynamic';
 
@@ -55,14 +56,12 @@ export async function POST(
     }
 
     // Build mandate_data for ACH support
-    let customerIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-      || req.headers.get("x-real-ip")
-      || (req as any).ip
-      || "0.0.0.0";
-
-    // Bypass loopback/localhost IPs with a mock US IP address for developer testing
-    if (customerIp === "::1" || customerIp === "127.0.0.1" || customerIp === "0.0.0.0" || customerIp.startsWith("::ffff:")) {
-      customerIp = "72.229.28.185"; // New York, USA
+    const customerIp = getPublicClientIp(req.headers, (req as any).ip);
+    if (!customerIp) {
+      return NextResponse.json(
+        { ok: false, error: "customer_ip_unavailable" },
+        { status: 400 }
+      );
     }
     const userAgent = req.headers.get("user-agent") || "";
 

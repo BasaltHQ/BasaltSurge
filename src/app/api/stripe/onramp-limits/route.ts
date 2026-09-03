@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { getPublicClientIp } from "@/lib/request-client-ip";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "missing_required_parameters" }, { status: 400 });
     }
 
-    const customerEmail = email || "anonymous";
+    const requestedEmail = String(email || "").trim().toLowerCase();
     const container = await getContainer();
 
     // 1. Fetch receipt document from Cosmos
@@ -30,6 +31,7 @@ export async function POST(req: NextRequest) {
     if (!receipt) {
       return NextResponse.json({ ok: false, error: "receipt_not_found" }, { status: 404 });
     }
+    const customerEmail = String(receipt.customerEmail || receipt.stripeEmail || requestedEmail || "anonymous").trim().toLowerCase();
 
     // 2. Fetch merchant configuration to check if trackTransactionLimits is enabled
     const brandKey = receipt.brandKey || "portalpay";
@@ -55,15 +57,16 @@ export async function POST(req: NextRequest) {
 
     // 3. Call Stripe's GET /v1/crypto/onramp_transaction_limits
     const url = new URL("https://api.stripe.com/v1/crypto/onramp_transaction_limits");
-    url.searchParams.append("destination_network", network.toLowerCase());
-    url.searchParams.append("wallet_address", walletAddress.toLowerCase());
+    const normalizedNetwork = String(network).trim().toLowerCase();
+    const normalizedWalletAddress = normalizedNetwork === "solana"
+      ? String(walletAddress).trim()
+      : String(walletAddress).trim().toLowerCase();
+    url.searchParams.append("destination_network", normalizedNetwork);
+    url.searchParams.append("wallet_address", normalizedWalletAddress);
 
-    let clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-      || req.headers.get("x-real-ip")
-      || "127.0.0.1";
-
-    if (clientIp === "::1" || clientIp === "127.0.0.1" || clientIp === "0.0.0.0" || clientIp.startsWith("::ffff:")) {
-      clientIp = "72.229.28.185"; // New York, USA
+    const clientIp = getPublicClientIp(req.headers, (req as any).ip);
+    if (!clientIp) {
+      return NextResponse.json({ ok: false, error: "customer_ip_unavailable" }, { status: 400 });
     }
     url.searchParams.append("customer_ip_address", clientIp);
 
@@ -110,98 +113,91 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Fallback default limits if empty/missing to ensure the portal UI renders them
-    if (limits.length === 0) {
-      limits = [
-        {
-          amount: 200000, // $2,000.00
-          currency: "usd",
-          payment_method_type: "card",
-          speed: "instant"
-        },
-        {
-          amount: 500000, // $5,000.00
-          currency: "usd",
-          payment_method_type: "us_bank_account",
-          speed: "standard"
+    // 4. Update analytics metadata without allowing a stale limits request to
+    // overwrite a concurrent webhook/reconciler transition to paid.
+    const cleanSessionId = typeof stripeSessionId === "string" ? stripeSessionId.trim() : "";
+    let mayAssignSessionId = false;
+    if (cleanSessionId && !receipt.stripeSessionId) {
+      try {
+        const checkQuery = {
+          query: "SELECT c.id FROM c WHERE c.type = 'receipt' AND c.stripeSessionId = @sessionId AND c.id != @currentId",
+          parameters: [
+            { name: "@sessionId", value: cleanSessionId },
+            { name: "@currentId", value: receipt.id },
+          ],
+        };
+        const { resources: foreignReceipts } = await container.items.query(checkQuery).fetchAll();
+        mayAssignSessionId = !foreignReceipts || foreignReceipts.length === 0;
+        if (!mayAssignSessionId) {
+          console.warn(`[ONRAMP LIMITS] stripeSessionId ${cleanSessionId} is already bound to receipt ${foreignReceipts[0].id}.`);
         }
-      ];
+      } catch (checkErr) {
+        console.warn("[ONRAMP LIMITS] Failed to check stripeSessionId uniqueness:", checkErr);
+      }
     }
 
-    // 4. Update the receipt's customerSessions array to track multiple customer sessions
-    let sessions = Array.isArray(receipt.customerSessions) ? receipt.customerSessions : [];
-    
-    const sessionEntry = {
-      email: customerEmail,
-      walletAddress,
-      stripeSessionId: stripeSessionId || null,
-      limits,
-      paymentMethodDetails: paymentMethodDetails || null,
-      createdAt: Date.now()
-    };
-
-    const existingIndex = sessions.findIndex((s: any) => {
-      if (stripeSessionId && s.stripeSessionId === stripeSessionId) {
-        return true;
-      }
-      const email1 = s.email || "";
-      const email2 = customerEmail || "";
-      if (email1 && email2 && email1.toLowerCase() === email2.toLowerCase()) {
-        const w1 = s.walletAddress ? s.walletAddress.toLowerCase() : "";
-        const w2 = walletAddress ? walletAddress.toLowerCase() : "";
-        if (w1 && w2 && w1 !== w2) return false;
-        
-        const s1 = s.stripeSessionId || "";
-        const s2 = stripeSessionId || "";
-        if (s1 && s2 && s1 !== s2) return false;
-        
-        return true;
-      }
-      return false;
-    });
-
-    if (existingIndex > -1) {
-      sessions[existingIndex] = {
-        ...sessions[existingIndex],
-        stripeSessionId: stripeSessionId || sessions[existingIndex].stripeSessionId,
-        limits: limits || sessions[existingIndex].limits || [],
-        paymentMethodDetails: paymentMethodDetails || sessions[existingIndex].paymentMethodDetails || null,
-        updatedAt: Date.now()
+    let currentReceipt = receipt;
+    let saved = false;
+    for (let attempt = 0; attempt < 3 && !saved; attempt++) {
+      const sessions = Array.isArray(currentReceipt.customerSessions)
+        ? [...currentReceipt.customerSessions]
+        : [];
+      const existingIndex = sessions.findIndex((session: any) => {
+        if (cleanSessionId && session.stripeSessionId === cleanSessionId) return true;
+        const sessionEmail = String(session.email || "").trim().toLowerCase();
+        if (!sessionEmail || sessionEmail !== customerEmail) return false;
+        const sessionWallet = normalizedNetwork === "solana"
+          ? String(session.walletAddress || "").trim()
+          : String(session.walletAddress || "").trim().toLowerCase();
+        if (sessionWallet && sessionWallet !== normalizedWalletAddress) return false;
+        const existingSessionId = String(session.stripeSessionId || "").trim();
+        return !(existingSessionId && cleanSessionId && existingSessionId !== cleanSessionId);
+      });
+      const now = Date.now();
+      const sessionEntry = {
+        email: customerEmail,
+        walletAddress: normalizedWalletAddress,
+        stripeSessionId: cleanSessionId || null,
+        limits,
+        paymentMethodDetails: paymentMethodDetails || null,
+        createdAt: now,
       };
-    } else {
-      sessions.push(sessionEntry);
-    }
+      if (existingIndex >= 0) {
+        sessions[existingIndex] = {
+          ...sessions[existingIndex],
+          stripeSessionId: cleanSessionId || sessions[existingIndex].stripeSessionId || null,
+          limits,
+          paymentMethodDetails: paymentMethodDetails || sessions[existingIndex].paymentMethodDetails || null,
+          updatedAt: now,
+        };
+      } else {
+        sessions.push(sessionEntry);
+      }
 
-    receipt.customerSessions = sessions;
-    
-    // SAFEGUARD: Only set receipt.stripeSessionId if not already set and not bound to a foreign receipt
-    if (stripeSessionId && typeof stripeSessionId === "string" && stripeSessionId.trim()) {
-      const cleanSessionId = stripeSessionId.trim();
-      if (!receipt.stripeSessionId) {
-        try {
-          const checkQuery = {
-            query: "SELECT c.id FROM c WHERE c.type = 'receipt' AND c.stripeSessionId = @sessionId AND c.id != @currentId",
-            parameters: [
-              { name: "@sessionId", value: cleanSessionId },
-              { name: "@currentId", value: receipt.id }
-            ]
-          };
-          const { resources: foreignReceipts } = await container.items.query(checkQuery).fetchAll();
-          if (foreignReceipts && foreignReceipts.length > 0) {
-            console.warn(`[ONRAMP LIMITS] stripeSessionId ${cleanSessionId} is already bound to receipt ${foreignReceipts[0].id}. Skipping assignment to ${receipt.id}.`);
-          } else {
-            receipt.stripeSessionId = cleanSessionId;
-          }
-        } catch (checkErr) {
-          console.warn("[ONRAMP LIMITS] Failed to check stripeSessionId uniqueness:", checkErr);
-        }
+      const nextReceipt = {
+        ...currentReceipt,
+        customerSessions: sessions.slice(-100),
+        ...(customerEmail !== "anonymous" ? { stripeEmail: customerEmail, customerEmail } : {}),
+        ...(!currentReceipt.stripeSessionId && mayAssignSessionId ? { stripeSessionId: cleanSessionId } : {}),
+        updatedAt: now,
+      };
+
+      try {
+        await container.item(currentReceipt.id, currentReceipt.wallet).replace(
+          nextReceipt,
+          currentReceipt._etag
+            ? { accessCondition: { type: "IfMatch", condition: currentReceipt._etag } }
+            : undefined,
+        );
+        saved = true;
+      } catch (writeError: any) {
+        const statusCode = Number(writeError?.code || writeError?.statusCode || 0);
+        if (statusCode !== 412 || attempt === 2) throw writeError;
+        const latest = await container.item(currentReceipt.id, currentReceipt.wallet).read<any>();
+        if (!latest.resource) throw new Error("receipt_not_found");
+        currentReceipt = latest.resource;
       }
     }
-    receipt.stripeEmail = customerEmail;
-    receipt.customerEmail = customerEmail;
-    receipt.updatedAt = Date.now();
-
-    await container.item(receipt.id, receipt.wallet).replace(receipt);
 
     return NextResponse.json({ ok: true, limits });
   } catch (e: any) {

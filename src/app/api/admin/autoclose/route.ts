@@ -11,8 +11,9 @@ import {
   normalizeAutocloseBrandKey,
   parseAutocloseBrandKeys,
 } from "@/lib/autoclose-policy";
-import { dispatchReceiptStatusWebhook } from "@/lib/webhook-dispatch";
+import { dispatchReceiptStatusWebhookBestEffort } from "@/lib/webhook-dispatch";
 import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
+import { isStripeOnrampSettlementEligibleStatus } from "@/lib/stripe-onramp-status";
 
 export const dynamic = "force-dynamic";
 
@@ -362,11 +363,13 @@ export async function POST(req: NextRequest) {
       receipt.stripeSessionStatus = stripeStatus;
       receipt.lastUpdatedAt = Date.now();
 
-      const isAch = receipt.detectedCardFunding === "us_bank_account" || 
-                    (Array.isArray(receipt.customerSessions) && receipt.customerSessions.some((s: any) => 
-                      s.paymentMethodDetails?.type === "us_bank_account" || 
-                      s.paymentMethodDetails?.paymentMethod === "us_bank_account"
-                    ));
+      const cardFunding = resolveStripeOnrampFunding(
+        onrampData,
+        receipt.detectedCardFunding,
+        receipt.isCreditCard === true
+      );
+      const isAch = cardFunding === "us_bank_account";
+      const isSettlementEligible = isStripeOnrampSettlementEligibleStatus(stripeStatus, isAch);
 
       const expirationLimit = isAch ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
       const receiptCreatedAt = getTimestampMs(receipt.createdAt);
@@ -380,7 +383,7 @@ export async function POST(req: NextRequest) {
       let txHash: string | null = null;
       let webhookPreviousStatus = String(receipt.status || "pending");
 
-      if (stripeStatus === "fulfillment_complete" && needsReceiptSettlement(receipt.transactionHash)) {
+      if (isSettlementEligible && needsReceiptSettlement(receipt.transactionHash)) {
         const stripeEmail = String(
           onrampData.customer_information?.email || onrampData.customer_details?.email || ""
         ).trim().toLowerCase();
@@ -394,15 +397,17 @@ export async function POST(req: NextRequest) {
 
         const email = stripeEmail;
         const merchantWallet = receiptMerchantWallet;
-        const amount = Number(receipt.totalUsd || receipt.onrampAmount || 0);
+        const stripeSourceAmount = Number(onrampData.transaction_details?.source_amount || 0);
+        const amount = Number(stripeSourceAmount || receipt.onrampAmount || receipt.totalUsd || 0);
         const brandKey = normalizeAutocloseBrandKey(receipt.brandKey || requestBrandKey);
         if (!Number.isFinite(amount) || amount <= 0) {
           return NextResponse.json({ error: "Receipt has an invalid settlement amount" }, { status: 409 });
         }
-        const stripeSourceAmount = Number(onrampData.transaction_details?.source_amount || 0);
-        if (stripeSourceAmount > 0 && stripeSourceAmount + 0.01 < amount * 0.95) {
+        const orderTotal = Number(receipt.orderTotalUsd || receipt.totalUsd || 0);
+        if (stripeSourceAmount > 0 && orderTotal > 0 && stripeSourceAmount + 0.01 < orderTotal * 0.95) {
           return NextResponse.json({ error: "Stripe amount is below the receipt total" }, { status: 409 });
         }
+        if (stripeSourceAmount > 0) receipt.onrampAmount = stripeSourceAmount;
 
         // Resolve split address
         const { getSiteConfigForWallet } = await import("@/lib/site-config");
@@ -417,11 +422,6 @@ export async function POST(req: NextRequest) {
           splitAddress = merchantWallet;
         }
 
-        const cardFunding = resolveStripeOnrampFunding(
-          onrampData,
-          receipt.detectedCardFunding,
-          receipt.isCreditCard === true
-        );
         const targetSplitAddress = resolveSettlementSplitAddress({
           funding: cardFunding,
           splitAddress,
@@ -537,7 +537,7 @@ export async function POST(req: NextRequest) {
           );
         }
       } else if (
-        stripeStatus !== "fulfillment_complete" &&
+        !isSettlementEligible &&
         (isRejected || isExpired) &&
         needsReceiptSettlement(receipt.transactionHash) &&
         !isProtectedPaymentStatus(receipt.status)
@@ -570,29 +570,12 @@ export async function POST(req: NextRequest) {
       );
       if (shouldDeliverWebhook) {
         const previousStatus = String(receipt.webhookLastPreviousStatus || webhookPreviousStatus || "pending");
-        const delivery = await dispatchReceiptStatusWebhook(receipt, webhookStatus, previousStatus, {
+        void dispatchReceiptStatusWebhookBestEffort(containerEvents, receipt, webhookStatus, previousStatus, {
           transactionHash: finalTxHash || undefined,
           merchantWallet: receiptMerchantWallet,
           stripeSessionId: sessionId,
           brandKey: normalizeAutocloseBrandKey(receipt.brandKey || requestBrandKey),
         });
-        await containerEvents.item(receipt.id, receipt.wallet).patch([
-          { op: "set", path: "/webhookLastStatus", value: webhookStatus },
-          { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus },
-          { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
-          { op: "set", path: "/webhookLastAttemptAt", value: Date.now() },
-          { op: "set", path: "/webhookLastTransactionHash", value: finalTxHash || null },
-          ...(delivery.statusCode
-            ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
-            : []),
-          { op: "set", path: "/webhookLastError", value: delivery.error || null },
-        ] as any);
-        if (!delivery.ok) {
-          return NextResponse.json(
-            { ok: false, error: "Settlement saved but merchant webhook delivery failed", status: webhookStatus, swept, txHash: txHash || finalTxHash || null },
-            { status: 502 }
-          );
-        }
       }
       return NextResponse.json({
         ok: true,
