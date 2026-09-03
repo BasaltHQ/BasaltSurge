@@ -9,6 +9,8 @@ export const STRIPE_PAYMENT_ACCEPTED_STATUSES = [
 
 const PAYMENT_ACCEPTED = new Set<string>(STRIPE_PAYMENT_ACCEPTED_STATUSES);
 
+export type StripeOnrampCheckoutMode = "ecommerce" | "full";
+
 const TERMINAL_FAILURE_STATUSES = new Set([
   "rejected",
   "canceled",
@@ -41,8 +43,44 @@ export function isStripeFulfillmentCompleteStatus(status: unknown): boolean {
 }
 
 /**
- * Card payments may enter the settlement sweeper as soon as Stripe accepts
- * payment. ACH must remain pending until fulfillment is complete.
+ * The portal is eCommerce-first. Only an explicit full-flow marker opts a
+ * receipt out, which also keeps older receipts/sessions compatible.
+ */
+export function normalizeStripeOnrampCheckoutMode(
+  mode: unknown
+): StripeOnrampCheckoutMode {
+  const normalized = String(mode || "").trim().toLowerCase();
+  return normalized === "full" || normalized === "standard" || normalized === "full_flow"
+    ? "full"
+    : "ecommerce";
+}
+
+/**
+ * Resolve the customer/merchant-facing receipt status independently from
+ * transfer readiness. In eCommerce mode every Stripe-accepted payment,
+ * including ACH, is paid at fulfillment_processing. A full-flow ACH receipt
+ * may retain its historical pending-settlement label until fulfillment is
+ * complete.
+ */
+export function resolveStripeAcceptedReceiptStatus(
+  status: unknown,
+  options: { isAch: boolean; checkoutMode?: unknown }
+): "paid" | "paid - ach pending" | null {
+  if (!isStripePaymentAcceptedStatus(status)) return null;
+
+  const checkoutMode = normalizeStripeOnrampCheckoutMode(options.checkoutMode);
+  if (checkoutMode === "ecommerce") return "paid";
+  if (options.isAch && !isStripeFulfillmentCompleteStatus(status)) {
+    return "paid - ach pending";
+  }
+  return "paid";
+}
+
+/**
+ * Card funds may enter the settlement sweeper as soon as Stripe accepts the
+ * payment. ACH funds must wait for fulfillment_complete before transfer. This
+ * is deliberately separate from the eCommerce receipt status: the order can
+ * already be paid while its ACH-funded settlement remains pending internally.
  */
 export function isStripeOnrampSettlementEligibleStatus(
   status: unknown,

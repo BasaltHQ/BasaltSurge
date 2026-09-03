@@ -16,12 +16,16 @@ import { dispatchReceiptStatusWebhookBestEffort } from "@/lib/webhook-dispatch";
 import {
   isStripeFulfillmentCompleteStatus,
   isStripeOnrampSettlementEligibleStatus,
+  normalizeStripeOnrampCheckoutMode,
+  resolveStripeAcceptedReceiptStatus,
 } from "@/lib/stripe-onramp-status";
 import {
   normalizeSettlementFunding,
   resolveSettlementSplitAddress,
   resolveStripeOnrampFunding,
 } from "@/lib/payment-split-routing";
+import { deriveStripeKycSnapshot } from "@/lib/stripe-kyc-tracking";
+import { applyStripeKycSnapshotToReceipt } from "@/lib/receipt-kyc-tracking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -508,6 +512,19 @@ export async function POST(req: NextRequest) {
         // Record last poll time and raw status from Stripe on the receipt
         receipt.lastPolledAt = Date.now();
         receipt.stripeSessionStatus = stripeStatus;
+        receipt.checkoutStatus = stripeStatus;
+        receipt.checkoutStatusSource = "stripe_reconciler";
+        receipt.checkoutStatusUpdatedAt = Date.now();
+        const checkoutHistory = Array.isArray(receipt.checkoutStatusHistory)
+          ? receipt.checkoutStatusHistory.slice(-199)
+          : [];
+        const previousCheckoutEntry = checkoutHistory[checkoutHistory.length - 1];
+        if (previousCheckoutEntry?.status !== stripeStatus || previousCheckoutEntry?.source !== "stripe_reconciler") {
+          receipt.checkoutStatusHistory = [
+            ...checkoutHistory,
+            { status: stripeStatus, source: "stripe_reconciler", ts: Date.now() },
+          ];
+        }
 
         const expirationLimit = isAch ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
         const isExpired = Date.now() - (receipt.createdAt || 0) > expirationLimit;
@@ -516,18 +533,57 @@ export async function POST(req: NextRequest) {
                            onrampData.transaction_details?.last_error === "location_not_supported" ||
                            onrampData.transaction_details?.last_error === "transaction_limit_reached";
 
-        // Preserve the established eCommerce settlement boundary: card
-        // payments are merchant-accepted once Stripe enters
-        // fulfillment_processing. ACH remains pending until Stripe reports
-        // fulfillment_complete because the bank transfer can still be in
-        // flight for days.
+        // Receipt state and transfer readiness are separate. In eCommerce mode
+        // every payment is customer/merchant-paid at fulfillment_processing,
+        // while ACH-funded USDC still waits for fulfillment_complete before it
+        // is eligible for the settlement sweep.
         const sessionFunding = resolveStripeOnrampFunding(
           onrampData,
           receipt.detectedCardFunding,
           receipt.isCreditCard === true
         );
         const isSessionAch = sessionFunding === "us_bank_account";
+        const checkoutMode = normalizeStripeOnrampCheckoutMode(
+          onrampData.metadata?.checkoutMode || receipt.checkoutMode
+        );
+        receipt.checkoutMode = checkoutMode;
         const isReadyForTransfer = isStripeOnrampSettlementEligibleStatus(stripeStatus, isSessionAch);
+
+        const cryptoCustomerId = String(onrampData.customer || onrampData.crypto_customer || receipt.cryptoCustomerId || "");
+        if (isReadyForTransfer && cryptoCustomerId) {
+          try {
+            const { getOAuthToken, refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+            let oauthToken = await getOAuthToken(cryptoCustomerId);
+            if (!oauthToken) oauthToken = await refreshOAuthToken(cryptoCustomerId);
+            if (oauthToken) {
+              const customerResponse = await fetch(
+                `https://api.stripe.com/v1/crypto/customers/${encodeURIComponent(cryptoCustomerId)}`,
+                {
+                  method: "GET",
+                  headers: {
+                    "Authorization": `Bearer ${stripeKey}`,
+                    "Stripe-OAuth-Token": oauthToken,
+                    "Stripe-Version": STRIPE_API_VERSION,
+                  },
+                }
+              );
+              if (customerResponse.ok) {
+                const snapshot = deriveStripeKycSnapshot(await customerResponse.json());
+                Object.assign(receipt, applyStripeKycSnapshotToReceipt({
+                  receipt,
+                  snapshot,
+                  phase: "final",
+                  cryptoCustomerId,
+                  requiredTier: receipt.kycRequiredLevel,
+                  kycOccurred: receipt.kycOccurred === true,
+                  source: "stripe_reconciler",
+                }));
+              }
+            }
+          } catch (kycError) {
+            console.warn(`[cron/reconcile-stuck] Could not refresh provider KYC for ${receiptId}:`, kycError);
+          }
+        }
 
         if (!isReadyForTransfer) {
           receipt.lastUpdatedAt = Date.now(); // Register the 1 hour polling cooldown
@@ -536,6 +592,10 @@ export async function POST(req: NextRequest) {
             if (isProtectedPaymentStatus(receipt.status)) {
               await container.item(receipt.id, receipt.wallet).patch([
                 { op: "set", path: "/stripeSessionStatus", value: stripeStatus },
+                { op: "set", path: "/checkoutStatus", value: stripeStatus },
+                { op: "set", path: "/checkoutStatusSource", value: "stripe_reconciler" },
+                { op: "set", path: "/checkoutStatusUpdatedAt", value: Date.now() },
+                { op: "set", path: "/checkoutStatusHistory", value: receipt.checkoutStatusHistory || [] },
                 { op: "set", path: "/lastPolledAt", value: receipt.lastPolledAt },
                 { op: "set", path: "/lastUpdatedAt", value: receipt.lastUpdatedAt },
               ] as any);
@@ -600,10 +660,10 @@ export async function POST(req: NextRequest) {
           }
 
           if (stripeStatus === "fulfillment_processing") {
-            const paymentDetailsType = String(onrampData.payment_details?.type || onrampData.payment_method_details?.type || "").toLowerCase();
-            const paymentMethod = String(onrampData.payment_method || "").toLowerCase();
-            const isAchSession = isAch || paymentDetailsType === "us_bank_account" || paymentMethod === "us_bank_account" || paymentMethod.includes("bank") || paymentMethod.includes("ach");
-            const targetStatus = isAchSession ? "paid - ach pending" : "paid";
+            const targetStatus = resolveStripeAcceptedReceiptStatus(stripeStatus, {
+              isAch: isSessionAch,
+              checkoutMode,
+            }) || "paid";
             const previousStatus = String(receipt.status || "pending");
 
             receipt.checkoutStatus = stripeStatus;
@@ -616,9 +676,11 @@ export async function POST(req: NextRequest) {
               receipt.statusHistory = Array.isArray(receipt.statusHistory)
                 ? [...receipt.statusHistory, { status: targetStatus, ts: Date.now() }]
                 : [{ status: targetStatus, ts: Date.now() }];
-              if (isAchSession) {
+              if (isSessionAch) {
                 receipt.detectedCardFunding = "us_bank_account";
-              } else {
+                receipt.isCreditCard = false;
+              }
+              if (targetStatus === "paid") {
                 receipt.ttl = -1;
               }
             }
@@ -647,6 +709,7 @@ export async function POST(req: NextRequest) {
             { op: "set", path: "/checkoutStatus", value: stripeStatus },
             { op: "set", path: "/checkoutStatusSource", value: "stripe_reconciler" },
             { op: "set", path: "/checkoutStatusUpdatedAt", value: Date.now() },
+            { op: "set", path: "/checkoutStatusHistory", value: receipt.checkoutStatusHistory || [] },
             { op: "set", path: "/lastPolledAt", value: receipt.lastPolledAt },
             { op: "set", path: "/lastUpdatedAt", value: receipt.lastUpdatedAt },
           ] as any);

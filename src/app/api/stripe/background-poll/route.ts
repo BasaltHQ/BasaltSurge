@@ -10,12 +10,17 @@ import {
   isStripeFulfillmentCompleteStatus,
   isStripeOnrampTerminalFailure,
   isStripePaymentAcceptedStatus,
+  normalizeStripeOnrampCheckoutMode,
+  resolveStripeAcceptedReceiptStatus,
+  type StripeOnrampCheckoutMode,
 } from "@/lib/stripe-onramp-status";
 import {
   normalizeSettlementFunding,
   resolveSettlementSplitAddress,
   resolveStripeOnrampFunding,
 } from "@/lib/payment-split-routing";
+import { deriveStripeKycSnapshot, highestKycTier, normalizeKycTier, type StripeKycSnapshot } from "@/lib/stripe-kyc-tracking";
+import { applyStripeKycSnapshotToReceipt } from "@/lib/receipt-kyc-tracking";
 
 export const dynamic = 'force-dynamic';
 
@@ -285,6 +290,7 @@ async function recordStripeFulfillmentProcessing(params: {
   sessionId: string;
   brandKey: string;
   funding: string;
+  checkoutMode?: StripeOnrampCheckoutMode;
   stripeStatus?: string;
   stripeSourceAmountUsd?: number;
 }): Promise<void> {
@@ -302,12 +308,30 @@ async function recordStripeFulfillmentProcessing(params: {
 
   const previousStatus = String(receipt.status || "pending");
   const isAch = funding === "us_bank_account";
-  const nextStatus = isAch ? "paid - ach pending" : "paid";
+  const checkoutMode = normalizeStripeOnrampCheckoutMode(
+    params.checkoutMode || receipt.checkoutMode
+  );
+  const nextStatus = resolveStripeAcceptedReceiptStatus(stripeStatus, {
+    isAch,
+    checkoutMode,
+  });
+  if (!nextStatus) return;
   receipt.stripeSessionId = sessionId;
+  receipt.checkoutMode = checkoutMode;
   receipt.stripeSessionStatus = stripeStatus;
   receipt.checkoutStatus = stripeStatus;
   receipt.checkoutStatusSource = "stripe_background_poll";
   receipt.checkoutStatusUpdatedAt = Date.now();
+  const checkoutHistory = Array.isArray(receipt.checkoutStatusHistory)
+    ? receipt.checkoutStatusHistory.slice(-199)
+    : [];
+  const previousCheckoutEntry = checkoutHistory[checkoutHistory.length - 1];
+  if (previousCheckoutEntry?.status !== stripeStatus || previousCheckoutEntry?.source !== "stripe_background_poll") {
+    receipt.checkoutStatusHistory = [
+      ...checkoutHistory,
+      { status: stripeStatus, source: "stripe_background_poll", ts: Date.now() },
+    ];
+  }
   receipt.lastUpdatedAt = Date.now();
   if (Number.isFinite(params.stripeSourceAmountUsd) && Number(params.stripeSourceAmountUsd) > 0) {
     receipt.onrampAmount = Number(params.stripeSourceAmountUsd);
@@ -320,7 +344,7 @@ async function recordStripeFulfillmentProcessing(params: {
       : [{ status: nextStatus, ts: Date.now() }];
     receipt.detectedCardFunding = funding;
     receipt.isCreditCard = funding === "credit";
-    if (!isAch) receipt.ttl = -1;
+    if (nextStatus === "paid") receipt.ttl = -1;
   }
 
   const shouldDeliver = Boolean(receipt.webhookUrl && receipt.status === nextStatus && (
@@ -345,6 +369,36 @@ async function recordStripeFulfillmentProcessing(params: {
   });
 }
 
+async function recordStripeCheckoutProgress(params: {
+  receiptId: string;
+  merchantWallet: string;
+  sessionId: string;
+  stripeStatus: string;
+}): Promise<void> {
+  const stripeStatus = String(params.stripeStatus || "").trim().toLowerCase();
+  if (!stripeStatus) return;
+  const container = await getContainer(undefined, undefined, { profile: "critical" });
+  const docId = params.receiptId.startsWith("receipt:") ? params.receiptId : `receipt:${params.receiptId}`;
+  const { resource: receipt } = await container.item(docId, params.merchantWallet).read<any>();
+  if (!receipt) return;
+  if (receipt.stripeSessionId && receipt.stripeSessionId !== params.sessionId) {
+    throw new Error(`receipt_session_mismatch:${receipt.stripeSessionId}:${params.sessionId}`);
+  }
+  const history = Array.isArray(receipt.checkoutStatusHistory)
+    ? receipt.checkoutStatusHistory.slice(-199)
+    : [];
+  const previous = history[history.length - 1];
+  const nextHistory = previous?.status === stripeStatus && previous?.source === "stripe_background_poll"
+    ? history
+    : [...history, { status: stripeStatus, source: "stripe_background_poll", ts: Date.now() }];
+  await container.item(docId, params.merchantWallet).patch([
+    { op: "set", path: "/checkoutStatus", value: stripeStatus },
+    { op: "set", path: "/checkoutStatusUpdatedAt", value: Date.now() },
+    { op: "set", path: "/checkoutStatusSource", value: "stripe_background_poll" },
+    { op: "set", path: "/checkoutStatusHistory", value: nextHistory },
+  ] as any);
+}
+
 async function runBackgroundPoll(params: {
   sessionId: string;
   receiptId: string;
@@ -357,6 +411,8 @@ async function runBackgroundPoll(params: {
   detectedCardFunding?: string;
   kycOccurred?: boolean;
   kycLevel?: string;
+  kycRequiredLevel?: string;
+  checkoutMode?: StripeOnrampCheckoutMode;
 }) {
   const {
     sessionId,
@@ -370,6 +426,8 @@ async function runBackgroundPoll(params: {
     detectedCardFunding,
     kycOccurred,
     kycLevel: initialKycLevel,
+    kycRequiredLevel,
+    checkoutMode,
   } = params;
 
   const stripeKey = process.env.STRIPE_API_KEY;
@@ -387,6 +445,8 @@ async function runBackgroundPoll(params: {
   let isDefinitiveFailure = false;
   let cryptoCustomerId = "";
   let processingRecorded = false;
+  let finalKycSnapshot: StripeKycSnapshot | null = null;
+  let lastRecordedStripeStatus = "";
 
   // Poll immediately, then up to 120 times every 5 seconds (10 minutes total).
   // The first immediate read closes the gap between checkout success and the
@@ -420,6 +480,11 @@ async function runBackgroundPoll(params: {
 
       console.log(`[BACKGROUND POLL] Status check (attempt ${attempt + 1}): ${status}`);
 
+      if (status && status !== lastRecordedStripeStatus && !(isStripePaymentAcceptedStatus(status) && !processingRecorded)) {
+        await recordStripeCheckoutProgress({ receiptId, merchantWallet, sessionId, stripeStatus: status });
+        lastRecordedStripeStatus = status;
+      }
+
       if (isStripePaymentAcceptedStatus(status) && !processingRecorded) {
         const processingFunding = resolveStripeOnrampFunding(data, detectedCardFunding, isCreditCard);
         resolvedFunding = processingFunding;
@@ -429,6 +494,7 @@ async function runBackgroundPoll(params: {
           sessionId,
           brandKey,
           funding: processingFunding,
+          checkoutMode,
           stripeStatus: status,
           stripeSourceAmountUsd: Number(
             data.transaction_details?.source_amount
@@ -437,6 +503,7 @@ async function runBackgroundPoll(params: {
           ),
         });
         processingRecorded = true;
+        lastRecordedStripeStatus = status;
       }
 
       if (isStripeFulfillmentCompleteStatus(status)) {
@@ -489,58 +556,34 @@ async function runBackgroundPoll(params: {
   if (resolvedStatus === "success") {
     console.log(`[BACKGROUND POLL] Stripe onramp fulfilled. Executing EIP-7702 transfer...`);
 
-    const incomingKycLevel = initialKycLevel ? String(initialKycLevel).trim() : undefined;
-    let kycLevel = (incomingKycLevel === "L2" || incomingKycLevel === "L1") ? incomingKycLevel : "L0";
+    const incomingKycLevel = normalizeKycTier(initialKycLevel) || undefined;
+    let kycLevel = incomingKycLevel;
     const finalFunding = normalizeSettlementFunding(resolvedFunding || detectedCardFunding, isCreditCard);
     isCreditCard = finalFunding === "credit";
-    const isAch = finalFunding === "us_bank_account";
-    
-    if (isAch) {
-      kycLevel = "L2";
-    } else if (cryptoCustomerId) {
+    if (cryptoCustomerId) {
       try {
+        const { getOAuthToken, refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+        let customerOAuthToken = await getOAuthToken(cryptoCustomerId);
+        if (!customerOAuthToken) customerOAuthToken = await refreshOAuthToken(cryptoCustomerId);
+        if (!customerOAuthToken) throw new Error("missing_stripe_customer_oauth_token");
         const custResponse = await fetch(
           `https://api.stripe.com/v1/crypto/customers/${encodeURIComponent(cryptoCustomerId)}`,
           {
             method: "GET",
             headers: {
               "Authorization": `Bearer ${stripeKey}`,
+              "Stripe-OAuth-Token": customerOAuthToken,
               "Stripe-Version": STRIPE_API_VERSION,
             },
           }
         );
         if (custResponse.ok) {
           const customerData = await custResponse.json();
-          const verifications = customerData.verifications || [];
-          const kycVerified = verifications.find((v: any) => v.name === "kyc_verified");
-          const idDocVerified = verifications.find((v: any) => v.name === "id_document_verified");
-          
-          const kycTiers = customerData.kyc_tiers || [];
-          const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
-          const l1Tier = kycTiers.find((t: any) => t.tier === "l1");
-          const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
-          
-          const isOverallKycVerified = kycVerified?.status === "approved" ||
-                                       kycVerified?.status === "verified" ||
-                                       kycVerified?.status === "completed";
-          const isOverallIdVerified = idDocVerified?.status === "approved" ||
-                                      idDocVerified?.status === "verified" ||
-                                      idDocVerified?.status === "completed";
-          
-          const isL0Verified = l0Tier 
-            ? (l0Tier.verification_status === "verified" || l0Tier.verification_status === "not_available")
-            : isOverallKycVerified;
-          const isL1Verified = l1Tier 
-            ? (l1Tier.verification_status === "verified" || l1Tier.verification_status === "not_available")
-            : isOverallKycVerified;
-          const isL2Verified = l2Tier 
-            ? (l2Tier.verification_status === "verified" || l2Tier.verification_status === "not_available")
-            : isOverallIdVerified;
-            
-          if (isL2Verified || incomingKycLevel === "L2") kycLevel = "L2";
-          else if (isL1Verified || incomingKycLevel === "L1") kycLevel = "L1";
-          else kycLevel = "L0";
-          console.log(`[BACKGROUND POLL] Customer KYC level resolved from Stripe: ${kycLevel}`);
+          finalKycSnapshot = deriveStripeKycSnapshot(customerData);
+          kycLevel = finalKycSnapshot.verifiedTier || finalKycSnapshot.currentTier || incomingKycLevel;
+          console.log(`[BACKGROUND POLL] Customer KYC resolved from Stripe: current=${finalKycSnapshot.currentTier || "unverified"}, verified=${finalKycSnapshot.verifiedTier || "unverified"}`);
+        } else {
+          console.warn(`[BACKGROUND POLL] Stripe customer KYC lookup returned HTTP ${custResponse.status}`);
         }
       } catch (kycFetchErr) {
         console.warn("[BACKGROUND POLL] Failed to fetch customer KYC level:", kycFetchErr);
@@ -609,9 +652,19 @@ async function runBackgroundPoll(params: {
           // Persist card funding if resolved
           receipt.isCreditCard = isCreditCard;
           receipt.detectedCardFunding = finalFunding;
-          receipt.kycLevel = kycLevel;
-          if (typeof kycOccurred === "boolean") {
-            receipt.kycOccurred = kycOccurred;
+          if (finalKycSnapshot && cryptoCustomerId) {
+            receipt = applyStripeKycSnapshotToReceipt({
+              receipt,
+              snapshot: finalKycSnapshot,
+              phase: "final",
+              cryptoCustomerId,
+              requiredTier: kycRequiredLevel,
+              kycOccurred: kycOccurred === true,
+              source: "stripe_background_poll",
+            });
+          } else {
+            if (kycLevel) receipt.kycLevelReported = kycLevel;
+            if (kycOccurred === true) receipt.kycOccurred = true;
           }
 
           let finalReceipt = receipt;
@@ -679,8 +732,10 @@ async function runBackgroundPoll(params: {
           console.log(`[BACKGROUND POLL] Receipt ${receiptId} is already paid or confirmed on-chain. Skipping failure update.`);
           return;
         }
-        const isAch = receipt.detectedCardFunding === "us_bank_account" || detectedCardFunding === "us_bank_account";
-        const nextStatus = isDefinitiveFailure ? "failed" : (isAch ? "paid - ach pending" : "pending");
+        // A timeout without a signed accepted state is still pending for every
+        // funding method. eCommerce ACH is marked paid earlier, exactly when
+        // fulfillment_processing is observed, and is protected from downgrade.
+        const nextStatus = isDefinitiveFailure ? "failed" : "pending";
         receipt.status = nextStatus;
         receipt.lastUpdatedAt = Date.now();
         receipt.statusHistory = Array.isArray(receipt.statusHistory)
@@ -798,7 +853,9 @@ async function runBackgroundPoll(params: {
               fallbackAddress: merchantWallet,
             });
 
-            let kycLevel = "L0";
+            const kycLevel = normalizeKycTier(
+              receipt.kycVerifiedLevel || receipt.kycFinalLevel || receipt.kycLevel
+            ) || undefined;
             const gaslessTx = await executeGaslessTransferServer(
               email,
               targetSplit,
@@ -855,8 +912,10 @@ export async function POST(req: NextRequest) {
     let splitAddressCredit = String(body.splitAddressCredit || "").trim().toLowerCase();
     let brandKey = String(body.brandKey || "").trim();
     let detectedCardFunding = String(body.detectedCardFunding || "").trim();
+    let checkoutMode = normalizeStripeOnrampCheckoutMode(body.checkoutMode);
     const kycOccurred = typeof body.kycOccurred === "boolean" ? body.kycOccurred : undefined;
     const kycLevel = body.kycLevel ? String(body.kycLevel).trim() : undefined;
+    const kycRequiredLevel = body.kycRequiredLevel ? String(body.kycRequiredLevel).trim() : undefined;
 
     if (!sessionId || !receiptId) {
       return NextResponse.json(
@@ -936,6 +995,9 @@ export async function POST(req: NextRequest) {
       }
 
       const stripeSession = await stripeResponse.json();
+      checkoutMode = normalizeStripeOnrampCheckoutMode(
+        stripeSession.metadata?.checkoutMode || receipt.checkoutMode || checkoutMode
+      );
       const expectedReceiptId = String(receipt.receiptId || receipt.id || "").replace(/^receipt:/, "").toLowerCase();
       const stripeReceiptId = String(stripeSession.metadata?.receiptId || "").replace(/^receipt:/, "").toLowerCase();
       if ((!receipt.stripeSessionId && !stripeReceiptId) || (stripeReceiptId && stripeReceiptId !== expectedReceiptId)) {
@@ -991,6 +1053,7 @@ export async function POST(req: NextRequest) {
       );
 
       receipt.stripeSessionId = sessionId;
+      receipt.checkoutMode = checkoutMode;
       receipt.customerEmail = email;
       if (receipt.orderTotalUsd == null || !Number.isFinite(Number(receipt.orderTotalUsd))) {
         const creationMinor = receipt.grossMinor == null ? NaN : Number(receipt.grossMinor);
@@ -1008,8 +1071,22 @@ export async function POST(req: NextRequest) {
       receipt.checkoutStatus = String(stripeSession.status || receipt.checkoutStatus || "");
       receipt.checkoutStatusSource = "stripe_background_poll_launch";
       receipt.checkoutStatusUpdatedAt = Date.now();
-      if (typeof kycOccurred === "boolean") receipt.kycOccurred = kycOccurred;
-      if (kycLevel) receipt.kycLevel = kycLevel;
+      const launchCheckoutStatus = String(stripeSession.status || receipt.checkoutStatus || "");
+      const launchHistory = Array.isArray(receipt.checkoutStatusHistory)
+        ? receipt.checkoutStatusHistory.slice(-199)
+        : [];
+      const previousLaunchEntry = launchHistory[launchHistory.length - 1];
+      if (launchCheckoutStatus && (previousLaunchEntry?.status !== launchCheckoutStatus || previousLaunchEntry?.source !== "stripe_background_poll_launch")) {
+        receipt.checkoutStatusHistory = [
+          ...launchHistory,
+          { status: launchCheckoutStatus, source: "stripe_background_poll_launch", ts: Date.now() },
+        ];
+      }
+      if (kycOccurred === true) receipt.kycOccurred = true;
+      if (kycLevel) receipt.kycLevelReported = normalizeKycTier(kycLevel) || kycLevel;
+      if (normalizeKycTier(kycRequiredLevel)) {
+        receipt.kycRequiredLevel = highestKycTier(receipt.kycRequiredLevel, kycRequiredLevel);
+      }
       receipt.lastUpdatedAt = Date.now();
       await container.items.upsert(receipt);
       verifiedReceipt = receipt;
@@ -1025,6 +1102,7 @@ export async function POST(req: NextRequest) {
             sessionId,
             brandKey,
             funding: detectedCardFunding,
+            checkoutMode,
             stripeStatus: stripeSession.status,
           });
         } catch (processingError) {
@@ -1056,6 +1134,8 @@ export async function POST(req: NextRequest) {
           detectedCardFunding,
           kycOccurred,
           kycLevel,
+          kycRequiredLevel,
+          checkoutMode,
         });
       } catch (err) {
         console.error("[BACKGROUND POLL] Unhandled error in background poll execution task:", err);

@@ -1,8 +1,93 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getContainer } from "@/lib/cosmos";
+import { deriveStripeKycSnapshot, normalizeKycTier } from "@/lib/stripe-kyc-tracking";
+import {
+  applyStripeKycSnapshotToReceipt,
+  type KycTrackingPhase,
+} from "@/lib/receipt-kyc-tracking";
 
 export const dynamic = 'force-dynamic';
 
 const STRIPE_API_VERSION = "2026-06-24.dahlia";
+
+async function persistProviderKycSnapshot(params: {
+  receiptId: string;
+  merchantWallet: string;
+  cryptoCustomerId: string;
+  customer: any;
+  phase: KycTrackingPhase;
+  requiredTier?: string;
+  kycOccurred: boolean;
+}): Promise<any | null> {
+  const merchantWallet = params.merchantWallet.trim().toLowerCase();
+  if (!params.receiptId || !/^0x[a-f0-9]{40}$/i.test(merchantWallet)) return null;
+
+  const container = await getContainer(undefined, undefined, { profile: "critical" });
+  const rawReceiptId = params.receiptId.replace(/^receipt:/, "");
+  const docId = `receipt:${rawReceiptId}`;
+  let receipt: any = null;
+  try {
+    const result = await container.item(docId, merchantWallet).read<any>();
+    receipt = result.resource || null;
+  } catch { }
+
+  if (!receipt) {
+    const { resources } = await container.items.query({
+      query: "SELECT * FROM c WHERE c.type = 'receipt' AND (c.receiptId = @rawId OR c.id = @docId)",
+      parameters: [
+        { name: "@rawId", value: rawReceiptId },
+        { name: "@docId", value: docId },
+      ],
+    }).fetchAll();
+    receipt = (resources || []).find((item: any) =>
+      String(item.wallet || item.merchantWallet || "").toLowerCase() === merchantWallet
+    ) || null;
+  }
+  if (!receipt) throw new Error("receipt_not_found");
+
+  const receiptEmail = String(receipt.customerEmail || receipt.stripeEmail || receipt.email || "").trim().toLowerCase();
+  const stripeEmail = String(
+    params.customer?.email
+    || params.customer?.email_address
+    || params.customer?.customer_information?.email
+    || ""
+  ).trim().toLowerCase();
+  if (receiptEmail && stripeEmail && receiptEmail !== stripeEmail) {
+    throw new Error("receipt_crypto_customer_email_mismatch");
+  }
+
+  const snapshot = deriveStripeKycSnapshot(params.customer);
+  // KYC polling runs concurrently with signed webhooks and settlement. Use an
+  // optimistic replace so a stale KYC read can never overwrite a newer paid or
+  // reconciled receipt state.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const next = applyStripeKycSnapshotToReceipt({
+      receipt,
+      snapshot,
+      phase: params.phase,
+      cryptoCustomerId: params.cryptoCustomerId,
+      requiredTier: params.requiredTier,
+      kycOccurred: params.kycOccurred,
+      source: "stripe_crypto_customer",
+    });
+    try {
+      const result = await container.item(receipt.id, merchantWallet).replace(
+        next,
+        receipt._etag
+          ? { accessCondition: { type: "IfMatch", condition: receipt._etag } }
+          : undefined
+      );
+      return result.resource || next;
+    } catch (writeError: any) {
+      const statusCode = Number(writeError?.code || writeError?.statusCode || 0);
+      if (statusCode !== 412 || attempt === 2) throw writeError;
+      const latest = await container.item(receipt.id, merchantWallet).read<any>();
+      if (!latest.resource) throw new Error("receipt_not_found");
+      receipt = latest.resource;
+    }
+  }
+  throw new Error("kyc_tracking_write_conflict");
+}
 
 /**
  * GET /api/stripe/crypto-customer/[id]
@@ -31,6 +116,14 @@ export async function GET(
         { status: 400 }
       );
     }
+
+    const url = new URL(req.url);
+    const receiptId = String(url.searchParams.get("receiptId") || "").trim();
+    const merchantWallet = String(url.searchParams.get("merchantWallet") || "").trim();
+    const phaseParam = String(url.searchParams.get("trackingPhase") || "current").trim().toLowerCase();
+    const trackingPhase: KycTrackingPhase = phaseParam === "initial" || phaseParam === "final" ? phaseParam : "current";
+    const requiredTier = normalizeKycTier(url.searchParams.get("requiredTier")) || undefined;
+    const kycOccurred = url.searchParams.get("kycOccurred") === "true";
 
     let oauthToken = req.headers.get("x-stripe-oauth-token") || "";
 
@@ -103,24 +196,20 @@ export async function GET(
       }
     }
 
-    // If Stripe is in a transient processing lock (403/409/429), treat as pending verification rather than failing
+    // A transport/processing lock is not a KYC tier. Return a retryable status
+    // instead of fabricating pending L0/L1/L2 rows that pollute initial-tier
+    // tracking and route customers to the wrong form.
     if (response.status === 403 || response.status === 409 || response.status === 429) {
-      console.log(`[CRYPTO CUSTOMER] Stripe transient processing lock (${response.status}), returning pending status...`);
+      console.log(`[CRYPTO CUSTOMER] Stripe transient processing lock (${response.status}), requesting retry...`);
       return NextResponse.json({
-        ok: true,
+        ok: false,
+        error: "stripe_customer_temporarily_unavailable",
         customerId: id,
-        providedFields: [],
-        kycStatus: "pending",
-        idDocStatus: "pending",
-        kycTiers: [
-          { tier: "l0", verification_status: "pending" },
-          { tier: "l1", verification_status: "pending" },
-          { tier: "l2", verification_status: "pending" }
-        ],
         transient: true,
         ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
-      }, {
+      }, { status: 503,
         headers: {
+          "Retry-After": "2",
           "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
           "Pragma": "no-cache",
           "Expires": "0"
@@ -129,7 +218,11 @@ export async function GET(
     }
 
     if (!response.ok) {
-      console.error("[CRYPTO CUSTOMER] Retrieval failed:", customer);
+      console.error("[CRYPTO CUSTOMER] Retrieval failed:", {
+        status: response.status,
+        type: customer?.error?.type,
+        code: customer?.error?.code,
+      });
       return NextResponse.json(
         { ok: false, error: customer.error?.message || "customer_fetch_failed" },
         { status: response.status }
@@ -139,11 +232,39 @@ export async function GET(
     const verifications = customer.verifications ?? [];
     const kycTiers = customer.kyc_tiers ?? [];
     const l2Tier = kycTiers.find((t: any) => t.tier === "l2");
-    console.log("[CRYPTO CUSTOMER] Full Customer payload:", JSON.stringify(customer, null, 2));
     const kycVerified = verifications.find((v: any) => v.name === "kyc_verified");
     const idDocVerified = verifications.find((v: any) => v.name === "id_document_verified");
 
     const derivedIdDocStatus = idDocVerified?.status ?? (l2Tier?.verification_status ?? "not_started");
+    const kycSnapshot = deriveStripeKycSnapshot(customer);
+    let persistedTracking: any = null;
+
+    if (receiptId && merchantWallet) {
+      try {
+        persistedTracking = await persistProviderKycSnapshot({
+          receiptId,
+          merchantWallet,
+          cryptoCustomerId: String(customer.id || id),
+          customer,
+          phase: trackingPhase,
+          requiredTier,
+          kycOccurred,
+        });
+      } catch (trackingError: any) {
+        const code = String(trackingError?.message || "kyc_tracking_failed");
+        console.error("[CRYPTO CUSTOMER] Provider KYC tracking failed:", code);
+        if (code.includes("mismatch")) {
+          return NextResponse.json({ ok: false, error: code }, { status: 409 });
+        }
+        if (code === "receipt_not_found") {
+          return NextResponse.json({ ok: false, error: code }, { status: 404 });
+        }
+        return NextResponse.json(
+          { ok: false, error: "kyc_tracking_unavailable" },
+          { status: 503, headers: { "Retry-After": "2" } }
+        );
+      }
+    }
 
     console.log("[CRYPTO CUSTOMER] KYC status:", kycVerified?.status || "not_started", "idDocStatus:", derivedIdDocStatus);
 
@@ -155,6 +276,20 @@ export async function GET(
       kycStatus: kycVerified?.status ?? "not_started",
       idDocStatus: derivedIdDocStatus,
       kycTiers: kycTiers,
+      kycSnapshot,
+      ...(persistedTracking ? {
+        tracking: {
+          initialLevel: persistedTracking.kycInitialLevel,
+          initialStatus: persistedTracking.kycInitialStatus,
+          initialVerifiedLevel: persistedTracking.kycInitialVerifiedLevel,
+          requiredLevel: persistedTracking.kycRequiredLevel,
+          completedLevel: persistedTracking.kycCompletedLevel,
+          finalLevel: persistedTracking.kycFinalLevel,
+          finalStatus: persistedTracking.kycFinalStatus,
+          verifiedLevel: persistedTracking.kycVerifiedLevel,
+          kycOccurred: persistedTracking.kycOccurred === true,
+        },
+      } : {}),
       ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
     }, {
       headers: {

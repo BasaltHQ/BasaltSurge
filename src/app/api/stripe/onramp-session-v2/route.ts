@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { getPublicClientIp } from "@/lib/request-client-ip";
+import { normalizeStripeOnrampCheckoutMode } from "@/lib/stripe-onramp-status";
 
 export const dynamic = 'force-dynamic';
 
@@ -46,6 +48,7 @@ export async function POST(req: NextRequest) {
     const receiptId = String(body.receiptId || "").trim();
     const merchantWallet = String(body.merchantWallet || "").trim();
     const brandKey = String(body.brandKey || "").trim();
+    const checkoutMode = normalizeStripeOnrampCheckoutMode(body.checkoutMode);
 
     if (!cryptoCustomerId || !cryptoPaymentToken) {
       return NextResponse.json(
@@ -104,14 +107,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Get customer IP for the session
-    let customerIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-      || req.headers.get("x-real-ip")
-      || (req as any).ip
-      || "0.0.0.0";
-
-    // Bypass loopback/localhost IPs with a mock US IP address for developer testing
-    if (customerIp === "::1" || customerIp === "127.0.0.1" || customerIp === "0.0.0.0" || customerIp.startsWith("::ffff:")) {
-      customerIp = "72.229.28.185"; // New York, USA
+    const customerIp = getPublicClientIp(req.headers, (req as any).ip);
+    if (!customerIp) {
+      return NextResponse.json(
+        { ok: false, error: "customer_ip_unavailable" },
+        { status: 400 }
+      );
     }
 
     // Build form-encoded body
@@ -147,6 +148,7 @@ export async function POST(req: NextRequest) {
     if (receiptId) params.append("metadata[receiptId]", receiptId);
     if (merchantWallet) params.append("metadata[merchantWallet]", merchantWallet);
     if (brandKey) params.append("metadata[brandKey]", brandKey);
+    params.append("metadata[checkoutMode]", checkoutMode);
 
     const splitMode = String(body.splitMode || "").trim().toLowerCase();
     if (splitMode) {
@@ -270,6 +272,7 @@ export async function POST(req: NextRequest) {
             receipt.onrampAmount = Number(sourceAmount);
           }
           receipt.stripeSessionId = data.id;
+          receipt.checkoutMode = checkoutMode;
           receipt.lastUpdatedAt = Date.now();
           await container.items.upsert(receipt);
           console.log(`[ONRAMP V2] Successfully linked Stripe session ${data.id} for receipt ${receiptId}`);

@@ -63,6 +63,16 @@ export interface AnalyticsReceiptItem {
   transactionHash?: string | null;
   cardFunding?: string | null;
   kycLevel?: string;
+  kycInitialLevel?: string | null;
+  kycInitialVerifiedLevel?: string | null;
+  kycRequiredLevel?: string | null;
+  kycCompletedLevel?: string | null;
+  kycFinalLevel?: string | null;
+  kycFinalStatus?: string | null;
+  kycVerifiedLevel?: string | null;
+  kycRegion?: string | null;
+  kycIdentifiersSatisfied?: boolean;
+  kycAttestationAccepted?: boolean;
   platformFee?: number;
   platformFeeSource?: "recorded_minor" | "recorded_usd" | "recorded_bps" | "unavailable";
   failureReason?: string | null;
@@ -529,7 +539,7 @@ export async function exportTransactionLedgerPDF(
         isSettledStatus(receipt.status) ? (receipt.platformFeeSource || "legacy") : "not applicable",
         String(receipt.status || "unknown").toUpperCase(),
         receipt.cardFunding || "unclassified",
-        receipt.kycLevel || "L0",
+        `${receipt.kycInitialVerifiedLevel || receipt.kycInitialLevel || "Unknown"} -> ${receipt.kycCompletedLevel || receipt.kycVerifiedLevel || receipt.kycFinalLevel || receipt.kycLevel || "Unknown"}`,
         pdfText(session, 28),
         receipt.failureReason || tx
       ];

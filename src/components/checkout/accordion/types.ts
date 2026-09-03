@@ -1,4 +1,5 @@
 import React from "react";
+import type { AccordionStepTransitionInput } from "@/lib/checkout-flow-tracking";
 
 export type StateSetter<T> = React.Dispatch<React.SetStateAction<T>> | ((val: T) => void);
 
@@ -92,6 +93,10 @@ export interface PortalPayAccordionCheckoutV2Props {
   onHeadlessSubmitEmailPhone?: (email: string, phone: string, country?: string, isForceRetryOrName?: boolean | string, fullName?: string) => Promise<void>;
   onSubmitPhone?: (phoneNumber: string, email?: string, country?: string) => void | Promise<void>;
   onSubmitKycInfo?: (info: any) => Promise<void>;
+  onSubmitKycIdentifiers?: (identifiers: Record<string, string>) => Promise<void>;
+  missingKycIdentifiers?: Array<{ type: string; regulation: string }>;
+  kycIdentifierAlternatives?: Array<{ original_missing_identifiers: string[]; alternative_missing_identifiers: string[] }>;
+  attestationElement?: HTMLElement | React.ReactNode | null;
   onVerifyDocuments?: () => Promise<void | boolean>;
   onSelectPaymentMethod?: (type: string) => Promise<void>;
   onCompleteCheckout?: () => Promise<void>;
@@ -106,6 +111,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   onrampLimits?: any[] | null;
   onEmailReceipt?: () => void;
   merchantWallet?: string;
+  onAccordionStepTransition?: (transition: AccordionStepTransitionInput) => void;
 }
 
 export interface AccordionCardProps {
@@ -184,6 +190,12 @@ export interface Step2Props {
   setDob: StateSetter<string>;
   ssn: string;
   setSsn: StateSetter<string>;
+  nationalities?: string;
+  setNationalities?: StateSetter<string>;
+  birthCountry?: string;
+  setBirthCountry?: StateSetter<string>;
+  birthCity?: string;
+  setBirthCity?: StateSetter<string>;
   micaIdentifierValue?: string;
   setMicaIdentifierValue?: StateSetter<string>;
   micaIdentifierType?: string;
@@ -221,6 +233,10 @@ export interface Step2Props {
   onSelectSuggestion: (item: any) => void;
   onSubmit: (e: React.FormEvent) => void;
   onVerifyDocuments?: () => Promise<void | boolean>;
+  onSubmitKycIdentifiers?: (identifiers: Record<string, string>) => Promise<void>;
+  missingKycIdentifiers?: Array<{ type: string; regulation: string }>;
+  kycIdentifierAlternatives?: Array<{ original_missing_identifiers: string[]; alternative_missing_identifiers: string[] }>;
+  attestationElement?: HTMLElement | React.ReactNode | null;
   onHeaderClick: () => void;
   onContinueToStep3: () => void;
 }

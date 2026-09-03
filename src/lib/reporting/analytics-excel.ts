@@ -244,7 +244,14 @@ function receiptRows(receipts: AnalyticsReceiptItem[], timeZone: string): unknow
       !isSettledStatus(receipt.status) || receipt.platformFeeSource === "unavailable" ? null : Number(receipt.platformFee || 0),
       isSettledStatus(receipt.status) ? (receipt.platformFeeSource || "legacy_unspecified") : "not_applicable_unsettled",
       receipt.cardFunding || "unclassified",
-      receipt.kycLevel || "L0",
+      receipt.kycInitialVerifiedLevel || receipt.kycInitialLevel || "Unknown",
+      receipt.kycRequiredLevel || "None",
+      receipt.kycCompletedLevel || "None",
+      receipt.kycVerifiedLevel || receipt.kycFinalLevel || receipt.kycLevel || "Unknown",
+      receipt.kycFinalStatus || "untracked",
+      receipt.kycRegion === "eu"
+        ? `identifiers=${receipt.kycIdentifiersSatisfied ? "yes" : "no"}; attestation=${receipt.kycAttestationAccepted ? "yes" : "no"}`
+        : "not_applicable",
       receipt.stripeSessionId || "",
       receipt.paymentId || "",
       receipt.transactionHash || "",
@@ -283,7 +290,10 @@ const TRANSACTION_COLUMNS: SheetColumn[] = [
   { label: "Merchant", width: 28 }, { label: "Receipt Wallet", width: 44 }, { label: "Merchant Wallet", width: 44 },
   { label: "Buyer Wallet", width: 44 }, { label: "Customer Email", width: 32 }, { label: "Status", width: 20 },
   { label: "Amount USD", width: 15, format: "$#,##0.00" }, { label: "Recorded Platform Fee USD", width: 23, format: "$#,##0.00" },
-  { label: "Fee Evidence", width: 20 }, { label: "Funding", width: 18 }, { label: "KYC Level", width: 12 },
+  { label: "Fee Evidence", width: 20 }, { label: "Funding", width: 18 },
+  { label: "Initial Verified KYC", width: 19 }, { label: "Required KYC", width: 15 },
+  { label: "Completed During Payment", width: 24 }, { label: "Final Verified KYC", width: 19 },
+  { label: "Final KYC Status", width: 18 }, { label: "EU Compliance", width: 36 },
   { label: "Stripe Session ID", width: 34 }, { label: "Payment ID", width: 34 }, { label: "Transaction Hash", width: 68 },
   { label: "Failure Detail", width: 60 }, { label: "Line Item Count", width: 15 }, { label: "Line Items JSON", width: 80 }
 ];

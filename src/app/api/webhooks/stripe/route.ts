@@ -8,6 +8,8 @@ import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
 import {
   isStripeFulfillmentCompleteStatus,
   isStripePaymentAcceptedStatus,
+  normalizeStripeOnrampCheckoutMode,
+  resolveStripeAcceptedReceiptStatus,
 } from "@/lib/stripe-onramp-status";
 import {
   normalizeSettlementFunding,
@@ -287,6 +289,7 @@ export async function POST(req: NextRequest) {
         splitAddressPrimary: context?.splitAddressPrimary,
         splitAddressCredit: context?.splitAddressCredit,
         fundingType: context?.fundingType || normalizeSettlementFunding(cardFunding),
+        checkoutMode: normalizeStripeOnrampCheckoutMode(metadata?.checkoutMode),
         sessionId,
         status,
         stripeEventType: type,
@@ -405,6 +408,9 @@ export async function POST(req: NextRequest) {
             r.isCreditCard === true
           );
           const receiptIsAch = receiptFunding === "us_bank_account";
+          const checkoutMode = normalizeStripeOnrampCheckoutMode(
+            metadata?.checkoutMode || r.checkoutMode
+          );
 
           // SAFEGUARD: Verify amount discrepancy if sourceAmount is available
           const sourceAmount = Number(txDetails.source_amount || 0);
@@ -490,24 +496,39 @@ export async function POST(req: NextRequest) {
 
           const previousStatus = String(r.status || "pending");
           const hasVerifiedSettlementTx = typeof onChainTx === "string" && /^0x[a-f0-9]{64}$/i.test(onChainTx);
-          const stripeAcceptedPayment = isStripePaymentAcceptedStatus(status);
-          const nextStatus = stripeAcceptedPayment
-            ? (receiptIsAch ? "paid - ach pending" : "paid")
-            : null;
+          const nextStatus = resolveStripeAcceptedReceiptStatus(status, {
+            isAch: receiptIsAch,
+            checkoutMode,
+          });
 
           // In eCommerce mode Stripe's signed fulfillment_processing status is
           // the authoritative paid boundary. Browser-reported progress remains
           // diagnostic and cannot make this transition.
           r.checkoutStatus = status;
+          r.checkoutMode = checkoutMode;
           r.checkoutStatusUpdatedAt = Date.now();
           r.checkoutStatusSource = "stripe_webhook";
+          const checkoutHistory = Array.isArray(r.checkoutStatusHistory)
+            ? r.checkoutStatusHistory.slice(-199)
+            : [];
+          const previousCheckoutEntry = checkoutHistory[checkoutHistory.length - 1];
+          if (previousCheckoutEntry?.status !== status || previousCheckoutEntry?.source !== "stripe_webhook") {
+            r.checkoutStatusHistory = [
+              ...checkoutHistory,
+              { status, source: "stripe_webhook", ts: Date.now() },
+            ];
+          }
           if (nextStatus) r.status = nextStatus;
           if (receiptIsAch) {
             r.detectedCardFunding = "us_bank_account";
-          } else if (nextStatus === "paid") {
+            r.isCreditCard = false;
+          }
+          if (nextStatus === "paid") {
             r.ttl = -1;
-            r.detectedCardFunding = receiptFunding;
-            r.isCreditCard = receiptFunding === "credit";
+            if (!receiptIsAch) {
+              r.detectedCardFunding = receiptFunding;
+              r.isCreditCard = receiptFunding === "credit";
+            }
           }
           r.stripeSessionStatus = status;
           if (nextStatus && previousStatus !== nextStatus) {
@@ -526,6 +547,7 @@ export async function POST(req: NextRequest) {
               { op: "set", path: "/checkoutStatus", value: r.checkoutStatus },
               { op: "set", path: "/checkoutStatusUpdatedAt", value: r.checkoutStatusUpdatedAt },
               { op: "set", path: "/checkoutStatusSource", value: "stripe_webhook" },
+              { op: "set", path: "/checkoutStatusHistory", value: r.checkoutStatusHistory || [] },
               { op: "set", path: "/lastUpdatedAt", value: r.lastUpdatedAt },
               ...(sessionId
                 ? [{ op: "set" as const, path: "/stripeSessionId", value: sessionId }]

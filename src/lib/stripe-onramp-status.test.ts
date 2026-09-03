@@ -10,6 +10,8 @@ const {
   isStripeOnrampSettlementEligibleStatus,
   isStripeOnrampTerminalFailure,
   isStripePaymentAcceptedStatus,
+  normalizeStripeOnrampCheckoutMode,
+  resolveStripeAcceptedReceiptStatus,
 } = stripeStatusPolicy;
 
 test("eCommerce payment is accepted at Stripe fulfillment processing/complete and the legacy complete alias", () => {
@@ -22,11 +24,43 @@ test("eCommerce payment is accepted at Stripe fulfillment processing/complete an
   assert.equal(isStripeFulfillmentCompleteStatus("onramp_completed"), true);
 });
 
-test("card settlement is eligible at processing while ACH waits for completion", () => {
+test("eCommerce receipts are paid at processing for card and ACH", () => {
+  assert.equal(resolveStripeAcceptedReceiptStatus("awaiting_funds", {
+    isAch: true,
+    checkoutMode: "ecommerce",
+  }), null);
+  assert.equal(resolveStripeAcceptedReceiptStatus("fulfillment_processing", {
+    isAch: false,
+    checkoutMode: "ecommerce",
+  }), "paid");
+  assert.equal(resolveStripeAcceptedReceiptStatus("fulfillment_processing", {
+    isAch: true,
+    checkoutMode: "ecommerce",
+  }), "paid");
+  assert.equal(resolveStripeAcceptedReceiptStatus("fulfillment_complete", {
+    isAch: true,
+    checkoutMode: "ecommerce",
+  }), "paid");
+});
+
+test("only ACH transfer readiness waits for fulfillment completion", () => {
   assert.equal(isStripeOnrampSettlementEligibleStatus("fulfillment_processing", false), true);
   assert.equal(isStripeOnrampSettlementEligibleStatus("fulfillment_processing", true), false);
   assert.equal(isStripeOnrampSettlementEligibleStatus("fulfillment_complete", false), true);
   assert.equal(isStripeOnrampSettlementEligibleStatus("fulfillment_complete", true), true);
+});
+
+test("explicit full flow keeps the historical ACH pending-settlement label", () => {
+  assert.equal(normalizeStripeOnrampCheckoutMode(undefined), "ecommerce");
+  assert.equal(normalizeStripeOnrampCheckoutMode("full"), "full");
+  assert.equal(resolveStripeAcceptedReceiptStatus("fulfillment_processing", {
+    isAch: true,
+    checkoutMode: "full",
+  }), "paid - ach pending");
+  assert.equal(resolveStripeAcceptedReceiptStatus("fulfillment_complete", {
+    isAch: true,
+    checkoutMode: "full",
+  }), "paid");
 });
 
 test("terminal failures do not classify retryable or pending sessions as failed", () => {
