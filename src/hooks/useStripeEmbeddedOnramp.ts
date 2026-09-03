@@ -763,7 +763,6 @@ export function useStripeEmbeddedOnramp({
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
   const isCoordinatorAuthedRef = useRef(false);
-  const lastStartOnrampTimeRef = useRef<number>(0);
   const kycOccurredRef = useRef(false);
   const activeCountryRef = useRef<string>("US");
   const kycInitialLevelRef = useRef<string | null>(null);
@@ -3615,19 +3614,14 @@ export function useStripeEmbeddedOnramp({
       }
     }
 
-    const now = Date.now();
-    const hasActiveAuth = Boolean(isCoordinatorAuthedRef.current && oauthTokenRef.current && customerIdRef.current);
-    if (isRunningRef.current && !isForceRetry && !hasActiveAuth) {
-      if (now - lastStartOnrampTimeRef.current > 45000) {
-        console.warn("[EMBEDDED ONRAMP] Onramp flow lock exceeded 45s timeout. Auto-resetting lock for re-trigger.");
-        isRunningRef.current = false;
-      } else {
-        console.warn("[EMBEDDED ONRAMP] Onramp flow is already running. Ignoring duplicate trigger.");
-        return;
-      }
+    if (isRunningRef.current) {
+      console.warn(
+        `[EMBEDDED ONRAMP] Onramp flow is already running at ${stepRef.current}. ` +
+        `${isForceRetry ? "Ignoring overlapping force retry." : "Ignoring duplicate trigger."}`
+      );
+      return;
     }
     isRunningRef.current = true;
-    lastStartOnrampTimeRef.current = now;
 
     if (isForceRetry || Date.now() - lastErrorSetTimeRef.current > 5000) {
       setError(null);
@@ -4503,7 +4497,7 @@ export function useStripeEmbeddedOnramp({
           setDetectedCardFunding(collectedFunding);
           if (collectedBrand) setDetectedCardBrand(collectedBrand);
           if (collectedLast4) setDetectedCardLast4(collectedLast4);
-          onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
+          onCardDetectedRef.current?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
         }
 
         const chosenSpeed: "standard" | "instant" = collectedFunding === "us_bank_account" ? "standard" : "instant";
@@ -4868,7 +4862,7 @@ export function useStripeEmbeddedOnramp({
     publishableKey, connectedWalletAddress, connectedWallet, handleError,
     updateStep, createBuyerWallet, runCheckoutLoop, pollKycStatus,
     buildTrackedCustomerUrl, consumeKycTrackingResponse, completeEuKyc,
-    resumeAfterKyc, reportKycEvent, getOnrampAmount, onCardDetected,
+    resumeAfterKyc, reportKycEvent, getOnrampAmount,
   ]);
 
   useEffect(() => {
