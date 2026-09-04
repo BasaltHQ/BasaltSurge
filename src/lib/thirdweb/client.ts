@@ -38,7 +38,11 @@ export function getClient() {
         "bt-checkout.aipowerpay.com": "aipowerpay",
         "www.bt-checkout.aipowerpay.com": "aipowerpay",
         "pay.lucky13marketing.com": "lucky13",
-        "www.pay.lucky13marketing.com": "lucky13"
+        "www.pay.lucky13marketing.com": "lucky13",
+        "canyapay.com": "canyapay",
+        "www.canyapay.com": "canyapay",
+        "canyapay.azurewebsites.net": "canyapay",
+        "canyapay.payportal.co": "canyapay"
       };
       if (KNOWN_PARTNER_DOMAINS[hostLower]) {
         brandKey = KNOWN_PARTNER_DOMAINS[hostLower];
@@ -57,6 +61,7 @@ export function getClient() {
           aipowerpay: "aipowerpay",
           lucky13: "lucky13",
           lucky13marketing: "lucky13",
+          canyapay: "canyapay",
         };
         brandKey = KNOWN_PARTNER_PATTERNS[candidate] || candidate;
       }
@@ -72,6 +77,8 @@ export function getClient() {
           xoinpay: "xoinpay",
           icunow: "icunow-store",
           aipowerpay: "aipowerpay",
+          lucky13: "lucky13",
+          canyapay: "canyapay",
         };
         if (KNOWN_PARTNER_PATTERNS[candidate]) {
           brandKey = KNOWN_PARTNER_PATTERNS[candidate];

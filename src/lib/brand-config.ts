@@ -15,6 +15,7 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   aipowerpay: "aipowerpay",
   lucky13: "lucky13",
   lucky13marketing: "lucky13",
+  canyapay: "canyapay",
   // Add more partner brands here as needed
 };
 
@@ -30,7 +31,11 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "bt-checkout.aipowerpay.com": "aipowerpay",
   "www.bt-checkout.aipowerpay.com": "aipowerpay",
   "pay.lucky13marketing.com": "lucky13",
-  "www.pay.lucky13marketing.com": "lucky13"
+  "www.pay.lucky13marketing.com": "lucky13",
+  "canyapay.com": "canyapay",
+  "www.canyapay.com": "canyapay",
+  "canyapay.azurewebsites.net": "canyapay",
+  "canyapay.payportal.co": "canyapay"
 };
 
 // Cache and variables for dynamic partner domains from DB
@@ -382,6 +387,7 @@ export async function deriveContainerIdentityFromHostname(host: string, cookieHe
   if (hostLower.includes("icunow")) return { brandKey: "icunow-store", containerType: "partner" };
   if (hostLower.includes("aipowerpay")) return { brandKey: "aipowerpay", containerType: "partner" };
   if (hostLower.includes("lucky13")) return { brandKey: "lucky13", containerType: "partner" };
+  if (hostLower.includes("canyapay")) return { brandKey: "canyapay", containerType: "partner" };
 
   return null;
 }
