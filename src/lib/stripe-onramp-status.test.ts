@@ -12,6 +12,7 @@ const {
   isStripePaymentAcceptedStatus,
   normalizeStripeOnrampCheckoutMode,
   resolveStripeAcceptedReceiptStatus,
+  shouldRestoreStripeAchPendingStatus,
 } = stripeStatusPolicy;
 
 test("eCommerce payment is accepted at Stripe fulfillment processing/complete and the legacy complete alias", () => {
@@ -24,7 +25,7 @@ test("eCommerce payment is accepted at Stripe fulfillment processing/complete an
   assert.equal(isStripeFulfillmentCompleteStatus("onramp_completed"), true);
 });
 
-test("eCommerce receipts are paid at processing for card and ACH", () => {
+test("eCommerce receipts preserve ACH pending settlement while remaining paid", () => {
   assert.equal(resolveStripeAcceptedReceiptStatus("awaiting_funds", {
     isAch: true,
     checkoutMode: "ecommerce",
@@ -36,7 +37,7 @@ test("eCommerce receipts are paid at processing for card and ACH", () => {
   assert.equal(resolveStripeAcceptedReceiptStatus("fulfillment_processing", {
     isAch: true,
     checkoutMode: "ecommerce",
-  }), "paid");
+  }), "paid - ach pending");
   assert.equal(resolveStripeAcceptedReceiptStatus("fulfillment_complete", {
     isAch: true,
     checkoutMode: "ecommerce",
@@ -61,6 +62,30 @@ test("explicit full flow keeps the historical ACH pending-settlement label", () 
     isAch: true,
     checkoutMode: "full",
   }), "paid");
+});
+
+test("plain paid ACH receipts are corrected only while settlement is genuinely pending", () => {
+  assert.equal(shouldRestoreStripeAchPendingStatus({
+    currentReceiptStatus: "paid",
+    incomingReceiptStatus: "paid - ach pending",
+    stripeStatus: "fulfillment_processing",
+    currentStripeStatus: "fulfillment_processing",
+    hasVerifiedSettlementTx: false,
+  }), true);
+  assert.equal(shouldRestoreStripeAchPendingStatus({
+    currentReceiptStatus: "paid",
+    incomingReceiptStatus: "paid - ach pending",
+    stripeStatus: "fulfillment_processing",
+    currentStripeStatus: "fulfillment_complete",
+    hasVerifiedSettlementTx: false,
+  }), false);
+  assert.equal(shouldRestoreStripeAchPendingStatus({
+    currentReceiptStatus: "paid",
+    incomingReceiptStatus: "paid - ach pending",
+    stripeStatus: "fulfillment_processing",
+    currentStripeStatus: "fulfillment_processing",
+    hasVerifiedSettlementTx: true,
+  }), false);
 });
 
 test("terminal failures do not classify retryable or pending sessions as failed", () => {

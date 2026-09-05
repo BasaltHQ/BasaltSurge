@@ -47,11 +47,20 @@ export function isPublicIpAddress(value: unknown): boolean {
 }
 
 export function getPublicClientIp(headers: Headers, requestIp?: unknown): string | null {
+  const forwarded = String(headers.get("x-forwarded-for") || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .reverse();
+  const trustCloudflare = String(process.env.TRUST_CLOUDFLARE_PROXY || "").toLowerCase() === "true";
   const candidates = [
-    headers.get("cf-connecting-ip"),
-    headers.get("x-forwarded-for")?.split(",")[0],
+    // Plesk/nginx normally overwrites X-Real-IP with the directly connected
+    // client. Do not prefer the left-most X-Forwarded-For entry: a browser can
+    // supply it and proxy_add_x_forwarded_for will preserve the spoofed value.
+    ...(trustCloudflare ? [headers.get("cf-connecting-ip")] : []),
     headers.get("x-real-ip"),
     requestIp,
+    ...forwarded,
   ];
   for (const value of candidates) {
     const normalized = stripAddressDecorations(String(value || ""));

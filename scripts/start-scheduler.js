@@ -14,32 +14,7 @@ for (const envFile of ['.env.production.local', '.env.local', '.env.production',
   });
 }
 
-const lockFile = path.join(__dirname, '..', 'cron.lock');
 const stateFile = path.join(__dirname, '..', 'cron-state.json');
-
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-function acquireLock() {
-  try {
-    if (fs.existsSync(lockFile)) {
-      const pid = parseInt(fs.readFileSync(lockFile, 'utf8'), 10);
-      if (pid && isProcessAlive(pid)) {
-        return false;
-      }
-    }
-    fs.writeFileSync(lockFile, process.pid.toString(), 'utf8');
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
 
 function getCronState() {
   try {
@@ -65,7 +40,7 @@ function triggerEndpoint(pathname, method = 'POST') {
 
   // Must match server.js's production default. server.js also writes the
   // selected port into process.env before loading this scheduler.
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || 3001;
   const options = {
     hostname: '127.0.0.1',
     port: port,
@@ -157,11 +132,20 @@ async function checkAndRun() {
 }
 
 function init() {
-  if (!acquireLock()) {
-    return; // Another process is holding the lock
+  if (process.argv.includes('--once')) {
+    console.log(`[cron-scheduler] Running one-shot fallback check on PID ${process.pid}`);
+    void checkAndRun().catch((error) => {
+      console.error('[cron-scheduler] One-shot fallback check failed:', error);
+      process.exitCode = 1;
+    });
+    return;
   }
 
-  console.log(`[cron-scheduler] Initialized scheduler daemon on PID ${process.pid}`);
+  // The scheduler is native to every application process. There is no
+  // filesystem leader lock to strand a replacement process during a Plesk or
+  // Passenger rolling rebuild. Financial concurrency is controlled narrowly
+  // by partner+wallet settlement claims inside the transfer executor.
+  console.log(`[cron-scheduler] Initialized native scheduler on PID ${process.pid}`);
 
   // Run initial check after a short startup delay
   setTimeout(() => void checkAndRun(), 15000);

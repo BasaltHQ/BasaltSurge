@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { determineNextKycTier, resolveCustomerKycTier } from "./kycTierEngine";
-import { parseOnrampError } from "./errorTaxonomy";
+// @ts-expect-error allowImportingTsExtensions is intentionally disabled for the app build.
+import * as kycTierEngine from "./kycTierEngine.ts";
+// @ts-expect-error allowImportingTsExtensions is intentionally disabled for the app build.
+import * as errorTaxonomy from "./errorTaxonomy.ts";
+
+const { determineNextKycTier, resolveCustomerKycTier } = kycTierEngine;
+const { parseOnrampError } = errorTaxonomy;
 
 test("US L0 verification remains sufficient for an in-limit card purchase", () => {
   const kyc = resolveCustomerKycTier([

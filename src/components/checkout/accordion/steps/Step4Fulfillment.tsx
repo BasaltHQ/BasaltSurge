@@ -12,6 +12,7 @@ import {
   Lock,
 } from "lucide-react";
 import { AccordionCard } from "../AccordionCard";
+import { AccordionContent } from "../AccordionContent";
 import { Step4FulfillmentProps } from "../types";
 import { getContrastingTextColor } from "../utils";
 
@@ -20,6 +21,7 @@ export function Step4Fulfillment({
   isConfirmed,
   isLightText = true,
   primaryColor = "#635BFF",
+  motionPosition = 0,
   receiptId = "REC-88492-V2",
   amountUsd = 25.0,
   email,
@@ -32,7 +34,6 @@ export function Step4Fulfillment({
   selectedPaymentType = "card",
   paymentConfirmed,
   onEmailReceipt,
-  onBackToPayment,
 }: Step4FulfillmentProps) {
   const buttonTextColor = getContrastingTextColor(primaryColor);
   const [mounted, setMounted] = useState(false);
@@ -555,27 +556,6 @@ export function Step4Fulfillment({
             </div>
           )}
 
-          {/* Fallback Cancel & Return to Payment Method Action */}
-          {onBackToPayment && (
-            <div className="pt-1 flex justify-center">
-              <button
-                type="button"
-                onClick={onBackToPayment}
-                className={`text-xs font-semibold underline underline-offset-4 transition cursor-pointer opacity-80 hover:opacity-100 ${
-                  isDeclined
-                    ? "text-amber-300 hover:text-amber-200 font-bold"
-                    : isLightText
-                    ? "text-white/80 hover:text-white"
-                    : "text-neutral-700 hover:text-black"
-                }`}
-              >
-                {isDeclined
-                  ? "Choose another payment method now →"
-                  : "Cancel & choose another payment method"}
-              </button>
-            </div>
-          )}
-
           {/* Subtle Security Stamp */}
           <div
             className={`flex items-center justify-center gap-2 text-[10.5px] pt-1 select-none font-medium tracking-wide uppercase ${
@@ -638,7 +618,8 @@ export function Step4Fulfillment({
         </div>
 
         {/* Step 4 Expanded Body */}
-        <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 ${isOpen ? "" : "hidden"}`}>
+        <AccordionContent isOpen={isOpen} position={motionPosition}>
+          <div className="p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10">
           {!isConfirmed ? (
             /* Inline Processing State inside Accordion */
             <div
@@ -934,7 +915,8 @@ export function Step4Fulfillment({
               </div>
             </div>
           )}
-        </div>
+          </div>
+        </AccordionContent>
       </AccordionCard>
     </>
   );

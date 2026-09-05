@@ -69,8 +69,13 @@ export function StripeEmbedContainer({
 
     if (typeof element === "object" && "nodeType" in element) {
       const domNode = element as HTMLElement;
-      host.innerHTML = "";
-      host.appendChild(domNode);
+      // Stripe owns the iframe-backed element after it is created. Accordion
+      // visibility changes must not detach and reinsert the same node because
+      // doing so can reset provider-managed input/challenge state. Only move
+      // the element when it is not already mounted in this host.
+      if (domNode.parentNode !== host) {
+        host.replaceChildren(domNode);
+      }
       setIsStalled(false);
       if (timeoutTimerRef.current) {
         clearTimeout(timeoutTimerRef.current);

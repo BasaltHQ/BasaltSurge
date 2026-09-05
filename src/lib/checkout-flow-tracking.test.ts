@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
+// @ts-expect-error allowImportingTsExtensions is intentionally disabled for the app build.
+import * as checkoutFlowTracking from "./checkout-flow-tracking.ts";
+
+const {
   accordionStepForOnrampState,
   appendAccordionStepTransition,
   buildAccordionJourneyPath,
   hasAccordionTransition,
   normalizeAccordionStepTransition,
-} from "./checkout-flow-tracking";
+} = checkoutFlowTracking;
 
 test("maps every v2 headless checkout state to its accordion stage", () => {
   for (const state of [

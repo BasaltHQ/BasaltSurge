@@ -270,10 +270,16 @@ export async function POST(req: NextRequest) {
         const kycEvent = typeof body.kycEvent === "string"
           ? String(body.kycEvent).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 64)
           : "";
-        const accordionTransition = normalizeAccordionStepTransition(body.accordionTransition, {
-          ts,
-          source: checkoutStatusSource,
-        });
+        // Only the dedicated accordion-step events may append navigation
+        // history. Besides rejecting unrelated/malformed combinations, this
+        // keeps the Cosmos patch at or below its 10-operation limit when KYC
+        // telemetry is present on the same event.
+        const accordionTransition = /^onramp_accordion_step_[1-4]$/.test(status)
+          ? normalizeAccordionStepTransition(body.accordionTransition, {
+              ts,
+              source: checkoutStatusSource,
+            })
+          : null;
         let patchResult: any = null;
         let receiptExists = false;
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -434,15 +440,15 @@ export async function POST(req: NextRequest) {
           brandKey,
           ipAddress: resource.ipAddress || ipAddress,
           // Record buyer on settlement statuses
-          ...(buyerWallet && ["checkout_success", "paid", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
+          ...(buyerWallet && ["checkout_success", "paid", "paid - ach pending", "ach_pending", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
             ? { buyerWallet }
             : {}),
           // Persist transaction hash on relevant statuses
-          ...(txHash && ["checkout_success", "tx_mined", "recipient_validated", "paid", "reconciled", "receipt_claimed"].includes(status)
+          ...(txHash && ["checkout_success", "tx_mined", "recipient_validated", "paid", "paid - ach pending", "ach_pending", "reconciled", "receipt_claimed"].includes(status)
             ? { transactionHash: txHash, transactionTimestamp: txTs }
             : {}),
           // Disable TTL (prevent auto-delete) if Paid/Settled
-          ...(["checkout_success", "paid", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
+          ...(["checkout_success", "paid", "paid - ach pending", "ach_pending", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
             ? { ttl: -1 }
             : {}),
           // Persist expected payment metadata at checkout initialization
@@ -499,14 +505,14 @@ export async function POST(req: NextRequest) {
           lastUpdatedAt: ts,
           brandKey,
           ipAddress,
-          ...(buyerWallet && ["checkout_success", "paid", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
+          ...(buyerWallet && ["checkout_success", "paid", "paid - ach pending", "ach_pending", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
             ? { buyerWallet }
             : {}),
-          ...(txHash && ["checkout_success", "tx_mined", "recipient_validated", "paid", "reconciled", "receipt_claimed"].includes(status)
+          ...(txHash && ["checkout_success", "tx_mined", "recipient_validated", "paid", "paid - ach pending", "ach_pending", "reconciled", "receipt_claimed"].includes(status)
             ? { transactionHash: txHash, transactionTimestamp: txTs }
             : {}),
           // Disable TTL (prevent auto-delete) if Paid/Settled
-          ...(["checkout_success", "paid", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
+          ...(["checkout_success", "paid", "paid - ach pending", "ach_pending", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
             ? { ttl: -1 }
             : {}),
           ...(status === "checkout_initialized" && (expectedToken || expectedAmountToken || typeof expectedUsd === "number")

@@ -5,7 +5,7 @@ import { getContainer } from "@/lib/cosmos";
  */
 export async function checkAndSyncShopifyOrder(receipt: any, nextStatus: string): Promise<any> {
   // 1. Check if status is a paid/settled status
-  const paidStatuses = ["paid", "checkout_success", "tx_mined", "reconciled"];
+  const paidStatuses = ["paid", "paid - ach pending", "ach_pending", "checkout_success", "tx_mined", "reconciled"];
   if (!paidStatuses.includes(String(nextStatus).toLowerCase())) {
     return receipt;
   }

@@ -14,6 +14,7 @@ import {
 import { SUPPORTED_COUNTRIES } from "../constants";
 import { formatPhoneInput, suggestEmailCorrection, sanitizeInternationalPhone, getContrastingTextColor } from "../utils";
 import { AccordionCard } from "../AccordionCard";
+import { AccordionContent } from "../AccordionContent";
 import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step1ContactProps } from "../types";
 import { StripeEmbedContainer } from "../StripeEmbedContainer";
@@ -25,6 +26,7 @@ export function Step1Contact({
   isLocked,
   isLightText = true,
   primaryColor = "#635BFF",
+  motionPosition = 0,
   email,
   setEmail,
   phone,
@@ -102,10 +104,11 @@ export function Step1Contact({
       />
 
       {/* Step 1 Expanded Form */}
-      <form
-        onSubmit={onSubmit}
-        className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 transition-all duration-300 ease-out ${isOpen ? "opacity-100" : "hidden"}`}
-      >
+      <AccordionContent isOpen={isOpen} position={motionPosition}>
+        <form
+          onSubmit={onSubmit}
+          className="p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10"
+        >
         {/* Email Address */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
@@ -316,7 +319,8 @@ export function Step1Contact({
             </button>
           );
         })()}
-      </form>
+        </form>
+      </AccordionContent>
     </AccordionCard>
   );
 }

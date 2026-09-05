@@ -10,6 +10,7 @@ import {
   KeyRound,
 } from "lucide-react";
 import { AccordionCard } from "../AccordionCard";
+import { AccordionContent } from "../AccordionContent";
 import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step3PaymentProps } from "../types";
 import { WalletOwnershipVerificationPanel } from "../WalletOwnershipVerificationPanel";
@@ -21,6 +22,7 @@ export function Step3Payment({
   isLocked,
   isLightText = true,
   primaryColor = "#635BFF",
+  motionPosition = 0,
   headlessStep,
   paymentElement,
   paymentContainerRef,
@@ -82,7 +84,8 @@ export function Step3Payment({
       />
 
       {/* Step 3 Expanded Body */}
-      <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 transition-all duration-300 ease-out ${isOpen ? "opacity-100" : "h-0 opacity-0 overflow-visible pointer-events-none p-0 border-0"}`}>
+      <AccordionContent isOpen={isOpen} position={motionPosition}>
+        <div className="p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10">
         {/* Top Error Alert Banner & Decline Recovery Panel */}
         {activeError && !isWalletOwnershipRequired && (
           <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 animate-in fade-in my-1 space-y-2 text-left">
@@ -198,7 +201,8 @@ export function Step3Payment({
             )}
           </div>
         )}
-      </div>
+        </div>
+      </AccordionContent>
     </AccordionCard>
   );
 }

@@ -88,6 +88,7 @@ export function useAccordionCheckoutState(
   const primaryColor = theme?.primaryColor || "#635BFF";
 
   const [activeStep, setActiveStepState] = useState<number>(1);
+  const [manualStepOverride, setManualStepOverride] = useState<number | null>(null);
   const activeStepRef = useRef<number>(1);
   const stepTransitionHandlerRef = useRef(onAccordionStepTransition);
   const accordionJourneyIdRef = useRef<string>(
@@ -519,6 +520,7 @@ export function useAccordionCheckoutState(
   ) => {
     const fromStep = activeStepRef.current;
     if (fromStep === toStep) return;
+    setManualStepOverride(trigger === "manual" ? toStep : null);
     reportAccordionTransition(fromStep, toStep, reason, trigger);
     setActiveStepState(toStep);
   }, [reportAccordionTransition]);
@@ -819,6 +821,7 @@ export function useAccordionCheckoutState(
       );
     },
     onStepAutoAdvanced: (fromStep, toStep, reason) => {
+      setManualStepOverride(null);
       reportAccordionTransition(
         fromStep,
         toStep as AccordionStepNumber,
@@ -828,6 +831,7 @@ export function useAccordionCheckoutState(
           : "automatic"
       );
     },
+    manualStepOverride,
   });
 
   // Step 1 Submit
@@ -1317,7 +1321,6 @@ export function useAccordionCheckoutState(
       selectedPaymentType,
       paymentConfirmed: effectivePaymentConfirmed,
       onEmailReceipt,
-      onBackToPayment: () => transitionToStep(3, "Customer returned to payment method from fulfillment", "manual"),
     },
   };
 }

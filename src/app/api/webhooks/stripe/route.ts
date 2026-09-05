@@ -4,12 +4,15 @@ import { getBrandKey } from "@/config/brands";
 import { auditEvent } from "@/lib/audit";
 import crypto from "node:crypto";
 import { dispatchReceiptStatusWebhookBestEffort } from "@/lib/webhook-dispatch";
-import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
 import {
-  isStripeFulfillmentCompleteStatus,
+  isProtectedPaymentStatus,
+  shouldIgnoreCanonicalStatusTransition,
+} from "@/lib/receipt-status-policy";
+import {
   isStripePaymentAcceptedStatus,
   normalizeStripeOnrampCheckoutMode,
   resolveStripeAcceptedReceiptStatus,
+  shouldRestoreStripeAchPendingStatus,
 } from "@/lib/stripe-onramp-status";
 import {
   normalizeSettlementFunding,
@@ -17,8 +20,53 @@ import {
   resolveStripeOnrampFunding,
   type SettlementFunding,
 } from "@/lib/payment-split-routing";
+import {
+  isStripeSourceAmountSufficient,
+  resolveStripeSettlementAmount,
+  resolveStripeSourceAmount,
+} from "@/lib/stripe-onramp-amounts";
 
 export const dynamic = 'force-dynamic';
+
+async function patchReceiptFields(
+  container: any,
+  receiptId: string,
+  partitionKey: string,
+  fields: Record<string, unknown>,
+  guard?: (current: any) => boolean
+): Promise<{ resource: any; skipped: boolean }> {
+  const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
+  let latest: any = null;
+
+  // Cosmos limits a patch request to ten operations. Keep each chunk below
+  // that limit and protect it with the ETag from a primary point read so a
+  // concurrent settlement write can never be overwritten by a stale webhook.
+  for (let offset = 0; offset < entries.length; offset += 9) {
+    const chunk = entries.slice(offset, offset + 9);
+    let applied = false;
+    for (let attempt = 0; attempt < 3 && !applied; attempt++) {
+      const { resource: current } = await container.item(receiptId, partitionKey).read();
+      if (!current) throw new Error(`receipt_not_found:${receiptId}`);
+      latest = current;
+      if (guard && !guard(current)) return { resource: current, skipped: true };
+
+      try {
+        const response = await container.item(receiptId, partitionKey).patch(
+          chunk.map(([key, value]) => ({ op: "set", path: `/${key}`, value })),
+          current._etag
+            ? { accessCondition: { type: "IfMatch", condition: current._etag } }
+            : undefined
+        );
+        latest = response.resource || latest;
+        applied = true;
+      } catch (error: any) {
+        if (Number(error?.code || error?.statusCode) !== 412 || attempt === 2) throw error;
+      }
+    }
+  }
+
+  return { resource: latest, skipped: false };
+}
 
 /**
  * POST /api/webhooks/stripe
@@ -245,11 +293,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const brandKey = getBrandKey();
+    const metadata = session?.metadata || {};
+    // Stripe calls a shared webhook host, so the request host is not a reliable
+    // tenant signal. Prefer the brand bound into the signed session metadata.
+    const brandKey = String(metadata?.brandKey || getBrandKey()).trim().toLowerCase();
     // Payment correlation must read from the primary. A replica-lagged receipt
     // can otherwise replay stale status or session bindings.
     const container = await getContainer(undefined, undefined, { profile: "critical" });
-    const metadata = session?.metadata || {};
     const sessionId = session?.id || '';
     const status = session?.status || '';
     const txDetails = session?.transaction_details || {};
@@ -413,93 +463,44 @@ export async function POST(req: NextRequest) {
           );
 
           // SAFEGUARD: Verify amount discrepancy if sourceAmount is available
-          const sourceAmount = Number(txDetails.source_amount || 0);
+          const sourceAmount = resolveStripeSourceAmount(session) || 0;
+          const settlementAmount = resolveStripeSettlementAmount(session);
           if (sourceAmount > 0) {
             r.onrampAmount = sourceAmount;
           }
+          if (settlementAmount) r.settlementAmount = settlementAmount;
           if (typeof r.totalUsd === "number" && r.totalUsd > 0 && sourceAmount > 0) {
-            const minExpected = +(r.totalUsd * 0.95).toFixed(2);
-            if (sourceAmount < minExpected) {
+            if (!isStripeSourceAmountSufficient(sourceAmount, r.totalUsd)) {
               console.warn(`[STRIPE WEBHOOK] Amount discrepancy detected for receipt ${r.id}: charged $${sourceAmount} vs receipt total $${r.totalUsd}. Skipping paid status update.`);
               continue;
             }
           }
 
-          // If onramp fulfillment is complete and receipt is missing transactionHash, check for auto-sweep
+          // The webhook is the authoritative provider-status writer, not a
+          // settlement executor. Keeping transfers in the background worker
+          // (with the delayed Plesk reconciler as backup) prevents one Stripe
+          // event from racing another settlement path for the same receipt.
           let onChainTx = r.transactionHash;
-          if (isStripeFulfillmentCompleteStatus(status) && (!onChainTx || onChainTx === 'ecommerce_pending') && !receiptIsAch) {
-            const customerEmail = r.customerEmail || r.email || metadata.customerEmail || session.customer_information?.email;
-            const targetSplit = resolveSettlementSplitAddress({
-              funding: receiptFunding,
-              isCreditCard: r.isCreditCard === true,
-              splitAddress: r.splitAddress || context?.splitAddressPrimary,
-              splitAddressCredit: r.splitAddressCredit || context?.splitAddressCredit,
-              fallbackAddress: merchantWallet,
-            });
-            // Sweep the Stripe source/deposit amount, never the customer-facing
-            // receipt total (which can include fees that were not deposited).
-            const targetAmount = r.onrampAmount || Number(txDetails.source_amount || 0) || r.totalUsd;
-            const targetBrand = r.brandKey || brandKey || "";
-
-            if (customerEmail && targetSplit && targetAmount > 0) {
-              try {
-                // Free read-only RPC balance check before deciding whether to sweep
-                const { createThirdwebClient, getContract, readContract } = await import("thirdweb");
-                const { base } = await import("thirdweb/chains");
-                const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-
-                const twReadClient = createThirdwebClient({
-                  clientId: process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "",
-                  secretKey: process.env.THIRDWEB_SECRET_KEY
-                });
-
-                const usdcContract = getContract({
-                  client: twReadClient,
-                  chain: base,
-                  address: BASE_USDC_ADDRESS
-                });
-
-                const buyerWalletAddr = r.buyerWallet || txDetails.wallet_address;
-                let balanceUnits = BigInt(0);
-                if (buyerWalletAddr) {
-                  try {
-                    balanceUnits = await readContract({
-                      contract: usdcContract,
-                      method: "function balanceOf(address account) view returns (uint256)",
-                      params: [buyerWalletAddr]
-                    });
-                  } catch {}
-                }
-
-                if (balanceUnits > BigInt(0) || !buyerWalletAddr) {
-                  console.log(`[STRIPE WEBHOOK] Triggering automatic gasless sweep for receipt ${r.id} ($${targetAmount} to ${targetSplit})...`);
-                  const { executeGaslessTransferServer } = await import("@/app/api/stripe/background-poll/route");
-                  const sweepTx = await executeGaslessTransferServer(
-                    customerEmail,
-                    targetSplit,
-                    targetAmount,
-                    targetBrand,
-                    true
-                  );
-                  if (sweepTx) {
-                    onChainTx = sweepTx;
-                    r.transactionHash = sweepTx;
-                    r.transactionTimestamp = Date.now();
-                    console.log(`[STRIPE WEBHOOK] Automatic sweep succeeded for receipt ${r.id}: ${sweepTx}`);
-                  }
-                }
-              } catch (sweepErr) {
-                console.warn(`[STRIPE WEBHOOK] Auto-sweep skipped or failed for ${r.id}:`, sweepErr);
-              }
-            }
-          }
 
           const previousStatus = String(r.status || "pending");
+          const previousStripeStatus = r.stripeSessionStatus || r.checkoutStatus;
           const hasVerifiedSettlementTx = typeof onChainTx === "string" && /^0x[a-f0-9]{64}$/i.test(onChainTx);
           const nextStatus = resolveStripeAcceptedReceiptStatus(status, {
             isAch: receiptIsAch,
             checkoutMode,
           });
+          const mayRestoreAchPending = nextStatus && shouldRestoreStripeAchPendingStatus({
+            currentReceiptStatus: previousStatus,
+            incomingReceiptStatus: nextStatus,
+            stripeStatus: status,
+            currentStripeStatus: previousStripeStatus,
+            hasVerifiedSettlementTx,
+          });
+          const canonicalNextStatus = nextStatus && (
+            !shouldIgnoreCanonicalStatusTransition(previousStatus, nextStatus) || mayRestoreAchPending
+          )
+            ? nextStatus
+            : null;
 
           // In eCommerce mode Stripe's signed fulfillment_processing status is
           // the authoritative paid boundary. Browser-reported progress remains
@@ -518,12 +519,12 @@ export async function POST(req: NextRequest) {
               { status, source: "stripe_webhook", ts: Date.now() },
             ];
           }
-          if (nextStatus) r.status = nextStatus;
+          if (canonicalNextStatus) r.status = canonicalNextStatus;
           if (receiptIsAch) {
             r.detectedCardFunding = "us_bank_account";
             r.isCreditCard = false;
           }
-          if (nextStatus === "paid") {
+          if (canonicalNextStatus) {
             r.ttl = -1;
             if (!receiptIsAch) {
               r.detectedCardFunding = receiptFunding;
@@ -531,14 +532,14 @@ export async function POST(req: NextRequest) {
             }
           }
           r.stripeSessionStatus = status;
-          if (nextStatus && previousStatus !== nextStatus) {
+          if (canonicalNextStatus && previousStatus !== canonicalNextStatus) {
             r.statusHistory = Array.isArray(r.statusHistory)
-              ? [...r.statusHistory, { status: nextStatus, ts: Date.now() }]
-              : [{ status: nextStatus, ts: Date.now() }];
+              ? [...r.statusHistory, { status: canonicalNextStatus, ts: Date.now() }]
+              : [{ status: canonicalNextStatus, ts: Date.now() }];
           }
           r.lastUpdatedAt = Date.now();
 
-          if (!nextStatus) {
+          if (!canonicalNextStatus) {
             // Patch diagnostic fields only. Replacing the whole receipt here
             // could replay a stale pre-paid snapshot over a concurrent paid
             // write from the settlement worker.
@@ -569,23 +570,58 @@ export async function POST(req: NextRequest) {
             }
           } catch {}
 
-          const shouldDeliver = Boolean(nextStatus && finalDoc.webhookUrl && (
-            previousStatus !== nextStatus ||
+          const shouldDeliver = Boolean(canonicalNextStatus && finalDoc.webhookUrl && (
+            previousStatus !== canonicalNextStatus ||
             finalDoc.webhookLastDeliveryOk !== true ||
-            finalDoc.webhookLastStatus !== nextStatus ||
+            finalDoc.webhookLastStatus !== canonicalNextStatus ||
             (hasVerifiedSettlementTx && finalDoc.webhookLastTransactionHash !== onChainTx)
           ));
           if (shouldDeliver) {
-            finalDoc.webhookLastStatus = nextStatus;
+            finalDoc.webhookLastStatus = canonicalNextStatus;
             finalDoc.webhookLastPreviousStatus = previousStatus;
             finalDoc.webhookLastDeliveryOk = false;
             finalDoc.webhookLastAttemptAt = Date.now();
             if (hasVerifiedSettlementTx) finalDoc.webhookLastTransactionHash = onChainTx;
           }
-          await container.items.upsert(finalDoc);
+          const persisted = await patchReceiptFields(
+            container,
+            finalDoc.id,
+            finalDoc.wallet,
+            {
+              status: finalDoc.status,
+              checkoutStatus: finalDoc.checkoutStatus,
+              checkoutMode: finalDoc.checkoutMode,
+              checkoutStatusUpdatedAt: finalDoc.checkoutStatusUpdatedAt,
+              checkoutStatusSource: finalDoc.checkoutStatusSource,
+              checkoutStatusHistory: finalDoc.checkoutStatusHistory,
+              detectedCardFunding: finalDoc.detectedCardFunding,
+              isCreditCard: finalDoc.isCreditCard,
+              ttl: finalDoc.ttl,
+              stripeSessionStatus: finalDoc.stripeSessionStatus,
+              stripeSessionId: finalDoc.stripeSessionId,
+              onrampAmount: finalDoc.onrampAmount,
+              settlementAmount: finalDoc.settlementAmount,
+              statusHistory: finalDoc.statusHistory,
+              lastUpdatedAt: finalDoc.lastUpdatedAt,
+              lineItems: finalDoc.lineItems,
+              totalUsd: finalDoc.totalUsd,
+              customerTotalUsd: finalDoc.customerTotalUsd,
+              webhookLastStatus: finalDoc.webhookLastStatus,
+              webhookLastPreviousStatus: finalDoc.webhookLastPreviousStatus,
+              webhookLastDeliveryOk: finalDoc.webhookLastDeliveryOk,
+              webhookLastAttemptAt: finalDoc.webhookLastAttemptAt,
+              webhookLastTransactionHash: finalDoc.webhookLastTransactionHash,
+            },
+            (current) => !shouldIgnoreCanonicalStatusTransition(current.status, finalDoc.status)
+          );
+          if (persisted.skipped) {
+            console.log(`[STRIPE WEBHOOK] Preserved newer canonical status '${persisted.resource?.status}' for receipt ${r.id}.`);
+            continue;
+          }
+          finalDoc = persisted.resource || finalDoc;
 
-          if (nextStatus && shouldDeliver) {
-            void dispatchReceiptStatusWebhookBestEffort(container, finalDoc, nextStatus, previousStatus, {
+          if (canonicalNextStatus && shouldDeliver) {
+            void dispatchReceiptStatusWebhookBestEffort(container, finalDoc, canonicalNextStatus, previousStatus, {
               transactionHash: hasVerifiedSettlementTx ? onChainTx : undefined,
               merchantWallet,
               stripeSessionId: sessionId,
@@ -594,7 +630,7 @@ export async function POST(req: NextRequest) {
             });
           }
 
-          console.log(`[STRIPE WEBHOOK] Updated receipt ${r.id}; provider='${status}', payment='${nextStatus || previousStatus}' (txHash: ${onChainTx || 'none'})`);
+          console.log(`[STRIPE WEBHOOK] Updated receipt ${r.id}; provider='${status}', payment='${canonicalNextStatus || previousStatus}' (txHash: ${onChainTx || 'none'})`);
         }
       } catch (e) {
         console.error('[STRIPE WEBHOOK] Error updating receipt status on fulfillment:', e);
@@ -645,8 +681,28 @@ export async function POST(req: NextRequest) {
                 r.webhookLastDeliveryOk = false;
                 r.webhookLastAttemptAt = Date.now();
               }
-              await container.items.upsert(r);
-              void dispatchReceiptStatusWebhookBestEffort(container, r, "failed", previousStatus, {
+              const persisted = await patchReceiptFields(
+                container,
+                r.id,
+                r.wallet,
+                {
+                  status: "failed",
+                  stripeSessionStatus: "rejected",
+                  statusHistory: r.statusHistory,
+                  lastUpdatedAt: r.lastUpdatedAt,
+                  webhookLastStatus: r.webhookLastStatus,
+                  webhookLastPreviousStatus: r.webhookLastPreviousStatus,
+                  webhookLastDeliveryOk: r.webhookLastDeliveryOk,
+                  webhookLastAttemptAt: r.webhookLastAttemptAt,
+                },
+                (current) => !isProtectedPaymentStatus(current.status)
+              );
+              if (persisted.skipped) {
+                console.log(`[STRIPE WEBHOOK] Receipt ${r.id} became paid while processing rejection; preserved paid status.`);
+                continue;
+              }
+              const persistedReceipt = persisted.resource || r;
+              void dispatchReceiptStatusWebhookBestEffort(container, persistedReceipt, "failed", previousStatus, {
                 merchantWallet: r.wallet || merchantWallet,
                 stripeSessionId: sessionId,
                 brandKey: r.brandKey || brandKey,

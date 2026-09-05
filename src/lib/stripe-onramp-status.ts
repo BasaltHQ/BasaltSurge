@@ -57,10 +57,9 @@ export function normalizeStripeOnrampCheckoutMode(
 
 /**
  * Resolve the customer/merchant-facing receipt status independently from
- * transfer readiness. In eCommerce mode every Stripe-accepted payment,
- * including ACH, is paid at fulfillment_processing. A full-flow ACH receipt
- * may retain its historical pending-settlement label until fulfillment is
- * complete.
+ * transfer readiness. "paid - ach pending" is a paid/accepted order state;
+ * the suffix preserves the fact that Stripe has not completed ACH fulfillment
+ * and the second-leg settlement must not run yet.
  */
 export function resolveStripeAcceptedReceiptStatus(
   status: unknown,
@@ -68,12 +67,34 @@ export function resolveStripeAcceptedReceiptStatus(
 ): "paid" | "paid - ach pending" | null {
   if (!isStripePaymentAcceptedStatus(status)) return null;
 
-  const checkoutMode = normalizeStripeOnrampCheckoutMode(options.checkoutMode);
-  if (checkoutMode === "ecommerce") return "paid";
   if (options.isAch && !isStripeFulfillmentCompleteStatus(status)) {
     return "paid - ach pending";
   }
   return "paid";
+}
+
+/**
+ * Repair receipts written as plain `paid` by the short-lived eCommerce ACH
+ * regression. Only an authoritative current processing state may make this
+ * correction; completed sessions and receipts with a real settlement hash
+ * remain fully paid and can never be moved backwards by a delayed event.
+ */
+export function shouldRestoreStripeAchPendingStatus(options: {
+  currentReceiptStatus: unknown;
+  incomingReceiptStatus: unknown;
+  stripeStatus: unknown;
+  currentStripeStatus?: unknown;
+  hasVerifiedSettlementTx?: boolean;
+}): boolean {
+  const currentReceiptStatus = normalizeStripeOnrampStatus(options.currentReceiptStatus);
+  const incomingReceiptStatus = normalizeStripeOnrampStatus(options.incomingReceiptStatus);
+  const stripeStatus = normalizeStripeOnrampStatus(options.stripeStatus);
+
+  return currentReceiptStatus === "paid"
+    && incomingReceiptStatus === "paid - ach pending"
+    && stripeStatus === "fulfillment_processing"
+    && !isStripeFulfillmentCompleteStatus(options.currentStripeStatus)
+    && options.hasVerifiedSettlementTx !== true;
 }
 
 /**

@@ -25,6 +25,11 @@ const PROTECTED_PAYMENT_STATUSES = new Set([
   "completed",
 ]);
 
+const PENDING_SETTLEMENT_STATUSES = new Set([
+  "paid - ach pending",
+  "ach_pending",
+]);
+
 const CHECKOUT_TELEMETRY_STATUSES = new Set([
   "link_opened",
   "buyer_logged_in",
@@ -77,6 +82,12 @@ export function shouldIgnoreCanonicalStatusTransition(
   if (!current || current === incoming) return false;
   if (incoming.includes("refund")) return false;
   if (!isProtectedPaymentStatus(current)) return false;
+
+  // Out-of-order provider events must not move a fully paid/settled receipt
+  // back to an ACH-pending label.
+  if (!PENDING_SETTLEMENT_STATUSES.has(current) && PENDING_SETTLEMENT_STATUSES.has(incoming)) {
+    return true;
+  }
 
   return !isProtectedPaymentStatus(incoming);
 }

@@ -23,6 +23,7 @@ export interface StepProgressionGuardProps {
   effectiveError?: string | null;
   onPaymentDeclined?: (reason?: string) => void;
   onStepAutoAdvanced?: (fromStep: number, toStep: number, reason: string) => void;
+  manualStepOverride?: number | null;
 }
 
 /**
@@ -56,6 +57,7 @@ export function useStepProgressionGuard({
   effectiveError,
   onPaymentDeclined,
   onStepAutoAdvanced,
+  manualStepOverride,
 }: StepProgressionGuardProps) {
   const lastLoggedTransitionRef = useRef<string>("");
 
@@ -240,6 +242,11 @@ export function useStepProgressionGuard({
   useEffect(() => {
     if (isPaid || isOrderConfirmed) return;
 
+    // A completed step reopened by the customer is an intentional edit, not a
+    // stalled progression. Keep it open until their next submission. The
+    // payment/fulfillment and KYC safety rules above still take precedence.
+    if (manualStepOverride === activeStep) return;
+
     // Case 0: Link OTP or phone authentication active in Step 1
     if (
       headlessStep === "authenticating" ||
@@ -345,5 +352,6 @@ export function useStepProgressionGuard({
     isOrderConfirmed,
     activeStep,
     setActiveStep,
+    manualStepOverride,
   ]);
 }
