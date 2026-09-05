@@ -70,6 +70,18 @@ import {
   hasAccordionTransition,
   type AccordionStepTransition,
 } from "@/lib/checkout-flow-tracking";
+import {
+  deduplicateAnalyticsReceipts,
+  isAnalyticsFailedReceipt,
+  isAnalyticsPaidReceipt,
+  summarizeAnalyticsKycProfile,
+  type AnalyticsKycProfile,
+} from "@/lib/platform-analytics-metrics";
+import {
+  buildAnalyticsFailureHeatmap,
+  extractAnalyticsFailureReasons,
+  type AnalyticsFailureHeatmap,
+} from "@/lib/platform-analytics-failures";
 
 const SYSTEM_TIMEZONE = "America/Los_Angeles";
 const DYNAMIC_TIMEZONE = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
@@ -194,6 +206,8 @@ interface Stat {
   dedupedTotalFailed?: number;
   trueIntegrationRate?: number;
   trueProcessRate?: number;
+  completionRate?: number;
+  resolvedSuccessRate?: number;
   totalGmv: number;
   totalFees: number;
   feeKnownCount?: number;
@@ -202,6 +216,7 @@ interface Stat {
   aov: number;
   cardTypes: { credit: number; debit: number; bank: number; unknown: number };
   kycLevels?: { none: number; l1: number; l2: number };
+  kycProfile?: AnalyticsKycProfile;
 }
 
 interface FailureReason {
@@ -346,6 +361,8 @@ interface ReceiptInfo {
   quoteSummary?: any;
 }
 
+type FailureHeatmapData = Pick<AnalyticsFailureHeatmap, "topReasons" | "matrix" | "affectedReceiptCount">;
+
 type AnalyticsReportType = "executive" | "ledger" | "brands" | "diagnostics";
 type AnalyticsReportFormat = "pdf" | "xlsx";
 
@@ -410,189 +427,13 @@ const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" | "Unknown" => {
   return "Unknown";
 };
 
-const isSettledStatus = (s?: string | null) => [
-  "paid",
-  "paid - ach pending",
-  "ach_pending",
-  "checkout_success",
-  "confirmed",
-  "tx_mined",
-  "reconciled",
-  "recipient_validated",
-  "receipt_claimed"
-].includes(String(s || "").toLowerCase());
-const isFailedStatus = (s?: string | null) => String(s || "").toLowerCase() === "failed";
+const isFailedStatus = (status?: string | null) => isAnalyticsFailedReceipt(status);
 
-export function deduplicateReceipts<T extends Partial<ReceiptInfo> & Record<string, any>>(receiptList: T[]): {
-  clusters: Array<{
-    id: string;
-    brandKey: string;
-    merchantKey: string;
-    emails: Set<string>;
-    wallets: Set<string>;
-    ips: Set<string>;
-    stripeSessions: Set<string>;
-    receipts: T[];
-    startTime: number;
-    endTime: number;
-    isPaid: boolean;
-    isFailed: boolean;
-    paidReceipt?: T;
-    latestReceipt: T;
-  }>;
-  dedupedTotalCreated: number;
-  dedupedTotalPaid: number;
-  dedupedTotalFailed: number;
-  trueIntegrationRate: number;
-  trueProcessRate: number;
-  clusterSizeMap: Map<string, number>;
-} {
-  if (!receiptList || receiptList.length === 0) {
-    return {
-      clusters: [],
-      dedupedTotalCreated: 0,
-      dedupedTotalPaid: 0,
-      dedupedTotalFailed: 0,
-      trueIntegrationRate: 0,
-      trueProcessRate: 0,
-      clusterSizeMap: new Map()
-    };
-  }
-
-  const sorted = [...receiptList].sort((a, b) => {
-    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-    return timeA - timeB;
-  });
-
-  const clusters: Array<{
-    id: string;
-    brandKey: string;
-    merchantKey: string;
-    emails: Set<string>;
-    wallets: Set<string>;
-    ips: Set<string>;
-    stripeSessions: Set<string>;
-    receipts: T[];
-    startTime: number;
-    endTime: number;
-    isPaid: boolean;
-    isFailed: boolean;
-    paidReceipt?: T;
-    latestReceipt: T;
-  }> = [];
-
-  const SESSION_INACTIVITY_MS = 30 * 60 * 1000; // 30 minutes
-  const MAX_SESSION_MS = 2 * 60 * 60 * 1000; // 2 hours max session span
-
-  for (const r of sorted) {
-    const ts = r.createdAt ? new Date(r.createdAt).getTime() : 0;
-    const bKey = r.brandKey || "basaltsurge";
-    const merchantKey = String(r.wallet || r.shopSlug || "").trim().toLowerCase();
-    
-    let email = String(r.customerEmail || r.stripeEmail || r.email || "").trim().toLowerCase();
-    if (email === "anonymous" || !email.includes("@")) email = "";
-
-    const wallet = String(r.buyerWallet || "").trim().toLowerCase();
-    const ip = String(r.ipAddress || "").trim();
-    const stripeSession = String(r.stripeSessionId || "").trim();
-    const settled = isSettledStatus(r.status);
-    const failed = isFailedStatus(r.status);
-
-    let matchedCluster: typeof clusters[0] | null = null;
-
-    // Search recent active clusters in reverse
-    for (let i = clusters.length - 1; i >= 0; i--) {
-      const c = clusters[i];
-      const timeSinceLast = ts - c.endTime;
-      const sessionDuration = ts - c.startTime;
-
-      if (timeSinceLast > SESSION_INACTIVITY_MS || sessionDuration > MAX_SESSION_MS) {
-        continue;
-      }
-
-      if (c.brandKey !== bKey) continue;
-      if (merchantKey && c.merchantKey && c.merchantKey !== merchantKey) continue;
-
-      let identityMatch = false;
-      if (email && c.emails.has(email)) identityMatch = true;
-      else if (wallet && c.wallets.has(wallet)) identityMatch = true;
-      else if (stripeSession && c.stripeSessions.has(stripeSession)) identityMatch = true;
-      else if (ip && c.ips.has(ip)) identityMatch = true;
-      else if (!c.isPaid && !c.isFailed && timeSinceLast <= 15 * 60 * 1000 && c.receipts.length < 5) {
-        // Anonymous cart revisions within 15m on same merchant/brand
-        identityMatch = true;
-      }
-
-      if (identityMatch) {
-        matchedCluster = c;
-        break;
-      }
-    }
-
-    if (matchedCluster) {
-      matchedCluster.receipts.push(r);
-      matchedCluster.endTime = Math.max(matchedCluster.endTime, ts);
-      matchedCluster.latestReceipt = r;
-      if (email) matchedCluster.emails.add(email);
-      if (wallet) matchedCluster.wallets.add(wallet);
-      if (ip) matchedCluster.ips.add(ip);
-      if (stripeSession) matchedCluster.stripeSessions.add(stripeSession);
-      if (settled) {
-        matchedCluster.isPaid = true;
-        matchedCluster.isFailed = false;
-        matchedCluster.paidReceipt = r;
-      } else if (failed && !matchedCluster.isPaid) {
-        matchedCluster.isFailed = true;
-      }
-    } else {
-      clusters.push({
-        id: `cluster-${r.receiptId || r.id || clusters.length}`,
-        brandKey: bKey,
-        merchantKey,
-        emails: new Set(email ? [email] : []),
-        wallets: new Set(wallet ? [wallet] : []),
-        ips: new Set(ip ? [ip] : []),
-        stripeSessions: new Set(stripeSession ? [stripeSession] : []),
-        receipts: [r],
-        startTime: ts,
-        endTime: ts,
-        isPaid: settled,
-        isFailed: failed && !settled,
-        paidReceipt: settled ? r : undefined,
-        latestReceipt: r
-      });
-    }
-  }
-
-  const clusterSizeMap = new Map<string, number>();
-  for (const c of clusters) {
-    const size = c.receipts.length;
-    for (const r of c.receipts) {
-      const key = r.receiptId || r.id;
-      if (key) clusterSizeMap.set(key, size);
-    }
-  }
-
-  const dedupedTotalCreated = clusters.length;
-  const dedupedTotalPaid = clusters.filter(c => c.isPaid).length;
-  const dedupedTotalFailed = clusters.filter(c => c.isFailed).length;
-  const trueIntegrationRate = dedupedTotalCreated > 0 ? +((dedupedTotalPaid / dedupedTotalCreated) * 100).toFixed(1) : 0;
-  const trueProcessRate = (dedupedTotalPaid + dedupedTotalFailed) > 0 ? +((dedupedTotalPaid / (dedupedTotalPaid + dedupedTotalFailed)) * 100).toFixed(1) : 0;
-
-  return {
-    clusters,
-    dedupedTotalCreated,
-    dedupedTotalPaid,
-    dedupedTotalFailed,
-    trueIntegrationRate,
-    trueProcessRate,
-    clusterSizeMap
-  };
-}
+export const deduplicateReceipts = deduplicateAnalyticsReceipts;
 
 function calculateReceiptStats(receipts: ReceiptInfo[]): Stat {
   const deduped = deduplicateReceipts(receipts);
+  const kycProfile = summarizeAnalyticsKycProfile(deduped.clusters);
   let totalPaid = 0;
   let totalFailed = 0;
   let totalGmv = 0;
@@ -603,7 +444,7 @@ function calculateReceiptStats(receipts: ReceiptInfo[]): Stat {
   const kycLevels = { none: 0, l1: 0, l2: 0 };
 
   receipts.forEach(receipt => {
-    if (isSettledStatus(receipt.status)) {
+    if (isAnalyticsPaidReceipt(receipt)) {
       totalPaid += 1;
       totalGmv += Number(receipt.totalUsd || 0);
       const hasKnownFee = receipt.platformFeeSource
@@ -641,6 +482,8 @@ function calculateReceiptStats(receipts: ReceiptInfo[]): Stat {
     dedupedTotalFailed: deduped.dedupedTotalFailed,
     trueIntegrationRate: deduped.trueIntegrationRate,
     trueProcessRate: deduped.trueProcessRate,
+    completionRate: deduped.completionRate,
+    resolvedSuccessRate: deduped.resolvedSuccessRate,
     totalGmv: +totalGmv.toFixed(2),
     totalFees: +totalFees.toFixed(2),
     feeKnownCount,
@@ -648,7 +491,8 @@ function calculateReceiptStats(receipts: ReceiptInfo[]): Stat {
     feeCoveragePct: totalPaid > 0 ? +((feeKnownCount / totalPaid) * 100).toFixed(1) : 100,
     aov: totalPaid > 0 ? +(totalGmv / totalPaid).toFixed(2) : 0,
     cardTypes,
-    kycLevels
+    kycLevels,
+    kycProfile
   };
 }
 
@@ -1069,6 +913,7 @@ export default function PlatformAnalyticsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<Stat | null>(null);
   const [failureReasons, setFailureReasons] = useState<FailureReason[]>([]);
+  const [failureHeatmap, setFailureHeatmap] = useState<FailureHeatmapData | null>(null);
   const [brandStats, setBrandStats] = useState<BrandStat[]>([]);
   const [recentReceipts, setRecentReceipts] = useState<ReceiptInfo[]>([]);
   const [dailySeries, setDailySeries] = useState<any[]>([]);
@@ -1396,6 +1241,8 @@ export default function PlatformAnalyticsPanel() {
       weekOffset: String(selectedWeekOffset),
       monthOffset: String(selectedMonthOffset),
       brandKey: selectedBrand,
+      statusFilter,
+      kycFilter,
       includeAggregates: includeAggregates ? "true" : "false"
     });
     if (customStartDate) params.set("customStart", customStartDate);
@@ -1407,7 +1254,7 @@ export default function PlatformAnalyticsPanel() {
       params.set("searchMode", searchMode);
     }
     return params;
-  }, [timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, customStartDate, customEndDate, appliedSearch, searchMode]);
+  }, [timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, statusFilter, kycFilter, customStartDate, customEndDate, appliedSearch, searchMode]);
 
   const fetchAnalyticsPage = useCallback(async (
     limit: number,
@@ -1518,6 +1365,7 @@ export default function PlatformAnalyticsPanel() {
       if (generation !== batchGenerationRef.current) return;
       setStats(result.firstData.stats);
       setFailureReasons(result.firstData.failureReasons || []);
+      setFailureHeatmap(result.firstData.failureHeatmap || null);
       setBrandStats(result.firstData.brandStats || []);
       setDailySeries(result.firstData.dailySeries || []);
       setTotalServerMatches(result.totalMatching);
@@ -1552,6 +1400,7 @@ export default function PlatformAnalyticsPanel() {
       const data = await fetchAnalyticsPage(fetchLimit === "all" ? 500 : fetchLimit, 0, controller.signal);
       setStats(data.stats);
       setFailureReasons(data.failureReasons);
+      setFailureHeatmap(data.failureHeatmap || null);
       setBrandStats(data.brandStats);
       setRecentReceipts(data.recentReceipts || []);
       setDailySeries(data.dailySeries || []);
@@ -1763,7 +1612,7 @@ export default function PlatformAnalyticsPanel() {
       const matchesBrand = selectedBrand === "all" || String(r.brandKey || "").toLowerCase() === selectedBrand.toLowerCase();
       const matchesStatus = statusFilter === "all" || String(r.status || "").toLowerCase() === statusFilter.toLowerCase();
 
-      const q = searchQuery.toLowerCase().trim();
+      const q = appliedSearch.toLowerCase().trim();
       const includes = (value?: string | null) => String(value || "").toLowerCase().includes(q);
       let matchesQuery = !q;
       if (q) {
@@ -1786,85 +1635,35 @@ export default function PlatformAnalyticsPanel() {
 
       return matchesBrand && matchesStatus && matchesQuery;
     });
-  }, [recentReceipts, selectedBrand, statusFilter, searchQuery, searchMode]);
+  }, [recentReceipts, selectedBrand, statusFilter, appliedSearch, searchMode]);
 
   // Final filtered receipts (including selected error combo filter)
   const filteredReceipts = useMemo(() => {
     if (!selectedErrorCombo) return baseFilteredReceipts;
     const [reasonA, reasonB] = selectedErrorCombo;
 
-    const getErrorsForReceipt = (rc: any) => {
-      const errs = new Set<string>();
-      if (rc.failureReason) errs.add(rc.failureReason.toLowerCase());
-      if (Array.isArray(rc.customerSessions)) {
-        rc.customerSessions.forEach((s: any) => {
-          if (s.lastError) errs.add(s.lastError.toLowerCase());
-          if (s.status === "failed" && s.error) errs.add(s.error.toLowerCase());
-        });
-      }
-      return Array.from(errs);
-    };
-
     return baseFilteredReceipts.filter(r => {
-      const receiptErrors = getErrorsForReceipt(r);
-      const hasA = receiptErrors.some(e => e.includes(reasonA.toLowerCase()) || reasonA.toLowerCase().includes(e));
-      const hasB = receiptErrors.some(e => e.includes(reasonB.toLowerCase()) || reasonB.toLowerCase().includes(e));
+      const receiptErrors = extractAnalyticsFailureReasons(r).map(reason => reason.toLowerCase());
+      const hasA = receiptErrors.includes(reasonA.toLowerCase());
+      const hasB = receiptErrors.includes(reasonB.toLowerCase());
       return hasA && hasB;
     });
   }, [baseFilteredReceipts, selectedErrorCombo]);
 
-  // Compute co-occurrences of failure reasons inside the same session
+  // Prefer full-query server aggregates; retain a deterministic fallback for
+  // older API responses during rolling deployments.
   const failureCombinations = useMemo(() => {
-    const topReasons = failureReasons.slice(0, 5).map(r => r.reason);
-    const N = topReasons.length;
-    const matrix = Array(N).fill(0).map(() => Array(N).fill(0));
+    if (failureHeatmap) return failureHeatmap;
+    return buildAnalyticsFailureHeatmap(baseFilteredReceipts);
+  }, [failureHeatmap, baseFilteredReceipts]);
 
-    if (N === 0) return { topReasons, matrix };
-
-    baseFilteredReceipts.forEach(r => {
-      if (!isFailedStatus(r.status) && !r.failureReason) return;
-      
-      const reasonsSet = new Set<string>();
-      if (r.failureReason) {
-        reasonsSet.add(r.failureReason);
-      }
-      
-      if (Array.isArray(r.customerSessions)) {
-        r.customerSessions.forEach(s => {
-          if (s.lastError) {
-            reasonsSet.add(s.lastError);
-          }
-          if (s.status === "failed" && s.error) {
-            reasonsSet.add(s.error);
-          }
-        });
-      }
-
-      const matchedIndices: number[] = [];
-      reasonsSet.forEach(reason => {
-        const idx = topReasons.findIndex(tr => 
-          reason.toLowerCase().includes(tr.toLowerCase()) || 
-          tr.toLowerCase().includes(reason.toLowerCase())
-        );
-        if (idx >= 0) matchedIndices.push(idx);
-      });
-
-      const uniqueIndices = Array.from(new Set(matchedIndices));
-
-      for (let i = 0; i < uniqueIndices.length; i++) {
-        for (let j = i; j < uniqueIndices.length; j++) {
-          const idxA = uniqueIndices[i];
-          const idxB = uniqueIndices[j];
-          matrix[idxA][idxB]++;
-          if (idxA !== idxB) {
-            matrix[idxB][idxA]++;
-          }
-        }
-      }
-    });
-
-    return { topReasons, matrix };
-  }, [failureReasons, baseFilteredReceipts]);
+  useEffect(() => {
+    if (!selectedErrorCombo) return;
+    const available = new Set(failureCombinations.topReasons.map(reason => reason.toLowerCase()));
+    if (!available.has(selectedErrorCombo[0].toLowerCase()) || !available.has(selectedErrorCombo[1].toLowerCase())) {
+      setSelectedErrorCombo(null);
+    }
+  }, [failureCombinations, selectedErrorCombo]);
 
   // Filtered & Sorted list for the table rows
   const tableReceipts = useMemo(() => {
@@ -1941,7 +1740,7 @@ export default function PlatformAnalyticsPanel() {
       const receiptsForProfiles = baseFilteredReceipts;
 
       receiptsForProfiles.forEach(r => {
-        if (isSettledStatus(r.status)) {
+        if (isAnalyticsPaidReceipt(r)) {
           totalPaid++;
           totalGmv += r.totalUsd;
           totalFees += r.platformFee || 0;
@@ -1997,11 +1796,14 @@ export default function PlatformAnalyticsPanel() {
         dedupedTotalFailed: dedupResult.dedupedTotalFailed,
         trueIntegrationRate: dedupResult.trueIntegrationRate,
         trueProcessRate: dedupResult.trueProcessRate,
+        completionRate: dedupResult.completionRate,
+        resolvedSuccessRate: dedupResult.resolvedSuccessRate,
         totalGmv: +totalGmv.toFixed(2),
         totalFees: +totalFees.toFixed(2),
         aov: +aov.toFixed(2),
         cardTypes,
-        kycLevels
+        kycLevels,
+        kycProfile: summarizeAnalyticsKycProfile(dedupResult.clusters)
       };
     }
 
@@ -2123,11 +1925,14 @@ export default function PlatformAnalyticsPanel() {
       dedupedTotalFailed,
       trueIntegrationRate: +trueIntegrationRate.toFixed(1),
       trueProcessRate: +trueProcessRate.toFixed(1),
+      completionRate: +trueIntegrationRate.toFixed(1),
+      resolvedSuccessRate: +trueProcessRate.toFixed(1),
       totalGmv: +totalGmv.toFixed(2),
       totalFees: +totalFees.toFixed(2),
       aov: +aov.toFixed(2),
       cardTypes,
-      kycLevels
+      kycLevels,
+      kycProfile: summarizeAnalyticsKycProfile(deduplicateReceipts(receiptsForProfiles).clusters)
     };
   }, [baseFilteredReceipts, dailySeries, timeRange, selectedBrand, searchQuery, statusFilter, kycFilter, customStartDate, customEndDate, selectedWeekOffset, selectedMonthOffset, getWeekRange, getMonthRange]);
 
@@ -2268,7 +2073,9 @@ export default function PlatformAnalyticsPanel() {
 
   const displayStats = useMemo(() => {
     if (!stats) return null;
-    if (hasActiveFilters) {
+    // Current API responses aggregate over the complete server-filtered scope.
+    // Keep the older client calculation only as a compatibility fallback.
+    if (hasActiveFilters && typeof stats.completionRate !== "number") {
       return dynamicStats;
     }
     return stats;
@@ -2277,6 +2084,7 @@ export default function PlatformAnalyticsPanel() {
   // Refined Success Rate Calculations based on selector mode
   const trueIntegrationRate = useMemo(() => {
     if (!displayStats) return 0;
+    if (typeof displayStats.completionRate === "number") return displayStats.completionRate;
     if (typeof displayStats.trueIntegrationRate === "number") return displayStats.trueIntegrationRate;
     const total = displayStats.dedupedTotalCreated ?? displayStats.totalCreated;
     const paid = displayStats.dedupedTotalPaid ?? displayStats.totalPaid;
@@ -2290,8 +2098,12 @@ export default function PlatformAnalyticsPanel() {
 
   const processRate = useMemo(() => {
     if (!displayStats) return 0;
-    const denom = displayStats.totalPaid + displayStats.totalFailed;
-    return denom > 0 ? +((displayStats.totalPaid / denom) * 100).toFixed(1) : 0;
+    if (typeof displayStats.resolvedSuccessRate === "number") return displayStats.resolvedSuccessRate;
+    if (typeof displayStats.trueProcessRate === "number") return displayStats.trueProcessRate;
+    const paid = displayStats.dedupedTotalPaid ?? displayStats.totalPaid;
+    const failed = displayStats.dedupedTotalFailed ?? displayStats.totalFailed;
+    const denom = paid + failed;
+    return denom > 0 ? +((paid / denom) * 100).toFixed(1) : 0;
   }, [displayStats]);
 
   const displayedSuccessRate = useMemo(() => {
@@ -2614,24 +2426,29 @@ export default function PlatformAnalyticsPanel() {
     };
   }, [dailySeries, successRateMode]);
 
-  // Overall status distribution dataset for the DonutChart
+  // Overall status distribution for the complete server-filtered query. The
+  // loaded receipt list is only a fallback during a rolling API deployment.
   const statusPieData = useMemo(() => {
-    let paidCount = 0;
-    let failedCount = 0;
-    let pendingCount = 0;
+    let paidCount = stats?.totalPaid ?? 0;
+    let failedCount = stats?.totalFailed ?? 0;
+    let pendingCount = stats
+      ? Math.max(0, stats.totalCreated - paidCount - failedCount)
+      : 0;
 
-    baseFilteredReceipts.forEach(r => {
-      if (["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)) paidCount++;
-      else if (isFailedStatus(r.status)) failedCount++;
-      else pendingCount++;
-    });
+    if (!stats) {
+      baseFilteredReceipts.forEach(r => {
+        if (isAnalyticsPaidReceipt(r)) paidCount++;
+        else if (isFailedStatus(r.status)) failedCount++;
+        else pendingCount++;
+      });
+    }
 
     return [
       { label: "Successful", value: paidCount },
       { label: "Failed", value: failedCount },
       { label: "Pending/Init", value: pendingCount }
     ];
-  }, [baseFilteredReceipts]);
+  }, [stats, baseFilteredReceipts]);
 
   // Copy to clipboard helper
   const handleCopy = (text: string, key: string) => {
@@ -2771,7 +2588,7 @@ export default function PlatformAnalyticsPanel() {
               }`}
           >
             <div className="flex items-center gap-1.5">
-              <span>Estimated True Rate (Deduped)</span>
+              <span>Checkout Completion (Unique)</span>
               <span
                 role="button"
                 tabIndex={0}
@@ -2804,7 +2621,7 @@ export default function PlatformAnalyticsPanel() {
                 : "text-muted-foreground hover:text-white"
               }`}
           >
-            <span>Integration Rate (All Intents)</span>
+            <span>Receipt Completion (Raw)</span>
             <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full border ${
               successRateMode === "integration" ? "bg-white/20 text-white border-white/30" : "bg-white/10 text-emerald-400 border-white/10"
             }`}>
@@ -2818,7 +2635,7 @@ export default function PlatformAnalyticsPanel() {
                 : "text-muted-foreground hover:text-white"
               }`}
           >
-            <span>Process Rate (Paid / Finished)</span>
+            <span>Resolved Outcome Rate</span>
             <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full border ${
               successRateMode === "process" ? "bg-white/20 text-white border-white/30" : "bg-white/10 text-cyan-400 border-white/10"
             }`}>
@@ -2828,10 +2645,10 @@ export default function PlatformAnalyticsPanel() {
         </div>
         <div className="text-[11.5px] text-muted-foreground max-w-md leading-relaxed">
           {successRateMode === "true_integration"
-            ? "Estimates true conversion by clustering rapid duplicate receipts and cart item revisions before payment into single checkout sessions."
+            ? "Paid unique checkout intents divided by every unique intent, including open, failed, and abandoned checkouts."
             : successRateMode === "integration"
-            ? "Calculates success rate across all raw initialized checkouts (reflects total intents including cart edits & abandonment)."
-            : "Refined metric focusing on submitted payment attempts, filtering out empty/unsubmitted sessions."
+            ? "Paid receipt records divided by all raw receipt records. This intentionally shows the effect of stored revisions."
+            : "Paid unique intents divided only by paid plus failed intents. Open and unresolved checkouts are excluded, so this is not a completion rate."
           }
         </div>
       </div>
@@ -2844,7 +2661,7 @@ export default function PlatformAnalyticsPanel() {
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">
-                  {successRateMode === "true_integration" ? "Est. True Success Rate" : "Success Rate"}
+                  {successRateMode === "true_integration" ? "Checkout Completion" : successRateMode === "process" ? "Resolved Outcome Rate" : "Receipt Completion"}
                 </span>
                 {successRateMode === "true_integration" && (
                   <span className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">
@@ -2873,11 +2690,11 @@ export default function PlatformAnalyticsPanel() {
                 <span>Total:</span>
                 <span className="font-semibold text-white/90">
                   {successRateMode === "true_integration" ? (
-                    `${displayStats.dedupedTotalPaid ?? displayStats.totalPaid} paid / ${displayStats.dedupedTotalCreated ?? displayStats.totalCreated} true intents`
+                    `${displayStats.dedupedTotalPaid ?? displayStats.totalPaid} unique paid / ${displayStats.dedupedTotalCreated ?? displayStats.totalCreated} unique intents`
                   ) : successRateMode === "integration" ? (
                     `${displayStats.totalPaid} paid / ${displayStats.totalCreated} intents`
                   ) : (
-                    `${displayStats.totalPaid} paid / ${displayStats.totalPaid + displayStats.totalFailed} finished`
+                    `${displayStats.dedupedTotalPaid ?? displayStats.totalPaid} paid / ${(displayStats.dedupedTotalPaid ?? displayStats.totalPaid) + (displayStats.dedupedTotalFailed ?? displayStats.totalFailed)} resolved`
                   )}
                 </span>
               </div>
@@ -2938,13 +2755,12 @@ export default function PlatformAnalyticsPanel() {
               const rawList = baseFilteredReceipts;
               const receiptsForProfiles = rawList.filter(r => {
                 if (successRateMode === "process") {
-                  return ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status);
+                  return isAnalyticsPaidReceipt(r);
                 }
                 return true;
               });
 
               const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
-              const kycLevels = { none: 0, l1: 0, l2: 0 };
 
               receiptsForProfiles.forEach(r => {
                 const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase();
@@ -2967,14 +2783,6 @@ export default function PlatformAnalyticsPanel() {
                 else if (funding === "debit") cardTypes.debit++;
                 else cardTypes.unknown++;
 
-                const kyc = getKycLevel(r);
-                if (kyc === "L2") {
-                  kycLevels.l2++;
-                } else if (kyc === "L1") {
-                  kycLevels.l1++;
-                } else {
-                  kycLevels.none++;
-                }
               });
 
               const totalCards = cardTypes.credit + cardTypes.debit + cardTypes.bank;
@@ -2982,10 +2790,9 @@ export default function PlatformAnalyticsPanel() {
               const debitPct = totalCards > 0 ? ((cardTypes.debit / totalCards) * 100).toFixed(1) : "0.0";
               const bankPct = totalCards > 0 ? ((cardTypes.bank / totalCards) * 100).toFixed(1) : "0.0";
 
-              const totalKyc = kycLevels.none + kycLevels.l1 + kycLevels.l2;
-              const nonePct = totalKyc > 0 ? ((kycLevels.none / totalKyc) * 100).toFixed(1) : "0.0";
-              const l1Pct = totalKyc > 0 ? ((kycLevels.l1 / totalKyc) * 100).toFixed(1) : "0.0";
-              const l2Pct = totalKyc > 0 ? ((kycLevels.l2 / totalKyc) * 100).toFixed(1) : "0.0";
+              const fallbackKycProfile = summarizeAnalyticsKycProfile(deduplicateReceipts(receiptsForProfiles).clusters);
+              const kycProfile = displayStats.kycProfile || fallbackKycProfile;
+              const kycPct = (value: number) => kycProfile.total > 0 ? ((value / kycProfile.total) * 100).toFixed(1) : "0.0";
 
               return !isCardFundingFlipped ? (
                 /* FRONT SIDE: Card Funding Profile */
@@ -3036,9 +2843,7 @@ export default function PlatformAnalyticsPanel() {
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
                         <span>Consumer KYC Profile</span>
-                        {successRateMode === "process" && (
-                          <span className="text-[9px] text-emerald-400 font-mono font-semibold bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">PAID ONLY</span>
-                        )}
+                        <span className="text-[9px] text-violet-300 font-mono font-semibold bg-violet-500/10 px-1.5 py-0.5 rounded border border-violet-500/20">UNIQUE INTENTS</span>
                       </span>
                       <button
                         onClick={() => setIsCardFundingFlipped(false)}
@@ -3049,26 +2854,31 @@ export default function PlatformAnalyticsPanel() {
                         <RefreshCw className="w-3 h-3 text-primary" />
                       </button>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 mt-2.5">
-                      <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
-                        <div className="text-[10px] text-muted-foreground font-medium">None (L0)</div>
-                        <div className="text-base font-bold text-white mt-0.5">{kycLevels.none}</div>
-                        <div className="text-[9px] font-mono text-zinc-400 font-medium mt-0.5">{nonePct}%</div>
+                    <div className="grid grid-cols-2 gap-2 mt-2.5">
+                      <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-2 text-center">
+                        <div className="text-[10px] text-violet-300 font-medium">Pre-verified</div>
+                        <div className="text-base font-bold text-violet-200 mt-0.5">{kycProfile.preverified}</div>
+                        <div className="text-[9px] font-mono text-violet-300 font-medium mt-0.5">{kycPct(kycProfile.preverified)}% of intents</div>
                       </div>
                       <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-2 text-center">
-                        <div className="text-[10px] text-emerald-400 font-medium">L1 KYC</div>
-                        <div className="text-base font-bold text-emerald-300 mt-0.5">{kycLevels.l1}</div>
-                        <div className="text-[9px] font-mono text-emerald-400 font-medium mt-0.5">{l1Pct}%</div>
+                        <div className="text-[10px] text-emerald-400 font-medium">Upgraded Here</div>
+                        <div className="text-base font-bold text-emerald-300 mt-0.5">{kycProfile.upgraded}</div>
+                        <div className="text-[9px] font-mono text-emerald-400 font-medium mt-0.5">{kycPct(kycProfile.upgraded)}% of intents</div>
+                      </div>
+                      <div className="bg-emerald-500/[0.06] border border-emerald-500/15 rounded-xl p-2 text-center">
+                        <div className="text-[10px] text-emerald-300 font-medium">Final L1</div>
+                        <div className="text-base font-bold text-emerald-200 mt-0.5">{kycProfile.l1}</div>
+                        <div className="text-[9px] font-mono text-emerald-300 font-medium mt-0.5">{kycPct(kycProfile.l1)}% of intents</div>
                       </div>
                       <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-2 text-center">
-                        <div className="text-[10px] text-cyan-400 font-medium">L2 KYC</div>
-                        <div className="text-base font-bold text-cyan-300 mt-0.5">{kycLevels.l2}</div>
-                        <div className="text-[9px] font-mono text-cyan-400 font-medium mt-0.5">{l2Pct}%</div>
+                        <div className="text-[10px] text-cyan-400 font-medium">Final L2</div>
+                        <div className="text-base font-bold text-cyan-300 mt-0.5">{kycProfile.l2}</div>
+                        <div className="text-[9px] font-mono text-cyan-400 font-medium mt-0.5">{kycPct(kycProfile.l2)}% of intents</div>
                       </div>
                     </div>
                   </div>
                   <div className="mt-2 text-[10px] text-muted-foreground text-center">
-                    Verified demographics & Stripe Radar identity levels {successRateMode === "process" ? "(Paid Transactions)" : "(All Intents)"}
+                    {kycProfile.l0} unverified/L0 · {kycProfile.untracked} legacy untracked · {kycProfile.total} unique intents
                   </div>
                 </div>
               );
@@ -3450,7 +3260,7 @@ export default function PlatformAnalyticsPanel() {
                 <span>Status Distribution</span>
               </h3>
               <p className="text-xs text-muted-foreground">
-                Breakdown of successful, failed, and pending checkouts.
+                Breakdown of all {stats?.totalCreated ?? baseFilteredReceipts.length} checkouts matching the active query.
               </p>
             </div>
 
@@ -3671,6 +3481,9 @@ export default function PlatformAnalyticsPanel() {
                         Filtered
                       </span>
                     )}
+                    <span className="text-[9px] text-white/40 font-mono">
+                      {failureCombinations.affectedReceiptCount} affected checkouts
+                    </span>
                   </div>
                   <button
                     onClick={() => setTfrFlipped(true)}
@@ -4355,7 +4168,7 @@ export default function PlatformAnalyticsPanel() {
               {paginatedReceipts.map(r => {
                 const isFlipped = flippedReceiptIds.has(r.receiptId);
                 const isExpanded = expandedReceiptIds.has(r.receiptId);
-                const isSettled = ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status);
+                const isSettled = isAnalyticsPaidReceipt(r);
 
                 return (
                   <div
@@ -4969,11 +4782,11 @@ export default function PlatformAnalyticsPanel() {
                             </div>
                           </td>
                           <td className="py-3.5 px-3">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${isAnalyticsPaidReceipt(r) ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
                               r.status === "failed" ? "bg-rose-500/15 text-rose-400 border-rose-500/30" :
                                 "bg-amber-500/15 text-amber-400 border-amber-500/30"
                               }`}>
-                              {["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) && <CheckCircle2 className="w-3 h-3" />}
+                              {isAnalyticsPaidReceipt(r) && <CheckCircle2 className="w-3 h-3" />}
                               {r.status === "failed" && <XCircle className="w-3 h-3" />}
                               <span>{r.status}</span>
                             </span>
@@ -5022,7 +4835,7 @@ export default function PlatformAnalyticsPanel() {
                         {isExpanded && (() => {
                           loadSiteConfigForReceipt(r.receiptId, r.wallet || r.merchantWallet, r.brandKey);
                           const siteCfg = fetchedSiteConfigs[r.receiptId] || r.merchantConfig || r.brandConfig || {};
-                          const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined", "recipient_validated", "receipt_claimed"].includes(r.status);
+                          const isSettled = isAnalyticsPaidReceipt(r);
                           const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase().trim();
                           const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
                           const isCrypto = rawFunding === "crypto" || rawFunding === "usdc" || rawFunding === "web3" || rawFunding === "direct_crypto" || (!!r.transactionHash && (!r.stripeSessionId || r.stripeSessionId === "N/A"));
@@ -5191,13 +5004,13 @@ export default function PlatformAnalyticsPanel() {
 
                                             <div className="flex items-center gap-2 self-start sm:self-auto">
                                               <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${
-                                                ["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status)
+                                                isAnalyticsPaidReceipt(r)
                                                   ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
                                                   : r.status === "failed"
                                                   ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
                                                   : "bg-amber-500/15 text-amber-300 border-amber-500/30"
                                               }`}>
-                                                {["paid", "paid - ach pending", "checkout_success", "tx_mined", "reconciled"].includes(r.status) ? "✓ Settled" : r.status}
+                                                {isAnalyticsPaidReceipt(r) ? "✓ Paid / Accepted" : r.status}
                                               </span>
                                             </div>
                                           </div>
@@ -7333,7 +7146,7 @@ export default function PlatformAnalyticsPanel() {
         document.body
       )}
 
-      {/* Estimated True Integration Rate Algorithm Modal */}
+      {/* Unique checkout completion algorithm modal */}
       {isAlgorithmModalOpen && typeof document !== "undefined" && createPortal(
         <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-6 select-text">
           {/* Backdrop */}
@@ -7355,13 +7168,13 @@ export default function PlatformAnalyticsPanel() {
                 </div>
                 <div>
                   <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight flex items-center gap-2">
-                    <span>Estimated True Integration Rate</span>
+                    <span>Unique Checkout Completion Methodology</span>
                     <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase tracking-wider bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                      Algo Spec
+                      Modeled Metric
                     </span>
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    How BasaltSurge clusters rapid checkout revisions to measure true buyer conversion.
+                    How BasaltSurge models checkout intents from receipt records while preserving the raw totals for comparison.
                   </p>
                 </div>
               </div>
@@ -7382,13 +7195,13 @@ export default function PlatformAnalyticsPanel() {
               <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
                 <div className="flex items-center gap-2 font-bold text-white text-xs">
                   <span className="h-2 w-2 rounded-full bg-rose-400" />
-                  <span>The Problem: Cart Revisions & False Abandonment</span>
+                  <span>The Problem: Multiple Records for One Checkout Journey</span>
                 </div>
                 <p className="text-muted-foreground text-[11.5px]">
-                  When shoppers modify cart quantities, apply promo codes, switch tokens, or navigate back and forth during checkout, e-commerce integrations often generate a brand new <code className="text-purple-300 font-mono text-[11px] bg-purple-500/10 px-1 py-0.5 rounded">receiptId</code> with status <code className="text-amber-300 font-mono text-[11px] bg-amber-500/10 px-1 py-0.5 rounded">"pending"</code>.
+                  Cart changes, retries, payment-method changes, and navigation during checkout can generate more than one <code className="text-purple-300 font-mono text-[11px] bg-purple-500/10 px-1 py-0.5 rounded">receiptId</code> for what may be the same buyer journey.
                 </p>
                 <p className="text-muted-foreground text-[11.5px]">
-                  Standard analytics count every single draft receipt in the denominator. A customer who changes their cart 3 times before paying successfully produces 4 receipts (3 abandoned + 1 paid), causing raw conversion rates to drop to <span className="font-semibold text-rose-400">25%</span> despite <span className="font-semibold text-emerald-400">100% true customer conversion</span>.
+                  Raw receipt completion counts every record separately. When consistent identifiers link three drafts and one paid receipt, modeled completion treats them as one paid intent; without sufficient linking evidence, the records deliberately remain separate.
                 </p>
               </div>
 
@@ -7406,7 +7219,7 @@ export default function PlatformAnalyticsPanel() {
                       <span>Temporal Sliding Window</span>
                     </div>
                     <p className="text-[10.5px] text-muted-foreground">
-                      Receipts within <span className="text-white font-semibold">30 minutes</span> of each other (up to a <span className="text-white font-semibold">2-hour maximum session span</span>) are grouped into the same checkout session.
+                      Email or buyer-wallet evidence may link a new record to a not-yet-paid cluster within <span className="text-white font-semibold">30 minutes</span> of activity, up to a <span className="text-white font-semibold">2-hour maximum journey span</span>. Exact identifiers are not limited by this time window.
                     </p>
                   </div>
 
@@ -7416,19 +7229,19 @@ export default function PlatformAnalyticsPanel() {
                       <span>Brand & Merchant Scoping</span>
                     </div>
                     <p className="text-[10.5px] text-muted-foreground">
-                      Only receipts created under the same <span className="text-white font-semibold">brandKey</span> and <span className="text-white font-semibold">merchant container</span> are eligible for clustering.
+                      Stripe-session, payment, transaction, email, and wallet matching is restricted to the same <span className="text-white font-semibold">brandKey</span> and <span className="text-white font-semibold">merchant container</span>. An exact receipt identity remains canonical.
                     </p>
                   </div>
                 </div>
 
                 <div className="space-y-1.5 pt-1">
-                  <div className="font-semibold text-white text-[11px]">5-Point Identity Linkage Hierarchy:</div>
+                  <div className="font-semibold text-white text-[11px]">Evidence-based identity linkage:</div>
                   <ul className="space-y-1 text-[11px] text-muted-foreground list-disc pl-4">
-                    <li><strong className="text-zinc-200">Customer Email:</strong> Matches normalized email address (<code className="font-mono text-[10px] text-purple-300">customerEmail</code> or <code className="font-mono text-[10px] text-purple-300">stripeEmail</code>).</li>
-                    <li><strong className="text-zinc-200">Buyer Wallet:</strong> Matches connected Web3 wallet address (<code className="font-mono text-[10px] text-purple-300">buyerWallet</code>).</li>
-                    <li><strong className="text-zinc-200">Stripe Session ID:</strong> Matches shared onramp checkout session (<code className="font-mono text-[10px] text-purple-300">stripeSessionId</code>).</li>
-                    <li><strong className="text-zinc-200">IP Address:</strong> Correlates rapid device sessions from the same client origin.</li>
-                    <li><strong className="text-zinc-200">Anonymous Cart Edits:</strong> Clusters anonymous attempts on the same container occurring within 15 minutes.</li>
+                    <li><strong className="text-zinc-200">Exact identifiers:</strong> Matching receipt, Stripe-session, payment, or on-chain transaction identifiers take precedence over fallback evidence.</li>
+                    <li><strong className="text-zinc-200">Customer email:</strong> Uses the first populated value in this order: <code className="font-mono text-[10px] text-purple-300">customerEmail</code>, <code className="font-mono text-[10px] text-purple-300">stripeEmail</code>, then legacy <code className="font-mono text-[10px] text-purple-300">email</code>. The selected value must contain <code className="font-mono text-[10px] text-purple-300">@</code> and cannot be <code className="font-mono text-[10px] text-purple-300">anonymous</code>.</li>
+                    <li><strong className="text-zinc-200">Buyer wallet:</strong> Uses the normalized connected Web3 address recorded in <code className="font-mono text-[10px] text-purple-300">buyerWallet</code>.</li>
+                    <li><strong className="text-zinc-200">Fallback conflict guard:</strong> Email or wallet matching is rejected when it conflicts with known customer, session, payment, or transaction evidence.</li>
+                    <li><strong className="text-zinc-200">Anonymous handling:</strong> IP addresses and timing alone never merge receipt records.</li>
                   </ul>
                 </div>
               </div>
@@ -7441,16 +7254,16 @@ export default function PlatformAnalyticsPanel() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10.5px]">
                   <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-0.5">
-                    <div className="font-bold text-emerald-400">1. Paid (Success)</div>
-                    <p className="text-muted-foreground">If <strong className="text-white">any</strong> receipt in the cluster settles as paid or mined, the entire session is marked <span className="text-emerald-400 font-semibold">1 Successful Conversion</span>.</p>
+                    <div className="font-bold text-emerald-400">1. Recognized Paid</div>
+                    <p className="text-muted-foreground">If <strong className="text-white">any</strong> record has a recognized payment-accepted or completion status, the cluster counts as <span className="text-emerald-400 font-semibold">1 Paid Intent</span>. This category can include ACH pending and is not limited to final fund settlement.</p>
                   </div>
                   <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 space-y-0.5">
                     <div className="font-bold text-rose-400">2. Failed</div>
-                    <p className="text-muted-foreground">If an attempt in the cluster failed and none succeeded, the session counts as <span className="text-rose-400 font-semibold">1 Failed Attempt</span>.</p>
+                    <p className="text-muted-foreground">If a record is marked <strong className="text-white">failed</strong> or <strong className="text-white">rejected</strong>, and no record in the cluster is recognized as paid, the cluster counts as <span className="text-rose-400 font-semibold">1 Failed Intent</span>.</p>
                   </div>
                   <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 space-y-0.5">
-                    <div className="font-bold text-amber-400">3. Abandoned</div>
-                    <p className="text-muted-foreground">Multiple unsubmitted draft receipts collapse into <span className="text-amber-400 font-semibold">1 Abandoned Intent</span> without inflating failure counts.</p>
+                    <div className="font-bold text-amber-400">3. Open / Unresolved</div>
+                    <p className="text-muted-foreground">A cluster with neither a recognized paid status nor a failed/rejected status remains <span className="text-amber-400 font-semibold">open or unresolved</span>. The algorithm does not infer abandonment from age alone.</p>
                   </div>
                 </div>
               </div>
@@ -7459,14 +7272,14 @@ export default function PlatformAnalyticsPanel() {
               <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/20 space-y-2">
                 <div className="font-bold text-purple-300 text-xs flex items-center justify-between">
                   <span>Mathematical Formula</span>
-                  <span className="font-mono text-[10px] text-purple-400">EST_TRUE_INTEGRATION_RATE</span>
+                  <span className="font-mono text-[10px] text-purple-400">UNIQUE_CHECKOUT_COMPLETION</span>
                 </div>
                 <div className="p-3 rounded-xl bg-black/60 border border-purple-500/30 font-mono text-center text-xs text-white">
-                  Estimated True Rate = ( Deduped Paid Sessions / Deduped Total Sessions ) × 100
+                  Checkout Completion = ( Unique Paid Intents / All Unique Intents ) × 100
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[10.5px] text-muted-foreground pt-1 gap-1">
-                  <span>Raw Integration: <span className="font-mono text-white">(Total Paid / All Raw Receipts) × 100</span></span>
-                  <span>Process Rate: <span className="font-mono text-white">(Total Paid / (Paid + Failed)) × 100</span></span>
+                  <span>Raw Receipt Completion: <span className="font-mono text-white">(Paid Records / All Raw Records) × 100</span></span>
+                  <span>Resolved Outcome Rate: <span className="font-mono text-white">(Paid Intents / (Paid + Failed Intents)) × 100</span></span>
                 </div>
               </div>
 
@@ -8502,7 +8315,8 @@ interface CustomDonutChartProps {
 }
 
 function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
-  const total = data.reduce((s, d) => s + d.value, 0) || 1;
+  const total = data.reduce((s, d) => s + d.value, 0);
+  const percentageDenominator = total || 1;
 
   // Highly contrasting, clear dashboard indicator colors:
   // Successful (Paid) = Emerald Green
@@ -8516,7 +8330,7 @@ function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
 
   let cumPercent = 0;
   const segments = data.map((d) => {
-    const pct = (d.value / total) * 100;
+    const pct = (d.value / percentageDenominator) * 100;
     const offset = cumPercent;
     cumPercent += pct;
     const color = colorMap[d.label] || "#71717a";

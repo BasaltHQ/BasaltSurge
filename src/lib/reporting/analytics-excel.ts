@@ -4,6 +4,7 @@ import type {
   AnalyticsReceiptItem,
   AnalyticsReportStat
 } from "./analytics-pdf";
+import { isAnalyticsPaidReceipt } from "@/lib/platform-analytics-metrics";
 
 type ReportKind = "executive" | "ledger" | "brands" | "diagnostics";
 
@@ -22,20 +23,6 @@ function text(value: unknown, maxLength = 32000): string {
 
 function reportFilename(stem: string): string {
   return `basaltsurge_${stem}_${new Date().toISOString().replace(/[:.]/g, "-")}.xlsx`;
-}
-
-function isSettledStatus(status: string | undefined): boolean {
-  return [
-    "paid",
-    "paid - ach pending",
-    "ach_pending",
-    "checkout_success",
-    "confirmed",
-    "tx_mined",
-    "reconciled",
-    "recipient_validated",
-    "receipt_claimed"
-  ].includes(String(status || "").toLowerCase());
 }
 
 async function loadXlsx() {
@@ -173,12 +160,12 @@ function summaryRows(stats: AnalyticsReportStat | null): unknown[][] {
     ["Failed records", failed, "records", "Records explicitly marked failed"],
     ["Open / other records", other, "records", "Pending, expired, refunded, or other statuses"],
     ["Settled GMV", stats?.totalGmv || 0, "USD", "Gross value of settled records"],
-    ["Recorded platform fees", stats?.totalFees || 0, "USD", "Excludes records without persisted platform-fee evidence"],
+    ["Platform fee revenue", stats?.totalFees || 0, "USD", "Persisted fee evidence or the contractual 50 BPS minimum"],
     ["Fee-data coverage", (stats?.feeCoveragePct ?? 100) / 100, "ratio", `${stats?.feeKnownCount || 0} settled records with known fee evidence`],
     ["Average order value", stats?.aov || 0, "USD", "Settled GMV / settled records"],
-    ["Raw receipt conversion", (stats?.successRate || 0) / 100, "ratio", "Settled records / all receipt records"],
-    ["Estimated intent conversion", (stats?.trueIntegrationRate || 0) / 100, "ratio", "Settled heuristic clusters / all heuristic clusters"],
-    ["Resolved payment success", (stats?.trueProcessRate || 0) / 100, "ratio", "Settled / (settled + failed) heuristic clusters"]
+    ["Raw receipt completion", (stats?.successRate || 0) / 100, "ratio", "Paid records / all raw receipt records"],
+    ["Checkout completion", (stats?.completionRate ?? stats?.trueIntegrationRate ?? 0) / 100, "ratio", "Unique paid intents / all unique checkout intents"],
+    ["Resolved outcome rate", (stats?.resolvedSuccessRate ?? stats?.trueProcessRate ?? 0) / 100, "ratio", "Unique paid / (unique paid + unique failed); excludes open intents"]
   ];
 }
 
@@ -208,6 +195,19 @@ function fundingRows(stats: AnalyticsReportStat | null): unknown[][] {
     ["Debit card", methods.debit, total ? methods.debit / total : 0],
     ["US bank account / ACH", methods.bank, total ? methods.bank / total : 0],
     ["Crypto / unclassified", methods.unknown, total ? methods.unknown / total : 0]
+  ];
+}
+
+function kycProfileRows(stats: AnalyticsReportStat | null): unknown[][] {
+  const kyc = stats?.kycProfile || { total: 0, preverified: 0, upgraded: 0, l0: 0, l1: 0, l2: 0, untracked: 0 };
+  const row = (label: string, count: number, definition: string) => [label, count, kyc.total ? count / kyc.total : 0, definition];
+  return [
+    row("Pre-verified at checkout start", kyc.preverified, "Initial verified tier was L1 or L2"),
+    row("Upgraded during checkout", kyc.upgraded, "KYC completion was recorded on this checkout"),
+    row("Final L1", kyc.l1, "Highest recorded final verified tier"),
+    row("Final L2", kyc.l2, "Highest recorded final verified tier"),
+    row("Unverified / L0", kyc.l0, "Explicitly unverified or L0"),
+    row("Legacy untracked", kyc.untracked, "No authoritative KYC tier was captured"),
   ];
 }
 
@@ -241,8 +241,8 @@ function receiptRows(receipts: AnalyticsReceiptItem[], timeZone: string): unknow
       receipt.email || "anonymous",
       receipt.status || "unknown",
       Number(receipt.totalUsd || 0),
-      !isSettledStatus(receipt.status) || receipt.platformFeeSource === "unavailable" ? null : Number(receipt.platformFee || 0),
-      isSettledStatus(receipt.status) ? (receipt.platformFeeSource || "legacy_unspecified") : "not_applicable_unsettled",
+      !isAnalyticsPaidReceipt(receipt) || receipt.platformFeeSource === "unavailable" ? null : Number(receipt.platformFee || 0),
+      isAnalyticsPaidReceipt(receipt) ? (receipt.platformFeeSource || "legacy_unspecified") : "not_applicable_unsettled",
       receipt.cardFunding || "unclassified",
       receipt.kycInitialVerifiedLevel || receipt.kycInitialLevel || "Unknown",
       receipt.kycRequiredLevel || "None",
@@ -307,12 +307,13 @@ const STATUS_COLUMNS: SheetColumn[] = [
 
 function definitionRows(): unknown[][] {
   return [
-    ["Raw receipt conversion", "Settled receipt records divided by all receipt records. Revisions are not deduplicated."],
-    ["Estimated intent conversion", "Session-based heuristic that clusters related receipt revisions. It is an estimate, not a stored source-of-truth field."],
-    ["Resolved payment success", "Settled heuristic intents divided by settled plus explicitly failed heuristic intents."],
+    ["Raw receipt completion", "Paid receipt records divided by all receipt records. Revisions are not deduplicated."],
+    ["Checkout completion", "Unique paid checkout intents divided by all unique intents, including open and unresolved checkouts."],
+    ["Resolved outcome rate", "Unique paid intents divided by unique paid plus explicitly failed intents. This deliberately excludes open intents."],
+    ["Intent deduplication", "Uses stable receipt, Stripe session, payment, transaction, and non-conflicting recent email/wallet evidence. IP-only and anonymous proximity never merge intents."],
     ["Settled GMV", "Gross USD value for recognized completion statuses."],
-    ["Recorded platform fees", "Persisted amountPlatformMinor, platform-fee USD, or persisted platform BPS. No default 50 BPS assumption is applied."],
-    ["Fee coverage", "Share of settled records with persisted platform-fee evidence."],
+    ["Platform fee revenue", "Uses persisted amountPlatformMinor, platform-fee USD, or platform BPS when available, with a contractual 50 BPS minimum."],
+    ["Fee basis coverage", "Share of paid records assigned either persisted fee evidence or the contractual floor."],
     ["No recorded failure detail", "The receipt is marked failed but no reason was found in its receipt data, status history, or retained logs."],
     ["Snapshot", "All sheets in a workbook are built from one complete, snapshot-pinned, filtered batch result."]
   ];
@@ -341,7 +342,7 @@ export async function exportAnalyticsXLSX(
     SUMMARY_COLUMNS, summaryRows(stats)
   ));
   const addBrands = () => addSheet(XLSX, workbook, "Partner Performance", buildSheet(
-    XLSX, "Partner Performance", "Volume, conversion, and recorded fee coverage by resolved partner key", scope,
+    XLSX, "Partner Performance", "Volume, conversion, and platform fee basis by resolved partner key", scope,
     BRAND_COLUMNS, brandRows(brands)
   ));
   const addFailures = () => addSheet(XLSX, workbook, "Failure Reasons", buildSheet(
@@ -368,6 +369,11 @@ export async function exportAnalyticsXLSX(
       XLSX, "Settled Funding Mix", "Funding classification for recognized settled records", scope,
       [{ label: "Funding Classification", width: 32 }, { label: "Settled Records", width: 18 }, { label: "Share of Settled", width: 20, format: "0.0%" }],
       fundingRows(stats)
+    ));
+    addSheet(XLSX, workbook, "KYC Lifecycle", buildSheet(
+      XLSX, "KYC Lifecycle", "Pre-verification, checkout upgrades, and final tier by unique checkout intent", scope,
+      [{ label: "KYC Measure", width: 34 }, { label: "Unique Intents", width: 18 }, { label: "Share of Intents", width: 20, format: "0.0%" }, { label: "Definition", width: 72 }],
+      kycProfileRows(stats)
     ));
     addFailures();
     addTransactions();

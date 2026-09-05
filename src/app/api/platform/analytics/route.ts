@@ -3,6 +3,13 @@ import { getContainer } from "@/lib/cosmos";
 import { resolveWalletRole } from "@/lib/authz";
 import { formatYMDInTimeZone, getDayRangeForYmdInTz, zonedTimeToUtcDate } from "@/lib/timezone";
 import { getPlatformAnalyticsFeeData } from "@/lib/platform-analytics-fees";
+import {
+  deduplicateAnalyticsReceipts,
+  isAnalyticsFailedReceipt,
+  isAnalyticsPaidReceipt,
+  summarizeAnalyticsKycProfile,
+} from "@/lib/platform-analytics-metrics";
+import { buildAnalyticsFailureHeatmap } from "@/lib/platform-analytics-failures";
 
 export const dynamic = 'force-dynamic';
 
@@ -63,6 +70,8 @@ export async function GET(req: NextRequest) {
     const customStart = req.nextUrl.searchParams.get("customStart");
     const customEnd = req.nextUrl.searchParams.get("customEnd");
     const brandKey = req.nextUrl.searchParams.get("brandKey");
+    const statusFilter = (req.nextUrl.searchParams.get("statusFilter") || "all").trim().toLowerCase();
+    const kycFilter = (req.nextUrl.searchParams.get("kycFilter") || "all").trim().toUpperCase();
 
     let filterStartIso: string | null = null;
     let filterEndIso: string | null = null;
@@ -134,6 +143,30 @@ export async function GET(req: NextRequest) {
 
       if (brandKey && brandKey !== "all") {
         andClauses.push({ brandKey: { $regex: `^${escapeRegex(brandKey)}$`, $options: "i" } });
+      }
+
+      if (statusFilter !== "all") {
+        andClauses.push({ status: { $regex: `^${escapeRegex(statusFilter)}$`, $options: "i" } });
+      }
+
+      if (["L0", "L1", "L2", "UNKNOWN"].includes(kycFilter)) {
+        const kycFields = ["kycVerifiedLevel", "kycCompletedLevel", "kycFinalLevel", "kycLevel", "kyc"];
+        const tierClauses = (tier: "L0" | "L1" | "L2") => {
+          const aliases = tier === "L0" ? "(?:L0|LEVEL\\s*0|UNVERIFIED)" : `(?:${tier}|LEVEL\\s*${tier.slice(1)})`;
+          return kycFields.map(field => ({ [field]: { $regex: `^${aliases}$`, $options: "i" } }));
+        };
+        const l2Clauses = tierClauses("L2");
+        const l1Clauses = tierClauses("L1");
+        const l0Clauses = tierClauses("L0");
+        if (kycFilter === "L2") {
+          andClauses.push({ $or: l2Clauses });
+        } else if (kycFilter === "L1") {
+          andClauses.push({ $and: [{ $or: l1Clauses }, { $nor: l2Clauses }] });
+        } else if (kycFilter === "L0") {
+          andClauses.push({ $and: [{ $or: l0Clauses }, { $nor: [...l1Clauses, ...l2Clauses] }] });
+        } else {
+          andClauses.push({ $nor: [...l0Clauses, ...l1Clauses, ...l2Clauses] });
+        }
       }
 
       // Targeted search conditions
@@ -271,6 +304,10 @@ export async function GET(req: NextRequest) {
               accordionCurrentStep: 1,
               accordionStepHistory: 1,
               statusHistory: 1,
+              failureReason: 1,
+              "customerSessions.status": 1,
+              "customerSessions.lastError": 1,
+              "customerSessions.error": 1,
               customerEmail: 1,
               stripeEmail: 1,
               email: 1,
@@ -341,6 +378,7 @@ export async function GET(req: NextRequest) {
             checkoutStatusHistory: 1,
             accordionCurrentStep: 1,
             accordionStepHistory: 1,
+            failureReason: 1,
             transactionHash: 1,
             txHash: 1,
             leg2TxHash: 1,
@@ -429,6 +467,23 @@ export async function GET(req: NextRequest) {
       if (brandKey && brandKey !== "all") {
         cosmosWhere += ` AND LOWER(c.brandKey) = '${brandKey.toLowerCase().replace(/'/g, "")}'`;
       }
+      if (statusFilter !== "all") {
+        cosmosWhere += ` AND LOWER(c.status) = '${statusFilter.replace(/'/g, "")}'`;
+      }
+      if (["L0", "L1", "L2", "UNKNOWN"].includes(kycFilter)) {
+        const kycFields = ["kycVerifiedLevel", "kycCompletedLevel", "kycFinalLevel", "kycLevel", "kyc"];
+        const tierCondition = (tier: "L0" | "L1" | "L2") => {
+          const aliases = tier === "L0" ? ["l0", "level 0", "level0", "unverified"] : [tier.toLowerCase(), `level ${tier.slice(1)}`, `level${tier.slice(1)}`];
+          return `(${kycFields.flatMap(field => aliases.map(alias => `(IS_DEFINED(c.${field}) AND LOWER(c.${field}) = '${alias}')`)).join(" OR ")})`;
+        };
+        const l0Condition = tierCondition("L0");
+        const l1Condition = tierCondition("L1");
+        const l2Condition = tierCondition("L2");
+        if (kycFilter === "L2") cosmosWhere += ` AND ${l2Condition}`;
+        else if (kycFilter === "L1") cosmosWhere += ` AND ${l1Condition} AND NOT ${l2Condition}`;
+        else if (kycFilter === "L0") cosmosWhere += ` AND ${l0Condition} AND NOT ${l1Condition} AND NOT ${l2Condition}`;
+        else cosmosWhere += ` AND NOT ${l0Condition} AND NOT ${l1Condition} AND NOT ${l2Condition}`;
+      }
       if (rawReceiptId || (searchMode === "receiptId" && rawSearch)) {
         const escaped = (rawReceiptId || rawSearch).toLowerCase().replace(/'/g, "");
         cosmosWhere += ` AND (CONTAINS(LOWER(c.receiptId), '${escaped}') OR CONTAINS(LOWER(c.id), '${escaped}'))`;
@@ -497,10 +552,12 @@ export async function GET(req: NextRequest) {
     }> = {};
 
     const cardTypeMap = { credit: 0, debit: 0, bank: 0, unknown: 0 };
-    const failureReasonCounts: Record<string, number> = {};
-
     // Helper to extract decline or error reasons from status history
     const getFailureReason = (receipt: any, rLogs: any[]) => {
+      if (receipt.failureReason) {
+        return String(receipt.failureReason).trim() || "No recorded failure detail";
+      }
+
       // Check logs first
       const errorLog = rLogs.find(l => l.level === "error");
       if (errorLog) {
@@ -669,151 +726,18 @@ export async function GET(req: NextRequest) {
         .join(" ") || "Unknown";
     };
 
-    const isSettledStatus = (s: string) => [
-      "paid",
-      "paid - ach pending",
-      "ach_pending",
-      "checkout_success",
-      "confirmed",
-      "tx_mined",
-      "reconciled",
-      "recipient_validated",
-      "receipt_claimed"
-    ].includes(String(s || "").toLowerCase());
-    const isFailedStatus = (s: string) => String(s || "").toLowerCase() === "failed";
-
-    // Deduplication algorithm: cluster raw receipts into single checkout intent sessions
-    const deduplicateReceiptList = (receiptList: any[]) => {
-      if (!receiptList || receiptList.length === 0) {
-        return {
-          clusters: [],
-          dedupedTotalCreated: 0,
-          dedupedTotalPaid: 0,
-          dedupedTotalFailed: 0,
-          trueIntegrationRate: 0,
-          trueProcessRate: 0
-        };
-      }
-
-      const sorted = [...receiptList].sort((a, b) => {
-        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return timeA - timeB;
-      });
-
-      const clusters: Array<{
-        id: string;
-        brandKey: string;
-        merchantKey: string;
-        emails: Set<string>;
-        wallets: Set<string>;
-        ips: Set<string>;
-        stripeSessions: Set<string>;
-        receipts: any[];
-        startTime: number;
-        endTime: number;
-        isPaid: boolean;
-        isFailed: boolean;
-      }> = [];
-
-      const SESSION_INACTIVITY_MS = 30 * 60 * 1000; // 30 minutes
-      const MAX_SESSION_MS = 2 * 60 * 60 * 1000; // 2 hours max session span
-
-      for (const r of sorted) {
-        const ts = r.createdAt ? new Date(r.createdAt).getTime() : 0;
-        const bKey = getReceiptBrandKey(r);
-        const merchantKey = String(r.wallet || r.shopSlug || "").trim().toLowerCase();
-        
-        let email = String(r.customerEmail || r.stripeEmail || r.email || "").trim().toLowerCase();
-        if (email === "anonymous" || !email.includes("@")) email = "";
-
-        const wallet = String(r.buyerWallet || "").trim().toLowerCase();
-        const ip = String(r.ipAddress || "").trim();
-        const stripeSession = String(r.stripeSessionId || "").trim();
-        const settled = isSettledStatus(r.status);
-        const failed = isFailedStatus(r.status);
-
-        let matchedCluster: typeof clusters[0] | null = null;
-
-        // Search recent active clusters in reverse (limit search window to recent 80 clusters or active session span)
-        const minCheckIdx = Math.max(0, clusters.length - 80);
-        for (let i = clusters.length - 1; i >= minCheckIdx; i--) {
-          const c = clusters[i];
-          const timeSinceLast = ts - c.endTime;
-          const sessionDuration = ts - c.startTime;
-
-          if (timeSinceLast > SESSION_INACTIVITY_MS || sessionDuration > MAX_SESSION_MS) {
-            continue;
-          }
-
-          if (c.brandKey !== bKey) continue;
-          if (merchantKey && c.merchantKey && c.merchantKey !== merchantKey) continue;
-
-          let identityMatch = false;
-          if (email && c.emails.has(email)) identityMatch = true;
-          else if (wallet && c.wallets.has(wallet)) identityMatch = true;
-          else if (stripeSession && c.stripeSessions.has(stripeSession)) identityMatch = true;
-          else if (ip && c.ips.has(ip)) identityMatch = true;
-          else if (!c.isPaid && !c.isFailed && timeSinceLast <= 15 * 60 * 1000 && c.receipts.length < 5) {
-            // Anonymous cart adjustments within 15m on same merchant/brand
-            identityMatch = true;
-          }
-
-          if (identityMatch) {
-            matchedCluster = c;
-            break;
-          }
-        }
-
-        if (matchedCluster) {
-          matchedCluster.receipts.push(r);
-          matchedCluster.endTime = Math.max(matchedCluster.endTime, ts);
-          if (email) matchedCluster.emails.add(email);
-          if (wallet) matchedCluster.wallets.add(wallet);
-          if (ip) matchedCluster.ips.add(ip);
-          if (stripeSession) matchedCluster.stripeSessions.add(stripeSession);
-          if (settled) {
-            matchedCluster.isPaid = true;
-            matchedCluster.isFailed = false;
-          } else if (failed && !matchedCluster.isPaid) {
-            matchedCluster.isFailed = true;
-          }
-        } else {
-          clusters.push({
-            id: `cluster-${r.receiptId || r.id || clusters.length}`,
-            brandKey: bKey,
-            merchantKey,
-            emails: new Set(email ? [email] : []),
-            wallets: new Set(wallet ? [wallet] : []),
-            ips: new Set(ip ? [ip] : []),
-            stripeSessions: new Set(stripeSession ? [stripeSession] : []),
-            receipts: [r],
-            startTime: ts,
-            endTime: ts,
-            isPaid: settled,
-            isFailed: failed && !settled
-          });
-        }
-      }
-
-      const dedupedTotalCreated = clusters.length;
-      const dedupedTotalPaid = clusters.filter(c => c.isPaid).length;
-      const dedupedTotalFailed = clusters.filter(c => c.isFailed).length;
-      const trueIntegrationRate = dedupedTotalCreated > 0 ? +((dedupedTotalPaid / dedupedTotalCreated) * 100).toFixed(1) : 0;
-      const trueProcessRate = (dedupedTotalPaid + dedupedTotalFailed) > 0 ? +((dedupedTotalPaid / (dedupedTotalPaid + dedupedTotalFailed)) * 100).toFixed(1) : 0;
-
-      return {
-        clusters,
-        dedupedTotalCreated,
-        dedupedTotalPaid,
-        dedupedTotalFailed,
-        trueIntegrationRate,
-        trueProcessRate
-      };
-    };
+    const isFailedStatus = (status: string) => isAnalyticsFailedReceipt(status);
+    const deduplicateReceiptList = (receiptList: any[]) => deduplicateAnalyticsReceipts(
+      receiptList.map(receipt => ({
+        ...receipt,
+        brandKey: getReceiptBrandKey(receipt),
+        merchantWallet: receipt.merchantWallet || receipt.wallet || receipt.shopSlug || null,
+      }))
+    );
 
     // Calculate all-time session deduplication metrics
     const allTimeDedup = deduplicateReceiptList(allReceiptsLight);
+    const kycProfile = summarizeAnalyticsKycProfile(allTimeDedup.clusters);
 
     // Aggregate metrics over all historical lightweight records
     for (const r of allReceiptsLight) {
@@ -837,19 +761,14 @@ export async function GET(req: NextRequest) {
       }
       brandMap[bKey].total++;
 
-      if (isSettledStatus(status)) {
+      if (isAnalyticsPaidReceipt(r)) {
         totalPaid++;
         const feeData = getReceiptFeeData(r);
         const feeUsd = feeData.amount;
         totalGmv += Number(r.totalUsd || 0);
         totalFees += feeUsd;
-        if (feeData.source === "unavailable") {
-          feeUnknownCount++;
-          brandMap[bKey].feeUnknownCount++;
-        } else {
-          feeKnownCount++;
-          brandMap[bKey].feeKnownCount++;
-        }
+        feeKnownCount++;
+        brandMap[bKey].feeKnownCount++;
         
         brandMap[bKey].paid++;
         brandMap[bKey].gmv += Number(r.totalUsd || 0);
@@ -864,12 +783,12 @@ export async function GET(req: NextRequest) {
         totalFailed++;
         brandMap[bKey].failed++;
         
-        const rId = r.receiptId || r.id;
-        const rLogs = logsByReceipt[rId] || [];
-        const reason = getFailureReason(r, rLogs);
-        failureReasonCounts[reason] = (failureReasonCounts[reason] || 0) + 1;
       }
     }
+
+    // The heatmap and reason list are calculated from every record matching the
+    // exact server query, rather than from the first browser-visible page.
+    const failureAnalytics = buildAnalyticsFailureHeatmap(allReceiptsLight);
 
     // Process detailed data only for the requested limit/batch of transactions
     const processedReceipts = receipts.map((r: any) => {
@@ -1021,7 +940,7 @@ export async function GET(req: NextRequest) {
       const status = r.status || "pending";
       g.allTotal++;
       
-      const isPaid = isSettledStatus(status);
+      const isPaid = isAnalyticsPaidReceipt(r);
       const isFailed = isFailedStatus(status);
       const paymentGmv = isPaid ? Number(r.totalUsd || 0) : 0;
       const paymentFees = isPaid ? getReceiptFeeUsd(r) : 0;
@@ -1093,17 +1012,23 @@ export async function GET(req: NextRequest) {
         dedupedTotalFailed: allTimeDedup.dedupedTotalFailed,
         trueIntegrationRate: allTimeDedup.trueIntegrationRate,
         trueProcessRate: allTimeDedup.trueProcessRate,
+        completionRate: allTimeDedup.completionRate,
+        resolvedSuccessRate: allTimeDedup.resolvedSuccessRate,
         totalGmv: +totalGmv.toFixed(2),
         totalFees: +totalFees.toFixed(2),
         feeKnownCount,
         feeUnknownCount,
         feeCoveragePct: totalPaid > 0 ? +((feeKnownCount / totalPaid) * 100).toFixed(1) : 100,
         aov: +aov.toFixed(2),
-        cardTypes: cardTypeMap
+        cardTypes: cardTypeMap,
+        kycProfile
       },
-      failureReasons: Object.entries(failureReasonCounts)
-        .map(([reason, count]) => ({ reason, count }))
-        .sort((a, b) => b.count - a.count),
+      failureReasons: failureAnalytics.reasonCounts,
+      failureHeatmap: {
+        topReasons: failureAnalytics.topReasons,
+        matrix: failureAnalytics.matrix,
+        affectedReceiptCount: failureAnalytics.affectedReceiptCount,
+      },
       brandStats: Object.values(brandMap)
         .map(b => ({
           ...b,

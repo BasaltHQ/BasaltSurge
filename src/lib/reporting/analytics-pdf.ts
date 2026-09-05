@@ -1,5 +1,6 @@
 // BasaltSurge analytics PDF reports. Heavy PDF libraries are loaded only when an
 // administrator requests an export so the analytics panel stays lightweight.
+import { isAnalyticsPaidReceipt, type AnalyticsKycProfile } from "@/lib/platform-analytics-metrics";
 
 export interface AnalyticsReportStat {
   totalCreated: number;
@@ -11,6 +12,8 @@ export interface AnalyticsReportStat {
   dedupedTotalFailed?: number;
   trueIntegrationRate?: number;
   trueProcessRate?: number;
+  completionRate?: number;
+  resolvedSuccessRate?: number;
   totalGmv: number;
   totalFees: number;
   feeKnownCount?: number;
@@ -19,6 +22,7 @@ export interface AnalyticsReportStat {
   aov: number;
   cardTypes: { credit: number; debit: number; bank: number; unknown: number };
   kycLevels?: { none: number; l1: number; l2: number };
+  kycProfile?: AnalyticsKycProfile;
 }
 
 export interface AnalyticsBrandStat {
@@ -74,7 +78,7 @@ export interface AnalyticsReceiptItem {
   kycIdentifiersSatisfied?: boolean;
   kycAttestationAccepted?: boolean;
   platformFee?: number;
-  platformFeeSource?: "recorded_minor" | "recorded_usd" | "recorded_bps" | "unavailable";
+  platformFeeSource?: "recorded_minor" | "recorded_usd" | "recorded_bps" | "minimum_50bps" | "unavailable";
   failureReason?: string | null;
   lineItems?: Array<{ label?: string; priceUsd?: number; qty?: number; quantity?: number }>;
 }
@@ -123,20 +127,6 @@ function formatDate(value: string | undefined, timeZone: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return date.toLocaleString("en-US", { dateStyle: "short", timeStyle: "short", timeZone });
-}
-
-function isSettledStatus(status: string | undefined): boolean {
-  return [
-    "paid",
-    "paid - ach pending",
-    "ach_pending",
-    "checkout_success",
-    "confirmed",
-    "tx_mined",
-    "reconciled",
-    "recipient_validated",
-    "receipt_claimed"
-  ].includes(String(status || "").toLowerCase());
 }
 
 function reportFilename(stem: string): string {
@@ -394,11 +384,11 @@ export async function exportExecutiveSummaryPDF(
   y = drawSectionTitle(doc, "1", "Executive scorecard", y);
   y = drawKpiGrid(doc, y, [
     { label: "Settled GMV", value: currency(stats?.totalGmv), note: `${quality.paid.toLocaleString()} settled records`, color: COLORS.emerald },
-    { label: "Recorded platform fees", value: currency(stats?.totalFees), note: `${percent(quality.feeCoverage)} fee-data coverage`, color: COLORS.violet },
+    { label: "Platform fee revenue", value: currency(stats?.totalFees), note: "Persisted evidence or 50 BPS contractual floor", color: COLORS.violet },
     { label: "Average order value", value: currency(stats?.aov), note: "Settled GMV / settled records", color: COLORS.blue },
-    { label: "Raw receipt conversion", value: percent(stats?.successRate), note: "Settled / all receipt records", color: COLORS.blue },
-    { label: "Estimated intent conversion", value: percent(stats?.trueIntegrationRate), note: "Heuristic session clustering", color: COLORS.violet },
-    { label: "Resolved payment success", value: percent(stats?.trueProcessRate), note: "Settled / (settled + failed)", color: COLORS.emerald }
+    { label: "Raw receipt completion", value: percent(stats?.successRate), note: "Paid records / all raw records", color: COLORS.blue },
+    { label: "Checkout completion", value: percent(stats?.completionRate ?? stats?.trueIntegrationRate), note: "Unique paid / all unique intents", color: COLORS.violet },
+    { label: "Resolved outcome rate", value: percent(stats?.resolvedSuccessRate ?? stats?.trueProcessRate), note: "Excludes open and unresolved", color: COLORS.emerald }
   ], "portrait");
 
   y = drawSectionTitle(doc, "2", "Volume reconciliation", y + 1, COLORS.violet);
@@ -423,9 +413,9 @@ export async function exportExecutiveSummaryPDF(
     head: [["Control", "Result", "Interpretation"]],
     body: sanitizeRows([
       ["Status reconciliation", quality.created === quality.paid + quality.failed + quality.unresolved ? "PASS" : "REVIEW", `${quality.paid} settled + ${quality.failed} failed + ${quality.unresolved} other = ${quality.created}`],
-      ["Recorded fee coverage", percent(quality.feeCoverage), "Fee total excludes records without persisted platform-fee evidence"],
+      ["Fee basis coverage", percent(quality.feeCoverage), "Every paid record uses persisted fee evidence or the contractual 50 BPS floor"],
       ["Failure-detail coverage", percent(quality.failureDetailCoverage), `${quality.missingFailureDetail.toLocaleString()} failed records have no stored reason`],
-      ["Intent metric", "ESTIMATED", "Clusters related receipt revisions; raw receipt counts remain authoritative"]
+      ["Intent metric", "EVIDENCE-BASED", "Stable receipt, session, payment, transaction, email, and wallet evidence; never IP-only"]
     ]),
     columnStyles: { 1: { halign: "center", fontStyle: "bold", cellWidth: 31 } }
   });
@@ -447,7 +437,7 @@ export async function exportExecutiveSummaryPDF(
   autoTable(doc, {
     ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
     startY: y,
-    head: [["Partner", "Key", "Raw", "Est. intents", "Settled", "GMV", "Recorded fees", "Fee cov.", "Est. conv."]],
+    head: [["Partner", "Key", "Raw", "Est. intents", "Settled", "GMV", "Platform fees", "Fee basis", "Est. conv."]],
     body: sanitizeRows(brandRows.length ? brandRows : [["No partner data", "-", "0", "0", "0", "$0.00", "$0.00", "100.0%", "0.0%"]]),
     styles: { fontSize: 6.5, cellPadding: 1.65, textColor: COLORS.slate },
     headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 6.4, cellPadding: 1.7 },
@@ -481,7 +471,33 @@ export async function exportExecutiveSummaryPDF(
   });
   y = (doc as any).lastAutoTable.finalY + 8;
 
-  y = drawSectionTitle(doc, "6", "Complete recorded failure summary", y, COLORS.rose);
+  if (y > 220) {
+    doc.addPage();
+    y = drawHeader(doc, title, "KYC lifecycle and failure detail", filterContext, "portrait", true);
+  }
+  y = drawSectionTitle(doc, "6", "KYC lifecycle by unique checkout intent", y, COLORS.violet);
+  const kyc = stats?.kycProfile || { total: 0, preverified: 0, upgraded: 0, l0: 0, l1: 0, l2: 0, untracked: 0 };
+  autoTable(doc, {
+    ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
+    startY: y,
+    head: [["KYC measure", "Unique intents", "Share of unique intents", "Meaning"]],
+    body: sanitizeRows([
+      ["Pre-verified at checkout start", kyc.preverified.toLocaleString(), kyc.total ? percent((kyc.preverified / kyc.total) * 100) : "0.0%", "Initial verified tier was L1 or L2"],
+      ["Upgraded during checkout", kyc.upgraded.toLocaleString(), kyc.total ? percent((kyc.upgraded / kyc.total) * 100) : "0.0%", "KYC completion was recorded on this checkout"],
+      ["Final L1", kyc.l1.toLocaleString(), kyc.total ? percent((kyc.l1 / kyc.total) * 100) : "0.0%", "Highest recorded final verified tier"],
+      ["Final L2", kyc.l2.toLocaleString(), kyc.total ? percent((kyc.l2 / kyc.total) * 100) : "0.0%", "Highest recorded final verified tier"],
+      ["Unverified / L0", kyc.l0.toLocaleString(), kyc.total ? percent((kyc.l0 / kyc.total) * 100) : "0.0%", "Explicitly unverified or L0"],
+      ["Legacy untracked", kyc.untracked.toLocaleString(), kyc.total ? percent((kyc.untracked / kyc.total) * 100) : "0.0%", "No authoritative KYC tier was captured"]
+    ]),
+    columnStyles: { 1: { halign: "right", fontStyle: "bold" }, 2: { halign: "right" } }
+  });
+  y = (doc as any).lastAutoTable.finalY + 8;
+
+  if (y > 230) {
+    doc.addPage();
+    y = drawHeader(doc, title, "Failure detail", filterContext, "portrait", true);
+  }
+  y = drawSectionTitle(doc, "7", "Complete recorded failure summary", y, COLORS.rose);
   const failureRows = failureReasons.map((reason, index) => [
     index + 1,
     reason.reason,
@@ -523,7 +539,7 @@ export async function exportTransactionLedgerPDF(
     }
     const rows = source.slice(start, start + chunkSize).map(receipt => {
       if (!receipt) return ["No matching transactions", "", "", "", "", "", "", "", "", "", "", "", ""];
-      const fee = !isSettledStatus(receipt.status) || receipt.platformFeeSource === "unavailable"
+      const fee = !isAnalyticsPaidReceipt(receipt) || receipt.platformFeeSource === "unavailable"
         ? "N/A"
         : currency(receipt.platformFee);
       const tx = receipt.transactionHash ? `${receipt.transactionHash.slice(0, 9)}...${receipt.transactionHash.slice(-6)}` : "-";
@@ -536,7 +552,7 @@ export async function exportTransactionLedgerPDF(
         receipt.email || "anonymous",
         currency(receipt.totalUsd),
         fee,
-        isSettledStatus(receipt.status) ? (receipt.platformFeeSource || "legacy") : "not applicable",
+        isAnalyticsPaidReceipt(receipt) ? (receipt.platformFeeSource || "legacy") : "not applicable",
         String(receipt.status || "unknown").toUpperCase(),
         receipt.cardFunding || "unclassified",
         `${receipt.kycInitialVerifiedLevel || receipt.kycInitialLevel || "Unknown"} -> ${receipt.kycCompletedLevel || receipt.kycVerifiedLevel || receipt.kycFinalLevel || receipt.kycLevel || "Unknown"}`,
@@ -581,8 +597,8 @@ export async function exportBrandFinancialPDF(
   y = drawSectionTitle(doc, "1", "Financial overview", y);
   y = drawKpiGrid(doc, y, [
     { label: "Settled GMV", value: currency(stats?.totalGmv), note: "Gross value of recognized settled records", color: COLORS.emerald },
-    { label: "Recorded platform fees", value: currency(stats?.totalFees), note: "No default fee assumptions applied", color: COLORS.violet },
-    { label: "Fee data coverage", value: percent(quality.feeCoverage), note: `${stats?.feeKnownCount || 0} of ${quality.paid} settled records`, color: quality.feeCoverage < 100 ? COLORS.amber : COLORS.emerald }
+    { label: "Platform fee revenue", value: currency(stats?.totalFees), note: "Includes the contractual 50 BPS minimum", color: COLORS.violet },
+    { label: "Fee basis coverage", value: percent(quality.feeCoverage), note: `${stats?.feeKnownCount || 0} of ${quality.paid} paid records`, color: quality.feeCoverage < 100 ? COLORS.amber : COLORS.emerald }
   ], "landscape");
 
   y = drawSectionTitle(doc, "2", "Partner reconciliation matrix", y + 1, COLORS.violet);
@@ -605,7 +621,7 @@ export async function exportBrandFinancialPDF(
   autoTable(doc, {
     ...standardTableOptions(doc, title, subtitle, scope, "landscape"),
     startY: y,
-    head: [["Partner", "Key", "Raw", "Est. intents", "Settled", "Failed", "Other", "Raw conv.", "Est. conv.", "GMV", "Recorded fees", "Fee cov.", "Effective rate"]],
+    head: [["Partner", "Key", "Raw", "Est. intents", "Settled", "Failed", "Other", "Raw conv.", "Est. conv.", "GMV", "Platform fees", "Fee basis", "Effective rate"]],
     body: sanitizeRows(rows.length ? rows : [["No partner data", "-", "0", "0", "0", "0", "0", "0.0%", "0.0%", "$0.00", "$0.00", "100.0%", "N/A"]]),
     styles: { fontSize: 6.4, cellPadding: 1.7, textColor: COLORS.slate },
     headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 6.3, cellPadding: 1.7 },
@@ -627,7 +643,7 @@ export async function exportBrandFinancialPDF(
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7);
   doc.setTextColor(124, 45, 18);
-  doc.text("Recorded fees include only persisted fee amounts or persisted platform BPS. Effective rate is suppressed when fee coverage is incomplete.", 17, noteY + 6.8);
+  doc.text("Platform fees use persisted fee evidence when available and never less than the contractual 50 BPS floor.", 17, noteY + 6.8);
 
   drawFooters(doc);
   downloadPdf(doc, reportFilename("partner_financials"));

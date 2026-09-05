@@ -21,6 +21,7 @@ import {
   appendAccordionStepTransition,
   normalizeAccordionStepTransition,
 } from "@/lib/checkout-flow-tracking";
+import { resolvePersistedClientIp } from "@/lib/request-client-ip";
 
 function hasValidInternalStatusSecret(req: NextRequest): boolean {
   const expected = getReceiptStatusInternalSecret();
@@ -173,7 +174,7 @@ export async function POST(req: NextRequest) {
 
     const paymentMethodDetails = typeof body.paymentMethodDetails === "object" ? body.paymentMethodDetails : undefined;
     const parentUrl = typeof body.parentUrl === "string" ? String(body.parentUrl).trim() : undefined;
-    const ipAddress = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "127.0.0.1";
+    const requestIpAddress = (req as NextRequest & { ip?: unknown }).ip;
     let brandKey: string | undefined = undefined;
     try { brandKey = getBrandKey(); } catch { brandKey = undefined; }
 
@@ -290,6 +291,9 @@ export async function POST(req: NextRequest) {
           } catch { }
           if (!existing) break;
           receiptExists = true;
+          const ipAddress = !isTrustedInternal
+            ? resolvePersistedClientIp(existing.ipAddress, req.headers, requestIpAddress)
+            : null;
 
           const priorHistory = Array.isArray(existing.checkoutStatusHistory)
             ? existing.checkoutStatusHistory.slice(-199)
@@ -353,6 +357,15 @@ export async function POST(req: NextRequest) {
             ] as any, existing._etag
               ? { accessCondition: { type: "IfMatch", condition: existing._etag } }
               : undefined);
+            if (ipAddress && ipAddress !== existing.ipAddress) {
+              try {
+                await container.item(id, wallet).patch([
+                  { op: "set", path: "/ipAddress", value: ipAddress },
+                ] as any);
+              } catch (ipPatchError) {
+                console.warn("[STATUS API] Checkout telemetry saved but client IP backfill failed:", ipPatchError);
+              }
+            }
             break;
           } catch (patchError: any) {
             const statusCode = Number(patchError?.code || patchError?.statusCode || patchError?.status || 0);
@@ -414,8 +427,21 @@ export async function POST(req: NextRequest) {
       }
 
       const currentStatus = String(resource?.status || "").toLowerCase();
+      const ipAddress = !isTrustedInternal
+        ? resolvePersistedClientIp(resource?.ipAddress, req.headers, requestIpAddress)
+        : null;
       if (shouldIgnoreCanonicalStatusTransition(currentStatus, status)) {
-        // Return success but do not update DB
+        // Preserve canonical payment state, but do not discard a trustworthy
+        // browser address merely because its lifecycle event arrived later.
+        if (resource && ipAddress && ipAddress !== resource.ipAddress) {
+          try {
+            await container.item(id, wallet).patch([
+              { op: "set", path: "/ipAddress", value: ipAddress },
+            ] as any);
+          } catch (ipPatchError) {
+            console.warn("[STATUS API] Canonical transition ignored and client IP backfill failed:", ipPatchError);
+          }
+        }
         return NextResponse.json({ ok: true, ignored: true, reason: "already_settled" }, { headers: { "x-correlation-id": correlationId } });
       }
 
@@ -438,7 +464,7 @@ export async function POST(req: NextRequest) {
               : [{ status, ts }]),
           lastUpdatedAt: ts,
           brandKey,
-          ipAddress: resource.ipAddress || ipAddress,
+          ...(ipAddress ? { ipAddress } : {}),
           // Record buyer on settlement statuses
           ...(buyerWallet && ["checkout_success", "paid", "paid - ach pending", "ach_pending", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
             ? { buyerWallet }
@@ -504,7 +530,7 @@ export async function POST(req: NextRequest) {
           createdAt: ts,
           lastUpdatedAt: ts,
           brandKey,
-          ipAddress,
+          ...(ipAddress ? { ipAddress } : {}),
           ...(buyerWallet && ["checkout_success", "paid", "paid - ach pending", "ach_pending", "tx_mined", "reconciled", "receipt_claimed"].includes(status)
             ? { buyerWallet }
             : {}),

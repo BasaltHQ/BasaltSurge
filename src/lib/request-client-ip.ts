@@ -52,14 +52,15 @@ export function getPublicClientIp(headers: Headers, requestIp?: unknown): string
     .map((value) => value.trim())
     .filter(Boolean)
     .reverse();
-  const trustCloudflare = String(process.env.TRUST_CLOUDFLARE_PROXY || "").toLowerCase() === "true";
   const candidates = [
-    // Plesk/nginx normally overwrites X-Real-IP with the directly connected
-    // client. Do not prefer the left-most X-Forwarded-For entry: a browser can
-    // supply it and proxy_add_x_forwarded_for will preserve the spoofed value.
-    ...(trustCloudflare ? [headers.get("cf-connecting-ip")] : []),
+    // Cloudflare and Plesk/nginx populate these automatically. Keeping the
+    // resolution in code avoids requiring a per-container environment flag.
+    headers.get("cf-connecting-ip"),
+    headers.get("true-client-ip"),
     headers.get("x-real-ip"),
     requestIp,
+    // Walk from the proxy side of the chain instead of trusting the first
+    // browser-supplied X-Forwarded-For value.
     ...forwarded,
   ];
   for (const value of candidates) {
@@ -67,4 +68,16 @@ export function getPublicClientIp(headers: Headers, requestIp?: unknown): string
     if (isPublicIpAddress(normalized)) return normalized;
   }
   return null;
+}
+
+/** Preserve the first trustworthy address, but allow a later browser request
+ * to replace loopback/private placeholders written by an internal callback. */
+export function resolvePersistedClientIp(
+  existingIp: unknown,
+  headers: Headers,
+  requestIp?: unknown,
+): string | null {
+  const existing = stripAddressDecorations(String(existingIp || ""));
+  if (isPublicIpAddress(existing)) return existing;
+  return getPublicClientIp(headers, requestIp);
 }
