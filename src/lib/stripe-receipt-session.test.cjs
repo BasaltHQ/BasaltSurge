@@ -10,7 +10,7 @@ const merchant = '0x' + '1'.repeat(40);
 const base = { id: 'receipt:order', receiptId: 'order', wallet: merchant, brandKey: 'test', stripeSessionId: 'cos_old', status: 'pending', totalUsd: 942 };
 const incoming = { id: 'cos_paid', created: 200, status: 'fulfillment_complete', metadata: { receiptId: 'order', merchantWallet: merchant, brandKey: 'test' }, transaction_details: { source_amount: '910.14', destination_amount: '910.14', destination_currency: 'usdc' } };
 
-function harness(initial = base, oldStatus = 'requires_payment') {
+function harness(initial = base, oldStatus = 'requires_payment', lookupResponse) {
   let doc = structuredClone(initial);
   let beforePatch;
   const calls = [];
@@ -52,7 +52,7 @@ function harness(initial = base, oldStatus = 'requires_payment') {
       module, exports: module.exports,
       require: name => mocks[name] || (name.startsWith('@/') ? load(path.join(root, name.slice(2) + '.ts')) : require(name)),
       process: { env: { STRIPE_API_KEY: 'test', STRIPE_WEBHOOK_SECRET: 'test' } },
-      fetch: async url => { assert.ok(String(url).endsWith('/cos_old')); return new Response(JSON.stringify({ id: 'cos_old', status: oldStatus })); },
+      fetch: async url => { assert.ok(String(url).endsWith('/cos_old')); return lookupResponse ? lookupResponse() : new Response(JSON.stringify({ id: 'cos_old', status: oldStatus })); },
       AbortSignal, Response, Buffer, console: { log() {}, warn() {}, error() {} },
     }, { filename: file });
     return module.exports;
@@ -71,6 +71,16 @@ function harness(initial = base, oldStatus = 'requires_payment') {
     },
   };
 }
+
+test('upstream HTML lookup is identified without mutating the receipt or exposing its body', async () => {
+  const h = harness(base, 'requires_payment', () => new Response('<!DOCTYPE html>private proxy details'));
+  await assert.rejects(h.helpers.retrieveStripeReceiptSession('cos_old'), error => {
+    assert.match(error.message, /Stripe session lookup returned non-JSON content \(HTTP 200\)/);
+    assert.doesNotMatch(error.message, /DOCTYPE|private proxy/);
+    return true;
+  });
+  assert.equal(h.calls.length, 0);
+});
 
 test('signed completed retry replaces unpaid session and marks receipt paid', async () => {
   const h = harness();

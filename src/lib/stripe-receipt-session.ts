@@ -181,8 +181,10 @@ export async function retrieveStripeReceiptSession(sessionId: string): Promise<a
     headers: { Authorization: `Bearer ${key}`, "Stripe-Version": "2026-06-24.dahlia" },
     signal: AbortSignal.timeout(15_000),
   });
-  if (!response.ok) throw new Error("stripe_session_lookup_failed");
-  const session = await response.json();
+  if (!response.ok) throw new Error(`Stripe session lookup failed (HTTP ${response.status}).`);
+  let session: any;
+  try { session = await response.json(); }
+  catch { throw new Error(`Stripe session lookup returned non-JSON content (HTTP ${response.status}).`); }
   if (session.id !== sessionId) throw new Error("stripe_session_lookup_mismatch");
   return session;
 }
