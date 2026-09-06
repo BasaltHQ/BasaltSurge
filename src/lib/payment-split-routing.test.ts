@@ -48,4 +48,6 @@ test("Stripe session funding is authoritative for recovery routing", () => {
   assert.equal(resolveStripeOnrampFunding({ payment_method_details: { card: { funding: "debit" } } }, "credit"), "debit");
   assert.equal(resolveStripeOnrampFunding({ payment_method: "us_bank_account" }, "debit"), "us_bank_account");
   assert.equal(resolveStripeOnrampFunding({ payment_method: "card" }, "credit"), "credit");
+  assert.equal(resolveStripeOnrampFunding({ paymentMethod: "us_bank_account" }, "debit"), "us_bank_account");
+  assert.equal(resolveStripeOnrampFunding({ payment_details: { card: { funding: "prepaid" } } }, "credit", true), "debit");
 });

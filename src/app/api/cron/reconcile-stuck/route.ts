@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { recoverStripeReceiptSession, retrieveStripeReceiptSession, persistStripeReceiptUpdate } from "@/lib/stripe-receipt-session";
 import { sendEmail } from "@/lib/aws/ses";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { generateHtmlEmailTemplate } from "@/lib/notifications/email-template";
@@ -89,7 +90,7 @@ async function persistReceiptAndNotify(
     receipt.webhookLastAttemptAt = Date.now();
     if (transactionHash) receipt.webhookLastTransactionHash = transactionHash;
   }
-  await container.items.upsert(receipt);
+  await persistStripeReceiptUpdate(container, receipt);
   if (!receipt.webhookUrl || !shouldDeliver) return;
 
   void dispatchReceiptStatusWebhookBestEffort(container, receipt, nextStatus, previousStatus, {
@@ -292,6 +293,17 @@ export async function POST(req: NextRequest) {
         }
 
         if (receipt && (!receipt.transactionHash || receipt.transactionHash === "ecommerce_pending" || receipt.transactionHash === "ach_pending")) {
+          if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
+            try {
+              const verifiedSession = await retrieveStripeReceiptSession(sessionId);
+              receipt = await recoverStripeReceiptSession(container, receipt, verifiedSession);
+              const candidateIndex = stuckReceipts.findIndex(r => r.id === receipt.id && r.wallet === receipt.wallet);
+              if (candidateIndex >= 0) stuckReceipts[candidateIndex] = receipt;
+            } catch (error) {
+              console.warn(`[cron/reconcile-stuck] Could not recover session binding for ${receipt.id}:`, error);
+              continue;
+            }
+          }
           // If the receipt doesn't have stripeSessionId, backfill it from the event
           if (!receipt.stripeSessionId) {
             receipt.stripeSessionId = sessionId;
@@ -305,7 +317,7 @@ export async function POST(req: NextRequest) {
             receipt.splitAddressCredit = receipt.splitAddressCredit || event.splitAddressCredit || null;
             receipt.brandKey = receipt.brandKey || event.brandKey || "";
             
-            await container.items.upsert(receipt);
+            await persistStripeReceiptUpdate(container, receipt);
             console.log(`[cron/reconcile-stuck] Backfilled receipt metadata for ${receipt.id} from Stripe event`);
           }
 
@@ -369,6 +381,11 @@ export async function POST(req: NextRequest) {
     for (const receipt of stuckReceipts) {
       const receiptId = receipt.receiptId || receipt.id;
       const sessionId = receipt.stripeSessionId;
+      if (receipt.stripePaidSessionId && receipt.stripePaidSessionId !== sessionId) {
+        skipped++;
+        results.push({ receiptId: receipt.receiptId, status: "skipped", reason: "paid_session_conflict" });
+        continue;
+      }
       let email = receipt.customerEmail || receipt.email;
       const merchantWallet = receipt.wallet;
       let amount = Number(receipt.settlementAmount || receipt.onrampAmount || receipt.totalUsd || 0);
@@ -463,7 +480,7 @@ export async function POST(req: NextRequest) {
             email = onrampData.customer_information?.email || "";
             if (email) {
               receipt.customerEmail = email;
-              await container.items.upsert(receipt);
+              await persistStripeReceiptUpdate(container, receipt);
               console.log(`[cron/reconcile-stuck] Backfilled missing customer email from Stripe for receipt ${receiptId}: ${email}`);
             }
           }
@@ -514,7 +531,7 @@ export async function POST(req: NextRequest) {
           console.warn(`[cron/reconcile-stuck] Misassociated Stripe session ${sessionId}! Stripe metadata receiptId is '${onrampData.metadata?.receiptId}', but candidate receipt is '${receiptId}'. Unsetting stripeSessionId from receipt ${receiptId}.`);
           delete receipt.stripeSessionId;
           receipt.lastUpdatedAt = Date.now();
-          await container.items.upsert(receipt);
+          await persistStripeReceiptUpdate(container, receipt);
           skipped++;
           results.push({ receiptId, status: "skipped", reason: "misassociated_session_metadata_mismatch" });
           continue;
@@ -630,7 +647,7 @@ export async function POST(req: NextRequest) {
               ? [...receipt.statusHistory, { status: "failed", ts: Date.now() }]
               : [{ status: "failed", ts: Date.now() }];
             
-            await container.items.upsert(receipt);
+            await persistStripeReceiptUpdate(container, receipt);
 
             // Send failure email
             try {
@@ -718,7 +735,7 @@ export async function POST(req: NextRequest) {
                 stripeSourceAmountUsd: stripeSourceAmount > 0 ? stripeSourceAmount : undefined,
               });
             } else {
-              await container.items.upsert(receipt);
+              await persistStripeReceiptUpdate(container, receipt);
             }
 
             skipped++;

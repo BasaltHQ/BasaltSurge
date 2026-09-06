@@ -55,6 +55,16 @@ export function normalizeStripeOnrampCheckoutMode(
     : "ecommerce";
 }
 
+/** Only the explicit top-level full-flow flag may opt a portal out of ecommerce. */
+export function resolvePortalCheckoutMode(search: string): StripeOnrampCheckoutMode {
+  const params = new URLSearchParams(search);
+  const fullFlow = params.getAll("f").some(value =>
+    ["", "1", "true"].includes(value.trim().toLowerCase())
+  );
+  // Preserve the legacy ?=f marker without matching values on unrelated keys.
+  return fullFlow || params.get("") === "f" ? "full" : "ecommerce";
+}
+
 /**
  * Resolve the customer/merchant-facing receipt status independently from
  * transfer readiness. "paid - ach pending" is a paid/accepted order state;
@@ -114,6 +124,8 @@ export function isStripeOnrampSettlementEligibleStatus(
 /** Permanent failures only. Retryable service and quote errors are excluded. */
 export function isStripeOnrampTerminalFailure(session: any): boolean {
   const status = normalizeStripeOnrampStatus(session?.status);
+  // last_error may describe a previous attempt on an already accepted session.
+  if (isStripePaymentAcceptedStatus(status)) return false;
   if (TERMINAL_FAILURE_STATUSES.has(status)) return true;
 
   const rawError = session?.transaction_details?.last_error

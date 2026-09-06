@@ -9,10 +9,10 @@ const SOURCE_ROOT = path.resolve(__dirname, "../../../..");
 
 // Run the actual route, FX loader, and conversion helper with HTTP and database
 // boundaries replaced. No test request can reach Stripe or a live receipt.
-function createHarness({ eurPerUsd = 0.9, stripeError = null } = {}) {
+function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides = {}, legacy = false } = {}) {
   const requests = [];
   const writes = [];
-  const receipt = { receiptId: "R-currency-test", totalUsd: 10 };
+  const receipt = { id: "receipt:R-currency-test", wallet: "0x1111111111111111111111111111111111111111", receiptId: "R-currency-test", totalUsd: 10, status: "pending", ...receiptOverrides };
   const jsonResponse = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers });
   const fetch = async (url, options = {}) => {
     requests.push({ url: String(url), options });
@@ -27,11 +27,18 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null } = {}) {
   const mocks = {
     "next/server": { NextResponse: { json: (value, init = {}) => jsonResponse(value, init.status || 200, init.headers || {}) } },
     "@/lib/cosmos": { getContainer: async () => ({
-      item: () => ({ read: async () => ({ resource: receipt }) }),
+      item: () => ({
+        read: async () => ({ resource: { ...receipt } }),
+        patch: async (operations, options = {}) => {
+          for (const [key, expected] of Object.entries(options.matchFields || {})) assert.equal(receipt[key] ?? null, expected);
+          for (const operation of operations) receipt[operation.path.slice(1)] = operation.value;
+          writes.push({ ...receipt });
+          return { resource: { ...receipt } };
+        },
+      }),
       items: { upsert: async value => writes.push({ ...value }) },
     }) },
     "@/lib/request-client-ip": { getPublicClientIp: () => "8.8.8.8" },
-    "@/lib/stripe-onramp-status": { normalizeStripeOnrampCheckoutMode: () => "ecommerce" },
   };
   const modules = new Map();
   function load(file) {
@@ -45,7 +52,7 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null } = {}) {
       module, exports: module.exports,
       require: name => {
         if (mocks[name]) return mocks[name];
-        if (["@/lib/eth", "@/lib/stripe-onramp-currency"].includes(name)) {
+        if (name.startsWith("@/lib/")) {
           return load(path.join(SOURCE_ROOT, name.slice(2) + ".ts"));
         }
         throw new Error(`Unexpected module: ${name}`);
@@ -56,7 +63,7 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null } = {}) {
     }, { filename: file });
     return module.exports;
   }
-  const route = load(path.join(__dirname, "route.ts"));
+  const route = load(path.join(__dirname, legacy ? "../onramp-session/route.ts" : "route.ts"));
   return {
     requests, writes,
     async post(overrides = {}) {
@@ -85,10 +92,25 @@ test("EUR route sends converted fiat and server FX metadata while persisting USD
   assert.equal(params.get("metadata[onrampSourceCurrency]"), "eur");
   assert.equal(Number(params.get("metadata[onrampSourceToUsdRate]")), 1 / 0.9);
   assert.equal(params.get("metadata[onrampSourceAmountUsd]"), "10");
+  assert.equal(params.get("metadata[checkoutMode]"), "ecommerce");
+  assert.equal(harness.writes[0].checkoutMode, "ecommerce");
   assert.equal(harness.writes[0].totalUsd, 10);
   assert.equal(harness.writes[0].orderTotalUsd, 10);
   assert.equal(harness.writes[0].onrampAmount, 10);
 });
+
+for (const legacy of [false, true]) {
+  for (const receiptOverrides of [{ status: "paid" }, { status: "paid - ach pending" }, { status: "pending", stripeSessionStatus: "fulfillment_processing" }, { status: "pending", transactionHash: `0x${"a".repeat(64)}` }]) {
+    test(`${legacy ? "legacy" : "headless"} session creation blocks an already-paid receipt before contacting Stripe`, async () => {
+      const harness = createHarness({ legacy, receiptOverrides });
+      const response = await harness.post();
+      assert.equal(response.status, 409);
+      assert.equal(response.data.code, "receipt_already_paid");
+      assert.equal(harness.requests.length, 0);
+      assert.equal(harness.writes.length, 0);
+    });
+  }
+}
 
 test("USD route preserves the dollar amount without making an FX request", async () => {
   const harness = createHarness({ eurPerUsd: null });

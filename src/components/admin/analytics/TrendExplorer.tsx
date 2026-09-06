@@ -3,6 +3,7 @@
 import React, { useId, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, GitCommit, Table2 } from "lucide-react";
 import { getDistinctBrandColor } from "./analytics-brand-colors";
+import { useChartViewport } from "./useChartViewport";
 import { finiteTrendValue, matchTrendCommit, trendLinePath, trendTimestamp, trendValue, trendXPositions, type GitCommitEvent, type TrendMetric, type TrendPoint, type TrendScale } from "./trend-model";
 
 export type { GitCommitEvent } from "./trend-model";
@@ -30,6 +31,7 @@ function TrendExplorer({
   showGitCommitsOverlay = true, setShowGitCommitsOverlay, kind,
 }: TrendExplorerProps & { kind: "line" | "bar" }) {
   const id = useId();
+  const viewport = useChartViewport();
   const [selectedSeries, setSelectedSeries] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null);
@@ -45,8 +47,8 @@ function TrendExplorer({
   const events = useMemo(() => gitCommits.map(commit => ({ commit, index: matchTrendCommit(data, commit, timezone) })), [gitCommits, data, timezone]);
   const positions = useMemo(() => {
     const margin = kind === "bar" ? Math.min(410, 450 / Math.max(1, data.length)) + 15 : 35;
-    return trendXPositions(data, margin, 1000 - margin);
-  }, [data, kind]);
+    return trendXPositions(data, margin, viewport.width - margin);
+  }, [data, kind, viewport.width]);
   const selectedCommit = events.find(event => event.commit.hash === selectedCommitHash);
   const axis = useMemo(() => {
     const values = data.flatMap(point => series.map(key => trendValue(point, key, metricType))).filter((value): value is number => value !== null);
@@ -86,7 +88,7 @@ function TrendExplorer({
   const details = row[`${readoutSeries}Details`];
   const currentValue = trendValue(row, readoutSeries, metricType);
 
-  return <div className="min-w-0 space-y-4">
+  return <div className="analytics-trend min-w-0 space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div role="group" aria-label="Highlight analytics series" className="flex flex-wrap gap-2">
         <button type="button" aria-pressed={selected === null} onClick={() => setSelectedSeries(null)} className={`min-h-10 rounded-lg border px-3 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${selected === null ? "border-primary bg-primary/15 text-white" : "border-white/15 text-white/65"}`}>Show all</button>
@@ -99,11 +101,11 @@ function TrendExplorer({
     </div>
     <div className="flex overflow-hidden rounded-xl border border-white/10 bg-black/20">
       <div aria-hidden="true" className="relative h-[320px] w-16 shrink-0 border-r border-white/10 bg-zinc-950 text-right text-xs text-white/60">{levels.map(level => <span key={level} className="absolute right-2 -translate-y-1/2 tabular-nums" style={{ top: y(level) ?? 275 }}>{metricType === "successRate" ? `${Math.round(level)}%` : level.toLocaleString("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 })}</span>)}</div>
-      <div className="min-w-0 flex-1 overflow-x-auto">
-        <svg viewBox="0 0 1000 320" role="img" aria-labelledby={`${id}-title ${id}-description`} className="h-[320px] min-w-[700px] w-full" preserveAspectRatio="none">
+      <div ref={viewport.ref} className="min-w-0 flex-1 overflow-x-auto">
+        <svg viewBox={`0 0 ${viewport.width} 320`} style={{ width: viewport.width, height: 320, display: "block" }} role="img" aria-labelledby={`${id}-title ${id}-description`} preserveAspectRatio="xMidYMid meet">
           <title id={`${id}-title`}>{`${title} ${kind === "bar" ? "by series" : "over time"}`}</title>
           <desc id={`${id}-description`}>Use the series buttons, observation controls, and data table for exact values. Dated observations use elapsed-time spacing. Missing values and missing days break lines. Git event markers, when enabled, use matching dated buckets only.</desc>
-          {levels.map(level => <line key={level} x1="10" x2="990" y1={y(level) ?? 275} y2={y(level) ?? 275} stroke="#ffffff18" />)}
+          {levels.map(level => <line key={level} x1="10" x2={viewport.width - 10} y1={y(level) ?? 275} y2={y(level) ?? 275} stroke="#ffffff12" strokeDasharray="3 6" />)}
           {series.map((key, seriesIndex) => {
             const isHighlighted = highlight === null || highlight === key;
             const color = colorFor(key);

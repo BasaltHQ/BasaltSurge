@@ -1,4 +1,4 @@
-export type AnalyticsWorkspace = "overview" | "conversion" | "failures" | "transactions" | "treasury";
+export type AnalyticsWorkspace = "overview" | "conversion" | "failures" | "transactions" | "treasury" | "audit";
 export type AnalyticsMetricBasis = "true_integration" | "integration" | "process";
 export type AnalyticsSearchMode = "all" | "receiptId" | "email" | "session" | "wallet";
 
@@ -32,7 +32,7 @@ const offset = (value: string | null, minimum: number) => Math.max(minimum, Math
 export function parseAnalyticsViewState(params: URLSearchParams): AnalyticsViewState {
   const reasons = params.getAll("pa_reason").filter(Boolean).slice(0, 2);
   return {
-    workspace: choice(params.get("pa_view"), ["overview", "conversion", "failures", "transactions", "treasury"], "overview"),
+    workspace: choice(params.get("pa_view"), ["overview", "conversion", "failures", "transactions", "treasury", "audit"], "overview"),
     brand: params.get("pa_brand") || "all",
     status: params.get("pa_status") || "all",
     kyc: choice(params.get("pa_kyc"), ["all", "L0", "L1", "L2", "Unknown"], "all"),

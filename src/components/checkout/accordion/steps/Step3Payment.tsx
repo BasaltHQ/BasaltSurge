@@ -131,7 +131,7 @@ export function Step3Payment({
                 </p>
               </div>
             )}
-            {headlessStep === "error" && isServiceError && onTimeoutRetry && !isLocked && (
+            {headlessStep === "error" && onTimeoutRetry && !isLocked && !isCompleted && (
               <button
                 type="button"
                 onClick={onTimeoutRetry}
@@ -183,6 +183,7 @@ export function Step3Payment({
               isLightText={isLightText}
               minHeight={210}
               errorMessage={activeError || undefined}
+              isFailed={headlessStep === "error"}
               loadingMessage={
                 headlessStep === "checking_link"
                   ? "Checking Stripe Link authorization..."

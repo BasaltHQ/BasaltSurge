@@ -116,7 +116,7 @@ function createHarness({ receipts = [], sessions = {}, balance = 100, balanceErr
         assert.ok(sessions[id], `Unexpected HTTP request ${url}`);
         return jsonResponse(sessions[id]);
       },
-      URL, Buffer, Response,
+      URL, Buffer, Response, AbortSignal,
       process: { env: { CRON_SECRET: "mock_cron", STRIPE_API_KEY: "sk_test_mock", BRAND_KEY: partner, CONTAINER_TYPE: partner ? "partner" : "platform" } },
       console: { log() {}, warn() {}, error() {} },
     }, { filename: file });
@@ -245,4 +245,25 @@ test("a completed session missing delivered USDC records progress without transf
   assert.ok(harness.documents.get("receipt:missing").lastReconcilePolledAt);
   assert.equal(result.results[0].reason, "missing_verified_settlement_amount");
   assert.equal(harness.transfers.length, 0);
+});
+
+test("accepted event repairs an older unpaid binding already in the sweep candidate list", async () => {
+  const paidSession = {
+    ...completed("retry", 10), id: "cos_retry_paid",
+    metadata: { receiptId: "retry", merchantWallet: MERCHANT, brandKey: "basaltsurge" },
+  };
+  const h = createHarness({
+    balance: 0,
+    receipts: [receipt("retry", { totalUsd: 10 }), {
+      id: "stripe_onramp:retry", type: "payment_event_stripe_onramp", brandKey: "basaltsurge",
+      sessionId: "cos_retry_paid", status: "fulfillment_complete", receivedAt: Date.now(),
+      merchantWallet: MERCHANT, metadata: paidSession.metadata,
+    }],
+    sessions: { cos_retry: { id: "cos_retry", status: "requires_payment" }, cos_retry_paid: paidSession },
+  });
+  await h.post();
+  assert.equal(h.documents.get("receipt:retry").stripeSessionId, "cos_retry_paid");
+  assert.equal(h.documents.get("receipt:retry").stripeSessionStatus, "fulfillment_complete");
+  assert.equal(h.requests.filter(id => id === "cos_retry").length, 1);
+  assert.equal(h.transfers.length, 0);
 });

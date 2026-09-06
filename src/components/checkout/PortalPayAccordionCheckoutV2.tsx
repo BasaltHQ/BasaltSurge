@@ -53,7 +53,7 @@ export function PortalPayAccordionCheckoutV2(props: PortalPayAccordionCheckoutV2
               </div>
               <button
                 type="button"
-                onClick={() => state.setLocalError(null)}
+                onClick={state.dismissError}
                 className="text-xs underline opacity-80 hover:opacity-100 cursor-pointer shrink-0"
               >
                 Dismiss

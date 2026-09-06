@@ -3,6 +3,8 @@ import { getContainer } from "@/lib/cosmos";
 import { getSiteConfigForWallet } from "@/lib/site-config"; // If needed for fresh fees
 import { getBrandKey } from "@/config/brands";
 import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
+import { resolveFeeMinusBaseCents } from "@/lib/receipts";
+import { assertStripeReceiptUnpaid, stripeReceiptWriteCondition } from "@/lib/stripe-receipt-session";
 
 function toCents(n: number) { return Math.round(Math.max(0, Number(n || 0)) * 100); }
 function fromCents(c: number) { return Math.round(c) / 100; }
@@ -17,7 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     try {
-        const container = await getContainer();
+        const container = await getContainer(undefined, undefined, { profile: "critical" });
         const query = `SELECT * FROM c WHERE c.receiptId = @id`;
         const { resources } = await container.items.query({
             query,
@@ -29,12 +31,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
 
         const receipt = resources[0];
-        if (receipt.status === 'paid' || receipt.status === 'reconciled') {
-            // For now, allow adding tips post-payment? (e.g. restaurant write-in).
-            // But usually this updates the total charged.
-            // If manual cash tip, maybe valid. If update charge, problematic.
-            // Let's allow it but log a warning or flag.
-        }
+        assertStripeReceiptUnpaid(receipt);
+        if (receipt.stripePaymentAttemptSessionId) return NextResponse.json({ error: "Payment is in progress; the receipt total cannot change.", code: "receipt_payment_in_progress" }, { status: 409 });
 
         const tipAmount = fromCents(toCents(tipInput));
 
@@ -141,7 +139,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             const scaledBaseWithoutFeeCents = scaledBaseCents + scaledTaxCents;
             
             // Unscale to recover original unscaled subtotal & tax
-            const originalBaseCents = toCents(receipt.totalUsd); // totalUsd stored was originalBaseWithoutFee
+            const originalBaseCents = resolveFeeMinusBaseCents(receipt);
             const unscaleFactor = scaledBaseWithoutFeeCents > 0 ? (originalBaseCents / scaledBaseWithoutFeeCents) : 1;
             
             const baseItemsClean = baseItems.map((i: any) => ({
@@ -235,11 +233,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             lastUpdatedAt: Date.now()
         };
 
-        await container.items.upsert(updatedReceipt);
+        // Never replay a pending snapshot over a payment accepted during calculation.
+        await container.item(receipt.id, receipt.wallet).patch(
+            ["tipAmount", "totalUsd", "lineItems", "lastUpdatedAt"].map(key => ({
+                op: "set", path: `/${key}`, value: (updatedReceipt as any)[key]
+            })),
+            stripeReceiptWriteCondition(receipt)
+        );
 
         return NextResponse.json({ ok: true, receipt: updatedReceipt });
 
     } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 });
+        const conflict = Number(e?.code || e?.statusCode) === 412;
+        return NextResponse.json({ error: conflict ? "Receipt changed. Reload before updating the tip." : e.message, code: conflict ? "receipt_changed" : e?.code }, { status: conflict || e?.statusCode === 409 ? 409 : 500 });
     }
 }

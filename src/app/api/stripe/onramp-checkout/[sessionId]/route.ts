@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPublicClientIp } from "@/lib/request-client-ip";
+import { getContainer } from "@/lib/cosmos";
+import { assertStripeReceiptUnpaid, readStripeReceiptForPayment, claimStripeReceiptCheckout, finishStripeReceiptCheckout } from "@/lib/stripe-receipt-session";
+import { isStripePaymentAcceptedStatus } from "@/lib/stripe-onramp-status";
+import { randomUUID } from "node:crypto";
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +20,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
+  let reservation: { container: any; receipt: any; requestId: string } | undefined;
+  let checkoutResponseReceived = false;
   try {
     const stripeKey = process.env.STRIPE_API_KEY;
     if (!stripeKey) {
@@ -55,6 +61,41 @@ export async function POST(
       }
     }
 
+    // Inspect the provider-owned metadata, never a client-supplied receipt ID.
+    // An accepted session is observationally complete; do not confirm it again.
+    let tokenRefreshed = false;
+    const readSession = () => fetch(`https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`, {
+      headers: { Authorization: `Bearer ${stripeKey}`, "Stripe-OAuth-Token": oauthToken, "Stripe-Version": STRIPE_API_VERSION },
+      signal: AbortSignal.timeout(15_000),
+    });
+    let sessionResponse = await readSession();
+    if ((sessionResponse.status === 401 || sessionResponse.status === 403) && cryptoCustomerId) {
+      const { refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
+      const refreshed = await refreshOAuthToken(cryptoCustomerId);
+      if (refreshed) { oauthToken = refreshed; tokenRefreshed = true; sessionResponse = await readSession(); }
+    }
+    if (!sessionResponse.ok) return NextResponse.json({ ok: false, error: "Unable to verify the payment session. Please try again.", code: "session_verification_unavailable" }, { status: 503 });
+    const session = await sessionResponse.json();
+    if (session.id !== sessionId) throw new Error("session_verification_mismatch");
+    if (isStripePaymentAcceptedStatus(session.status)) {
+      return NextResponse.json({ ok: true, status: session.status, client_secret: null, ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}) });
+    }
+    const assertPayable = async (reserve = false) => {
+      if (!session.metadata?.receiptId) return;
+      const container = await getContainer(undefined, undefined, { profile: "critical" });
+      const receipt = await readStripeReceiptForPayment(container, session.metadata.receiptId, session.metadata.merchantWallet);
+      assertStripeReceiptUnpaid(receipt);
+      if (receipt.stripeSessionId !== sessionId) {
+        throw Object.assign(new Error("This payment session was replaced. Reopen the current receipt."), { code: "receipt_session_superseded", statusCode: 409 });
+      }
+      if (reserve) {
+        const requestId = randomUUID();
+        await claimStripeReceiptCheckout(container, receipt, sessionId, requestId);
+        reservation = { container, receipt, requestId };
+      }
+    };
+    await assertPayable();
+
     // Build mandate_data for ACH support
     const customerIp = getPublicClientIp(req.headers, (req as any).ip);
     if (!customerIp) {
@@ -73,6 +114,7 @@ export async function POST(
     });
 
     console.log("[ONRAMP CHECKOUT] Checking out session:", sessionId);
+    await assertPayable(true);
 
     let response = await fetch(
       `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}/checkout`,
@@ -89,7 +131,7 @@ export async function POST(
     );
 
     let data = await response.json();
-    let tokenRefreshed = false;
+    checkoutResponseReceived = true;
 
     // Auto-refresh token if Stripe returns 401/unauthorized due to expired oauth token
     if ((response.status === 401 || (data.error && String(data.error.message || "").toLowerCase().includes("oauth"))) && cryptoCustomerId) {
@@ -99,7 +141,9 @@ export async function POST(
       if (refreshedToken) {
         oauthToken = refreshedToken;
         tokenRefreshed = true;
+        await assertPayable();
         console.log("[ONRAMP CHECKOUT] Retrying checkout with refreshed OAuth token...");
+        checkoutResponseReceived = false;
         response = await fetch(
           `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}/checkout`,
           {
@@ -114,6 +158,7 @@ export async function POST(
           }
         );
         data = await response.json();
+        checkoutResponseReceived = true;
       }
     }
 
@@ -192,9 +237,15 @@ export async function POST(
     });
   } catch (e: any) {
     console.error("[ONRAMP CHECKOUT] Error:", e);
+    if (reservation && !checkoutResponseReceived) return NextResponse.json({ ok: false, error: "Payment confirmation is pending. Do not submit another payment.", code: "receipt_payment_in_progress" }, { status: 409 });
     return NextResponse.json(
-      { ok: false, error: e?.message || "internal_error" },
-      { status: 500 }
+      { ok: false, error: e?.message || "internal_error", code: e?.code },
+      { status: e?.statusCode === 409 ? 409 : 500 }
     );
+  } finally {
+    if (reservation && checkoutResponseReceived) {
+      try { await finishStripeReceiptCheckout(reservation.container, reservation.receipt, reservation.requestId); }
+      catch (error) { console.error("[ONRAMP CHECKOUT] Receipt remains reserved pending recovery:", error); }
+    }
   }
 }

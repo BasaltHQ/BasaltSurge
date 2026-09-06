@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useId, useMemo, useState } from "react";
+import { useChartViewport } from "./useChartViewport";
 import { ChevronLeft, ChevronRight, Table2 } from "lucide-react";
 import { buildTreasuryScenarios, normalizeTreasuryHistory, treasuryValue, type TreasuryScenario, type TreasuryScenarioMode } from "./treasury-model";
 
@@ -23,6 +24,7 @@ const scenarioLabel = (scenario: TreasuryScenario) => scenario.charAt(0).toUpper
 /** Treasury history and explicit, editable compound-growth scenarios. */
 export default function TreasuryExplorer({ data, tokenPrices }: TreasuryExplorerProps) {
   const id = useId();
+  const viewport = useChartViewport();
   const [selectedToken, setSelectedToken] = useState<string | null>(null);
   const [hoveredToken, setHoveredToken] = useState<string | null>(null);
   const [observationIndex, setObservationIndex] = useState<number | null>(null);
@@ -59,7 +61,7 @@ export default function TreasuryExplorer({ data, tokenPrices }: TreasuryExplorer
 
   const firstTimestamp = history[0].timestamp;
   const lastTimestamp = forecast?.points[forecast.points.length - 1].timestamp ?? latest.timestamp;
-  const x = (timestamp: number) => lastTimestamp === firstTimestamp ? 525 : 75 + ((timestamp - firstTimestamp) / (lastTimestamp - firstTimestamp)) * 895;
+  const x = (timestamp: number) => lastTimestamp === firstTimestamp ? viewport.width / 2 : 75 + ((timestamp - firstTimestamp) / (lastTimestamp - firstTimestamp)) * (viewport.width - 105);
   const y = (value: number) => 280 - ((value - axis.minimum) / (axis.maximum - axis.minimum)) * 255;
   const pathFor = (points: Array<{ timestamp: number; value: number | null }>) => {
     let open = false;
@@ -116,13 +118,13 @@ export default function TreasuryExplorer({ data, tokenPrices }: TreasuryExplorer
         </div>}
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-white/10 bg-black/20">
-        <svg viewBox="0 0 1000 325" role="img" aria-labelledby={`${id}-title ${id}-description`} className="h-[310px] min-w-[620px] w-full" preserveAspectRatio="none">
+      <div ref={viewport.ref} className="overflow-x-auto rounded-xl border border-white/10 bg-black/20">
+        <svg viewBox={`0 0 ${viewport.width} 325`} style={{ width: viewport.width, height: 325, display: "block" }} role="img" aria-labelledby={`${id}-title ${id}-description`} preserveAspectRatio="xMidYMid meet">
           <title id={`${id}-title`}>Treasury portfolio and token values over time</title>
           <desc id={`${id}-description`}>Solid lines show supplied history. Dashed lines, when enabled, show editable assumptions from the last observation. Use the observation controls or data table for exact values. Missing values break the lines.</desc>
           {[0, 0.25, 0.5, 0.75, 1].map(fraction => {
             const value = axis.minimum + fraction * (axis.maximum - axis.minimum);
-            return <g key={fraction}><line x1="75" x2="970" y1={y(value)} y2={y(value)} stroke="#ffffff18" /><text x="66" y={y(value) + 4} textAnchor="end" fill="#a1a1aa" fontSize="11">{value.toLocaleString("en-US", { notation: "compact", style: "currency", currency: "USD", maximumFractionDigits: 1 })}</text></g>;
+            return <g key={fraction}><line x1="75" x2={viewport.width - 30} y1={y(value)} y2={y(value)} stroke="#ffffff18" /><text x="66" y={y(value) + 4} textAnchor="end" fill="#a1a1aa" fontSize="11">{value.toLocaleString("en-US", { notation: "compact", style: "currency", currency: "USD", maximumFractionDigits: 1 })}</text></g>;
           })}
           {series.map(token => {
             const opacity = !highlight || highlight === token ? 1 : 0.15;
@@ -140,7 +142,7 @@ export default function TreasuryExplorer({ data, tokenPrices }: TreasuryExplorer
             {visibleScenarios.map(scenario => <path key={scenario} d={pathFor(forecast.points.map(point => ({ timestamp: point.timestamp, value: point[scenario] })))} fill="none" stroke={SCENARIO_COLORS[scenario]} strokeWidth="2" strokeDasharray="6 4" />)}
           </>}
           <text x="75" y="311" fill="#a1a1aa" fontSize="11">{history[0].date}</text>
-          <text x="970" y="311" textAnchor="end" fill="#a1a1aa" fontSize="11">{new Date(lastTimestamp).toISOString().slice(0, 10)}</text>
+          <text x={viewport.width - 30} y="311" textAnchor="end" fill="#a1a1aa" fontSize="11">{new Date(lastTimestamp).toISOString().slice(0, 10)}</text>
         </svg>
       </div>
 

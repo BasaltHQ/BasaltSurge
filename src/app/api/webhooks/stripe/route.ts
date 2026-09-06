@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { recoverStripeReceiptSession, stripeReceiptWriteCondition } from "@/lib/stripe-receipt-session";
 import { getBrandKey } from "@/config/brands";
 import { auditEvent } from "@/lib/audit";
 import crypto from "node:crypto";
@@ -9,6 +10,7 @@ import {
   shouldIgnoreCanonicalStatusTransition,
 } from "@/lib/receipt-status-policy";
 import {
+  isStripeFulfillmentCompleteStatus,
   isStripePaymentAcceptedStatus,
   normalizeStripeOnrampCheckoutMode,
   resolveStripeAcceptedReceiptStatus,
@@ -53,9 +55,7 @@ async function patchReceiptFields(
       try {
         const response = await container.item(receiptId, partitionKey).patch(
           chunk.map(([key, value]) => ({ op: "set", path: `/${key}`, value })),
-          current._etag
-            ? { accessCondition: { type: "IfMatch", condition: current._etag } }
-            : undefined
+          stripeReceiptWriteCondition(current)
         );
         latest = response.resource || latest;
         applied = true;
@@ -167,7 +167,7 @@ async function resolveMerchantContext(
         const { resources } = await container.items.query(querySpec).fetchAll();
         if (resources && resources.length > 0) {
           foundReceipt = resources[0];
-          if (sessionId && foundReceipt.stripeSessionId && foundReceipt.stripeSessionId !== sessionId) {
+          if (!receiptIdRaw && sessionId && foundReceipt.stripeSessionId && foundReceipt.stripeSessionId !== sessionId) {
             console.error(`[STRIPE WEBHOOK] Receipt ${foundReceipt.id} is bound to ${foundReceipt.stripeSessionId}, not ${sessionId}`);
             return null;
           }
@@ -438,7 +438,7 @@ export async function POST(req: NextRequest) {
           throw new Error(`ambiguous_stripe_session_receipts:${sessionId}`);
         }
 
-        for (const r of linkedReceipts) {
+        for (let r of linkedReceipts) {
           const rIdRaw = String(r.receiptId || r.id || "").replace(/^receipt:/, "").trim().toLowerCase();
           
           if (metaReceiptRaw && rIdRaw && rIdRaw !== metaReceiptRaw.toLowerCase()) {
@@ -447,8 +447,7 @@ export async function POST(req: NextRequest) {
           }
 
           if (sessionId && r.stripeSessionId && r.stripeSessionId !== sessionId) {
-            console.warn(`[STRIPE WEBHOOK] Receipt ${r.id} is already bound to ${r.stripeSessionId}; refusing event for ${sessionId}.`);
-            continue;
+            r = await recoverStripeReceiptSession(container, r, session);
           }
           if (!r.stripeSessionId && sessionId) r.stripeSessionId = sessionId;
 
@@ -599,6 +598,7 @@ export async function POST(req: NextRequest) {
               ttl: finalDoc.ttl,
               stripeSessionStatus: finalDoc.stripeSessionStatus,
               stripeSessionId: finalDoc.stripeSessionId,
+              stripePaidSessionId: sessionId,
               onrampAmount: finalDoc.onrampAmount,
               settlementAmount: finalDoc.settlementAmount,
               statusHistory: finalDoc.statusHistory,
@@ -612,7 +612,10 @@ export async function POST(req: NextRequest) {
               webhookLastAttemptAt: finalDoc.webhookLastAttemptAt,
               webhookLastTransactionHash: finalDoc.webhookLastTransactionHash,
             },
-            (current) => !shouldIgnoreCanonicalStatusTransition(current.status, finalDoc.status)
+            (current) => (!current.stripeSessionId || current.stripeSessionId === sessionId)
+              && (!current.stripePaidSessionId || current.stripePaidSessionId === sessionId)
+              && !(isStripeFulfillmentCompleteStatus(current.stripeSessionStatus) && !isStripeFulfillmentCompleteStatus(status))
+              && !shouldIgnoreCanonicalStatusTransition(current.status, finalDoc.status)
           );
           if (persisted.skipped) {
             console.log(`[STRIPE WEBHOOK] Preserved newer canonical status '${persisted.resource?.status}' for receipt ${r.id}.`);

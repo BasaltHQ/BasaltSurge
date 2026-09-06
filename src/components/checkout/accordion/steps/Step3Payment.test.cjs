@@ -16,7 +16,7 @@ function load(file) {
   vm.runInNewContext(output, {
     module, exports: module.exports,
     require(name) {
-      if (name === "react") return { useRef: () => ({ current: null }), useEffect() {} };
+      if (name === "react") return { useRef: () => ({ current: null }), useState: initial => [initial, () => {}], useEffect() {} };
       if (name === "react/jsx-runtime") {
         const jsx = (type, props) => ({ type, props });
         return { jsx, jsxs: jsx };
@@ -64,4 +64,23 @@ test("actual issuer declines retain their payment recovery advice", () => {
   const nodes = render({ headlessStep: "error", activeError: "Your card was declined by your issuing bank." });
   assert.match(textOf(nodes), /Quick Tips/);
   assert.match(textOf(nodes), /banking app/);
+});
+
+test("generic payment collection failures immediately offer retry and stop the connection placeholder", () => {
+  let retries = 0;
+  const nodes = render({ headlessStep: "error", activeError: "Payment method collection failed", onTimeoutRetry: () => retries++ });
+  const retry = nodes.find(node => node?.type === "button" && node.props.children === "Retry checkout");
+  assert.ok(retry);
+  retry.props.onClick();
+  assert.equal(retries, 1);
+  assert.equal(nodes.find(node => node?.type === "StripeEmbedContainer").props.isFailed, true);
+  const completed = render({ headlessStep: "error", activeError: "Payment method collection failed", isCompleted: true, onTimeoutRetry() {} });
+  assert.equal(completed.some(node => node?.type === "button" && node.props.children === "Retry checkout"), false);
+});
+
+test("failed empty embed does not claim Stripe is still connecting", () => {
+  const { StripeEmbedContainer } = load(path.join(__dirname, "../StripeEmbedContainer.tsx"));
+  const text = textOf(flatten(StripeEmbedContainer({ element: null, isFailed: true })));
+  assert.match(text, /no longer active/);
+  assert.doesNotMatch(text, /Initializing|Taking longer|finalizing|Encrypted/);
 });

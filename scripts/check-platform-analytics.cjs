@@ -8,6 +8,7 @@ const roots = [
   "src/app/(web)/admin/panels/PlatformAnalyticsPanel.tsx",
   "src/app/api/platform/analytics/route.ts",
   "src/app/api/platform/safe-value/route.ts",
+  "src/app/api/platform/stripe-audit/route.ts",
 ];
 const program = ts.createProgram(roots, { ...parsed.options, noEmit: true, incremental: false });
 const diagnostics = [...parsed.errors, ...ts.getPreEmitDiagnostics(program)];

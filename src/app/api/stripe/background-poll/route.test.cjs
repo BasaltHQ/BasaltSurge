@@ -18,7 +18,7 @@ const clone = value => value == null ? value : structuredClone(value);
 // Execute the route and its real claim/status/amount helpers. Only database,
 // wallet, network, lifecycle, and notification boundaries are replaced: no
 // request or transfer can leave this harness.
-function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors = [], afterErrors = 0 } = {}) {
+function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors = [], afterErrors = 0, funding = "debit", debitSplit = SPLIT } = {}) {
   const documents = new Map([[RECEIPT_KEY, {
     id: `receipt:${RECEIPT_ID}`,
     receiptId: RECEIPT_ID,
@@ -32,11 +32,12 @@ function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors
     transactionHash: "ecommerce_pending",
     totalUsd: 9,
     splitAddress: SPLIT,
-    splitAddressCredit: SPLIT,
+    splitAddressCredit: debitSplit,
     brandKey: "portalpay",
   }]]);
   const callbacks = [];
-  const calls = { balance: [], send: [], fetch: [], writes: [], containers: [], timers: [], errors: [] };
+  const calls = { balance: [], send: [], fetch: [], writes: [], containers: [], timers: [], errors: [], emails: [] };
+  const state = { stripeStatus: "fulfillment_complete", fallbackRace: null };
   const pendingBalances = [...balances];
   const pendingBalanceErrors = [...balanceErrors];
   const pendingSendErrors = [...sendErrors];
@@ -67,9 +68,16 @@ function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors
           documents.set(key, clone(document));
           return { resource: clone(document) };
         },
-        patch: async operations => {
+        patch: async (operations, options = {}) => {
           assert.ok(documents.has(key), `Cannot patch missing test document ${key}`);
+          if (key === RECEIPT_KEY && state.fallbackRace && operations.some(op => op.path === "/status" && ["pending", "failed"].includes(op.value))) {
+            documents.set(key, { ...documents.get(key), ...state.fallbackRace });
+            state.fallbackRace = null;
+          }
           const document = clone(documents.get(key));
+          for (const [field, expected] of Object.entries(options.matchFields || {})) {
+            if ((document[field] ?? null) !== expected) throw Object.assign(new Error("receipt_changed"), { statusCode: 412 });
+          }
           for (const operation of operations) {
             const field = operation.path.replace(/^\//, "");
             if (operation.op === "remove") delete document[field];
@@ -87,7 +95,8 @@ function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors
     if (String(url) === `https://api.stripe.com/v1/crypto/onramp_sessions/${SESSION_ID}`) {
       return jsonResponse({
         id: SESSION_ID,
-        status: "fulfillment_complete",
+        status: state.stripeStatus,
+        payment_details: funding === "us_bank_account" ? { type: "us_bank_account", us_bank_account: {} } : { type: "card", card: { funding } },
         customer_information: { email: "buyer@example.test" },
         metadata: { receiptId: RECEIPT_ID, merchantWallet: MERCHANT, checkoutMode: "ecommerce" },
         transaction_details: {
@@ -119,7 +128,7 @@ function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors
         return container;
       },
     },
-    "@/lib/aws/ses": { sendEmail: async () => {} },
+    "@/lib/aws/ses": { sendEmail: async (...args) => { calls.emails.push(args); } },
     "@/lib/site-config": { getSiteConfigForWallet: async () => ({ splitAddress: SPLIT, splitAddressCredit: SPLIT }) },
     "@/lib/notifications/email-template": { generateHtmlEmailTemplate: () => "test email" },
     "@/app/api/auth/thirdweb-verify/route": { markEmailVerified: () => "test_verification_token" },
@@ -177,7 +186,7 @@ function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors
   }
   const route = load(path.join(__dirname, "route.ts"));
   return {
-    calls, callbacks,
+    calls, callbacks, state,
     receipt: () => clone(documents.get(RECEIPT_KEY)),
     claims: () => [...documents.values()].filter(document => document.type === "settlement_execution_claim").map(clone),
     setReceipt: changes => documents.set(RECEIPT_KEY, { ...documents.get(RECEIPT_KEY), ...changes }),
@@ -193,6 +202,45 @@ function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors
       await callbacks.shift()();
     },
   };
+}
+
+test("a background polling deadline retains pending status without failure email or sweep", async () => {
+  const harness = createHarness();
+  harness.state.stripeStatus = "requires_payment";
+  assert.equal((await harness.post()).status, 200);
+  await harness.runAfter();
+  assert.equal(harness.receipt().status, "pending");
+  assert.equal(harness.calls.send.length, 0);
+  assert.equal(harness.calls.emails.length, 0);
+});
+
+for (const funding of ["debit", "credit", "us_bank_account", "prepaid"]) {
+  test(`server settlement sends ${funding} funds to the correct configured split`, async () => {
+    const debitSplit = "0x4444444444444444444444444444444444444444";
+    const harness = createHarness({ funding, debitSplit });
+    assert.equal((await harness.post()).status, 200);
+    await harness.runAfter();
+    assert.equal(harness.calls.send.length, 1);
+    assert.equal(harness.calls.send[0].transaction.params[0], ["debit", "prepaid"].includes(funding) ? debitSplit : SPLIT);
+    assert.equal(harness.calls.send[0].transaction.params[1], 9_000_000n);
+  });
+}
+
+for (const newer of [
+  { status: "paid", stripeSessionStatus: "fulfillment_complete", transactionHash: TX_HASH },
+  { stripeSessionId: "cos_new_attempt", status: "pending" },
+]) {
+  test(`a stale terminal observation cannot overwrite concurrent ${newer.status} receipt state`, async () => {
+    const harness = createHarness();
+    harness.state.stripeStatus = "requires_payment";
+    await harness.post();
+    harness.state.stripeStatus = "rejected";
+    harness.state.fallbackRace = newer;
+    await harness.runAfter();
+    for (const [key, value] of Object.entries(newer)) assert.equal(harness.receipt()[key], value);
+    assert.equal(harness.calls.emails.length, 0, "a stale failure must not notify the buyer");
+    assert.equal(harness.calls.send.length, 0);
+  });
 }
 
 test("launch waits for the Next.js after callback before accessing the settlement wallet", async () => {

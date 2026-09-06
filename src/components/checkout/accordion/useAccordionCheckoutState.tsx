@@ -85,6 +85,9 @@ export function useAccordionCheckoutState(
     onAccordionStepTransition,
   } = props;
 
+  // Sandbox cookies must never replace a wired live checkout with a simulation.
+  const isLiveIntegration = typeof onHeadlessSubmitEmailPhone === "function" || headlessStep !== undefined;
+
   const primaryColor = theme?.primaryColor || "#635BFF";
 
   const [activeStep, setActiveStepState] = useState<number>(1);
@@ -97,6 +100,7 @@ export function useAccordionCheckoutState(
   const transitionSequenceRef = useRef(0);
   const initialTransitionReportedRef = useRef(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [manualEditAddress, setManualEditAddress] = useState<boolean>(false);
 
   // Read sandbox simulation cookies
@@ -107,7 +111,7 @@ export function useAccordionCheckoutState(
   const [cookieSimPm, setCookieSimPm] = useState<string | null>(null);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || isLiveIntegration) return;
     const cookies = window.document.cookie || "";
     if (cookies.includes("pp_sandbox_sim_enabled=true")) {
       setCookieSimEnabled(true);
@@ -160,7 +164,7 @@ export function useAccordionCheckoutState(
   }, []);
 
   // Strict separation of simulation demo mode vs live production checkout
-  const isSimulationMode = Boolean(
+  const isSimulationMode = !isLiveIntegration && Boolean(
     simulatedTier ||
     simulatedStatus ||
     (simulatedPath && simulatedPath !== "normal") ||
@@ -171,12 +175,12 @@ export function useAccordionCheckoutState(
   const effectiveTier: string = simulatedTier || cookieSimTier || kycTierRequired || "l0";
   const effectiveStatus: string =
     simulatedStatus ||
-    cookieSimStatus ||
+    (!isLiveIntegration && cookieSimStatus) ||
     (isAllKycCompleted ? "verified" : "normal");
   const effectiveError: string =
     simulatedError && simulatedError !== "none"
       ? simulatedError
-      : cookieSimError && cookieSimError !== "none"
+      : !isLiveIntegration && cookieSimError && cookieSimError !== "none"
       ? cookieSimError
       : "";
 
@@ -321,7 +325,13 @@ export function useAccordionCheckoutState(
 
   // Active error (props, local, or simulated, formatted)
   const rawActiveError = localError || (propError && propError !== "none" ? propError : null) || (effectiveError && effectiveError !== "none" ? effectiveError : null);
-  const activeError = rawActiveError ? (formatErrorMessage(rawActiveError) || rawActiveError) : null;
+  const paymentAlreadyConfirmed = isReceiptPaid || Boolean(propPaymentConfirmed) || headlessStep === "completed";
+  const activeError = !paymentAlreadyConfirmed && rawActiveError && rawActiveError !== dismissedError
+    ? (formatErrorMessage(rawActiveError) || rawActiveError) : null;
+  const dismissError = () => { setDismissedError(rawActiveError); setLocalError(null); };
+  useEffect(() => {
+    if (!rawActiveError) setDismissedError(null);
+  }, [rawActiveError]);
 
   // Step 1: Contact State
   const [email, setEmail] = useState(initialEmail);
@@ -540,7 +550,7 @@ export function useAccordionCheckoutState(
   }, []);
 
   // Canonical payment completion status
-  const effectivePaymentConfirmed = propPaymentConfirmed || simulatedPaymentConfirmed;
+  const effectivePaymentConfirmed = propPaymentConfirmed || (isSimulationMode ? simulatedPaymentConfirmed : null);
   const isPaid = isLiveMode
     ? Boolean(isReceiptPaid || effectivePaymentConfirmed || headlessStep === "completed")
     : Boolean(fulfillmentStage === "complete" && simulatedPaymentConfirmed);
@@ -1190,6 +1200,7 @@ export function useAccordionCheckoutState(
     handleStepChange,
     localError,
     setLocalError,
+    dismissError,
     activeError,
     isPaid,
     isOrderConfirmed,

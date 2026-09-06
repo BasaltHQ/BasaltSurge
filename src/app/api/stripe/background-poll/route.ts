@@ -1,5 +1,6 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { recoverStripeReceiptSession, stripeReceiptWriteCondition, persistStripeReceiptUpdate } from "@/lib/stripe-receipt-session";
 import { sendEmail } from "@/lib/aws/ses";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { generateHtmlEmailTemplate } from "@/lib/notifications/email-template";
@@ -476,7 +477,7 @@ async function recordStripeFulfillmentProcessing(params: {
     receipt.webhookLastDeliveryOk = false;
     receipt.webhookLastAttemptAt = Date.now();
   }
-  await container.items.upsert(receipt);
+  await persistStripeReceiptUpdate(container, receipt);
 
   if (!shouldDeliver) return;
   void dispatchReceiptStatusWebhookBestEffort(container, receipt, nextStatus, previousStatus, {
@@ -925,7 +926,12 @@ async function runBackgroundPoll(params: {
       const { resource: receipt } = await container.item(docId, merchantWallet).read();
 
       if (receipt) {
-        if (isProtectedPaymentStatus(receipt.status) || receipt.transactionHash || receipt.leg2TxHash || receipt.leg1TxHash) {
+        if (receipt.stripeSessionId !== sessionId) {
+          console.warn(`[BACKGROUND POLL] Ignoring old session ${sessionId}; receipt now belongs to another attempt.`);
+          return;
+        }
+        if (isProtectedPaymentStatus(receipt.status) || isStripePaymentAcceptedStatus(receipt.stripeSessionStatus)
+          || [receipt.transactionHash, receipt.leg2TxHash, receipt.leg1TxHash].some(hash => /^0x[a-f0-9]{64}$/i.test(String(hash || "")))) {
           console.log(`[BACKGROUND POLL] Receipt ${receiptId} is already paid or confirmed on-chain. Skipping failure update.`);
           return;
         }
@@ -945,6 +951,7 @@ async function runBackgroundPoll(params: {
         const nextStatus = paymentAcceptedByStripe
           ? (fallbackAcceptedStatus || "paid")
           : (isDefinitiveFailure ? "failed" : "pending");
+        const writeCondition = stripeReceiptWriteCondition(receipt);
         const previousStatus = String(receipt.status || "pending");
         receipt.status = nextStatus;
         if (fallbackFunding === "us_bank_account") {
@@ -963,7 +970,14 @@ async function runBackgroundPoll(params: {
           receipt.webhookLastAttemptAt = Date.now();
         }
 
-        await container.items.upsert(receipt);
+        // A webhook can mark the receipt paid or replace its session while
+        // this worker is finishing. Never overwrite that newer observation.
+        const fields = ["status", "detectedCardFunding", "isCreditCard", "ttl", "lastUpdatedAt", "statusHistory",
+          "webhookLastStatus", "webhookLastPreviousStatus", "webhookLastDeliveryOk", "webhookLastAttemptAt"];
+        await container.item(docId, merchantWallet).patch(
+          fields.filter(key => receipt[key] !== undefined).map(key => ({ op: "set", path: `/${key}`, value: receipt[key] })),
+          writeCondition
+        );
         if (paymentAcceptedByStripe && receipt.webhookUrl) {
           void dispatchReceiptStatusWebhookBestEffort(container, receipt, nextStatus, previousStatus, {
             merchantWallet,
@@ -974,12 +988,14 @@ async function runBackgroundPoll(params: {
         console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to ${nextStatus} in DB`);
       } else {
         console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found in DB for failure tagging`);
+        return;
       }
     } catch (dbErr) {
       console.error("[BACKGROUND POLL] Database failure update error:", dbErr);
+      return;
     }
 
-    if (isDefinitiveFailure) {
+    if (isDefinitiveFailure && !paymentAcceptedByStripe) {
       // 2. Send transaction failure email to customer
       try {
         console.log(`[BACKGROUND POLL] Sending failure email to ${email}`);
@@ -1001,12 +1017,12 @@ async function runBackgroundPoll(params: {
           logoUrl: absoluteLogoUrl || undefined,
           title: "Transaction Failed",
           subtitle: `Receipt #${receiptId}`,
-          message: `Your transaction of $${amount.toFixed(2)} could not be processed. Your payment has failed and you have not been charged. Please try again.`,
+          message: `Stripe reported that your payment of $${amount.toFixed(2)} could not be completed. Check your receipt for its latest status before trying again. Your bank may temporarily show an authorization hold.`,
           details: [
             { label: "Receipt ID", value: receiptId },
             { label: "Amount", value: `$${amount.toFixed(2)}` },
             { label: "Status", value: "Failed" },
-            { label: "Reason", value: "Onramp transaction failed or timed out" },
+            { label: "Reason", value: "Stripe reported a terminal payment failure" },
           ],
           ctaText: "Try Payment Again",
           ctaUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001"}/portal/${receiptId}?recipient=${encodeURIComponent(merchantWallet)}`,
@@ -1107,11 +1123,6 @@ export async function POST(req: NextRequest) {
       }
       merchantWallet = storedMerchantWallet;
 
-      if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
-        console.error(`[BACKGROUND POLL] Receipt ${receiptId} is bound to ${receipt.stripeSessionId}; rejected ${sessionId}`);
-        return NextResponse.json({ ok: false, error: "receipt_session_mismatch" }, { status: 409 });
-      }
-
       const stripeResponse = await fetch(
         `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
         {
@@ -1139,6 +1150,13 @@ export async function POST(req: NextRequest) {
       const stripeMerchantWallet = String(stripeSession.metadata?.merchantWallet || stripeSession.metadata?.wallet || "").trim().toLowerCase();
       if (stripeMerchantWallet && stripeMerchantWallet !== merchantWallet.toLowerCase()) {
         return NextResponse.json({ ok: false, error: "stripe_metadata_merchant_mismatch" }, { status: 409 });
+      }
+      if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
+        try {
+          receipt = await recoverStripeReceiptSession(container, receipt, stripeSession);
+        } catch {
+          return NextResponse.json({ ok: false, error: "receipt_session_mismatch" }, { status: 409 });
+        }
       }
 
       const stripeEmail = String(stripeSession.customer_information?.email || stripeSession.customer_details?.email || "").trim().toLowerCase();
@@ -1218,7 +1236,7 @@ export async function POST(req: NextRequest) {
         receipt.kycRequiredLevel = highestKycTier(receipt.kycRequiredLevel, kycRequiredLevel);
       }
       receipt.lastUpdatedAt = Date.now();
-      await container.items.upsert(receipt);
+      await persistStripeReceiptUpdate(container, receipt);
       verifiedReceipt = receipt;
       console.log(`[BACKGROUND POLL] Verified and saved Stripe metadata for receipt ${receiptId}`);
 

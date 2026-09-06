@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { attachCreatedStripeSession, readStripeReceiptForPayment, assertStripeReceiptCanCreateSession } from "@/lib/stripe-receipt-session";
 import { getPublicClientIp } from "@/lib/request-client-ip";
 import { normalizeStripeOnrampCheckoutMode } from "@/lib/stripe-onramp-status";
 import { fetchUsdRates } from "@/lib/eth";
@@ -51,6 +52,10 @@ export async function POST(req: NextRequest) {
     const merchantWallet = String(body.merchantWallet || "").trim();
     const brandKey = String(body.brandKey || "").trim();
     const checkoutMode = normalizeStripeOnrampCheckoutMode(body.checkoutMode);
+    if (receiptId) {
+      const container = await getContainer(undefined, undefined, { profile: "critical" });
+      await assertStripeReceiptCanCreateSession(container, await readStripeReceiptForPayment(container, receiptId, merchantWallet));
+    }
 
     if (!cryptoCustomerId || !cryptoPaymentToken) {
       return NextResponse.json(
@@ -226,7 +231,7 @@ export async function POST(req: NextRequest) {
 
     if (receiptId) {
       try {
-        const container = await getContainer();
+        const container = await getContainer(undefined, undefined, { profile: "critical" });
         const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
         const rawId = receiptId.replace(/^receipt:/, "");
         let receipt: any = null;
@@ -282,13 +287,17 @@ export async function POST(req: NextRequest) {
           receipt.stripeSessionId = data.id;
           receipt.checkoutMode = checkoutMode;
           receipt.lastUpdatedAt = Date.now();
-          await container.items.upsert(receipt);
+          await attachCreatedStripeSession(container, receipt, data);
           console.log(`[ONRAMP V2] Successfully linked Stripe session ${data.id} for receipt ${receiptId}`);
         } else {
           console.warn(`[ONRAMP V2] Receipt ${receiptId} not found in DB`);
+          throw new Error("receipt_not_found");
         }
       } catch (dbErr: any) {
+        if (dbErr?.code === "receipt_payment_in_progress") return NextResponse.json({ ok: false, error: dbErr.message, code: dbErr.code }, { status: 409 });
+        if (dbErr?.code === "receipt_already_paid") return NextResponse.json({ ok: false, error: "This receipt has already been paid.", code: dbErr.code }, { status: 409 });
         console.error("[ONRAMP V2] Failed to persist Stripe session ID to receipt:", dbErr);
+        return NextResponse.json({ ok: false, error: "stripe_session_receipt_attachment_failed" }, { status: 503 });
       }
     }
 
@@ -309,8 +318,8 @@ export async function POST(req: NextRequest) {
     }
     console.error("[ONRAMP V2] Error:", e);
     return NextResponse.json(
-      { ok: false, error: e?.message || "internal_error" },
-      { status: 500 }
+      { ok: false, error: e?.message || "internal_error", code: e?.code },
+      { status: e?.statusCode === 409 ? 409 : 500 }
     );
   }
 }

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { isDualSplitEnabled } from "@/lib/env";
 import { maskSensitiveData } from "@/lib/sanitize-logs";
-import { resolveSettlementSplitAddress } from "@/lib/payment-split-routing";
+import { resolveStripeOnrampFunding } from "@/lib/payment-split-routing";
 import { canReuseStripeCoordinatorSession } from "@/lib/stripe-coordinator-session";
 import { getStripeOnrampPreflightError } from "@/lib/stripe-onramp-preflight";
 import { getStripeOnrampPaymentMethodTypes } from "@/lib/stripe-onramp-payment-methods";
@@ -31,7 +31,6 @@ import {
   nextKycTierForExceededLimit,
   selectStripeOnrampLimit,
 } from "@/lib/stripe-onramp-limits";
-import { resolveStripeSettlementAmount, usdcAmountToBaseUnits } from "@/lib/stripe-onramp-amounts";
 
 // Safe sessionStorage decorator that redirects persistent user tokens to localStorage to minimize OTP prompts
 const sessionStorageDecorator = {
@@ -338,6 +337,8 @@ export type UseStripeEmbeddedOnrampProps = {
     kycOccurred?: boolean;
     /** True only after a server read observed Stripe's accepted state. */
     paymentAccepted?: boolean;
+    /** A server receipt read confirms an earlier payment; do not post a new payment event. */
+    receiptAlreadyPaid?: boolean;
     /** Signed provider status observed by the server-side status endpoint. */
     stripeStatus?: string;
   }) => void;
@@ -439,14 +440,25 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
   creating_session: "Preparing transaction...",
   confirming_fees: "Reviewing payment fee...",
   checking_out: "Processing payment...",
-  awaiting_funds: "Waiting for funds...",
+  awaiting_funds: "Payment confirmation is pending. Please do not submit another payment.",
   transferring: "Completing transfer...",
   completed: "Payment complete!",
   error: "Something went wrong",
 };
 
-// ─── Base USDC contract address ───
-const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+/** Bound observational requests, including a stalled response body. Never retry a payment submission here. */
+async function fetchOnrampObservation(url: string, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const data = await response.json().catch(() => ({}));
+    return { response, data };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 
 const ONRAMP_ERROR_MAPPINGS: Record<string, string> = {
   crypto_onramp_amount_above_maximum: "The purchase amount exceeds the maximum allowed limit.",
@@ -683,7 +695,7 @@ export function useStripeEmbeddedOnramp({
   onError,
   onStepChange,
   onCardDetected,
-  isEcommerceMode = false,
+  isEcommerceMode = true,
   feeMinusEnabled = false,
   debitFeePct = 0,
   creditFeePct = 0,
@@ -864,6 +876,7 @@ export function useStripeEmbeddedOnramp({
   const isVerifyingRef = useRef(false);
   const startOnrampRef = useRef<any>(null);
   const paymentRejectRef = useRef<any>(null);
+  const paymentAuthRecoveryAttemptsRef = useRef(0);
   const isAchEnforcedRef = useRef(false);
   const sessionFundingRef = useRef<"credit" | "debit" | "us_bank_account" | null>(null);
 
@@ -1124,6 +1137,18 @@ export function useStripeEmbeddedOnramp({
       const err = event.reason;
       const errMessage = String(err?.message || err || "").toLowerCase();
 
+      // The embedded SDK can reject its internal payment-selection promise
+      // without rejecting collectPaymentMethod's element promise or callback.
+      // Settle our pending selection so the normal Link recovery path can run.
+      // Do not treat a card/3DS authentication failure as expired Link auth.
+      const requiresLinkAuth = String(err?.code || "").toLowerCase() === "authentication_required"
+        || /^(authentication required|not authenticated|unauthenticated)[.!]?$/.test(errMessage.trim());
+      if (stepRef.current === "collecting_payment" && paymentRejectRef.current && requiresLinkAuth) {
+        event.preventDefault();
+        paymentRejectRef.current(Object.assign(new Error("Authentication required"), { code: "authentication_required" }));
+        return;
+      }
+
       // Check for Stripe Link unsupported account error (match explicit error codes/messages, not generic help URLs)
       const isUnsupportedLink = errMessage.includes("can't support your link account") || 
                                  errMessage.includes("unsupportable_customer") ||
@@ -1274,6 +1299,19 @@ export function useStripeEmbeddedOnramp({
     
     // Resolve programmatic code from error object if present
     const code = err?.code || (err instanceof Error ? (err as any).code : undefined) || "";
+    if (code === "receipt_already_paid") {
+      isRunningRef.current = false;
+      setError(null);
+      updateStep("completed");
+      onSuccessRef.current?.({ sessionId: sessionIdRef.current || "", receiptAlreadyPaid: true });
+      return;
+    }
+    if (code === "receipt_payment_in_progress") {
+      isRunningRef.current = false;
+      setError(null);
+      updateStep("awaiting_funds");
+      return;
+    }
     const friendlyMessage = code ? getFriendlyOnrampErrorMessage(code, message) : message;
 
     console.error(`[EMBEDDED ONRAMP] ${friendlyMessage}`, err);
@@ -1669,131 +1707,6 @@ export function useStripeEmbeddedOnramp({
   }, [brandKey]);
 
   // ─── Execute gasless USDC transfer from smart wallet → split contract ───
-  const executeGaslessTransfer = useCallback(async (
-    fromWalletEmail: string,
-    toAddress: string,
-    usdcAmount: number
-  ): Promise<string | null> => {
-    try {
-      const { createThirdwebClient, getContract, prepareContractCall, sendTransaction, readContract } = await import("thirdweb");
-      const { base } = await import("thirdweb/chains");
-
-      let clientId = "";
-      if (typeof window !== "undefined") {
-        clientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id") || "";
-      }
-      if (!clientId) {
-        const bKey = brandKey ? String(brandKey).trim().toUpperCase() : "";
-        const envClientId = bKey ? process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] : undefined;
-        clientId = envClientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID || "";
-      }
-
-      const twClient = createThirdwebClient({
-        clientId,
-      });
-
-      let account: any;
-
-      if (buyerAccountRef.current) {
-        console.log("[EMBEDDED ONRAMP] Using active guest EOA account (EIP-7702 mode):", buyerAccountRef.current.address);
-        account = buyerAccountRef.current;
-      } else {
-        const { inAppWallet } = await import("thirdweb/wallets");
-        // Re-connect the wallet as EOA with EIP-7702 gasless sponsored execution
-        console.log("[EMBEDDED ONRAMP] Re-connecting guest EOA wallet for EIP-7702 gasless transfer...");
-        const wallet = inAppWallet({
-          auth: {
-            options: ["auth_endpoint" as any],
-          },
-          executionMode: {
-            mode: "EIP7702",
-            sponsorGas: true,
-          },
-        });
-
-        const maxReconnAttempts = 3;
-        let lastReconnErr: any = null;
-
-        for (let a = 1; a <= maxReconnAttempts; a++) {
-          try {
-            account = await wallet.connect({
-              client: twClient,
-              chain: base,
-              strategy: "auth_endpoint" as any,
-              payload: JSON.stringify({
-                email: fromWalletEmail,
-                verificationToken: verificationTokenRef.current || "",
-                brandKey: brandKey || "",
-              }),
-            });
-            console.log(`[EMBEDDED ONRAMP] Guest EOA re-connected (attempt ${a}):`, account.address);
-            buyerAccountRef.current = account;
-            break;
-          } catch (rErr: any) {
-            lastReconnErr = rErr;
-            console.warn(`[EMBEDDED ONRAMP] Guest EOA reconnect attempt ${a}/${maxReconnAttempts} failed:`, rErr?.message || rErr);
-            if (a < maxReconnAttempts) {
-              await new Promise((r) => setTimeout(r, a * 350));
-            }
-          }
-        }
-
-        if (!account) {
-          console.error("[EMBEDDED ONRAMP] Failed to reconnect guest wallet after retries:", lastReconnErr);
-          return null;
-        }
-      }
-
-      // Prepare ERC-20 transfer: USDC has 6 decimals
-      const usdcContract = getContract({
-        client: twClient,
-        chain: base,
-        address: BASE_USDC_ADDRESS,
-      });
-
-      // Query the actual USDC balance before transferring the amount Stripe
-      // attributed to this payment.
-      let balance = BigInt(0);
-      try {
-        balance = await readContract({
-          contract: usdcContract,
-          method: "function balanceOf(address account) view returns (uint256)",
-          params: [account.address],
-        });
-        console.log(`[EMBEDDED ONRAMP] Target address: ${account.address}, USDC balance: ${balance.toString()}`);
-      } catch (balErr) {
-        console.warn("[EMBEDDED ONRAMP] Failed to query USDC balance on-chain:", balErr);
-      }
-
-      const requiredUnits = usdcAmountToBaseUnits(usdcAmount);
-      
-      if (balance > BigInt(0) && balance < requiredUnits) {
-        console.warn(`[EMBEDDED ONRAMP] Wallet balance ${balance.toString()} is below the Stripe-attributed settlement ${requiredUnits.toString()}. Deferring transfer for reconciliation.`);
-        return null;
-      }
-      const amountInUnits = requiredUnits;
-
-      const tx = prepareContractCall({
-        contract: usdcContract,
-        method: "function transfer(address to, uint256 amount) returns (bool)",
-        params: [toAddress, amountInUnits],
-      });
-
-      console.log("[EMBEDDED ONRAMP] Preparing USDC transfer:", amountInUnits.toString(), "→", toAddress.slice(0, 10) + "...");
-
-      const result = await sendTransaction({
-        account,
-        transaction: tx,
-      });
-
-      console.log("[EMBEDDED ONRAMP] ✓ Transfer complete, tx:", result.transactionHash);
-      return result.transactionHash;
-    } catch (err: any) {
-      console.error("[EMBEDDED ONRAMP] Transfer failed:", err);
-      return null;
-    }
-  }, [brandKey]);
-
   const getOnrampAmount = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
     if (getAmountForFunding) {
       return getAmountForFunding(funding);
@@ -1845,6 +1758,10 @@ export function useStripeEmbeddedOnramp({
 
         if (!sessionRes.ok) {
           const errData = await sessionRes.json().catch(() => ({}));
+          if (errData.code === "receipt_already_paid" || errData.code === "receipt_payment_in_progress") {
+            handleError(errData.error, errData);
+            return null;
+          }
           const errMessage = String(errData.error || "").toLowerCase();
           const errCode = String(errData.code || "").toLowerCase();
           console.error("[EMBEDDED ONRAMP] Stripe session creation rejected:", {
@@ -2086,13 +2003,13 @@ export function useStripeEmbeddedOnramp({
     activeEmail: string,
     overrideFunding?: "credit" | "debit" | "us_bank_account" | null
   ) => {
-    const fundingTypeToUse = overrideFunding !== undefined ? overrideFunding : (detectedCardFunding || sessionFundingRef.current);
+    let fundingTypeToUse = overrideFunding !== undefined ? overrideFunding : (detectedCardFunding || sessionFundingRef.current);
     if (customerIdRef.current) {
       try {
-        const finalKycResponse = await fetch(buildTrackedCustomerUrl(customerIdRef.current, "final"), {
+        const { response: finalKycResponse, data: finalKycData } = await fetchOnrampObservation(buildTrackedCustomerUrl(customerIdRef.current, "final"), {
           headers: { "x-stripe-oauth-token": oauthTokenRef.current || "" },
         });
-        if (finalKycResponse.ok) consumeKycTrackingResponse(await finalKycResponse.json());
+        if (finalKycResponse.ok) consumeKycTrackingResponse(finalKycData);
       } catch (finalKycError) {
         console.warn("[EMBEDDED ONRAMP] Final provider KYC snapshot could not be refreshed:", finalKycError);
       }
@@ -2103,12 +2020,11 @@ export function useStripeEmbeddedOnramp({
       || undefined;
 
     console.log("[EMBEDDED ONRAMP] Checking eCommerce mode before Step 11. isEcommerceMode:", isEcommerceMode, "fundingTypeToUse:", fundingTypeToUse, "resolvedKycLevel:", resolvedKycLevel);
-    if (isEcommerceMode) {
-      console.log("[EMBEDDED ONRAMP] eCommerce mode active. Launching verified background reconciliation.");
+    const awaitBackgroundConfirmation = async (initialStatus = "", maxPolls = 90) => {
       const isAch = fundingTypeToUse === "us_bank_account";
       updateStep("awaiting_funds");
 
-      let currentStripeStatus = "";
+      let currentStripeStatus = initialStatus;
       const backgroundPollPayload = {
         sessionId,
         receiptId,
@@ -2119,7 +2035,7 @@ export function useStripeEmbeddedOnramp({
         splitAddressCredit,
         brandKey,
         detectedCardFunding: fundingTypeToUse,
-        checkoutMode: "ecommerce",
+        checkoutMode: isEcommerceMode ? "ecommerce" : "full",
         kycOccurred: kycOccurredRef.current,
         kycLevel: resolvedKycLevel,
         kycRequiredLevel: kycRequiredLevelDetectedRef.current?.toUpperCase(),
@@ -2129,13 +2045,15 @@ export function useStripeEmbeddedOnramp({
 
       const launchBackgroundPoll = async (allowAcceptedRetry: boolean) => {
         try {
-          const launchResponse = await fetch("/api/stripe/background-poll", {
+          const { response: launchResponse, data: launchData } = await fetchOnrampObservation("/api/stripe/background-poll", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(backgroundPollPayload),
           });
-          const launchData = await launchResponse.json().catch(() => ({}));
-          currentStripeStatus = String(launchData.stripeStatus || currentStripeStatus);
+          const launchStatus = String(launchData.stripeStatus || "");
+          if (!isStripePaymentAcceptedStatus(currentStripeStatus) || isStripeFulfillmentCompleteStatus(launchStatus)) {
+            currentStripeStatus = launchStatus || currentStripeStatus;
+          }
           if (!launchResponse.ok || launchData.ok === false) {
             // An explicit server rejection occurs before the detached worker is
             // launched, so it is safe to retry once after Stripe reaches its
@@ -2162,7 +2080,7 @@ export function useStripeEmbeddedOnramp({
       // merely to performCheckout returning. Poll every two seconds so the UI
       // transitions as soon as fulfillment_processing is visible. This applies
       // equally to card and ACH; ACH only waits before the later funds sweep.
-      for (let poll = 0; poll < 90 && !isStripePaymentAcceptedStatus(currentStripeStatus); poll++) {
+      for (let poll = 0; poll < maxPolls && !isStripePaymentAcceptedStatus(currentStripeStatus); poll++) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
         if (!mountedRef.current) return;
 
@@ -2173,11 +2091,10 @@ export function useStripeEmbeddedOnramp({
           if (customerIdRef.current) {
             statusHeaders["x-crypto-customer-id"] = customerIdRef.current;
           }
-          const statusResponse = await fetch(
+          const { response: statusResponse, data: statusData } = await fetchOnrampObservation(
             `/api/stripe/onramp-status?sessionId=${encodeURIComponent(sessionId)}`,
             { headers: statusHeaders }
           );
-          const statusData = await statusResponse.json().catch(() => ({}));
           if (!statusResponse.ok || statusData.ok === false) {
             console.warn(`[EMBEDDED ONRAMP] eCommerce status fallback returned HTTP ${statusResponse.status}`);
             continue;
@@ -2223,7 +2140,8 @@ export function useStripeEmbeddedOnramp({
       } else {
         // Do not claim payment before Stripe accepts it. The server worker and
         // Plesk reconciliation remain active after this client-side timeout.
-        isRunningRef.current = false;
+        // Keep the attempt locked: a deadline must not enable another charge.
+        isRunningRef.current = true;
         onSuccessRef.current?.({
           sessionId,
           txHash: isAch ? "ach_pending" : "ecommerce_pending",
@@ -2235,23 +2153,18 @@ export function useStripeEmbeddedOnramp({
           ...currentKycResult(),
         });
       }
-      return;
-    }
+    };
 
     const isAch = fundingTypeToUse === "us_bank_account";
-    if (isAch) {
-      console.log("[EMBEDDED ONRAMP] ACH/Bank payment chosen in standard mode. Redirecting to awaiting_funds and completing client flow.");
-      isRunningRef.current = false;
-      updateStep("awaiting_funds");
-      onSuccessRef.current?.({ sessionId, txHash: "ach_pending", kycLevel: resolvedKycLevel, ...currentKycResult() });
+    if (isEcommerceMode || isAch) {
+      await awaitBackgroundConfirmation();
       return;
     }
 
     updateStep("awaiting_funds");
 
     let fundsDelivered = false;
-    let isCreditCard = false;
-    let deliveredSettlementAmount: number | null = null;
+    let lastStripeStatus = "";
     console.log(`[EMBEDDED ONRAMP] Starting to poll status for session: ${sessionId}`);
     for (let poll = 0; poll < 60; poll++) {
       await new Promise(r => setTimeout(r, 5000));
@@ -2264,14 +2177,21 @@ export function useStripeEmbeddedOnramp({
         if (customerIdRef.current) {
           statusHeaders["x-crypto-customer-id"] = customerIdRef.current;
         }
-        const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(sessionId)}`, {
+        const { response: statusRes, data: statusData } = await fetchOnrampObservation(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(sessionId)}`, {
           headers: statusHeaders
         });
         if (!statusRes.ok) {
           console.warn(`[EMBEDDED ONRAMP] Status endpoint returned error status: ${statusRes.status}`);
           continue;
         }
-        const statusData = await statusRes.json();
+        if (statusData.ok === false) continue;
+        if (isStripePaymentAcceptedStatus(statusData.status) || !isStripePaymentAcceptedStatus(lastStripeStatus)) {
+          lastStripeStatus = String(statusData.status || lastStripeStatus);
+        }
+        if (!isStripePaymentAcceptedStatus(lastStripeStatus) && isStripeOnrampTerminalFailure(statusData)) {
+          handleError("Stripe declined or rejected this payment before fulfillment.");
+          return;
+        }
         if (statusData.refreshedToken) {
           console.log("[EMBEDDED ONRAMP] Status poll returned refreshed OAuth token, updating ref...");
           oauthTokenRef.current = statusData.refreshedToken;
@@ -2279,24 +2199,12 @@ export function useStripeEmbeddedOnramp({
             sessionStorage.setItem("stripe_onramp_oauth_token", statusData.refreshedToken);
           }
         }
-        console.log(`[EMBEDDED ONRAMP] Polled status (attempt ${poll + 1}):`, statusData?.status, statusData);
+        console.log(`[EMBEDDED ONRAMP] Polled status (attempt ${poll + 1}):`, statusData?.status, maskSensitiveData(statusData));
 
         if (statusData && isStripeFulfillmentCompleteStatus(statusData.status)) {
           fundsDelivered = true;
-          deliveredSettlementAmount = resolveStripeSettlementAmount(statusData);
-          const method = statusData.paymentMethod || null;
-          const funding = statusData.paymentDetails?.card?.funding || null;
-          let resolvedFunding = funding || detectedCardFunding || sessionFundingRef.current;
-          if (!resolvedFunding && method) {
-            const methodLower = String(method).toLowerCase();
-            if (methodLower.includes("debit")) {
-              resolvedFunding = "debit";
-            } else if (methodLower.includes("credit")) {
-              resolvedFunding = "credit";
-            }
-          }
-          isCreditCard = resolvedFunding === "credit" || resolvedFunding === null;
-          console.log("[EMBEDDED ONRAMP] ✓ USDC delivered to buyer's smart wallet. Credit card:", isCreditCard, "Resolved funding:", resolvedFunding);
+          fundingTypeToUse = resolveStripeOnrampFunding(statusData, fundingTypeToUse);
+          console.log("[EMBEDDED ONRAMP] Stripe delivery confirmed. Funding:", fundingTypeToUse);
           break;
         }
       } catch (pollErr) {
@@ -2305,7 +2213,9 @@ export function useStripeEmbeddedOnramp({
     }
 
     if (!fundsDelivered) {
-      handleError("Timed out waiting for funds delivery");
+      // Expiry of the foreground polling budget is not a provider failure.
+      // Hand off this same session; never recollect payment or start a new one.
+      await awaitBackgroundConfirmation(lastStripeStatus, 0);
       return;
     }
 
@@ -2313,48 +2223,10 @@ export function useStripeEmbeddedOnramp({
 
     updateStep("transferring");
 
-    const targetSplitAddress = resolveSettlementSplitAddress({
-      funding: fundingTypeToUse,
-      isCreditCard,
-      splitAddress,
-      splitAddressCredit,
-    });
-
-    const finalAmount = deliveredSettlementAmount
-      || getOnrampAmount(fundingTypeToUse || (isCreditCard ? "credit" : "debit"));
-    const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, finalAmount);
-
-    if (!txHash) {
-      // Stripe has already completed the payment. Preserve that fact and leave
-      // settlement queued for the webhook/Plesk reconciler instead of showing
-      // the customer a false payment failure.
-      isRunningRef.current = false;
-      setError("Payment received. Merchant settlement is continuing in the background.");
-      updateStep("awaiting_funds");
-      onSuccessRef.current?.({
-        sessionId,
-        txHash: "settlement_pending",
-        kycLevel: resolvedKycLevel,
-        detectedCardFunding: fundingTypeToUse || (isCreditCard ? "credit" : "debit"),
-        isCreditCard,
-        paymentAccepted: true,
-        stripeStatus: "fulfillment_complete",
-        ...currentKycResult(),
-      });
-      return;
-    }
-
-    isRunningRef.current = false;
-    updateStep("completed");
-    onSuccessRef.current?.({
-      sessionId,
-      txHash,
-      kycLevel: resolvedKycLevel,
-      detectedCardFunding: fundingTypeToUse || (isCreditCard ? "credit" : "debit"),
-      isCreditCard: isCreditCard,
-      targetSplitAddress: targetSplitAddress,
-      ...currentKycResult(),
-    });
+    // All settlement execution must share the server wallet claim and receipt
+    // journal. A direct browser transfer can race the webhook/cron sweeper.
+    // The server re-reads Stripe's exact destination amount and funding type.
+    await awaitBackgroundConfirmation("fulfillment_complete", 0);
   }, [
     isEcommerceMode,
     receiptId,
@@ -2366,7 +2238,6 @@ export function useStripeEmbeddedOnramp({
     detectedCardFunding,
     updateStep,
     handleError,
-    executeGaslessTransfer,
     getOnrampAmount,
     buildTrackedCustomerUrl,
     consumeKycTrackingResponse,
@@ -2605,6 +2476,10 @@ export function useStripeEmbeddedOnramp({
         }
       } catch (sdkCheckoutErr: any) {
         const checkoutErr = checkoutResponseError || sdkCheckoutErr;
+        if (checkoutErr?.code === "receipt_already_paid" || checkoutErr?.code === "receipt_payment_in_progress") {
+          handleError(checkoutErr.message, checkoutErr);
+          return;
+        }
         console.warn(`[EMBEDDED ONRAMP] Checkout attempt ${attempt + 1} failed, checking error state...`, checkoutErr);
         
         let isCardDecline = false;
@@ -3703,7 +3578,7 @@ export function useStripeEmbeddedOnramp({
       }
     }
 
-    if (isRunningRef.current) {
+    if (isRunningRef.current || ["awaiting_funds", "transferring", "completed"].includes(stepRef.current)) {
       console.warn(
         `[EMBEDDED ONRAMP] Onramp flow is already running at ${stepRef.current}. ` +
         `${isForceRetry ? "Ignoring overlapping force retry." : "Ignoring duplicate trigger."}`
@@ -3741,6 +3616,7 @@ export function useStripeEmbeddedOnramp({
     }
     isRunningRef.current = true;
 
+    if (isForceRetry) paymentAuthRecoveryAttemptsRef.current = 0;
     if (isForceRetry || Date.now() - lastErrorSetTimeRef.current > 5000) {
       setError(null);
     }
@@ -4432,7 +4308,16 @@ export function useStripeEmbeddedOnramp({
         updateStep("collecting_payment");
 
         const paymentPromise = new Promise<{ token: string; funding: "credit" | "debit" | "us_bank_account" | null; brand: string; last4: string; paymentMethodDetails?: any }>((resolve, reject) => {
-          paymentRejectRef.current = reject;
+          let settled = false;
+          let failed = false;
+          const rejectCollection = (error: any) => {
+            if (settled) return;
+            settled = true;
+            failed = true;
+            if (paymentRejectRef.current === rejectCollection) paymentRejectRef.current = null;
+            reject(error);
+          };
+          paymentRejectRef.current = rejectCollection;
 
           try {
             const elemResult = onramp.collectPaymentMethod(
@@ -4445,7 +4330,15 @@ export function useStripeEmbeddedOnramp({
                 wallets: { applePay: "auto", googlePay: "auto" },
               },
               (result: any) => {
-                console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", result);
+                if (settled || !mountedRef.current || onrampRef.current !== onramp) return;
+                console.log("[EMBEDDED ONRAMP] collectPaymentMethod callback result:", maskSensitiveData(result));
+                if (!result || result.error) {
+                  const providerError = result?.error;
+                  rejectCollection(Object.assign(new Error(
+                    providerError?.message || (typeof providerError === "string" ? providerError : "Payment method collection failed")
+                  ), { code: providerError?.code }));
+                  return;
+                }
                 if (result) {
                   const newToken = result.oauthToken || 
                                    result.accessToken || 
@@ -4511,6 +4404,7 @@ export function useStripeEmbeddedOnramp({
                     })
                   };
 
+                  settled = true;
                   paymentRejectRef.current = null;
                   resolve({ 
                     token: result.cryptoPaymentToken, 
@@ -4520,29 +4414,28 @@ export function useStripeEmbeddedOnramp({
                     paymentMethodDetails: pmDetailsToSend
                   });
                 } else {
-                  paymentRejectRef.current = null;
-                  reject(new Error("Payment method collection failed"));
+                  rejectCollection(new Error("Payment method collection failed"));
                 }
               }
             );
 
             if (elemResult && typeof (elemResult as any).then === "function") {
               (elemResult as Promise<HTMLElement>).then((element: HTMLElement) => {
-                if (mountedRef.current && element) {
+                if (!failed && mountedRef.current && onrampRef.current === onramp && element) {
                   console.log("[EMBEDDED ONRAMP] Payment element resolved from Promise");
                   setPaymentElement(element);
                 }
               }).catch((err) => {
+                if (settled) return;
                 console.error("[EMBEDDED ONRAMP] Payment element Promise failed:", err);
                 if (mountedRef.current) {
                   setPaymentElement(null);
                 }
-                paymentRejectRef.current = null;
-                reject(err);
+                rejectCollection(err);
               });
             } else if (elemResult && typeof elemResult === "object" && !(elemResult instanceof Promise)) {
               console.log("[EMBEDDED ONRAMP] Payment element returned synchronously");
-              if (mountedRef.current) {
+              if (!failed && mountedRef.current && onrampRef.current === onramp) {
                 setPaymentElement(elemResult as unknown as HTMLElement);
               }
             }
@@ -4551,8 +4444,7 @@ export function useStripeEmbeddedOnramp({
             if (mountedRef.current) {
               setPaymentElement(null);
             }
-            paymentRejectRef.current = null;
-            reject(syncErr);
+            rejectCollection(syncErr);
           }
         });
 
@@ -4570,6 +4462,7 @@ export function useStripeEmbeddedOnramp({
           collectedLast4 = result.last4;
           collectedPaymentMethodDetails = result.paymentMethodDetails || null;
         } catch (paymentErr: any) {
+          if (!mountedRef.current) return;
           console.warn("[EMBEDDED ONRAMP] Payment method collection rejected:", paymentErr);
           if (mountedRef.current) {
             setPaymentElement(null);
@@ -4587,14 +4480,24 @@ export function useStripeEmbeddedOnramp({
               onrampRef.current = null;
             }
             updateStep("authenticating");
-            if (startOnrampRef.current && activeEmailRef.current) {
+            if (paymentAuthRecoveryAttemptsRef.current < 1 && startOnrampRef.current && activeEmailRef.current) {
+              paymentAuthRecoveryAttemptsRef.current += 1;
               isRunningRef.current = false;
-              startOnrampRef.current(activeEmailRef.current, undefined, undefined, true);
+              await startOnrampRef.current(activeEmailRef.current);
+            } else {
+              const message = "Authentication required. Please reconnect to Stripe Link and try again.";
+              setPersistedError(message);
+              isRunningRef.current = false;
+              updateStep("error");
+              onErrorRef.current?.(Object.assign(new Error(message), { code: "authentication_required" }));
             }
             return;
           }
-          setError(paymentErr?.message || "Payment method selection was not completed. Please try again.");
+          const message = paymentErr?.message || "Payment method selection was not completed. Please try again.";
+          setPersistedError(message);
           isRunningRef.current = false;
+          updateStep("error");
+          onErrorRef.current?.(paymentErr instanceof Error ? paymentErr : new Error(message));
           return;
         }
 
@@ -4966,7 +4869,7 @@ export function useStripeEmbeddedOnramp({
     enabled, email, phone, fullName, localPhone, splitAddress, splitAddressCredit, amount, network,
     destinationCurrency, receiptId, merchantWallet, brandKey,
     publishableKey, connectedWalletAddress, connectedWallet, handleError,
-    updateStep, createBuyerWallet, runCheckoutLoop, pollKycStatus,
+    updateStep, setPersistedError, createBuyerWallet, runCheckoutLoop, pollKycStatus,
     buildTrackedCustomerUrl, consumeKycTrackingResponse, completeEuKyc,
     resumeAfterKyc, reportKycEvent, getOnrampAmount, achEnabled, theme, isEcommerceMode,
   ]);

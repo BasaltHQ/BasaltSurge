@@ -6,6 +6,8 @@ import { getDistinctBrandColor } from "@/components/admin/analytics/analytics-br
 export { getDistinctBrandColor, BRAND_COLOR_MAP, DISTINCT_BRAND_PALETTE } from "@/components/admin/analytics/analytics-brand-colors";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import FailureExplorer from "@/components/admin/analytics/FailureExplorer";
+import AnalyticsLoadingScreen from "@/components/admin/analytics/AnalyticsLoadingScreen";
+import StripeAuditExplorer from "@/components/admin/analytics/StripeAuditExplorer";
 import ReceiptInvestigation from "@/components/admin/analytics/ReceiptInvestigation";
 import { CustomInteractiveLineChart, CustomInteractiveBarChart, type GitCommitEvent } from "@/components/admin/analytics/TrendExplorer";
 import SafeInteractiveLineChart from "@/components/admin/analytics/TreasuryExplorer";
@@ -377,19 +379,6 @@ function calculateFailureReportReasons(receipts: ReceiptInfo[]): FailureReason[]
 function readAnalyticsView(): AnalyticsViewState {
   if (typeof window === "undefined") return parseAnalyticsViewState(new URLSearchParams());
   return parseAnalyticsViewState(new URLSearchParams(window.location.search));
-}
-
-function AnalyticsPageLoadingState() {
-  return <div className="space-y-5" role="status" aria-live="polite" aria-label="Loading platform analytics">
-    <div className="rounded-xl border border-white/10 bg-zinc-950 p-6">
-      <h2 className="text-xl font-semibold text-white">Platform Analytics</h2>
-      <p className="mt-2 text-sm text-zinc-400">Loading metrics and receipt evidence…</p>
-    </div>
-    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4" aria-hidden="true">
-      {[0,1,2,3].map(index => <div key={index} className="h-28 rounded-xl border border-white/10 bg-zinc-900" />)}
-    </div>
-    <div className="h-72 rounded-xl border border-white/10 bg-zinc-900" aria-hidden="true" />
-  </div>;
 }
 
 export default function PlatformAnalyticsPanel() {
@@ -1552,7 +1541,7 @@ export default function PlatformAnalyticsPanel() {
   />;
 
   if (loading) {
-    return <AnalyticsPageLoadingState />;
+    return <AnalyticsLoadingScreen />;
   }
 
   if (error && !stats) {
@@ -1575,9 +1564,10 @@ export default function PlatformAnalyticsPanel() {
   return (
     <div className="platform-analytics w-full space-y-5 pb-24" data-density={density}>
 
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <header className="analytics-hero flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight text-white">Platform Analytics</h2>
+          <div className="analytics-eyebrow"><Activity size={13}/> PLATFORM INTELLIGENCE</div>
+          <h2 className="text-2xl font-semibold tracking-tight text-white">Platform <span>Analytics</span></h2>
           <p className="mt-1 text-sm text-zinc-400">Performance, payment evidence and operational diagnostics.</p>
           <p className="mt-2 text-xs text-zinc-400" role="status">{isRefetching ? "Updating metrics…" : queryMetadata?.generatedAt ? `Updated ${new Date(queryMetadata.aggregateGeneratedAt || queryMetadata.generatedAt).toLocaleString(undefined, { timeZone: effectiveTimezone })} · ${effectiveTimezone}` : "Manual refresh"}</p>
         </div>
@@ -1594,9 +1584,9 @@ export default function PlatformAnalyticsPanel() {
       {(isRefetching || error) && queryMetadata?.query && <p className="rounded-lg border border-white/10 p-3 text-xs text-zinc-400">Displayed results: partner {queryMetadata.query.brandKey}, status {queryMetadata.query.status}, KYC {queryMetadata.query.kyc}, search {queryMetadata.query.search || "none"}. The controls below describe the requested query.</p>}
       {error && stats && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200"><span>Showing previous results. {error}</span><button type="button" onClick={fetchAnalytics} className="underline">Retry</button></div>}
       <nav className="analytics-workspaces" aria-label="Analytics workspaces">
-        {([['overview','Overview'],['conversion','Conversion & Brands'],['failures','Failures'],['transactions','Transactions'],['treasury','Treasury']] as const).map(([key,label]) => <button type="button" key={key} aria-current={workspace === key ? "page" : undefined} onClick={() => setWorkspace(key)}>{label}</button>)}
+        {([['overview','Overview',Activity],['conversion','Conversion & Brands',BarChart2],['failures','Failures',AlertCircle],['transactions','Transactions',FileText],['treasury','Treasury',Database],['audit','Audit & Reconcile',CheckCircle2]] as const).map(([key,label,Icon]) => <button type="button" key={key} aria-current={workspace === key ? "page" : undefined} onClick={() => setWorkspace(key)}><Icon size={15}/>{label}</button>)}
       </nav>
-      <section aria-label="Analytics query and reports" className="rounded-xl border border-white/10 bg-zinc-950 p-4 space-y-4">
+      <section hidden={workspace === "audit"} aria-label="Analytics query and reports" className="rounded-xl border border-white/10 bg-zinc-950 p-4 space-y-4">
           {/* Filter Toolbar */}
           <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3 sm:gap-4">
 
@@ -1999,14 +1989,14 @@ export default function PlatformAnalyticsPanel() {
         {isExportingReport && <div role="status" aria-live="polite" className="flex items-center gap-3 text-sm"><progress max={100} value={exportProgress} aria-label="Report export progress" /><span>Preparing {activeExportFormat?.toUpperCase()} report · {exportProgress}%</span><button type="button" className="underline" onClick={() => exportAbortRef.current?.abort()}>Cancel export</button></div>}
       </section>
 
-      {workspace !== "treasury" && <section aria-label="Metric definition" className="flex flex-col gap-3 rounded-xl border border-white/10 p-4 lg:flex-row lg:items-center lg:justify-between">
+      {workspace !== "treasury" && workspace !== "audit" && <section aria-label="Metric definition" className="flex flex-col gap-3 rounded-xl border border-white/10 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap gap-2">
           {([['true_integration','Checkout completion · unique',trueIntegrationRate],['integration','Receipt completion · raw',integrationRate],['process','Resolved outcomes · unique',processRate]] as const).map(([key,label,value]) => <button type="button" key={key} aria-pressed={successRateMode === key} onClick={() => setSuccessRateMode(key)} className={`rounded-lg border px-3 py-2 text-xs ${successRateMode === key ? "border-indigo-400/50 bg-indigo-500/20 text-white" : "border-white/10 text-zinc-400"}`}>{label} <span className="ml-2 font-mono">{analyticsMetricValue(displayStats || {}, key)?.toFixed(1) ?? "—"}%</span></button>)}
           <button type="button" onClick={() => { rememberDialogFocus(); setIsAlgorithmModalOpen(true); }} className="rounded-lg border border-white/10 px-3 py-2 text-xs">Definitions</button>
         </div>
         <p className="max-w-md text-xs text-zinc-400">{successRateMode === "true_integration" ? "Paid unique intents / all unique intents, including open and failed." : successRateMode === "integration" ? "Paid receipt records / all raw records, including revisions." : "Paid unique intents / paid + failed unique intents. Unresolved intents are excluded."}</p>
       </section>}
-      <section hidden={workspace !== "overview" && workspace !== "conversion"}>
+      <section className="analytics-workspace-stack" hidden={workspace !== "overview" && workspace !== "conversion"}>
       {serverComparison?.available && <p className="mb-4 text-xs text-zinc-400">Compared with {new Date(serverComparison.start).toLocaleString(undefined, { timeZone: effectiveTimezone })} to {new Date(serverComparison.end).toLocaleString(undefined, { timeZone: effectiveTimezone })}, using the same filters and equal elapsed time.</p>}
       {displayStats && workspace === "overview" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
@@ -2158,7 +2148,7 @@ export default function PlatformAnalyticsPanel() {
         />)}
       </section>
 
-      <section hidden={workspace !== "conversion"}>
+      <section className="analytics-workspace-stack" hidden={workspace !== "conversion"}>
       {/* 3-Column Section Header */}
       <div className={`flex items-center justify-between glass-pane border border-white/10 bg-zinc-950/80 px-5 py-3 rounded-2xl transition-all duration-300 ${
         isThreeColumnMinimized ? "mb-6" : "mb-4"
@@ -2284,7 +2274,7 @@ export default function PlatformAnalyticsPanel() {
                   </button>
                 </div>
 
-                <div className="flex flex-col justify-around py-2 flex-1 min-h-0 mt-4 mb-2">
+                <div className="analytics-brand-bars flex flex-col justify-around py-2 flex-1 min-h-0 mt-4 mb-2">
                   {displayedBrandStats.map((b) => {
                     const brandIdx = allBrandKeys.indexOf(b.brandKey);
                     const color = getBrandColor(b.brandKey, brandIdx);
@@ -2311,7 +2301,7 @@ export default function PlatformAnalyticsPanel() {
                           <span className="text-muted-foreground text-xs font-medium">
                             {brandMetric === "successRate" ? (
                               <>
-                                {b.successRate}% SR <span className="text-white/20 mx-1">|</span> ${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                                {b.successRate.toFixed(1)}% SR <span className="text-white/20 mx-1">|</span> ${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                               </>
                             ) : (
                               <>
@@ -2399,7 +2389,8 @@ export default function PlatformAnalyticsPanel() {
       </section>
       {workspace === "failures" && <FailureExplorer data={failureCombinations} selected={selectedErrorCombo} onSelect={selection => { setSelectedErrorCombo(selection); setCurrentPage(1); }} />}
       {workspace === "overview" && <button type="button" className="flex w-full items-center justify-between rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-left" onClick={() => setWorkspace("failures")}><span><span className="block text-sm font-medium text-rose-200">Failure analysis</span><span className="mt-1 block text-xs text-zinc-400">{failureCombinations.affectedReceiptCount} receipts with recorded errors · reason frequency and co-occurrence</span></span><ArrowRight className="h-4 w-4" /></button>}
-      <section hidden={workspace !== "treasury"}>
+      <div hidden={workspace !== "audit"}><StripeAuditExplorer brands={allBrandKeys} onInspect={receiptId => { resetAnalyticsQuery(); setSearchMode("receiptId"); setSearchQuery(receiptId); setAppliedSearch(receiptId); setTimeRange("all"); setWorkspace("transactions"); }} /></div>
+      <section className="analytics-workspace-stack" hidden={workspace !== "treasury"}>
       <div className="mb-4 space-y-2 rounded-lg border border-white/10 p-4 text-xs text-zinc-400" role="status">
         <p>Source: {safeMetadata?.source || "Awaiting data"} · Indexed: {safeMetadata?.lastIndexedAt ? new Date(safeMetadata.lastIndexedAt).toLocaleString(undefined, { timeZone: effectiveTimezone }) : "Unavailable"}</p>
         {safeMetadata?.warning && <p className="text-amber-300">{safeMetadata.warning}</p>}
@@ -2997,7 +2988,7 @@ function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
   return (
     <div className="flex flex-col items-center justify-between h-full w-full py-1">
       {/* Large Centered Donut Circle */}
-      <div className="relative w-[88%] aspect-square flex-shrink-0 mt-2">
+      <div className="analytics-status-donut relative aspect-square flex-shrink-0 mt-2">
         <svg aria-hidden="true" viewBox="0 0 36 36" className="w-full h-full -rotate-90">
           {segments.map((seg, i) => {
             if (seg.value === 0) return null;
@@ -3029,7 +3020,7 @@ function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
       </div>
 
       {/* Slim HUD Legend along the bottom edge */}
-      <div className="flex items-center justify-around w-full border-t border-white/5 pt-3 mt-3 flex-shrink-0">
+      <div className="analytics-donut-legend flex items-center justify-around w-full border-t border-white/5 pt-3 mt-3 flex-shrink-0">
         {segments.map((seg, i) => (
           <div key={i} className="flex items-center gap-1 text-xs text-white/70">
             <div className="h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: seg.color }} />
