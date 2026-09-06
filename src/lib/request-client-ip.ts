@@ -47,15 +47,37 @@ export function isPublicIpAddress(value: unknown): boolean {
 }
 
 export function getPublicClientIp(headers: Headers, requestIp?: unknown): string | null {
+  const forwarded = String(headers.get("x-forwarded-for") || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .reverse();
   const candidates = [
+    // Cloudflare and Plesk/nginx populate these automatically. Keeping the
+    // resolution in code avoids requiring a per-container environment flag.
     headers.get("cf-connecting-ip"),
-    headers.get("x-forwarded-for")?.split(",")[0],
+    headers.get("true-client-ip"),
     headers.get("x-real-ip"),
     requestIp,
+    // Walk from the proxy side of the chain instead of trusting the first
+    // browser-supplied X-Forwarded-For value.
+    ...forwarded,
   ];
   for (const value of candidates) {
     const normalized = stripAddressDecorations(String(value || ""));
     if (isPublicIpAddress(normalized)) return normalized;
   }
   return null;
+}
+
+/** Preserve the first trustworthy address, but allow a later browser request
+ * to replace loopback/private placeholders written by an internal callback. */
+export function resolvePersistedClientIp(
+  existingIp: unknown,
+  headers: Headers,
+  requestIp?: unknown,
+): string | null {
+  const existing = stripAddressDecorations(String(existingIp || ""));
+  if (isPublicIpAddress(existing)) return existing;
+  return getPublicClientIp(headers, requestIp);
 }

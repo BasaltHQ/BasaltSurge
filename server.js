@@ -1,10 +1,15 @@
 const { createServer } = require('http');
 const { parse } = require('url');
+// `npm start` is the production entrypoint. Plesk normally injects NODE_ENV,
+// but set the expected default before Next is initialized when it does not.
+if (!process.env.NODE_ENV) process.env.NODE_ENV = 'production';
 const next = require('next');
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
-const port = process.env.PORT || 3000;
+// Preserve the existing production/start default when Plesk does not inject a
+// port. The scheduler receives this exact value after the server starts.
+const port = process.env.PORT || 3001;
 // when using middleware `hostname` and `port` must be provided below
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();

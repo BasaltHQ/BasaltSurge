@@ -2,6 +2,7 @@ import React from "react";
 import type { AccordionStepTransitionInput } from "@/lib/checkout-flow-tracking";
 
 export type StateSetter<T> = React.Dispatch<React.SetStateAction<T>> | ((val: T) => void);
+export type AccordionMotionPosition = -1 | 0 | 1;
 
 export interface SupportedCountry {
   code: string;
@@ -167,6 +168,7 @@ export interface Step1ContactProps extends Step1Props {
   isLocked: boolean;
   isLightText?: boolean;
   primaryColor?: string;
+  motionPosition?: AccordionMotionPosition;
 }
 
 export interface Step2Props {
@@ -247,6 +249,7 @@ export interface Step2IdentityProps extends Step2Props {
   isLocked: boolean;
   isLightText?: boolean;
   primaryColor?: string;
+  motionPosition?: AccordionMotionPosition;
 }
 
 export interface Step3Props {
@@ -271,6 +274,7 @@ export interface Step3PaymentProps extends Step3Props {
   isLocked: boolean;
   isLightText?: boolean;
   primaryColor?: string;
+  motionPosition?: AccordionMotionPosition;
 }
 
 export interface Step4Props {
@@ -286,7 +290,6 @@ export interface Step4Props {
   selectedPaymentType?: "applePay" | "googlePay" | "card" | "bank" | string;
   paymentConfirmed?: { txHash: string; amount: number; token: string; funding?: string } | null;
   onEmailReceipt?: () => void;
-  onBackToPayment?: () => void;
 }
 
 export interface Step4FulfillmentProps extends Step4Props {
@@ -294,6 +297,7 @@ export interface Step4FulfillmentProps extends Step4Props {
   isConfirmed: boolean;
   isLightText?: boolean;
   primaryColor?: string;
+  motionPosition?: AccordionMotionPosition;
 }
 
 export interface UseAccordionCheckoutStateReturn {

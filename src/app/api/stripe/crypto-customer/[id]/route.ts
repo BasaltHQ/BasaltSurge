@@ -10,6 +10,41 @@ export const dynamic = 'force-dynamic';
 
 const STRIPE_API_VERSION = "2026-06-24.dahlia";
 
+const KYC_TRACKING_FIELD_GROUPS = [
+  [
+    "cryptoCustomerId",
+    "kycInitialLevel",
+    "kycInitialStatus",
+    "kycInitialVerifiedLevel",
+    "kycInitialCapturedAt",
+    "kycInitialSource",
+    "kycInitialSnapshot",
+  ],
+  [
+    "kycRequiredLevel",
+    "kycOccurred",
+    "kycFinalLevel",
+    "kycFinalStatus",
+    "kycVerifiedLevel",
+    "kycLevel",
+    "kycRegion",
+    "kycIdentifiersSatisfied",
+    "kycAttestationAccepted",
+  ],
+  [
+    "kycEuFullyVerified",
+    "kycFinalSnapshot",
+    "kycVerificationErrors",
+    "kycProviderUpdatedAt",
+    "kycProviderSource",
+    "kycCompletedLevel",
+    "kycCompletedDuringTransaction",
+    "kycCompletedAt",
+    "kycHistory",
+  ],
+  ["lastUpdatedAt"],
+] as const;
+
 async function persistProviderKycSnapshot(params: {
   receiptId: string;
   merchantWallet: string;
@@ -57,36 +92,52 @@ async function persistProviderKycSnapshot(params: {
   }
 
   const snapshot = deriveStripeKycSnapshot(params.customer);
-  // KYC polling runs concurrently with signed webhooks and settlement. Use an
-  // optimistic replace so a stale KYC read can never overwrite a newer paid or
-  // reconciled receipt state.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const next = applyStripeKycSnapshotToReceipt({
-      receipt,
-      snapshot,
-      phase: params.phase,
-      cryptoCustomerId: params.cryptoCustomerId,
-      requiredTier: params.requiredTier,
-      kycOccurred: params.kycOccurred,
-      source: "stripe_crypto_customer",
-    });
-    try {
-      const result = await container.item(receipt.id, merchantWallet).replace(
-        next,
-        receipt._etag
-          ? { accessCondition: { type: "IfMatch", condition: receipt._etag } }
-          : undefined
-      );
-      return result.resource || next;
-    } catch (writeError: any) {
-      const statusCode = Number(writeError?.code || writeError?.statusCode || 0);
-      if (statusCode !== 412 || attempt === 2) throw writeError;
-      const latest = await container.item(receipt.id, merchantWallet).read<any>();
-      if (!latest.resource) throw new Error("receipt_not_found");
-      receipt = latest.resource;
+  // KYC polling runs concurrently with signed webhooks and settlement. Patch
+  // only KYC-owned fields in Cosmos-sized chunks; a KYC refresh must never
+  // replace a newer financial status, transaction hash, or settlement result.
+  let latest = receipt;
+  for (const fieldGroup of KYC_TRACKING_FIELD_GROUPS) {
+    let applied = false;
+    for (let attempt = 0; attempt < 3 && !applied; attempt++) {
+      const read = await container.item(receipt.id, merchantWallet).read<any>();
+      const current = read.resource || null;
+      if (!current) throw new Error("receipt_not_found");
+
+      const next = applyStripeKycSnapshotToReceipt({
+        receipt: current,
+        snapshot,
+        phase: params.phase,
+        cryptoCustomerId: params.cryptoCustomerId,
+        requiredTier: params.requiredTier,
+        kycOccurred: params.kycOccurred,
+        source: "stripe_crypto_customer",
+      });
+      const operations = fieldGroup
+        .filter((field) => next[field] !== undefined)
+        .map((field) => ({ op: "set" as const, path: `/${field}`, value: next[field] }));
+      if (operations.length === 0) {
+        latest = current;
+        applied = true;
+        continue;
+      }
+
+      try {
+        const result = await container.item(receipt.id, merchantWallet).patch(
+          operations,
+          current._etag
+            ? { accessCondition: { type: "IfMatch", condition: current._etag } }
+            : undefined
+        );
+        latest = result.resource || { ...current, ...next };
+        applied = true;
+      } catch (writeError: any) {
+        const statusCode = Number(writeError?.code || writeError?.statusCode || 0);
+        if (statusCode !== 412 || attempt === 2) throw writeError;
+      }
     }
+    if (!applied) throw new Error("kyc_tracking_write_conflict");
   }
-  throw new Error("kyc_tracking_write_conflict");
+  return latest;
 }
 
 /**

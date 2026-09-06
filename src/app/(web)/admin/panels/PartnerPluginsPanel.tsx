@@ -4,14 +4,7 @@ import React from "react";
 import { useActiveAccount } from "thirdweb/react";
 import { ExternalLink, Copy, CheckCircle } from "lucide-react";
 import { useBrand } from "@/contexts/BrandContext";
-
-function resolveS3Url(url?: string): string {
-  if (!url) return "";
-  if (url.startsWith("s3://basaltsurge/")) {
-    return url.replace("s3://basaltsurge/", "https://basaltsurge.s3.us-west-or.io.cloud.ovh.us/");
-  }
-  return url;
-}
+import { resolveS3Url } from "@/lib/storage/s3-url";
 
 /**
  * Partner Admin: Plugins Catalog (brand-scoped)

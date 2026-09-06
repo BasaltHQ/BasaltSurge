@@ -8,6 +8,7 @@ export * from "./useStepProgressionGuard";
 export * from "./DobPicker";
 export * from "./AddressAutocomplete";
 export * from "./AccordionCard";
+export * from "./AccordionContent";
 export * from "./AccordionStepHeader";
 export * from "./CheckoutHeader";
 export * from "./WalletOwnershipVerificationPanel";

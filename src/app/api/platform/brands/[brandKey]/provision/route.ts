@@ -273,7 +273,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
       "APIM_", "AFD_", "UNISWAP_", "ETHERSCAN_", "BLOCKSCOUT_", "SEVENSHIFTS_",
       "TOAST_", "VARUNI_", "JWT_", "RESERVE_", "DEFAULT_", "PP_BRAND_", "AGENT_",
       "DB_", "S3_", "CLOUDFLARE_", "STRIPE_", "LINK_", "ELEVENLABS_", "PLESK_",
-      "MICROSOFT_", "CLARITY_"
+      "MICROSOFT_", "CLARITY_", "CRON_"
     ];
     const allowExact = [
       "JWT_SECRET", "NODE_ENV", "PORT", "WEBSITES_PORT", "BRAND_NAME", "BACKOFFICE_NAME",
@@ -282,7 +282,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ brandKey: 
       "NEXT_PUBLIC_BRAND_NAME", "BRAND_APP_URL", "NEXT_PUBLIC_BRAND_APP_URL", "PP_BRAND_NAME",
       "PP_BRAND_LOGO", "PP_BRAND_FAVICON", "PP_BRAND_SYMBOL", "AGENT_WALLETS_JSON",
       "NEXT_PUBLIC_AGENT_WALLETS_JSON", "embedded", "DEBUG", "HOSTING_PROVIDER",
-      "STORAGE_PROVIDER", "WEBSITES_ENABLE_APP_SERVICE_STORAGE"
+      "STORAGE_PROVIDER", "WEBSITES_ENABLE_APP_SERVICE_STORAGE", "START_SCHEDULER"
     ];
     const denyKeys = new Set([
       "Path", "ComSpec", "PATHEXT", "ProgramFiles", "ProgramData", "CommonProgramFiles", "CommonProgramFiles(x86)",

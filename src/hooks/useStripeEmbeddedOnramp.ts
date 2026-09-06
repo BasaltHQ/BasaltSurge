@@ -28,6 +28,7 @@ import {
   nextKycTierForExceededLimit,
   selectStripeOnrampLimit,
 } from "@/lib/stripe-onramp-limits";
+import { resolveStripeSettlementAmount, usdcAmountToBaseUnits } from "@/lib/stripe-onramp-amounts";
 
 // Safe sessionStorage decorator that redirects persistent user tokens to localStorage to minimize OTP prompts
 const sessionStorageDecorator = {
@@ -763,7 +764,6 @@ export function useStripeEmbeddedOnramp({
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
   const isCoordinatorAuthedRef = useRef(false);
-  const lastStartOnrampTimeRef = useRef<number>(0);
   const kycOccurredRef = useRef(false);
   const activeCountryRef = useRef<string>("US");
   const kycInitialLevelRef = useRef<string | null>(null);
@@ -1309,7 +1309,6 @@ export function useStripeEmbeddedOnramp({
 
     isRunningRef.current = false;
     setError(friendlyMessage);
-    onErrorRef.current?.(err instanceof Error ? err : new Error(friendlyMessage));
     setAuthElement(null);
     setPaymentElement(null);
     setAttestationElement(null);
@@ -1349,7 +1348,7 @@ export function useStripeEmbeddedOnramp({
     }
     isCoordinatorAuthedRef.current = false;
     updateStep(isCancellation ? "idle" : "error");
-    onErrorRef.current?.(new Error(friendlyMessage));
+    onErrorRef.current?.(err instanceof Error ? err : new Error(friendlyMessage));
   }, [detectedCardFunding, updateStep, receiptId, merchantWallet]);
 
   const pollKycStatus = useCallback(async (custId: string, targetTier?: "l0" | "l1" | "l2"): Promise<boolean> => {
@@ -1662,7 +1661,7 @@ export function useStripeEmbeddedOnramp({
       console.error("[EMBEDDED ONRAMP] Wallet client setup failed:", err);
       return null;
     }
-  }, []);
+  }, [brandKey]);
 
   // ─── Execute gasless USDC transfer from smart wallet → split contract ───
   const executeGaslessTransfer = useCallback(async (
@@ -1747,7 +1746,8 @@ export function useStripeEmbeddedOnramp({
         address: BASE_USDC_ADDRESS,
       });
 
-      // Query the actual USDC balance in the wallet on-chain to handle decimals / dust/ slippage perfectly
+      // Query the actual USDC balance before transferring the amount Stripe
+      // attributed to this payment.
       let balance = BigInt(0);
       try {
         balance = await readContract({
@@ -1760,28 +1760,13 @@ export function useStripeEmbeddedOnramp({
         console.warn("[EMBEDDED ONRAMP] Failed to query USDC balance on-chain:", balErr);
       }
 
-      const requiredUnits = BigInt(Math.floor(usdcAmount * 1_000_000)); // 6 decimals
+      const requiredUnits = usdcAmountToBaseUnits(usdcAmount);
       
-      // Sweep full balance only if balance is less than required (slippage/fee adjustment) or if guest smart wallet.
-      // If balance is sufficient and they have personal funds, only transfer the requiredUnits to protect their extra balance.
-      let amountInUnits = requiredUnits;
-      if (balance > BigInt(0)) {
-        if (balance < requiredUnits) {
-          console.log(`[EMBEDDED ONRAMP] Balance ${balance.toString()} is less than required ${requiredUnits.toString()}. Sweeping full balance.`);
-          amountInUnits = balance;
-        } else {
-          // If it's a guest smart wallet (buyerAccountRef was created deterministically), we can sweep everything to keep it clean.
-          // But if it's a user's personal connected wallet (inAppWallet or EOA), we MUST only transfer requiredUnits to avoid taking their personal funds.
-          const isGuestWallet = !connectedWallet;
-          if (isGuestWallet) {
-            console.log(`[EMBEDDED ONRAMP] Balance is sufficient: ${balance.toString()}. Sweeping guest wallet to clear dust.`);
-            amountInUnits = balance;
-          } else {
-            console.log(`[EMBEDDED ONRAMP] Balance is sufficient: ${balance.toString()}. Transferring exactly required amount: ${requiredUnits.toString()}`);
-            amountInUnits = requiredUnits;
-          }
-        }
+      if (balance > BigInt(0) && balance < requiredUnits) {
+        console.warn(`[EMBEDDED ONRAMP] Wallet balance ${balance.toString()} is below the Stripe-attributed settlement ${requiredUnits.toString()}. Deferring transfer for reconciliation.`);
+        return null;
       }
+      const amountInUnits = requiredUnits;
 
       const tx = prepareContractCall({
         contract: usdcContract,
@@ -1802,7 +1787,7 @@ export function useStripeEmbeddedOnramp({
       console.error("[EMBEDDED ONRAMP] Transfer failed:", err);
       return null;
     }
-  }, []);
+  }, [brandKey]);
 
   const getOnrampAmount = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
     if (getAmountForFunding) {
@@ -1854,6 +1839,9 @@ export function useStripeEmbeddedOnramp({
           const errData = await sessionRes.json().catch(() => ({}));
           const errMessage = String(errData.error || "").toLowerCase();
           const errCode = String(errData.code || "").toLowerCase();
+          const explicitlyRequiresL2 =
+            errCode === "crypto_onramp_missing_document_verification" ||
+            errMessage.includes("missing_document_verification");
 
           if (
             errMessage.includes("verification") || 
@@ -1986,8 +1974,8 @@ export function useStripeEmbeddedOnramp({
               console.warn("[EMBEDDED ONRAMP] Failed to pre-check customer status:", checkErr);
             }
 
-            if (isL1Verified && !isAchEnforcedRef.current) {
-              console.log("[EMBEDDED ONRAMP] Customer is already L1 verified. Session creation failure is not an L2 KYC requirement.");
+            if (isL1Verified && !isAchEnforcedRef.current && !explicitlyRequiresL2) {
+              console.log("[EMBEDDED ONRAMP] Customer is already L1 verified and Stripe did not return the explicit L2 requirement code.");
               const err = new Error(errData.error || "Session creation failed");
               (err as any).code = errData.code;
               throw err;
@@ -2043,6 +2031,10 @@ export function useStripeEmbeddedOnramp({
     handleError,
     detectedCardFunding,
     isEcommerceMode,
+    getOnrampAmount,
+    buildTrackedCustomerUrl,
+    pollKycStatus,
+    setKycTierRequired,
   ]);
 
   const postCheckoutHandler = useCallback(async (
@@ -2215,6 +2207,7 @@ export function useStripeEmbeddedOnramp({
 
     let fundsDelivered = false;
     let isCreditCard = false;
+    let deliveredSettlementAmount: number | null = null;
     console.log(`[EMBEDDED ONRAMP] Starting to poll status for session: ${sessionId}`);
     for (let poll = 0; poll < 60; poll++) {
       await new Promise(r => setTimeout(r, 5000));
@@ -2246,6 +2239,7 @@ export function useStripeEmbeddedOnramp({
 
         if (statusData && isStripeFulfillmentCompleteStatus(statusData.status)) {
           fundsDelivered = true;
+          deliveredSettlementAmount = resolveStripeSettlementAmount(statusData);
           const method = statusData.paymentMethod || null;
           const funding = statusData.paymentDetails?.card?.funding || null;
           let resolvedFunding = funding || detectedCardFunding || sessionFundingRef.current;
@@ -2282,11 +2276,27 @@ export function useStripeEmbeddedOnramp({
       splitAddressCredit,
     });
 
-    const finalAmount = getOnrampAmount(fundingTypeToUse || (isCreditCard ? "credit" : "debit"));
+    const finalAmount = deliveredSettlementAmount
+      || getOnrampAmount(fundingTypeToUse || (isCreditCard ? "credit" : "debit"));
     const txHash = await executeGaslessTransfer(activeEmail, targetSplitAddress, finalAmount);
 
     if (!txHash) {
-      handleError("Failed to transfer funds to merchant");
+      // Stripe has already completed the payment. Preserve that fact and leave
+      // settlement queued for the webhook/Plesk reconciler instead of showing
+      // the customer a false payment failure.
+      isRunningRef.current = false;
+      setError("Payment received. Merchant settlement is continuing in the background.");
+      updateStep("awaiting_funds");
+      onSuccessRef.current?.({
+        sessionId,
+        txHash: "settlement_pending",
+        kycLevel: resolvedKycLevel,
+        detectedCardFunding: fundingTypeToUse || (isCreditCard ? "credit" : "debit"),
+        isCreditCard,
+        paymentAccepted: true,
+        stripeStatus: "fulfillment_complete",
+        ...currentKycResult(),
+      });
       return;
     }
 
@@ -3084,7 +3094,20 @@ export function useStripeEmbeddedOnramp({
     isRunningRef.current = true;
     reportKycEvent("identifiers_submitted", "l2");
     updateStep("submitting_kyc");
-    const result = await coordinator.updateKycInfo(identifiers);
+    let result: any;
+    try {
+      result = await coordinator.updateKycInfo(identifiers);
+    } catch (identifierError: any) {
+      // Identifier validation/network errors are recoverable. Keep the
+      // coordinator and entered requirements available so the customer can
+      // correct or retry without restarting the payment flow.
+      isRunningRef.current = false;
+      updateStep("collecting_identifiers");
+      throw new Error(
+        identifierError?.message ||
+        "Stripe could not verify the submitted identifiers. Please check them and try again."
+      );
+    }
     const remaining = Array.isArray(result?.identifiers) ? result.identifiers : [];
     const invalidTypes = Array.isArray(result?.invalid_identifiers) ? result.invalid_identifiers : [];
     setKycIdentifierAlternatives(Array.isArray(result?.alternatives) ? result.alternatives : []);
@@ -3297,7 +3320,7 @@ export function useStripeEmbeddedOnramp({
               setDetectedCardFunding(null);
               setDetectedCardBrand(null);
               setDetectedCardLast4(null);
-              onCardDetected?.(null);
+              onCardDetectedRef.current?.(null);
               isRunningRef.current = false;
               setTimeout(() => {
                 startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, undefined, true);
@@ -3388,7 +3411,7 @@ export function useStripeEmbeddedOnramp({
                 setDetectedCardFunding(null);
                 setDetectedCardBrand(null);
                 setDetectedCardLast4(null);
-                onCardDetected?.(null);
+                onCardDetectedRef.current?.(null);
                 isRunningRef.current = false;
                 setTimeout(() => {
                   startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, undefined, true);
@@ -3615,19 +3638,14 @@ export function useStripeEmbeddedOnramp({
       }
     }
 
-    const now = Date.now();
-    const hasActiveAuth = Boolean(isCoordinatorAuthedRef.current && oauthTokenRef.current && customerIdRef.current);
-    if (isRunningRef.current && !isForceRetry && !hasActiveAuth) {
-      if (now - lastStartOnrampTimeRef.current > 45000) {
-        console.warn("[EMBEDDED ONRAMP] Onramp flow lock exceeded 45s timeout. Auto-resetting lock for re-trigger.");
-        isRunningRef.current = false;
-      } else {
-        console.warn("[EMBEDDED ONRAMP] Onramp flow is already running. Ignoring duplicate trigger.");
-        return;
-      }
+    if (isRunningRef.current) {
+      console.warn(
+        `[EMBEDDED ONRAMP] Onramp flow is already running at ${stepRef.current}. ` +
+        `${isForceRetry ? "Ignoring overlapping force retry." : "Ignoring duplicate trigger."}`
+      );
+      return;
     }
     isRunningRef.current = true;
-    lastStartOnrampTimeRef.current = now;
 
     if (isForceRetry || Date.now() - lastErrorSetTimeRef.current > 5000) {
       setError(null);
@@ -4503,7 +4521,7 @@ export function useStripeEmbeddedOnramp({
           setDetectedCardFunding(collectedFunding);
           if (collectedBrand) setDetectedCardBrand(collectedBrand);
           if (collectedLast4) setDetectedCardLast4(collectedLast4);
-          onCardDetected?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
+          onCardDetectedRef.current?.({ funding: collectedFunding, brand: collectedBrand || "", last4: collectedLast4 || "" });
         }
 
         const chosenSpeed: "standard" | "instant" = collectedFunding === "us_bank_account" ? "standard" : "instant";
@@ -4868,7 +4886,7 @@ export function useStripeEmbeddedOnramp({
     publishableKey, connectedWalletAddress, connectedWallet, handleError,
     updateStep, createBuyerWallet, runCheckoutLoop, pollKycStatus,
     buildTrackedCustomerUrl, consumeKycTrackingResponse, completeEuKyc,
-    resumeAfterKyc, reportKycEvent, getOnrampAmount, onCardDetected,
+    resumeAfterKyc, reportKycEvent, getOnrampAmount,
   ]);
 
   useEffect(() => {

@@ -6,14 +6,22 @@ import { getBrandKey } from "@/config/brands";
 import { POST as runAutoclose } from "../../cron/autoclose/route";
 import { resolveSettlementSplitAddress, resolveStripeOnrampFunding } from "@/lib/payment-split-routing";
 import {
-  getTimestampMs,
   needsReceiptSettlement,
   normalizeAutocloseBrandKey,
   parseAutocloseBrandKeys,
 } from "@/lib/autoclose-policy";
 import { dispatchReceiptStatusWebhookBestEffort } from "@/lib/webhook-dispatch";
 import { isProtectedPaymentStatus } from "@/lib/receipt-status-policy";
-import { isStripeOnrampSettlementEligibleStatus } from "@/lib/stripe-onramp-status";
+import {
+  isStripeOnrampSettlementEligibleStatus,
+  isStripeOnrampTerminalFailure,
+} from "@/lib/stripe-onramp-status";
+import {
+  isStripeSourceAmountSufficient,
+  resolveStripeSettlementAmount,
+  resolveStripeSourceAmount,
+  usdcAmountToBaseUnits,
+} from "@/lib/stripe-onramp-amounts";
 
 export const dynamic = "force-dynamic";
 
@@ -371,13 +379,7 @@ export async function POST(req: NextRequest) {
       const isAch = cardFunding === "us_bank_account";
       const isSettlementEligible = isStripeOnrampSettlementEligibleStatus(stripeStatus, isAch);
 
-      const expirationLimit = isAch ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-      const receiptCreatedAt = getTimestampMs(receipt.createdAt);
-      const isExpired = receiptCreatedAt > 0 && Date.now() - receiptCreatedAt > expirationLimit;
-      const isRejected = stripeStatus === "rejected" || 
-                         onrampData.transaction_details?.last_error === "transaction_failed" ||
-                         onrampData.transaction_details?.last_error === "location_not_supported" ||
-                         onrampData.transaction_details?.last_error === "transaction_limit_reached";
+      const isRejected = isStripeOnrampTerminalFailure(onrampData);
 
       let swept = false;
       let txHash: string | null = null;
@@ -397,17 +399,18 @@ export async function POST(req: NextRequest) {
 
         const email = stripeEmail;
         const merchantWallet = receiptMerchantWallet;
-        const stripeSourceAmount = Number(onrampData.transaction_details?.source_amount || 0);
-        const amount = Number(stripeSourceAmount || receipt.onrampAmount || receipt.totalUsd || 0);
+        const stripeSourceAmount = resolveStripeSourceAmount(onrampData) || 0;
+        const amount = resolveStripeSettlementAmount(onrampData) || 0;
         const brandKey = normalizeAutocloseBrandKey(receipt.brandKey || requestBrandKey);
         if (!Number.isFinite(amount) || amount <= 0) {
           return NextResponse.json({ error: "Receipt has an invalid settlement amount" }, { status: 409 });
         }
         const orderTotal = Number(receipt.orderTotalUsd || receipt.totalUsd || 0);
-        if (stripeSourceAmount > 0 && orderTotal > 0 && stripeSourceAmount + 0.01 < orderTotal * 0.95) {
+        if (stripeSourceAmount > 0 && orderTotal > 0 && !isStripeSourceAmountSufficient(stripeSourceAmount, orderTotal)) {
           return NextResponse.json({ error: "Stripe amount is below the receipt total" }, { status: 409 });
         }
         if (stripeSourceAmount > 0) receipt.onrampAmount = stripeSourceAmount;
+        receipt.settlementAmount = amount;
 
         // Resolve split address
         const { getSiteConfigForWallet } = await import("@/lib/site-config");
@@ -502,7 +505,7 @@ export async function POST(req: NextRequest) {
           params: [guestAddress],
         });
 
-        const requiredUnits = BigInt(Math.floor(amount * 1_000_000));
+        const requiredUnits = usdcAmountToBaseUnits(amount);
         if (balance >= requiredUnits) {
           const { executeGaslessTransferServer } = await import("@/app/api/stripe/background-poll/route");
           txHash = await executeGaslessTransferServer(email, targetSplitAddress, amount, brandKey, false);
@@ -538,15 +541,15 @@ export async function POST(req: NextRequest) {
         }
       } else if (
         !isSettlementEligible &&
-        (isRejected || isExpired) &&
+        isRejected &&
         needsReceiptSettlement(receipt.transactionHash) &&
         !isProtectedPaymentStatus(receipt.status)
       ) {
         webhookPreviousStatus = String(receipt.status || "pending");
         receipt.status = "failed";
         receipt.statusHistory = Array.isArray(receipt.statusHistory)
-          ? [...receipt.statusHistory, { status: "failed", ts: Date.now(), note: "Marked failed on manual poll due to timeout/rejection" }]
-          : [{ status: "failed", ts: Date.now(), note: "Marked failed on manual poll due to timeout/rejection" }];
+          ? [...receipt.statusHistory, { status: "failed", ts: Date.now(), note: "Marked failed on manual poll after Stripe terminal rejection" }]
+          : [{ status: "failed", ts: Date.now(), note: "Marked failed on manual poll after Stripe terminal rejection" }];
         receipt.webhookLastStatus = "failed";
         receipt.webhookLastPreviousStatus = webhookPreviousStatus;
         receipt.webhookLastDeliveryOk = false;

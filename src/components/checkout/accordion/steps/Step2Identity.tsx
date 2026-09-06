@@ -24,6 +24,7 @@ import { formatSSN, getCountryAddressConfig, splitFullName, getContrastingTextCo
 import { DobPicker } from "../DobPicker";
 import { AddressAutocomplete } from "../AddressAutocomplete";
 import { AccordionCard } from "../AccordionCard";
+import { AccordionContent } from "../AccordionContent";
 import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step2IdentityProps } from "../types";
 import { StripeEmbedContainer } from "../StripeEmbedContainer";
@@ -35,6 +36,7 @@ export function Step2Identity({
   isLocked,
   isLightText = true,
   primaryColor = "#635BFF",
+  motionPosition = 0,
   firstName,
   setFirstName,
   lastName,
@@ -248,7 +250,12 @@ export function Step2Identity({
       />
 
       {/* Step 2 Expanded Body */}
-      <div className={`p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10 transition-all duration-300 ease-out ${isOpen ? "opacity-100" : "h-0 opacity-0 overflow-visible pointer-events-none p-0 border-0"}`}>
+      <AccordionContent
+        isOpen={isOpen}
+        position={motionPosition}
+        overflowVisible={showSuggestions || isCalendarOpen}
+      >
+        <div className="p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10">
         {isIdentifierStage ? (
           <form
             className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-3.5 mt-2 text-left"
@@ -329,7 +336,7 @@ export function Step2Identity({
             </div>
             <StripeEmbedContainer
               element={attestationElement}
-              isVisible
+              isVisible={isOpen}
               loadingMessage="Loading Stripe attestation..."
               isLightText={isLightText}
               minHeight={180}
@@ -843,7 +850,8 @@ export function Step2Identity({
             </button>
           </form>
         )}
-      </div>
+        </div>
+      </AccordionContent>
     </AccordionCard>
   );
 }

@@ -21,6 +21,7 @@ import {
 import { resolveCustomerKycTier, KycTierEntry } from "./kycTierEngine";
 import { parseOnrampError, formatOnrampErrorMessage } from "./errorTaxonomy";
 import { useStepProgressionGuard } from "./useStepProgressionGuard";
+import { shouldAutoInitializeStripePaymentElement } from "@/lib/stripe-payment-element-guard";
 import { isValidIsoCountryCode } from "@/lib/stripe-kyc-tracking";
 import type {
   AccordionStepNumber,
@@ -87,6 +88,7 @@ export function useAccordionCheckoutState(
   const primaryColor = theme?.primaryColor || "#635BFF";
 
   const [activeStep, setActiveStepState] = useState<number>(1);
+  const [manualStepOverride, setManualStepOverride] = useState<number | null>(null);
   const activeStepRef = useRef<number>(1);
   const stepTransitionHandlerRef = useRef(onAccordionStepTransition);
   const accordionJourneyIdRef = useRef<string>(
@@ -518,6 +520,7 @@ export function useAccordionCheckoutState(
   ) => {
     const fromStep = activeStepRef.current;
     if (fromStep === toStep) return;
+    setManualStepOverride(trigger === "manual" ? toStep : null);
     reportAccordionTransition(fromStep, toStep, reason, trigger);
     setActiveStepState(toStep);
   }, [reportAccordionTransition]);
@@ -660,35 +663,18 @@ export function useAccordionCheckoutState(
 
   // Reactive Step 3 Watchdog: Trigger recovery initialization if Step 3 is active with null paymentElement
   useEffect(() => {
-    const isStepInFlightOrAuth = [
-      "authenticating",
-      "collecting_phone",
-      "checking_link",
-      "registering_link",
-      "initializing",
-      "collecting_kyc",
-      "collecting_identifiers",
-      "accepting_terms",
-      "submitting_kyc",
-      "verifying_identity",
-      "creating_session",
-      "confirming_fees",
-      "checking_out",
-      "awaiting_funds",
-      "transferring",
-      "completed",
-    ].includes(effectiveHeadlessStep as string);
+    const shouldInitialize = shouldAutoInitializeStripePaymentElement({
+      activeStep,
+      hasPaymentElement: Boolean(propPaymentElement),
+      isSimulationMode,
+      hasSubmitHandler: Boolean(onHeadlessSubmitEmailPhone),
+      hasEmail: Boolean(email),
+      headlessStep: effectiveHeadlessStep,
+    });
 
-    if (
-      activeStep === 3 &&
-      !propPaymentElement &&
-      !isSimulationMode &&
-      onHeadlessSubmitEmailPhone &&
-      email &&
-      !isStepInFlightOrAuth
-    ) {
+    if (shouldInitialize) {
       const timer = setTimeout(() => {
-        if (!propPaymentElement && !isStepInFlightOrAuth) {
+        if (!propPaymentElement) {
           console.log("[ACCORDION STATE] Step 3 active with null paymentElement after 2.5s. Triggering session re-initialization...");
           handlePaymentTimeoutRetry();
         }
@@ -835,6 +821,7 @@ export function useAccordionCheckoutState(
       );
     },
     onStepAutoAdvanced: (fromStep, toStep, reason) => {
+      setManualStepOverride(null);
       reportAccordionTransition(
         fromStep,
         toStep as AccordionStepNumber,
@@ -844,6 +831,7 @@ export function useAccordionCheckoutState(
           : "automatic"
       );
     },
+    manualStepOverride,
   });
 
   // Step 1 Submit
@@ -1313,7 +1301,10 @@ export function useAccordionCheckoutState(
       onWalletSignatureChange: setWalletSignature,
       onSubmitWalletSignature: handleWalletSignatureSubmit,
       isSubmittingWalletSignature,
-      onTimeoutRetry: handlePaymentTimeoutRetry,
+      // collectPaymentMethod() is already an active user-interaction request.
+      // If Stripe truly stalls, reload cleanly instead of starting a competing
+      // coordinator request against the same authenticated session.
+      onTimeoutRetry: effectiveHeadlessStep === "collecting_payment" ? undefined : handlePaymentTimeoutRetry,
       onHeaderClick: () => handleStepChange(3),
     },
     // Step 4 Props Bundle
@@ -1330,7 +1321,6 @@ export function useAccordionCheckoutState(
       selectedPaymentType,
       paymentConfirmed: effectivePaymentConfirmed,
       onEmailReceipt,
-      onBackToPayment: () => transitionToStep(3, "Customer returned to payment method from fulfillment", "manual"),
     },
   };
 }
