@@ -1022,7 +1022,7 @@ export default function PlatformAnalyticsPanel() {
   // Filters
   const [selectedBrand, setSelectedBrand] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [timeRange, setTimeRange] = useState<string>("all");
+  const [timeRange, setTimeRange] = useState<string>("today");
   const [customStartDate, setCustomStartDate] = useState<string>(() => {
     const d = new Date();
     d.setDate(d.getDate() - 7);
