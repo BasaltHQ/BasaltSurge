@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { getPublicClientIp } from "@/lib/request-client-ip";
 import { normalizeStripeOnrampCheckoutMode } from "@/lib/stripe-onramp-status";
+import { fetchUsdRates } from "@/lib/eth";
+import { resolveStripeOnrampSourceAmounts, StripeOnrampCurrencyError } from "@/lib/stripe-onramp-currency";
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +17,7 @@ const STRIPE_API_VERSION = "2026-06-24.dahlia";
  *   cryptoCustomerId: string,
  *   cryptoPaymentToken: string,
  *   sourceAmount?: number,
+ *   sourceAmountUsd?: number,
  *   destinationAmount?: number,
  *   sourceCurrency?: string,
  *   destinationCurrency?: string,
@@ -38,9 +41,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const cryptoCustomerId = String(body.cryptoCustomerId || "").trim();
     const cryptoPaymentToken = String(body.cryptoPaymentToken || "").trim();
-    const sourceAmount = body.sourceAmount ? String(body.sourceAmount) : undefined;
     const destinationAmount = body.destinationAmount ? String(body.destinationAmount) : undefined;
-    const sourceCurrency = String(body.sourceCurrency || "usd").trim().toLowerCase();
+    const requestedSourceCurrency = String(body.sourceCurrency || "usd").trim().toLowerCase();
     const destinationCurrency = String(body.destinationCurrency || "usdc").trim().toLowerCase();
     const destinationNetwork = String(body.destinationNetwork || "base").trim().toLowerCase();
     const walletAddress = String(body.walletAddress || "").trim();
@@ -78,7 +80,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Must provide either sourceAmount or destinationAmount, not both
-    if (!sourceAmount && !destinationAmount) {
+    if (body.sourceAmount == null && body.sourceAmountUsd == null && !destinationAmount) {
       return NextResponse.json(
         { ok: false, error: "missing_amount" },
         { status: 400 }
@@ -93,6 +95,21 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    if ((body.sourceAmount != null || body.sourceAmountUsd != null) && destinationAmount) {
+      return NextResponse.json({ ok: false, error: "Specify either a source amount or a destination amount.", code: "conflicting_amounts" }, { status: 400 });
+    }
+
+    // sourceAmountUsd is the portal's existing USD amount. EU sessions require
+    // EUR, so convert it on the server before constructing the Stripe request.
+    // USD requests don't need an FX lookup.
+    const usdRates = requestedSourceCurrency === "eur" ? await fetchUsdRates() : undefined;
+    const sourceAmounts = resolveStripeOnrampSourceAmounts({
+      sourceCurrency: requestedSourceCurrency,
+      sourceAmount: body.sourceAmount,
+      sourceAmountUsd: body.sourceAmountUsd,
+      eurPerUsd: usdRates?.EUR,
+    });
+    const { sourceAmount, sourceCurrency } = sourceAmounts;
 
     // Build form-encoded body
     const params = new URLSearchParams();
@@ -128,6 +145,13 @@ export async function POST(req: NextRequest) {
     if (merchantWallet) params.append("metadata[merchantWallet]", merchantWallet);
     if (brandKey) params.append("metadata[brandKey]", brandKey);
     params.append("metadata[checkoutMode]", checkoutMode);
+    // Signed Stripe events carry the server's rate so later reconciliation
+    // converts actual source fiat back to USD without treating EUR as dollars.
+    params.append("metadata[onrampSourceCurrency]", sourceCurrency);
+    params.append("metadata[onrampSourceToUsdRate]", String(sourceAmounts.usdPerSource));
+    if (sourceAmounts.sourceAmountUsd !== undefined) {
+      params.append("metadata[onrampSourceAmountUsd]", String(sourceAmounts.sourceAmountUsd));
+    }
 
     const splitMode = String(body.splitMode || "").trim().toLowerCase();
     if (splitMode) {
@@ -188,7 +212,12 @@ export async function POST(req: NextRequest) {
     if (!response.ok) {
       console.error("[ONRAMP V2] Session creation failed:", data);
       return NextResponse.json(
-        { ok: false, error: data.error?.message || "session_creation_failed", code: data.error?.code },
+        {
+          ok: false,
+          error: data.error?.message || "session_creation_failed",
+          code: data.error?.code,
+          requestId: response.headers.get("request-id"),
+        },
         { status: response.status }
       );
     }
@@ -233,7 +262,7 @@ export async function POST(req: NextRequest) {
 
         if (receipt) {
           const hadStripeSession = Boolean(receipt.stripeSessionId);
-          if (sourceAmount && Number(sourceAmount) > 0) {
+          if (sourceAmounts.sourceAmountUsd !== undefined && sourceAmounts.sourceAmountUsd > 0) {
             // Keep the merchant order total stable. Stripe `source_amount`
             // is the amount used by the onramp/sweeper and is intentionally a
             // separate financial value.
@@ -248,7 +277,7 @@ export async function POST(req: NextRequest) {
                 ? creationTotal
                 : Number(receipt.totalUsd || 0);
             }
-            receipt.onrampAmount = Number(sourceAmount);
+            receipt.onrampAmount = sourceAmounts.sourceAmountUsd;
           }
           receipt.stripeSessionId = data.id;
           receipt.checkoutMode = checkoutMode;
@@ -275,6 +304,9 @@ export async function POST(req: NextRequest) {
       ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
     });
   } catch (e: any) {
+    if (e instanceof StripeOnrampCurrencyError) {
+      return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.code === "fx_rate_unavailable" ? 503 : 400 });
+    }
     console.error("[ONRAMP V2] Error:", e);
     return NextResponse.json(
       { ok: false, error: e?.message || "internal_error" },

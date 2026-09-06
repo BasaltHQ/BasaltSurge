@@ -286,23 +286,6 @@ export function useStepProgressionGuard({
       return;
     }
 
-    // Case B: Explicit KYC or Document Verification step from Onramp
-    if (
-      (!isStep2Satisfied && headlessStep === "collecting_kyc" && !isPaymentReady) ||
-      headlessStep === "collecting_identifiers" ||
-      headlessStep === "accepting_terms" ||
-      (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
-      showStepUpForm ||
-      (isL2Requirement && !kyc.isL2Verified)
-    ) {
-      if (activeStep !== 2) {
-        logTransition(activeStep, 2, `Onramp Step: ${headlessStep || "kyc_required"}`);
-        setActiveStep(2);
-      }
-      return;
-    }
-
-    // Case D: Customer is authenticated via Link session or OTP (only once progressed past auth phase)
     const isAuthComplete =
       isLinkOtpVerified ||
       Boolean(
@@ -327,6 +310,23 @@ export function useStepProgressionGuard({
         ].includes(headlessStep)
       );
 
+    // Case B: Explicit KYC or Document Verification step from Onramp.
+    // A country's derived KYC requirements cannot skip Link authentication.
+    if (
+      (!isStep2Satisfied && headlessStep === "collecting_kyc" && !isPaymentReady) ||
+      headlessStep === "collecting_identifiers" ||
+      headlessStep === "accepting_terms" ||
+      (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
+      (isAuthComplete && (showStepUpForm || (isL2Requirement && !kyc.isL2Verified)))
+    ) {
+      if (activeStep !== 2) {
+        logTransition(activeStep, 2, `Onramp Step: ${headlessStep || "kyc_required"}`);
+        setActiveStep(2);
+      }
+      return;
+    }
+
+    // Case D: Customer is authenticated via Link session or OTP (only once progressed past auth phase)
     if (isAuthComplete && activeStep === 1) {
       if (isStep2Satisfied) {
         logTransition(1, 3, "Customer Pre-Verified / KYC Satisfied");

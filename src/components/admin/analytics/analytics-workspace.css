@@ -1,0 +1,21 @@
+.platform-analytics { color: #f4f4f5; color-scheme: dark; }
+.platform-analytics [hidden] { display: none !important; }
+.platform-analytics .glass-pane { background: #101114; backdrop-filter: none; box-shadow: none; border-color: #303138; }
+.platform-analytics button, .platform-analytics input, .platform-analytics select { min-height: 32px; }
+.platform-analytics :is(button,input,select,a):focus-visible { outline: 2px solid #a5b4fc; outline-offset: 3px; }
+.platform-analytics th { font-weight: 500; text-align: left; }
+.platform-analytics th > button { width: 100%; text-align: inherit; display: flex; align-items: center; gap: .4rem; }
+.platform-analytics td { font-variant-numeric: tabular-nums; }
+.platform-analytics[data-density="compact"] .analytics-ledger > tbody > tr > td { padding-top: .5rem; padding-bottom: .5rem; }
+.platform-analytics .analytics-workspaces { display:flex; flex-wrap:wrap; gap:.375rem; border-bottom:1px solid #303138; padding-bottom:.75rem; }
+.platform-analytics .analytics-workspaces button { padding:.6rem .9rem; border-radius:.5rem; font-size:.875rem; color:#b4b4bd; }
+.platform-analytics .analytics-workspaces button[aria-current="page"] { background:#272832; color:#fff; }
+.platform-analytics .analytics-workspaces button:hover { background:#202126; color:#fff; }
+.platform-analytics .analytics-scope { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; font-size:.75rem; color:#b4b4bd; }
+.platform-analytics .analytics-scope button { border:1px solid #3f3f46; border-radius:.5rem; padding:.2rem .6rem; color:#e4e4e7; }
+.platform-analytics .analytics-chart-data { border-top:1px solid #303138; padding-top:.75rem; margin-top:.75rem; }
+.platform-analytics .analytics-chart-data summary { cursor:pointer; color:#c4c4cc; font-size:.875rem; padding:.5rem 0; }
+.platform-analytics .analytics-chart-data table { width:100%; font-size:.75rem; border-collapse:collapse; }
+.platform-analytics .analytics-chart-data :is(th,td) { padding:.5rem; border-bottom:1px solid #303138; }
+@media (pointer:coarse) { .platform-analytics :is(button,input,select) { min-height:44px; } }
+@media (prefers-reduced-motion:reduce) { .platform-analytics *, .analytics-investigation-dialog * { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }

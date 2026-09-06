@@ -15,6 +15,7 @@ import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step3PaymentProps } from "../types";
 import { WalletOwnershipVerificationPanel } from "../WalletOwnershipVerificationPanel";
 import { StripeEmbedContainer } from "../StripeEmbedContainer";
+import { parseOnrampError } from "../errorTaxonomy";
 
 export function Step3Payment({
   isOpen,
@@ -38,6 +39,7 @@ export function Step3Payment({
   onHeaderClick,
 }: Step3PaymentProps) {
   const isIdentityVerifying = headlessStep === "verifying_identity";
+  const isServiceError = parseOnrampError(activeError)?.category === "service";
   const isWalletOwnershipRequired =
     Boolean(walletOwnershipChallenge) && !isWalletOwnershipVerified;
   const internalPaymentContainerRef = React.useRef<HTMLDivElement | null>(null);
@@ -96,7 +98,7 @@ export function Step3Payment({
                 <p className="text-xs leading-relaxed text-amber-300/90">{activeError}</p>
               </div>
             </div>
-            {(activeError.toLowerCase().includes("frozen") || activeError.toLowerCase().includes("freeze")) && (
+            {!isServiceError && (activeError.toLowerCase().includes("frozen") || activeError.toLowerCase().includes("freeze")) && (
               <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
                 <span className="font-semibold text-amber-300">Card Locked or Frozen:</span>
                 <p className="pl-1 opacity-90">
@@ -104,7 +106,7 @@ export function Step3Payment({
                 </p>
               </div>
             )}
-            {(activeError.toLowerCase().includes("decline") || activeError.toLowerCase().includes("support") || activeError.toLowerCase().includes("failed")) && !(activeError.toLowerCase().includes("frozen") || activeError.toLowerCase().includes("freeze")) && (
+            {!isServiceError && (activeError.toLowerCase().includes("decline") || activeError.toLowerCase().includes("support") || activeError.toLowerCase().includes("failed")) && !(activeError.toLowerCase().includes("frozen") || activeError.toLowerCase().includes("freeze")) && (
               <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
                 <span className="font-semibold text-amber-300">Quick Tips:</span>
                 <ul className="list-disc list-inside space-y-0.5 pl-1 opacity-90">
@@ -113,7 +115,7 @@ export function Step3Payment({
                 </ul>
               </div>
             )}
-            {activeError.toLowerCase().includes("bank") && activeError.toLowerCase().includes("supported") && (
+            {!isServiceError && activeError.toLowerCase().includes("bank") && activeError.toLowerCase().includes("supported") && (
               <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
                 <span className="font-semibold text-amber-300">Recommendation:</span>
                 <p className="pl-1 opacity-90">
@@ -121,13 +123,22 @@ export function Step3Payment({
                 </p>
               </div>
             )}
-            {(activeError.toLowerCase().includes("limit") || activeError.toLowerCase().includes("maximum")) && (
+            {!isServiceError && (activeError.toLowerCase().includes("limit") || activeError.toLowerCase().includes("maximum")) && (
               <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
                 <span className="font-semibold text-amber-300">Higher Limits Available:</span>
                 <p className="pl-1 opacity-90">
                   ACH Direct Debit (US Bank Account) offers significantly higher single-transaction purchase limits.
                 </p>
               </div>
+            )}
+            {headlessStep === "error" && isServiceError && onTimeoutRetry && !isLocked && (
+              <button
+                type="button"
+                onClick={onTimeoutRetry}
+                className="px-3.5 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-xs font-semibold cursor-pointer"
+              >
+                Retry checkout
+              </button>
             )}
           </div>
         )}

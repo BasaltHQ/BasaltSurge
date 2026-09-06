@@ -840,6 +840,10 @@ export function useAccordionCheckoutState(
       e.preventDefault();
     }
     if (!email) return;
+    if (!isSimulationMode && !onHeadlessSubmitEmailPhone) {
+      setLocalError("Checkout is still loading. Please wait a moment and try again.");
+      return;
+    }
 
     // If email is already locked/authorized or OTP verified, proceed to appropriate step without re-authenticating
     if (isEmailLocked || isLinkOtpVerified) {
@@ -1208,7 +1212,7 @@ export function useAccordionCheckoutState(
       authElement: effectiveAuthElement,
       authContainerRef,
       activeError,
-      isSubmittingContact,
+      isSubmittingContact: isSubmittingContact || (!isSimulationMode && !onHeadlessSubmitEmailPhone),
       effectiveStatus,
       isAllKycCompleted,
       isEmailLocked,

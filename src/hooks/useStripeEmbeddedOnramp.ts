@@ -4,6 +4,9 @@ import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { isDualSplitEnabled } from "@/lib/env";
 import { maskSensitiveData } from "@/lib/sanitize-logs";
 import { resolveSettlementSplitAddress } from "@/lib/payment-split-routing";
+import { canReuseStripeCoordinatorSession } from "@/lib/stripe-coordinator-session";
+import { getStripeOnrampPreflightError } from "@/lib/stripe-onramp-preflight";
+import { getStripeOnrampPaymentMethodTypes } from "@/lib/stripe-onramp-payment-methods";
 import {
   isStripeFulfillmentCompleteStatus,
   isStripeOnrampTerminalFailure,
@@ -763,7 +766,7 @@ export function useStripeEmbeddedOnramp({
   const [onrampLimits, setOnrampLimits] = useState<any[] | null>(null);
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
-  const isCoordinatorAuthedRef = useRef(false);
+  const authenticatedCoordinatorRef = useRef<OnrampCoordinator | null>(null);
   const kycOccurredRef = useRef(false);
   const activeCountryRef = useRef<string>("US");
   const kycInitialLevelRef = useRef<string | null>(null);
@@ -1261,6 +1264,8 @@ export function useStripeEmbeddedOnramp({
       window.removeEventListener("unhandledrejection", handleUnhandledRejection);
       window.removeEventListener("message", handleWindowMessage);
       try { onrampRef.current?.destroy(); } catch {}
+      onrampRef.current = null;
+      authenticatedCoordinatorRef.current = null;
     };
   }, [updateStep]);
 
@@ -1282,7 +1287,7 @@ export function useStripeEmbeddedOnramp({
         try { onrampRef.current.destroy(); } catch {}
         onrampRef.current = null;
       }
-      isCoordinatorAuthedRef.current = false;
+      authenticatedCoordinatorRef.current = null;
       setTimeout(() => {
         startOnrampRef.current?.(activeEmailRef.current || undefined);
       }, 50);
@@ -1346,7 +1351,7 @@ export function useStripeEmbeddedOnramp({
       }
       onrampRef.current = null;
     }
-    isCoordinatorAuthedRef.current = false;
+    authenticatedCoordinatorRef.current = null;
     updateStep(isCancellation ? "idle" : "error");
     onErrorRef.current?.(err instanceof Error ? err : new Error(friendlyMessage));
   }, [detectedCardFunding, updateStep, receiptId, merchantWallet]);
@@ -1545,7 +1550,7 @@ export function useStripeEmbeddedOnramp({
       }
       onrampRef.current = null;
     }
-    isCoordinatorAuthedRef.current = false;
+    authenticatedCoordinatorRef.current = null;
     if (typeof window !== "undefined") {
       sessionStorage.removeItem("stripe_onramp_customer_id");
       sessionStorage.removeItem("stripe_onramp_oauth_token");
@@ -1812,7 +1817,8 @@ export function useStripeEmbeddedOnramp({
       try {
         const fundingTypeToUse = funding !== undefined ? funding : (detectedCardFunding || sessionFundingRef.current);
         const settlementSpeed = (fundingTypeToUse === "credit" || fundingTypeToUse === "debit") ? "instant" : "standard";
-
+        const region = latestKycSnapshotRef.current?.region;
+        const isEuCustomer = region === "eu" || (!region && isEuEeaCountry(activeCountryRef.current));
 
         const sessionRes = await fetch("/api/stripe/onramp-session-v2", {
           method: "POST",
@@ -1820,8 +1826,10 @@ export function useStripeEmbeddedOnramp({
           body: JSON.stringify({
             cryptoCustomerId: customerId,
             cryptoPaymentToken: pmToken,
-            sourceAmount: amt ?? getOnrampAmount(fundingTypeToUse),
-            sourceCurrency: "usd",
+            // The order is priced in USD. The server converts the fiat amount
+            // for EU sessions and records the rate for USD reconciliation.
+            sourceAmountUsd: amt ?? getOnrampAmount(fundingTypeToUse),
+            sourceCurrency: isEuCustomer ? "eur" : "usd",
             destinationCurrency,
             destinationNetwork: network,
             walletAddress: buyerWallet,
@@ -1839,6 +1847,13 @@ export function useStripeEmbeddedOnramp({
           const errData = await sessionRes.json().catch(() => ({}));
           const errMessage = String(errData.error || "").toLowerCase();
           const errCode = String(errData.code || "").toLowerCase();
+          console.error("[EMBEDDED ONRAMP] Stripe session creation rejected:", {
+            receiptId,
+            status: sessionRes.status,
+            code: errData.code || null,
+            requestId: errData.requestId || null,
+            message: errData.error || "Session creation failed",
+          });
           const explicitlyRequiresL2 =
             errCode === "crypto_onramp_missing_document_verification" ||
             errMessage.includes("missing_document_verification");
@@ -1872,7 +1887,34 @@ export function useStripeEmbeddedOnramp({
                     sessionStorage.setItem("stripe_onramp_oauth_token", kycData.refreshedToken);
                   }
                 }
-                console.log("[EMBEDDED ONRAMP] Pre-verification customer status:", kycData);
+                const snapshot = consumeKycTrackingResponse(kycData);
+                if (snapshot.region === "eu") {
+                  // EU verification has different requirements from US L0/L1.
+                  // A rejected session must not send a fully verified EU buyer
+                  // through those forms again, or be presented as a card decline.
+                  if (snapshot.euFullyVerified) {
+                    const providerError = Object.assign(
+                      new Error(`Stripe could not create the payment session after identity verification. ${errData.error || "Please retry or contact support."}`),
+                      { code: errData.code || "session_creation_failed" },
+                    );
+                    setPersistedError(providerError.message);
+                    // This element's selection callback has already resolved.
+                    // Recollection must create a fresh element on retry while
+                    // keeping the authenticated coordinator alive.
+                    setPaymentElement(null);
+                    paymentTokenRef.current = null;
+                    updateStep("error");
+                    isRunningRef.current = false;
+                    onErrorRef.current?.(providerError);
+                    return null;
+                  }
+                  const l2 = snapshot.tiers.find((tier) => tier.tier === "l2");
+                  setIsAllKycCompleted(false);
+                  setKycTierRequired(l2?.verification_status === "rejected" ? "l2" : "l0");
+                  updateStep("collecting_kyc");
+                  isRunningRef.current = false;
+                  return null;
+                }
                 
                 const kycTiers = kycData.kycTiers || [];
                 const l0Tier = kycTiers.find((t: any) => t.tier === "l0");
@@ -2033,8 +2075,10 @@ export function useStripeEmbeddedOnramp({
     isEcommerceMode,
     getOnrampAmount,
     buildTrackedCustomerUrl,
+    consumeKycTrackingResponse,
     pollKycStatus,
     setKycTierRequired,
+    setPersistedError,
   ]);
 
   const postCheckoutHandler = useCallback(async (
@@ -2503,6 +2547,7 @@ export function useStripeEmbeddedOnramp({
 
     if (!checkoutSucceeded) {
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      let checkoutResponseError: (Error & { code?: string; lastError?: string }) | undefined;
       try {
         if (!onrampRef.current) {
           console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before performCheckout. Aborting.");
@@ -2510,6 +2555,9 @@ export function useStripeEmbeddedOnramp({
         }
 
         const result = await onrampRef.current.performCheckout(currentSessionId || "", async (onrampSessionId: string) => {
+          // The SDK can invoke this callback again after handling a next action.
+          // Keep only the current response's error if the SDK wraps the rejection.
+          checkoutResponseError = undefined;
           const checkoutRes = await fetch(`/api/stripe/onramp-checkout/${encodeURIComponent(onrampSessionId)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2529,15 +2577,21 @@ export function useStripeEmbeddedOnramp({
             }
           }
 
-          if (!checkoutData.client_secret) {
+          if (!checkoutRes.ok || checkoutData.ok === false || !checkoutData.client_secret) {
             // If the checkout is already in a final successful state, we don't need a client_secret.
             // Return empty string to let Stripe SDK performCheckout know the flow is complete.
             const isFinalStatus = ["awaiting_funds", "fulfillment_processing", "fulfillment_complete"].includes(checkoutData.status);
-            if (checkoutData.ok !== false && isFinalStatus) {
+            if (checkoutRes.ok && checkoutData.ok !== false && isFinalStatus) {
               console.log("[EMBEDDED ONRAMP] Checkout completed with status:", checkoutData.status);
               return "";
             }
-            throw new Error(checkoutData.error || "No client_secret returned");
+            const lastError = checkoutData.lastError || checkoutData.transactionDetails?.last_error;
+            const code = checkoutData.code || lastError;
+            checkoutResponseError = Object.assign(
+              new Error(checkoutData.error || lastError || "No client_secret returned"),
+              { code, lastError },
+            );
+            throw checkoutResponseError;
           }
 
           return checkoutData.client_secret;
@@ -2549,7 +2603,8 @@ export function useStripeEmbeddedOnramp({
         } else {
           throw new Error("checkout_unsuccessful");
         }
-      } catch (checkoutErr: any) {
+      } catch (sdkCheckoutErr: any) {
+        const checkoutErr = checkoutResponseError || sdkCheckoutErr;
         console.warn(`[EMBEDDED ONRAMP] Checkout attempt ${attempt + 1} failed, checking error state...`, checkoutErr);
         
         let isCardDecline = false;
@@ -2560,10 +2615,21 @@ export function useStripeEmbeddedOnramp({
           if (customerId) {
             statusHeaders["x-crypto-customer-id"] = customerId;
           }
-          const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId || "")}`, {
-            headers: statusHeaders
-          });
-          const statusData = await statusRes.json().catch(() => ({}));
+          let statusData: any = {};
+          try {
+            const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId || "")}`, {
+              headers: statusHeaders
+            });
+            if (statusRes.ok) {
+              statusData = await statusRes.json().catch(() => ({}));
+            } else {
+              console.warn("[EMBEDDED ONRAMP] Session status unavailable after checkout error:", statusRes.status);
+            }
+          } catch (statusErr) {
+            // A status outage must not hide a known SDK/checkout error. In
+            // particular, wallet ownership still needs its challenge flow.
+            console.warn("[EMBEDDED ONRAMP] Failed to fetch session status after checkout error:", statusErr);
+          }
 
           // Short-circuit: If the transaction is already successful, do not retry checkout
           const isFinalStatus = ["awaiting_funds", "fulfillment_processing", "fulfillment_complete"].includes(statusData.status);
@@ -2577,7 +2643,7 @@ export function useStripeEmbeddedOnramp({
             console.log("[EMBEDDED ONRAMP] Status check returned refreshed OAuth token, updating ref...");
             oauthTokenRef.current = statusData.refreshedToken;
           }
-          const lastError = statusData.transactionDetails?.last_error;
+          const lastError = statusData.transactionDetails?.last_error || checkoutErr?.lastError;
 
           console.log(`[EMBEDDED ONRAMP] Inspecting lastError from session status:`, lastError);
 
@@ -2915,9 +2981,8 @@ export function useStripeEmbeddedOnramp({
               return;
             }
           }
-        } catch (statusErr: any) {
-          console.warn("[EMBEDDED ONRAMP] Failed to fetch session status after checkout error:", statusErr);
-          // Fallback: If status fetch failed, check if the checkout exception itself is a card decline
+        } catch (recoveryErr: any) {
+          console.warn("[EMBEDDED ONRAMP] Failed to recover from checkout error:", recoveryErr);
           isCardDecline = checkIfCardDecline(checkoutErr);
         }
 
@@ -3467,7 +3532,7 @@ export function useStripeEmbeddedOnramp({
       if (rawMsg.includes("not authenticated") || rawMsg.includes("authentication required") || rawMsg.includes("unauthenticated")) {
         console.warn("[EMBEDDED ONRAMP] Coordinator unauthenticated on submitKycInfo. Purging stale auth and re-authenticating...");
         oauthTokenRef.current = null;
-        isCoordinatorAuthedRef.current = false;
+        authenticatedCoordinatorRef.current = null;
         if (typeof window !== "undefined") {
           sessionStorage.removeItem("stripe_onramp_oauth_token");
         }
@@ -3581,7 +3646,7 @@ export function useStripeEmbeddedOnramp({
       if (errMsg.includes("not authenticated") || errMsg.includes("authentication required") || errMsg.includes("unauthenticated")) {
         console.warn("[EMBEDDED ONRAMP] Coordinator unauthenticated on verifyDocuments. Purging stale auth and re-authenticating...");
         oauthTokenRef.current = null;
-        isCoordinatorAuthedRef.current = false;
+        authenticatedCoordinatorRef.current = null;
         if (typeof window !== "undefined") {
           sessionStorage.removeItem("stripe_onramp_oauth_token");
         }
@@ -3645,13 +3710,42 @@ export function useStripeEmbeddedOnramp({
       );
       return;
     }
+
+    const rawEmail = overrideEmail || activeEmailRef.current || email || (typeof window !== "undefined" ? sessionStorage.getItem("stripe_onramp_email") || "" : "");
+    const activeEmail = rawEmail.trim().toLowerCase();
+    const preflightError = getStripeOnrampPreflightError({
+      enabled,
+      email: activeEmail,
+      splitAddress,
+      publishableKey,
+      amount,
+    });
+    if (preflightError) {
+      if (preflightError.code === "email_required") return;
+      console.error("[EMBEDDED ONRAMP] Checkout prerequisites unavailable:", {
+        code: preflightError.code,
+        receiptId,
+        step: stepRef.current,
+        enabled: Boolean(enabled),
+        hasEmail: Boolean(activeEmail),
+        hasSplitAddress: Boolean(splitAddress),
+        hasPublishableKey: Boolean(publishableKey),
+        hasValidAmount: Number.isFinite(amount) && Number(amount) > 0,
+      });
+      // Configuration can change while the accordion opens. Do not tear down
+      // an authenticated coordinator or clear credentials for a preflight error.
+      setError(preflightError.message);
+      updateStep("error");
+      onErrorRef.current?.(Object.assign(new Error(preflightError.message), { code: preflightError.code }));
+      return;
+    }
     isRunningRef.current = true;
 
     if (isForceRetry || Date.now() - lastErrorSetTimeRef.current > 5000) {
       setError(null);
     }
     if (isForceRetry && onrampRef.current) {
-      if (!isCoordinatorAuthedRef.current && !oauthTokenRef.current) {
+      if (authenticatedCoordinatorRef.current !== onrampRef.current && !oauthTokenRef.current) {
         try { onrampRef.current.destroy(); } catch (_e) {}
         onrampRef.current = null;
       }
@@ -3659,8 +3753,6 @@ export function useStripeEmbeddedOnramp({
     }
     console.log("[EMBEDDED ONRAMP] startOnramp triggered. isEcommerceMode prop:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
 
-    const rawEmail = overrideEmail || activeEmailRef.current || email || (typeof window !== "undefined" ? sessionStorage.getItem("stripe_onramp_email") || "" : "");
-    const activeEmail = rawEmail.trim().toLowerCase();
     if (activeEmail) {
       activeEmailRef.current = activeEmail;
       if (typeof window !== "undefined") {
@@ -3686,7 +3778,7 @@ export function useStripeEmbeddedOnramp({
             try { onrampRef.current.destroy(); } catch {}
             onrampRef.current = null;
           }
-          isCoordinatorAuthedRef.current = false;
+          authenticatedCoordinatorRef.current = null;
           setAuthElement(null);
           setPaymentElement(null);
         }
@@ -3703,20 +3795,6 @@ export function useStripeEmbeddedOnramp({
     const activeName = resolvedName;
     const formattedPhone = activePhone ? formatToE164(activePhone, activeCountryRef.current || "US") : "";
 
-    if (!enabled || !activeEmail || !splitAddress || !publishableKey) {
-      isRunningRef.current = false;
-      if (activeEmail) {
-        handleError("Missing required fields (split address or API key)");
-      }
-      return;
-    }
-
-    if (!amount || amount <= 0) {
-      isRunningRef.current = false;
-      handleError("Invalid amount");
-      return;
-    }
-
     try {
       let onramp = onrampRef.current;
       let customerId = customerIdRef.current || (typeof window !== "undefined" ? sessionStorage.getItem("stripe_onramp_customer_id") : null);
@@ -3728,6 +3806,8 @@ export function useStripeEmbeddedOnramp({
       if (buyerWallet) buyerWalletRef.current = buyerWallet;
 
       if (!onramp) {
+        authenticatedCoordinatorRef.current = null;
+        setAuthElement(null);
         // ─── Step 1: Initialize Stripe SDK with native Dark theme ───
         // @ts-ignore - beta SDK method missing from types
         const stripeCryptoModule = (await import("@stripe/crypto")) as any;
@@ -3746,10 +3826,15 @@ export function useStripeEmbeddedOnramp({
         return;
       }
 
-      const hasAuthenticatedSession = Boolean(customerId && oauthTokenRef.current && buyerWallet);
+      const hasAuthenticatedSession = canReuseStripeCoordinatorSession({
+        coordinator: onramp,
+        authenticatedCoordinator: authenticatedCoordinatorRef.current,
+        customerId,
+        oauthToken: oauthTokenRef.current,
+        buyerWallet,
+      });
       if (hasAuthenticatedSession) {
-        isCoordinatorAuthedRef.current = true;
-        console.log("[EMBEDDED ONRAMP] Active authenticated session found for customer:", customerId, "- Bypassing Link OTP.");
+        console.log("[EMBEDDED ONRAMP] Reusing authenticated Stripe coordinator for customer:", customerId);
       }
 
       let authIntentId = "";
@@ -3839,15 +3924,17 @@ export function useStripeEmbeddedOnramp({
       updateStep("authenticating");
 
       const authPromise = new Promise<string>((resolve, reject) => {
+        let authenticationCompleted = false;
         const authTimeout = setTimeout(() => {
           console.warn("[EMBEDDED ONRAMP] Link auth element creation timeout (10s).");
         }, 10000);
 
         try {
           const authResult = onramp.authenticate(authIntentId, (result: any) => {
+            authenticationCompleted = true;
             clearTimeout(authTimeout);
             if (result.result === "success" && result.crypto_customer_id) {
-              isCoordinatorAuthedRef.current = true;
+              authenticatedCoordinatorRef.current = onramp;
               resolve(result.crypto_customer_id);
             } else if (result.result === "abandoned") {
               reject(new Error("Authentication cancelled by user"));
@@ -3861,7 +3948,7 @@ export function useStripeEmbeddedOnramp({
           if (authResult && typeof authResult.then === "function") {
             authResult.then((element: HTMLElement | null) => {
               clearTimeout(authTimeout);
-              if (element && mountedRef.current) {
+              if (element && mountedRef.current && !authenticationCompleted) {
                 console.log("[EMBEDDED ONRAMP] Link auth element generated successfully.");
                 setAuthElement(element);
               }
@@ -4244,12 +4331,7 @@ export function useStripeEmbeddedOnramp({
                 setIsAllKycCompleted(true);
                 setKycLevel("L2");
                 setPaymentElement(null);
-                if (onrampRef.current) {
-                  try { onrampRef.current.destroy(); } catch {}
-                  onrampRef.current = null;
-                }
-                isCoordinatorAuthedRef.current = false;
-                // Restart check after success with clean coordinator
+                // Continue with the authenticated coordinator after KYC.
                 isRunningRef.current = false;
                 setTimeout(() => startOnramp(activeEmail, activePhone, activeName), 50);
                 return;
@@ -4355,7 +4437,11 @@ export function useStripeEmbeddedOnramp({
           try {
             const elemResult = onramp.collectPaymentMethod(
               {
-                payment_method_types: achEnabled ? ["card", "us_bank_account"] : ["card"],
+                payment_method_types: getStripeOnrampPaymentMethodTypes({
+                  achEnabled: Boolean(achEnabled),
+                  region: latestKycSnapshotRef.current?.region || null,
+                  isEuCountry: isEuEeaCountry(activeCountryRef.current),
+                }),
                 wallets: { applePay: "auto", googlePay: "auto" },
               },
               (result: any) => {
@@ -4492,7 +4578,7 @@ export function useStripeEmbeddedOnramp({
           if (pErrMsg.includes("not authenticated") || pErrMsg.includes("authentication required") || pErrMsg.includes("unauthenticated")) {
             console.warn("[EMBEDDED ONRAMP] Coordinator unauthenticated during collectPaymentMethod. Refreshing Link session...");
             oauthTokenRef.current = null;
-            isCoordinatorAuthedRef.current = false;
+            authenticatedCoordinatorRef.current = null;
             if (typeof window !== "undefined") {
               sessionStorage.removeItem("stripe_onramp_oauth_token");
             }
@@ -4682,11 +4768,7 @@ export function useStripeEmbeddedOnramp({
               setIsAllKycCompleted(true);
               setKycLevel("L2");
               setPaymentElement(null); // Clear element after successful KYC checks
-              if (onrampRef.current) {
-                try { onrampRef.current.destroy(); } catch {}
-                onrampRef.current = null;
-              }
-              isCoordinatorAuthedRef.current = false;
+              // Keep the authenticated coordinator for payment recollection.
               isRunningRef.current = false;
               if (startOnrampRef.current) {
                 await startOnrampRef.current(activeEmail, activePhone, activeName);
@@ -4881,12 +4963,12 @@ export function useStripeEmbeddedOnramp({
       handleError(err?.message || "Onramp flow failed");
     }
   }, [
-    enabled, email, phone, localPhone, splitAddress, splitAddressCredit, amount, network,
+    enabled, email, phone, fullName, localPhone, splitAddress, splitAddressCredit, amount, network,
     destinationCurrency, receiptId, merchantWallet, brandKey,
     publishableKey, connectedWalletAddress, connectedWallet, handleError,
     updateStep, createBuyerWallet, runCheckoutLoop, pollKycStatus,
     buildTrackedCustomerUrl, consumeKycTrackingResponse, completeEuKyc,
-    resumeAfterKyc, reportKycEvent, getOnrampAmount,
+    resumeAfterKyc, reportKycEvent, getOnrampAmount, achEnabled, theme, isEcommerceMode,
   ]);
 
   useEffect(() => {

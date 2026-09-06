@@ -43,6 +43,33 @@ test("supports camel-case normalized session data", () => {
   assert.equal(resolveStripeSettlementAmount(session), 24.123456);
 });
 
+test("normalizes actual EUR source fiat to USD while leaving delivered USDC unchanged", () => {
+  const session = {
+    transaction_details: { source_amount: "9.00", source_currency: "eur", destination_amount: "9.65", destination_currency: "usdc" },
+    metadata: { onrampSourceCurrency: "eur", onrampSourceToUsdRate: String(1 / 0.9), onrampSourceAmountUsd: "10" },
+  };
+  assert.equal(resolveStripeSourceAmount(session), 10);
+  assert.equal(resolveStripeSettlementAmount(session), 9.65);
+  assert.equal(isStripeSourceAmountSufficient(resolveStripeSourceAmount(session), 10), true);
+  session.transaction_details.source_amount = "4.50";
+  assert.equal(resolveStripeSourceAmount(session), 5);
+  assert.equal(isStripeSourceAmountSufficient(resolveStripeSourceAmount(session), 10), false);
+});
+
+test("foreign source fiat without a matching valid conversion rate stops USD reconciliation", () => {
+  const transaction_details = { source_amount: "9.00", source_currency: "eur" };
+  for (const metadata of [undefined, {}, { onrampSourceCurrency: "usd", onrampSourceToUsdRate: "1.1" }, { onrampSourceCurrency: "eur", onrampSourceToUsdRate: "0" }]) {
+    assert.throws(() => resolveStripeSourceAmount({ transaction_details, metadata }), /conversion is unavailable/);
+  }
+});
+
+test("uses the server currency metadata when a normalized session omits source_currency", () => {
+  assert.equal(resolveStripeSourceAmount({
+    transactionDetails: { sourceAmount: "9" },
+    metadata: { onrampSourceCurrency: "eur", onrampSourceToUsdRate: String(1 / 0.9) },
+  }), 10);
+});
+
 test("refuses to infer a settlement amount before Stripe exposes it", () => {
   assert.equal(resolveStripeSettlementAmount({ transaction_details: {} }), null);
 });

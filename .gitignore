@@ -84,6 +84,7 @@ visa_iso_merchant_contacts.csv
 vcrun.py
 
 /scripts/*
+!/scripts/check-platform-analytics.cjs
 !/scripts/start-scheduler.js
 /scratch/
 

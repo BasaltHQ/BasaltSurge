@@ -11658,6 +11658,11 @@ export default function AdminPage() {
   const canBranding = canAccessPanel("branding", wallet);
   const canAdmins = canAccessPanel("admins", wallet);
   const [activeTab, setActiveTab] = useState<AdminTabKey>("reserve");
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "platformAnalytics") {
+      setActiveTab("platformAnalytics");
+    }
+  }, []);
   const [industryPack, setIndustryPack] = useState<string | null>(null);
   const containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").toLowerCase();
 

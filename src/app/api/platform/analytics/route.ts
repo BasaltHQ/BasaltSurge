@@ -1,17 +1,53 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { getContainer } from "@/lib/cosmos";
 import { resolveWalletRole } from "@/lib/authz";
-import { formatYMDInTimeZone, getDayRangeForYmdInTz, zonedTimeToUtcDate } from "@/lib/timezone";
 import { getPlatformAnalyticsFeeData } from "@/lib/platform-analytics-fees";
+import { resolveAnalyticsKyc } from "@/lib/platform-analytics-metrics";
+import { aggregateAnalyticsReceipts } from "@/lib/platform-analytics-aggregation";
+import { buildAnalyticsFailureHeatmap, extractAnalyticsFailureReasons, matchesAnalyticsFailureSelection } from "@/lib/platform-analytics-failures";
 import {
-  deduplicateAnalyticsReceipts,
-  isAnalyticsFailedReceipt,
-  isAnalyticsPaidReceipt,
-  summarizeAnalyticsKycProfile,
-} from "@/lib/platform-analytics-metrics";
-import { buildAnalyticsFailureHeatmap } from "@/lib/platform-analytics-failures";
+  ANALYTICS_DEFINITION_VERSION, analyticsPageSize, resolveAnalyticsQuery, resolveAnalyticsBrand,
+  analyticsReceiptInRange, matchesAnalyticsQueryDimensions, analyticsSortReceipts,
+  analyticsStorageKey, pageAnalyticsReceipts,
+  buildAnalyticsFacets,
+} from "@/lib/platform-analytics-query";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
+
+// Full identity, KYC and failure evidence must be present in every metric path.
+// Large item/transaction payloads remain in the paged detail read.
+const RECEIPT_PROJECTION = Object.fromEntries([
+  "_id", "id", "receiptId", "brandKey", "brandName", "status", "totalUsd", "createdAt",
+  "amountPlatformMinor", "platformFeeUsd", "platformFee", "portalFeeUsd", "platformFeeBps",
+  "platformBps", "splitConfig", "effectiveProcessingFeeBps", "detectedCardFunding",
+  "cardFunding", "funding", "isCreditCard", "kycLevel", "kyc", "kycOccurred", "kyc_occurred",
+  "kycInitialLevel", "kycInitialStatus", "kycInitialVerifiedLevel", "kycRequiredLevel",
+  "kycCompletedLevel", "kycCompletedDuringTransaction", "kycFinalLevel", "kycFinalStatus",
+  "kycVerifiedLevel", "kycRegion", "kycIdentifiersSatisfied", "kycAttestationAccepted",
+  "kycEuFullyVerified", "kycFinalSnapshot", "kycVerificationErrors", "kycHistory",
+  "checkoutStatus", "checkoutStatusHistory", "accordionCurrentStep", "accordionStepHistory",
+  "statusHistory", "lifecycleHistory", "failureReason", "customerSessions",
+  "customerEmail", "stripeEmail", "email", "wallet", "merchantWallet", "shopSlug",
+  "parentUrl", "merchantName", "shopName", "ipAddress", "buyerWallet", "stripeSessionId",
+  "paymentId", "thirdwebMetadata.paymentId", "transactionHash", "txHash", "leg2TxHash",
+  "leg1TxHash", "onrampTxHash",
+].map(field => [field, 1]));
+
+type CachedPopulation = { rows: any[]; facets: ReturnType<typeof buildAnalyticsFacets>; generatedAt: string; expiresAt: number };
+const populationCache = new Map<string, CachedPopulation>();
+const MAX_CACHE_RECEIPTS = 30000;
+const CACHE_TTL_MS = 60_000;
+let configCache: { rows: any[]; generatedAt: string; expiresAt: number } | null = null;
+
+function cachePopulation(key: string, value: CachedPopulation) {
+  for (const [cachedKey, cached] of populationCache) if (cached.expiresAt <= Date.now()) populationCache.delete(cachedKey);
+  if (value.rows.length > MAX_CACHE_RECEIPTS) return;
+  while (populationCache.size && (populationCache.size >= 8 || Array.from(populationCache.values()).reduce((sum, cached) => sum + cached.rows.length, 0) + value.rows.length > MAX_CACHE_RECEIPTS)) {
+    populationCache.delete(populationCache.keys().next().value!);
+  }
+  populationCache.set(key, value);
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -22,608 +58,27 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 403 });
     }
 
-    const container = await getContainer();
-    let receipts: any[] = [];
-    let allReceiptsLight: any[] = [];
-    let logs: any[] = [];
-    let nextContinuationToken: string | null = null;
 
-    // Parse fetch limit and offset query parameters (default to 500, offset 0)
-    const limitParam = req.nextUrl.searchParams.get("limit");
-    let limit = 500;
-    if (limitParam === "all") {
-      limit = 0;
-    } else if (limitParam) {
-      const parsed = parseInt(limitParam, 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        limit = parsed;
-      }
+    let scope: ReturnType<typeof resolveAnalyticsQuery>;
+    let limit: number;
+    let offset: number;
+    try {
+      scope = resolveAnalyticsQuery(req.nextUrl.searchParams, req.headers.get("x-client-timezone"));
+      limit = analyticsPageSize(req.nextUrl.searchParams.get("limit"));
+      const rawOffset = req.nextUrl.searchParams.get("offset") || req.nextUrl.searchParams.get("skip") || "0";
+      if (!/^\d+$/.test(rawOffset) || !Number.isSafeInteger(Number(rawOffset))) throw new Error("Invalid offset");
+      offset = Number(rawOffset);
+    } catch (error) {
+      return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Invalid analytics query" }, { status: 400 });
     }
 
-    // Every paged query is pinned to a snapshot boundary so newly-created
-    // receipts cannot shift later batches and cause gaps or duplicates.
-    const requestedSnapshotEnd = req.nextUrl.searchParams.get("snapshotEnd");
-    const parsedSnapshotEnd = requestedSnapshotEnd ? new Date(requestedSnapshotEnd) : null;
-    const snapshotEndIso = parsedSnapshotEnd && !Number.isNaN(parsedSnapshotEnd.getTime())
-      ? parsedSnapshotEnd.toISOString()
-      : new Date().toISOString();
-
-    const offsetParam = req.nextUrl.searchParams.get("offset") || req.nextUrl.searchParams.get("skip") || "0";
-    const offset = Math.max(0, parseInt(offsetParam, 10) || 0);
-    const continuationToken = req.nextUrl.searchParams.get("continuationToken") || undefined;
-
-    const timezoneMode = req.nextUrl.searchParams.get("timezoneMode") || "system";
-    const clientTimezone = req.headers.get("x-client-timezone") || "America/Los_Angeles";
-    const targetTimezone = timezoneMode === "dynamic" ? clientTimezone : "America/Los_Angeles";
-
-    // Search and query parameters
-    const rawSearch = (req.nextUrl.searchParams.get("search") || req.nextUrl.searchParams.get("q") || "").trim();
-    const rawReceiptId = (req.nextUrl.searchParams.get("receiptId") || "").trim();
-    const rawEmail = (req.nextUrl.searchParams.get("email") || "").trim();
-    const searchMode = req.nextUrl.searchParams.get("searchMode") || "all";
     const includeAggregates = req.nextUrl.searchParams.get("includeAggregates") !== "false";
-
-    // Time-range query parameters for dynamic receipt loading
-    const timeRange = req.nextUrl.searchParams.get("timeRange");
-    const weekOffset = parseInt(req.nextUrl.searchParams.get("weekOffset") || "0", 10);
-    const monthOffset = parseInt(req.nextUrl.searchParams.get("monthOffset") || "0", 10);
-    const customStart = req.nextUrl.searchParams.get("customStart");
-    const customEnd = req.nextUrl.searchParams.get("customEnd");
-    const brandKey = req.nextUrl.searchParams.get("brandKey");
-    const statusFilter = (req.nextUrl.searchParams.get("statusFilter") || "all").trim().toLowerCase();
-    const kycFilter = (req.nextUrl.searchParams.get("kycFilter") || "all").trim().toUpperCase();
-
-    let filterStartIso: string | null = null;
-    let filterEndIso: string | null = null;
-
-    if (timeRange && timeRange !== "all") {
-      const now = new Date();
-      if (timeRange === "today") {
-        const todayYmd = formatYMDInTimeZone(targetTimezone, now);
-        const { start } = getDayRangeForYmdInTz(targetTimezone, todayYmd);
-        filterStartIso = start.toISOString();
-      } else if (timeRange === "yesterday") {
-        const dtf = new Intl.DateTimeFormat('en-US', { timeZone: targetTimezone, year: 'numeric', month: 'numeric', day: 'numeric' });
-        const parts = dtf.formatToParts(now);
-        const year = Number(parts.find(p => p.type === 'year')?.value);
-        const month = Number(parts.find(p => p.type === 'month')?.value);
-        const date = Number(parts.find(p => p.type === 'day')?.value);
-        const yesterdayStart = zonedTimeToUtcDate(targetTimezone, year, month, date - 1, 0, 0, 0, 0);
-        const todayStart = zonedTimeToUtcDate(targetTimezone, year, month, date, 0, 0, 0, 0);
-        filterStartIso = yesterdayStart.toISOString();
-        filterEndIso = todayStart.toISOString();
-      } else if (timeRange === "weekly") {
-        const dtf = new Intl.DateTimeFormat('en-US', { timeZone: targetTimezone, year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short' });
-        const parts = dtf.formatToParts(now);
-        const year = Number(parts.find(p => p.type === 'year')?.value);
-        const month = Number(parts.find(p => p.type === 'month')?.value);
-        const date = Number(parts.find(p => p.type === 'day')?.value);
-        const dayStr = parts.find(p => p.type === 'weekday')?.value || 'Mon';
-        const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-        const day = dayMap[dayStr] ?? 1;
-        const diff = date - day + (day === 0 ? -6 : 1);
-        const start = zonedTimeToUtcDate(targetTimezone, year, month, diff + weekOffset * 7, 0, 0, 0, 0);
-        const end = zonedTimeToUtcDate(targetTimezone, year, month, diff + weekOffset * 7 + 6, 23, 59, 59, 999);
-        filterStartIso = start.toISOString();
-        filterEndIso = end.toISOString();
-      } else if (timeRange === "monthly") {
-        const dtf = new Intl.DateTimeFormat('en-US', { timeZone: targetTimezone, year: 'numeric', month: 'numeric', day: 'numeric' });
-        const parts = dtf.formatToParts(now);
-        const year = Number(parts.find(p => p.type === 'year')?.value);
-        const month = Number(parts.find(p => p.type === 'month')?.value);
-        const start = zonedTimeToUtcDate(targetTimezone, year, month + monthOffset, 1, 0, 0, 0, 0);
-        const end = zonedTimeToUtcDate(targetTimezone, year, month + monthOffset + 1, 0, 23, 59, 59, 999);
-        filterStartIso = start.toISOString();
-        filterEndIso = end.toISOString();
-      } else if (timeRange === "custom" && customStart && customEnd) {
-        const { start } = getDayRangeForYmdInTz(targetTimezone, customStart);
-        const { end } = getDayRangeForYmdInTz(targetTimezone, customEnd);
-        filterStartIso = start.toISOString();
-        filterEndIso = end.toISOString();
-      }
-    }
-
-    // The snapshot is also the natural upper bound for open-ended ranges.
-    // Respect an earlier explicit range end when one exists.
-    if (!filterEndIso || new Date(snapshotEndIso).getTime() < new Date(filterEndIso).getTime()) {
-      filterEndIso = snapshotEndIso;
-    }
-
-    const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-    let totalDetailedMatches = 0;
-
-    // 2. Fetch receipts and logs using MongoDB projection for performance if available
-    if ((container as any).getCollection) {
-      const collection = (container as any).getCollection();
-      
-      // Build one canonical filter for the detailed page and its aggregate
-      // metrics so the UI, PDF, and workbook totals always reconcile.
-      const andClauses: any[] = [{ type: "receipt" }];
-
-      if (brandKey && brandKey !== "all") {
-        andClauses.push({ brandKey: { $regex: `^${escapeRegex(brandKey)}$`, $options: "i" } });
-      }
-
-      if (statusFilter !== "all") {
-        andClauses.push({ status: { $regex: `^${escapeRegex(statusFilter)}$`, $options: "i" } });
-      }
-
-      if (["L0", "L1", "L2", "UNKNOWN"].includes(kycFilter)) {
-        const kycFields = ["kycVerifiedLevel", "kycCompletedLevel", "kycFinalLevel", "kycLevel", "kyc"];
-        const tierClauses = (tier: "L0" | "L1" | "L2") => {
-          const aliases = tier === "L0" ? "(?:L0|LEVEL\\s*0|UNVERIFIED)" : `(?:${tier}|LEVEL\\s*${tier.slice(1)})`;
-          return kycFields.map(field => ({ [field]: { $regex: `^${aliases}$`, $options: "i" } }));
-        };
-        const l2Clauses = tierClauses("L2");
-        const l1Clauses = tierClauses("L1");
-        const l0Clauses = tierClauses("L0");
-        if (kycFilter === "L2") {
-          andClauses.push({ $or: l2Clauses });
-        } else if (kycFilter === "L1") {
-          andClauses.push({ $and: [{ $or: l1Clauses }, { $nor: l2Clauses }] });
-        } else if (kycFilter === "L0") {
-          andClauses.push({ $and: [{ $or: l0Clauses }, { $nor: [...l1Clauses, ...l2Clauses] }] });
-        } else {
-          andClauses.push({ $nor: [...l0Clauses, ...l1Clauses, ...l2Clauses] });
-        }
-      }
-
-      // Targeted search conditions
-      if (rawReceiptId || (searchMode === "receiptId" && rawSearch)) {
-        const term = escapeRegex(rawReceiptId || rawSearch);
-        andClauses.push({
-          $or: [
-            { receiptId: { $regex: term, $options: "i" } },
-            { id: { $regex: term, $options: "i" } }
-          ]
-        });
-      } else if (rawEmail || (searchMode === "email" && rawSearch)) {
-        const term = escapeRegex(rawEmail || rawSearch);
-        andClauses.push({
-          $or: [
-            { customerEmail: { $regex: term, $options: "i" } },
-            { stripeEmail: { $regex: term, $options: "i" } },
-            { email: { $regex: term, $options: "i" } }
-          ]
-        });
-      } else if (searchMode === "session" && rawSearch) {
-        const term = escapeRegex(rawSearch);
-        andClauses.push({
-          $or: [
-            { stripeSessionId: { $regex: term, $options: "i" } },
-            { paymentId: { $regex: term, $options: "i" } }
-          ]
-        });
-      } else if (searchMode === "wallet" && rawSearch) {
-        const term = escapeRegex(rawSearch);
-        andClauses.push({
-          $or: [
-            { buyerWallet: { $regex: term, $options: "i" } },
-            { wallet: { $regex: term, $options: "i" } },
-            { merchantWallet: { $regex: term, $options: "i" } }
-          ]
-        });
-      } else if (rawSearch) {
-        const term = escapeRegex(rawSearch);
-        andClauses.push({
-          $or: [
-            { receiptId: { $regex: term, $options: "i" } },
-            { id: { $regex: term, $options: "i" } },
-            { customerEmail: { $regex: term, $options: "i" } },
-            { stripeEmail: { $regex: term, $options: "i" } },
-            { email: { $regex: term, $options: "i" } },
-            { stripeSessionId: { $regex: term, $options: "i" } },
-            { transactionHash: { $regex: term, $options: "i" } },
-            { txHash: { $regex: term, $options: "i" } },
-            { onrampTxHash: { $regex: term, $options: "i" } },
-            { leg1TxHash: { $regex: term, $options: "i" } },
-            { leg2TxHash: { $regex: term, $options: "i" } },
-            { buyerWallet: { $regex: term, $options: "i" } },
-            { wallet: { $regex: term, $options: "i" } },
-            { merchantWallet: { $regex: term, $options: "i" } },
-            { merchantName: { $regex: term, $options: "i" } },
-            { shopName: { $regex: term, $options: "i" } },
-            { shopSlug: { $regex: term, $options: "i" } },
-            { brandKey: { $regex: term, $options: "i" } }
-          ]
-        });
-      }
-
-      // If no specific receipt/email/search query is provided, or if timeRange is set, apply date boundaries
-      if (filterStartIso || filterEndIso) {
-        const startDateObj = filterStartIso ? new Date(filterStartIso) : null;
-        const endDateObj = filterEndIso ? new Date(filterEndIso) : null;
-
-        const dateConds: any[] = [];
-        const strConds: any[] = [];
-
-        if (startDateObj) dateConds.push({ createdAt: { $gte: startDateObj } });
-        if (endDateObj) dateConds.push({ createdAt: { $lte: endDateObj } });
-
-        if (filterStartIso) strConds.push({ createdAt: { $gte: filterStartIso } });
-        if (filterEndIso) strConds.push({ createdAt: { $lte: filterEndIso } });
-
-        andClauses.push({
-          $or: [
-            { $and: dateConds },
-            { $and: strConds }
-          ]
-        });
-      }
-
-      const receiptsQueryFilter = andClauses.length === 1 ? andClauses[0] : { $and: andClauses };
-
-      if (includeAggregates) {
-        allReceiptsLight = await collection.find(
-          receiptsQueryFilter,
-          {
-            projection: {
-              _id: 1,
-              id: 1,
-              receiptId: 1,
-              brandKey: 1,
-              brandName: 1,
-              status: 1,
-              totalUsd: 1,
-              createdAt: 1,
-              amountPlatformMinor: 1,
-              platformFeeUsd: 1,
-              platformFee: 1,
-              portalFeeUsd: 1,
-              platformFeeBps: 1,
-              platformBps: 1,
-              splitConfig: 1,
-              effectiveProcessingFeeBps: 1,
-              detectedCardFunding: 1,
-              cardFunding: 1,
-              funding: 1,
-              isCreditCard: 1,
-              kycLevel: 1,
-              kyc: 1,
-              kycOccurred: 1,
-              kyc_occurred: 1,
-              kycInitialLevel: 1,
-              kycInitialStatus: 1,
-              kycInitialVerifiedLevel: 1,
-              kycRequiredLevel: 1,
-              kycCompletedLevel: 1,
-              kycCompletedDuringTransaction: 1,
-              kycFinalLevel: 1,
-              kycFinalStatus: 1,
-              kycVerifiedLevel: 1,
-              kycRegion: 1,
-              kycIdentifiersSatisfied: 1,
-              kycAttestationAccepted: 1,
-              kycEuFullyVerified: 1,
-              kycFinalSnapshot: 1,
-              kycVerificationErrors: 1,
-              kycHistory: 1,
-              checkoutStatus: 1,
-              checkoutStatusHistory: 1,
-              accordionCurrentStep: 1,
-              accordionStepHistory: 1,
-              statusHistory: 1,
-              failureReason: 1,
-              "customerSessions.status": 1,
-              "customerSessions.lastError": 1,
-              "customerSessions.error": 1,
-              customerEmail: 1,
-              stripeEmail: 1,
-              email: 1,
-              wallet: 1,
-              merchantWallet: 1,
-              shopSlug: 1,
-              parentUrl: 1,
-              merchantName: 1,
-              ipAddress: 1,
-              buyerWallet: 1,
-              stripeSessionId: 1,
-              transactionHash: 1,
-              txHash: 1,
-              leg2TxHash: 1,
-              leg1TxHash: 1,
-              onrampTxHash: 1
-            },
-            readPreference: "secondaryPreferred"
-          }
-        ).sort({ createdAt: -1, _id: -1 }).toArray();
-      }
-
-      totalDetailedMatches = await collection.countDocuments(receiptsQueryFilter);
-
-      let query = collection.find(
-        receiptsQueryFilter,
-        {
-          projection: {
-            _id: 1,
-            id: 1,
-            receiptId: 1,
-            brandKey: 1,
-            brandName: 1,
-            status: 1,
-            totalUsd: 1,
-            createdAt: 1,
-            amountPlatformMinor: 1,
-            platformFeeUsd: 1,
-            platformFee: 1,
-            portalFeeUsd: 1,
-            platformFeeBps: 1,
-            effectiveProcessingFeeBps: 1,
-            detectedCardFunding: 1,
-            cardFunding: 1,
-            funding: 1,
-            isCreditCard: 1,
-            kycLevel: 1,
-            kyc: 1,
-            kycOccurred: 1,
-            kyc_occurred: 1,
-            kycInitialLevel: 1,
-            kycInitialStatus: 1,
-            kycInitialVerifiedLevel: 1,
-            kycRequiredLevel: 1,
-            kycCompletedLevel: 1,
-            kycCompletedDuringTransaction: 1,
-            kycFinalLevel: 1,
-            kycFinalStatus: 1,
-            kycVerifiedLevel: 1,
-            kycRegion: 1,
-            kycIdentifiersSatisfied: 1,
-            kycAttestationAccepted: 1,
-            kycEuFullyVerified: 1,
-            kycFinalSnapshot: 1,
-            kycVerificationErrors: 1,
-            kycHistory: 1,
-            checkoutStatus: 1,
-            checkoutStatusHistory: 1,
-            accordionCurrentStep: 1,
-            accordionStepHistory: 1,
-            failureReason: 1,
-            transactionHash: 1,
-            txHash: 1,
-            leg2TxHash: 1,
-            leg1TxHash: 1,
-            onrampTxHash: 1,
-            stripeSessionId: 1,
-            statusHistory: 1,
-            customerEmail: 1,
-            stripeEmail: 1,
-            email: 1,
-            lineItems: 1,
-            parentUrl: 1,
-            splitAddress: 1,
-            splitAddressCredit: 1,
-            customerSessions: 1,
-            lastPolledAt: 1,
-            stripeSessionStatus: 1,
-            ipAddress: 1,
-            wallet: 1,
-            merchantWallet: 1,
-            buyerWallet: 1,
-            merchantName: 1,
-            shopName: 1,
-            shopTitle: 1,
-            merchantTitle: 1,
-            shopifyShop: 1,
-            shopSlug: 1,
-            presentedFeeBps: 1,
-            creditPresentedFeeBps: 1,
-            splitConfig: 1,
-            splitConfigCredit: 1,
-            partnerBps: 1,
-            platformBps: 1,
-            feeMinusEnabled: 1,
-            thirdwebMetadata: 1,
-            paymentId: 1,
-            transactions: 1,
-            originChainId: 1,
-            destinationChainId: 1,
-            originToken: 1,
-            destinationToken: 1,
-            originAmount: 1,
-            destinationAmount: 1,
-            quoteSummary: 1,
-            isCrypto: 1
-          },
-          readPreference: "secondaryPreferred"
-        }
-      ).sort({ createdAt: -1, _id: -1 });
-
-      if (offset > 0) {
-        query = query.skip(offset);
-      }
-      if (limit > 0) {
-        query = query.limit(limit);
-      } else if (limit === 0) {
-        // Safe cap for "all" in a single batch to prevent memory / socket exhaustion
-        query = query.limit(5000);
-      }
-      receipts = await query.toArray();
-
-      // Query logs for the current page instead of taking an unrelated global
-      // sample. This keeps receipt diagnostics complete across every batch.
-      const db = collection.db;
-      const pageReceiptIds = receipts
-        .map((receipt: any) => receipt.receiptId || receipt.id)
-        .filter((receiptId: unknown): receiptId is string => typeof receiptId === "string" && receiptId.length > 0);
-      if (pageReceiptIds.length > 0) {
-        logs = await db.collection("portal_logs").find(
-          { receiptId: { $in: pageReceiptIds } },
-          {
-            projection: {
-              receiptId: 1,
-              level: 1,
-              message: 1,
-              createdAt: 1,
-              userAgent: 1
-            },
-            readPreference: "secondaryPreferred"
-          }
-        ).sort({ createdAt: -1, _id: -1 }).limit(pageReceiptIds.length * 25).toArray();
-      }
-    } else {
-      // Fallback for Cosmos DB
-      let cosmosWhere = "c.type = 'receipt'";
-      if (brandKey && brandKey !== "all") {
-        cosmosWhere += ` AND LOWER(c.brandKey) = '${brandKey.toLowerCase().replace(/'/g, "")}'`;
-      }
-      if (statusFilter !== "all") {
-        cosmosWhere += ` AND LOWER(c.status) = '${statusFilter.replace(/'/g, "")}'`;
-      }
-      if (["L0", "L1", "L2", "UNKNOWN"].includes(kycFilter)) {
-        const kycFields = ["kycVerifiedLevel", "kycCompletedLevel", "kycFinalLevel", "kycLevel", "kyc"];
-        const tierCondition = (tier: "L0" | "L1" | "L2") => {
-          const aliases = tier === "L0" ? ["l0", "level 0", "level0", "unverified"] : [tier.toLowerCase(), `level ${tier.slice(1)}`, `level${tier.slice(1)}`];
-          return `(${kycFields.flatMap(field => aliases.map(alias => `(IS_DEFINED(c.${field}) AND LOWER(c.${field}) = '${alias}')`)).join(" OR ")})`;
-        };
-        const l0Condition = tierCondition("L0");
-        const l1Condition = tierCondition("L1");
-        const l2Condition = tierCondition("L2");
-        if (kycFilter === "L2") cosmosWhere += ` AND ${l2Condition}`;
-        else if (kycFilter === "L1") cosmosWhere += ` AND ${l1Condition} AND NOT ${l2Condition}`;
-        else if (kycFilter === "L0") cosmosWhere += ` AND ${l0Condition} AND NOT ${l1Condition} AND NOT ${l2Condition}`;
-        else cosmosWhere += ` AND NOT ${l0Condition} AND NOT ${l1Condition} AND NOT ${l2Condition}`;
-      }
-      if (rawReceiptId || (searchMode === "receiptId" && rawSearch)) {
-        const escaped = (rawReceiptId || rawSearch).toLowerCase().replace(/'/g, "");
-        cosmosWhere += ` AND (CONTAINS(LOWER(c.receiptId), '${escaped}') OR CONTAINS(LOWER(c.id), '${escaped}'))`;
-      } else if (rawEmail || (searchMode === "email" && rawSearch)) {
-        const escaped = (rawEmail || rawSearch).toLowerCase().replace(/'/g, "");
-        cosmosWhere += ` AND (CONTAINS(LOWER(c.customerEmail), '${escaped}') OR CONTAINS(LOWER(c.stripeEmail), '${escaped}') OR CONTAINS(LOWER(c.email), '${escaped}'))`;
-      } else if (searchMode === "session" && rawSearch) {
-        const escaped = rawSearch.toLowerCase().replace(/'/g, "");
-        cosmosWhere += ` AND (CONTAINS(LOWER(c.stripeSessionId), '${escaped}') OR CONTAINS(LOWER(c.paymentId), '${escaped}'))`;
-      } else if (searchMode === "wallet" && rawSearch) {
-        const escaped = rawSearch.toLowerCase().replace(/'/g, "");
-        cosmosWhere += ` AND (CONTAINS(LOWER(c.buyerWallet), '${escaped}') OR CONTAINS(LOWER(c.wallet), '${escaped}') OR CONTAINS(LOWER(c.merchantWallet), '${escaped}'))`;
-      } else if (rawSearch) {
-        const escaped = rawSearch.toLowerCase().replace(/'/g, "");
-        cosmosWhere += ` AND (CONTAINS(LOWER(c.receiptId), '${escaped}') OR CONTAINS(LOWER(c.id), '${escaped}') OR CONTAINS(LOWER(c.customerEmail), '${escaped}') OR CONTAINS(LOWER(c.stripeEmail), '${escaped}') OR CONTAINS(LOWER(c.stripeSessionId), '${escaped}') OR CONTAINS(LOWER(c.paymentId), '${escaped}') OR CONTAINS(LOWER(c.transactionHash), '${escaped}') OR CONTAINS(LOWER(c.txHash), '${escaped}') OR CONTAINS(LOWER(c.buyerWallet), '${escaped}') OR CONTAINS(LOWER(c.wallet), '${escaped}') OR CONTAINS(LOWER(c.merchantWallet), '${escaped}'))`;
-      }
-
-      if (filterStartIso) cosmosWhere += ` AND c.createdAt >= '${filterStartIso.replace(/'/g, "")}'`;
-      if (filterEndIso) cosmosWhere += ` AND c.createdAt <= '${filterEndIso.replace(/'/g, "")}'`;
-
-      const countSpec = { query: `SELECT VALUE COUNT(1) FROM c WHERE ${cosmosWhere}` };
-      const { resources: countRows } = await container.items.query(countSpec).fetchAll();
-      totalDetailedMatches = Number(countRows?.[0] || 0);
-
-      const pageSize = limit > 0 ? Math.min(limit, 1000) : 500;
-      const querySpec = { query: `SELECT * FROM c WHERE ${cosmosWhere} ORDER BY c.createdAt DESC` };
-      const page = await container.items.query(querySpec, {
-        maxItemCount: pageSize,
-        continuationToken
-      }).fetchNext();
-      receipts = page.resources || [];
-      nextContinuationToken = page.continuationToken || null;
-
-      // Aggregates are computed only on the first request. Later continuation
-      // pages skip this full scan and return detailed records only.
-      if (includeAggregates) {
-        const aggregateSpec = { query: `SELECT * FROM c WHERE ${cosmosWhere}` };
-        const { resources: aggregateRows } = await container.items.query(aggregateSpec).fetchAll();
-        allReceiptsLight = aggregateRows || [];
-      }
-    }
-
-    // 3. Aggregate metrics
-    let totalCreated = 0;
-    let totalPaid = 0;
-    let totalFailed = 0;
-    let totalGmv = 0;
-    let totalFees = 0;
-    let feeKnownCount = 0;
-    let feeUnknownCount = 0;
-    
-    const brandMap: Record<string, {
-      brandKey: string;
-      brandName: string;
-      total: number;
-      paid: number;
-      failed: number;
-      gmv: number;
-      fees: number;
-      feeKnownCount: number;
-      feeUnknownCount: number;
-      dedupedTotal?: number;
-      dedupedPaid?: number;
-      dedupedFailed?: number;
-      trueSuccessRate?: number;
-    }> = {};
-
-    const cardTypeMap = { credit: 0, debit: 0, bank: 0, unknown: 0 };
-    // Helper to extract decline or error reasons from status history
-    const getFailureReason = (receipt: any, rLogs: any[]) => {
-      if (receipt.failureReason) {
-        return String(receipt.failureReason).trim() || "No recorded failure detail";
-      }
-
-      // Check logs first
-      const errorLog = rLogs.find(l => l.level === "error");
-      if (errorLog) {
-        // Clean up common error messages
-        let msg = String(errorLog.message || "");
-        if (msg.includes("[STRIPE HEADLESS] Error:")) {
-          msg = msg.split("[STRIPE HEADLESS] Error:")[1].trim().split("\n")[0];
-        } else if (msg.includes("[EMBEDDED ONRAMP]")) {
-          msg = msg.split("[EMBEDDED ONRAMP]")[1].trim();
-        }
-        return msg || "Unknown Error";
-      }
-
-      // Check statusHistory
-      if (Array.isArray(receipt.statusHistory)) {
-        const failedStep = receipt.statusHistory.find((h: any) => String(h.status || "").toLowerCase() === "failed");
-        if (failedStep && failedStep.reason) {
-          return failedStep.reason;
-        }
-      }
-
-      return "No recorded failure detail";
-    };
-
-    // Resolve only persisted KYC tiers. Transaction amount and the presence of
-    // a KYC-related log do not prove that verification completed.
-    const getKycLevel = (receipt: any) => {
-      const rawKyc = String(
-        receipt.kycVerifiedLevel
-        || receipt.kycCompletedLevel
-        || receipt.kycFinalLevel
-        || receipt.kycLevel
-        || receipt.kyc
-        || ""
-      ).toUpperCase().trim();
-      if (rawKyc === "L2" || rawKyc === "LEVEL 2" || rawKyc === "LEVEL2") return "L2";
-
-      if (Array.isArray(receipt.customerSessions) && receipt.customerSessions.length > 0) {
-        for (const s of receipt.customerSessions) {
-          const sKyc = String(s?.kycLevel || s?.kyc_level || "").toUpperCase().trim();
-          if (sKyc === "L2") return "L2";
-        }
-      }
-
-      if (rawKyc === "L1" || rawKyc === "LEVEL 1" || rawKyc === "LEVEL1") return "L1";
-
-      if (Array.isArray(receipt.customerSessions) && receipt.customerSessions.length > 0) {
-        for (const s of receipt.customerSessions) {
-          const sKyc = String(s?.kycLevel || s?.kyc_level || "").toUpperCase().trim();
-          if (sKyc === "L1") return "L1";
-        }
-      }
-
-      if (rawKyc === "L0" || rawKyc === "LEVEL 0" || rawKyc === "LEVEL0") return "L0";
-      return "Unknown";
-    };
-
-    // Group logs by receiptId for fast in-memory lookup
-    const logsByReceipt: Record<string, any[]> = {};
-    for (const l of logs) {
-      if (l.receiptId) {
-        if (!logsByReceipt[l.receiptId]) logsByReceipt[l.receiptId] = [];
-        logsByReceipt[l.receiptId].push(l);
-      }
-    }
-
+    const queryKey = createHash("sha256").update(JSON.stringify(scope)).digest("hex").slice(0, 24);
+    const cursor = req.nextUrl.searchParams.get("cursor") || req.nextUrl.searchParams.get("continuationToken");
+    const container = await getContainer();
+    const collection = (container as any).getCollection?.();
+    let configGeneratedAt: string | null = null;
+    let configAvailable = true;
     // Pre-fetch merchant configurations for split addresses and merchant names resolution in a single query
     const configMap: Record<string, { brandKey?: string; merchantName?: string; slug?: string; splitAddress?: string; splitAddressCredit?: string }> = {};
     const brandNameMap: Record<string, string> = {};
@@ -631,7 +86,16 @@ export async function GET(req: NextRequest) {
       const configQuery = {
         query: "SELECT c.type, c.id, c.wallet, c.brandKey, c.merchantName, c.name, c.businessName, c.shopName, c.displayName, c.title, c.slug, c.theme, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit FROM c WHERE c.type = 'site_config' OR c.type = 'shop_config' OR c.type = 'wallet_config' OR c.type = 'client_request' OR c.type = 'brand_config'"
       };
-      const { resources: configs } = await container.items.query(configQuery).fetchAll();
+      let configs: any[];
+      if (configCache && configCache.expiresAt > Date.now()) {
+        configs = configCache.rows;
+        configGeneratedAt = configCache.generatedAt;
+      } else {
+        const result = await container.items.query(configQuery).fetchAll();
+        configs = result.resources || [];
+        configGeneratedAt = new Date().toISOString();
+        configCache = { rows: configs, generatedAt: configGeneratedAt, expiresAt: Date.now() + CACHE_TTL_MS };
+      }
       for (const cfg of configs || []) {
         const configBrandKey = String(
           cfg.brandKey
@@ -649,11 +113,11 @@ export async function GET(req: NextRequest) {
 
         if (cfg.wallet) {
           const wLower = String(cfg.wallet).toLowerCase().trim();
-          const bKeyLower = String(cfg.brandKey || "").toLowerCase().trim();
+          const bKeyLower = configBrandKey;
           const pair = `${wLower}:${bKeyLower}`;
           const mName = cfg.merchantName || cfg.shopName || cfg.businessName || cfg.displayName || cfg.name || cfg.title;
           const entry = {
-            brandKey: cfg.brandKey || undefined,
+            brandKey: configBrandKey || undefined,
             merchantName: mName || undefined,
             slug: cfg.slug || undefined,
             splitAddress: cfg.splitAddress || cfg.split?.address || undefined,
@@ -668,39 +132,12 @@ export async function GET(req: NextRequest) {
         }
       }
     } catch (err) {
+      configAvailable = false;
       console.error("[PLATFORM ANALYTICS API] Failed to pre-fetch wallet configs:", err);
     }
 
-    // Every settled receipt contributes at least the platform's persistent
-    // 50 BPS floor. Persisted platform-fee evidence may raise that amount.
-    const getReceiptFeeData = getPlatformAnalyticsFeeData;
-    const getReceiptFeeUsd = (rc: any) => getReceiptFeeData(rc).amount;
 
-    // Helper to resolve brand key container slug cleanly
-    const getReceiptBrandKey = (rc: any) => {
-      const rawBrandKey = String(rc.brandKey || "").toLowerCase().trim();
-      if (rawBrandKey && rawBrandKey !== "unknown" && rawBrandKey !== "portalpay") {
-        return rawBrandKey;
-      }
-      const rawShopSlug = String(rc.shopSlug || "").toLowerCase().trim();
-      if (rawShopSlug && rawShopSlug !== "unknown") {
-        return rawShopSlug;
-      }
-      const wLower = String(rc.wallet || "").toLowerCase().trim();
-      if (wLower && configMap[wLower]?.brandKey) {
-        return String(configMap[wLower].brandKey).toLowerCase().trim();
-      }
-      if (rc.parentUrl) {
-        const url = String(rc.parentUrl).toLowerCase();
-        if (url.includes("aipowerpay")) return "aipowerpay";
-        if (url.includes("basaltsurge")) return "basaltsurge";
-        if (url.includes("lucky13")) return "lucky13";
-        if (url.includes("xoinpay")) return "xoinpay";
-      }
-      if (rawBrandKey) return rawBrandKey;
-      return "basaltsurge";
-    };
-
+    const getReceiptBrandKey = (receipt: any) => resolveAnalyticsBrand(receipt, configMap);
     const getReceiptBrandName = (rc: any, resolvedBrandKey: string) => {
       const key = String(resolvedBrandKey || "unknown").toLowerCase().trim();
       const knownNames: Record<string, string> = {
@@ -726,69 +163,103 @@ export async function GET(req: NextRequest) {
         .join(" ") || "Unknown";
     };
 
-    const isFailedStatus = (status: string) => isAnalyticsFailedReceipt(status);
-    const deduplicateReceiptList = (receiptList: any[]) => deduplicateAnalyticsReceipts(
-      receiptList.map(receipt => ({
-        ...receipt,
-        brandKey: getReceiptBrandKey(receipt),
-        merchantWallet: receipt.merchantWallet || receipt.wallet || receipt.shopSlug || null,
-      }))
-    );
 
-    // Calculate all-time session deduplication metrics
-    const allTimeDedup = deduplicateReceiptList(allReceiptsLight);
-    const kycProfile = summarizeAnalyticsKycProfile(allTimeDedup.clusters);
-
-    // Aggregate metrics over all historical lightweight records
-    for (const r of allReceiptsLight) {
-      const status = r.status || "pending";
-      totalCreated++;
-      
-      const bKey = getReceiptBrandKey(r);
-      const bName = getReceiptBrandName(r, bKey);
-      if (!brandMap[bKey]) {
-        brandMap[bKey] = {
-          brandKey: bKey,
-          brandName: bName,
-          total: 0,
-          paid: 0,
-          failed: 0,
-          gmv: 0,
-          fees: 0,
-          feeKnownCount: 0,
-          feeUnknownCount: 0
+    const generatedAt = new Date().toISOString();
+    const cached = populationCache.get(queryKey);
+    let projected: any[];
+    let facets: ReturnType<typeof buildAnalyticsFacets>;
+    let aggregateGeneratedAt = generatedAt;
+    let usedCachedProjection = false;
+    if (cached && cached.expiresAt > Date.now()) {
+      projected = cached.rows;
+      facets = cached.facets;
+      aggregateGeneratedAt = cached.generatedAt;
+      usedCachedProjection = true;
+    } else {
+      const starts = [scope.start, scope.comparison?.start].filter((value): value is string => Boolean(value));
+      const earliestStart = starts.length ? starts.sort()[0] : null;
+      if (collection) {
+        const start = earliestStart ? new Date(earliestStart) : null;
+        const end = new Date(scope.end);
+        const dateFilter = { ...(start ? { $gte: start } : {}), $lt: end };
+        const stringFilter = { ...(earliestStart ? { $gte: earliestStart } : {}), $lt: scope.end };
+        projected = await collection.find(
+          { type: "receipt", $or: [{ createdAt: dateFilter }, { createdAt: stringFilter }] },
+          { projection: RECEIPT_PROJECTION, readPreference: "secondaryPreferred" },
+        ).toArray();
+      } else {
+        // Backend-neutral predicates below are shared with Mongo. Parameters keep
+        // apostrophes and other literal search characters intact.
+        const clauses = ["c.type = 'receipt'", "c.createdAt < @end"];
+        const parameters: Array<{ name: string; value: string }> = [{ name: "@end", value: scope.end }];
+        if (earliestStart) { clauses.push("c.createdAt >= @start"); parameters.push({ name: "@start", value: earliestStart }); }
+        const result = await container.items.query({ query: `SELECT * FROM c WHERE ${clauses.join(" AND ")}`, parameters }).fetchAll();
+        projected = result.resources || [];
+      }
+      projected = projected.map(receipt => {
+        const brandKey = getReceiptBrandKey(receipt);
+        const walletKey = String(receipt.wallet || receipt.merchantWallet || "").toLowerCase().trim();
+        const configured = configMap[`${walletKey}:${brandKey}`] || configMap[walletKey];
+        return {
+          ...receipt, brandKey, brandName: getReceiptBrandName(receipt, brandKey),
+          merchantName: receipt.merchantName || receipt.shopName || configured?.merchantName || null,
+          merchantWallet: receipt.merchantWallet || receipt.wallet || null,
         };
-      }
-      brandMap[bKey].total++;
-
-      if (isAnalyticsPaidReceipt(r)) {
-        totalPaid++;
-        const feeData = getReceiptFeeData(r);
-        const feeUsd = feeData.amount;
-        totalGmv += Number(r.totalUsd || 0);
-        totalFees += feeUsd;
-        feeKnownCount++;
-        brandMap[bKey].feeKnownCount++;
-        
-        brandMap[bKey].paid++;
-        brandMap[bKey].gmv += Number(r.totalUsd || 0);
-        brandMap[bKey].fees += feeUsd;
-
-        const funding = String(r.detectedCardFunding || r.cardFunding || r.funding || (r.isCreditCard === true ? "credit" : "")).toLowerCase();
-        if (["us_bank_account", "ach", "bank"].includes(funding)) cardTypeMap.bank++;
-        else if (funding === "credit") cardTypeMap.credit++;
-        else if (funding === "debit") cardTypeMap.debit++;
-        else cardTypeMap.unknown++;
-      } else if (isFailedStatus(status)) {
-        totalFailed++;
-        brandMap[bKey].failed++;
-        
-      }
+      });
+      facets = buildAnalyticsFacets(projected.filter(receipt => analyticsReceiptInRange(receipt, scope)));
+      const selected = scope.failureReasons.length ? [scope.failureReasons[0], scope.failureReasons[1] || scope.failureReasons[0]] as [string, string] : null;
+      projected = projected.filter(receipt => matchesAnalyticsQueryDimensions(receipt, scope) && matchesAnalyticsFailureSelection(receipt, selected));
+      cachePopulation(queryKey, { rows: projected, facets, generatedAt, expiresAt: Date.now() + CACHE_TTL_MS });
     }
 
-    // The heatmap and reason list are calculated from every record matching the
-    // exact server query, rather than from the first browser-visible page.
-    const failureAnalytics = buildAnalyticsFailureHeatmap(allReceiptsLight);
+    const allReceiptsLight = projected.filter(receipt => analyticsReceiptInRange(receipt, scope)).sort(analyticsSortReceipts);
+    let page: ReturnType<typeof pageAnalyticsReceipts>;
+    try { page = pageAnalyticsReceipts(allReceiptsLight, limit, offset, cursor, queryKey); }
+    catch (error) { return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Invalid cursor" }, { status: 400 }); }
+
+    // Resolve page membership from the complete canonical population, then load
+    // large investigation payloads only for the selected storage IDs.
+    let receipts = page.page;
+    if (collection && receipts.length) {
+      const detailRows = await collection.find({ type: "receipt", _id: { $in: receipts.map(receipt => receipt._id) } }, { readPreference: "secondaryPreferred" }).toArray();
+      const details = new Map<string, any>(detailRows.map((receipt: any) => [analyticsStorageKey(receipt), receipt]));
+      receipts = receipts.map(projectedReceipt => {
+        const detail = details.get(analyticsStorageKey(projectedReceipt));
+        // Keep the projected dimensions/evidence used by this query in sync
+        // with its ledger. Non-projected detail can be newer; metadata says so.
+        return detail ? { ...detail, ...projectedReceipt, thirdwebMetadata: { ...detail.thirdwebMetadata, ...projectedReceipt.thirdwebMetadata } } : { ...projectedReceipt, detailUnavailable: true };
+      });
+    }
+    const logsByReceipt: Record<string, any[]> = {};
+    const logEvidenceByReceipt: Record<string, { status: string; loaded: number; hasMore: boolean }> = {};
+    const pageReceiptIds = Array.from(new Set(receipts.map(receipt => String(receipt.receiptId || receipt.id || "")).filter(Boolean)));
+    for (const receiptId of pageReceiptIds) logEvidenceByReceipt[receiptId] = { status: "unavailable", loaded: 0, hasMore: false };
+    if (collection && pageReceiptIds.length && req.nextUrl.searchParams.get("includeLogPreview") !== "false") {
+      try {
+        const logsContainer = await getContainer(undefined, "portal_logs");
+        const logCollection = (logsContainer as any).getCollection();
+        // Cap each receipt independently so one noisy checkout cannot starve
+        // every other receipt of its evidence sample.
+        const grouped = await logCollection.aggregate([
+          { $match: { receiptId: { $in: pageReceiptIds } } },
+          { $sort: { createdAt: -1, _id: -1 } },
+          { $group: { _id: "$receiptId", count: { $sum: 1 }, logs: { $firstN: { n: 25, input: { level: "$level", message: "$message", createdAt: "$createdAt", userAgent: "$userAgent" } } } } },
+        ]).toArray();
+        for (const receiptId of pageReceiptIds) logEvidenceByReceipt[receiptId] = { status: "available", loaded: 0, hasMore: false };
+        for (const group of grouped) {
+          logsByReceipt[group._id] = group.logs;
+          logEvidenceByReceipt[group._id] = { status: "available", loaded: group.logs.length, hasMore: group.count > group.logs.length };
+        }
+      } catch (error) {
+        // Logs are optional evidence; their failure must not erase analytics.
+        console.error("[PLATFORM ANALYTICS API] Log preview unavailable:", error);
+      }
+    }
+    const getFailureReason = (receipt: any, logs: any[]) => {
+      const persisted = extractAnalyticsFailureReasons(receipt)[0];
+      if (persisted && persisted !== "No recorded failure detail") return persisted;
+      return logs.find(log => log.level === "error")?.message || persisted || null;
+    };
 
     // Process detailed data only for the requested limit/batch of transactions
     const processedReceipts = receipts.map((r: any) => {
@@ -802,14 +273,14 @@ export async function GET(req: NextRequest) {
 
       const derivedMerchantName = r.merchantName || r.shopName || r.shopTitle || r.merchantTitle || r.shopifyShop || resolvedConfig.merchantName || null;
       const derivedShopSlug = r.shopSlug || resolvedConfig.slug || null;
-      const feeData = getReceiptFeeData(r);
+      const feeData = getPlatformAnalyticsFeeData(r);
       const feeUsd = feeData.amount;
       const canonicalStatusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
       const checkoutStatusHistory = Array.isArray(r.checkoutStatusHistory) ? r.checkoutStatusHistory : [];
       const accordionStepHistory = Array.isArray(r.accordionStepHistory)
         ? [...r.accordionStepHistory].sort((a: any, b: any) => Number(a?.ts || 0) - Number(b?.ts || 0))
         : [];
-      const lifecycleHistory = [...canonicalStatusHistory, ...checkoutStatusHistory]
+      const lifecycleHistory = [...(Array.isArray(r.lifecycleHistory) ? r.lifecycleHistory : []), ...canonicalStatusHistory, ...checkoutStatusHistory]
         .sort((a: any, b: any) => Number(a?.ts || 0) - Number(b?.ts || 0));
 
       return {
@@ -830,9 +301,16 @@ export async function GET(req: NextRequest) {
         email: r.customerEmail || r.stripeEmail || r.email || "anonymous",
         stripeSessionId: r.stripeSessionId || null,
         transactionHash: r.transactionHash || r.txHash || r.leg2TxHash || r.leg1TxHash || r.onrampTxHash || null,
+        txHash: r.txHash || null,
+        leg1TxHash: r.leg1TxHash || null,
+        leg2TxHash: r.leg2TxHash || null,
+        onrampTxHash: r.onrampTxHash || null,
         cardFunding: r.detectedCardFunding || r.cardFunding || r.funding || (r.isCreditCard === true ? "credit" : null),
-        failureReason: isFailedStatus(status) ? getFailureReason(r, rLogs) : null,
-        kycLevel: getKycLevel(r),
+        failureReason: r.failureReason || null,
+        diagnosticFailureReason: getFailureReason(r, rLogs),
+        failureReasons: extractAnalyticsFailureReasons(r),
+        kycLevel: resolveAnalyticsKyc(r).highestCompleted,
+        kycDimensions: resolveAnalyticsKyc(r),
         kycOccurred: !!(r.kycOccurred || r.kyc_occurred),
         kycInitialLevel: r.kycInitialLevel || null,
         kycInitialStatus: r.kycInitialStatus || null,
@@ -858,6 +336,20 @@ export async function GET(req: NextRequest) {
         accordionStepHistory,
         platformFee: feeUsd,
         platformFeeSource: feeData.source,
+        amountPlatformMinor: r.amountPlatformMinor ?? null,
+        platformFeeUsd: r.platformFeeUsd ?? null,
+        portalFeeUsd: r.portalFeeUsd ?? null,
+        platformFeeBps: r.platformFeeBps ?? null,
+        platformBps: r.platformBps ?? null,
+        splitConfig: r.splitConfig || null,
+        splitConfigCredit: r.splitConfigCredit || null,
+        presentedFeeBps: r.presentedFeeBps ?? null,
+        creditPresentedFeeBps: r.creditPresentedFeeBps ?? null,
+        partnerBps: r.partnerBps ?? null,
+        effectiveProcessingFeeBps: r.effectiveProcessingFeeBps ?? null,
+        feeMinusEnabled: r.feeMinusEnabled === true,
+        logEvidence: logEvidenceByReceipt[rId] || { status: "unavailable", loaded: 0, hasMore: false },
+        detailUnavailable: r.detailUnavailable === true,
         lineItems: r.lineItems || [],
         parentUrl: r.parentUrl || null,
         splitAddress: r.splitAddress || resolvedConfig.splitAddress || null,
@@ -885,177 +377,62 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    // Aggregate metrics chronologically over all historical lightweight records
-    const dailySeriesMap: Record<string, {
-      dateLabel: string;
-      timestamp: number;
-      allPaid: number;
-      allFailed: number;
-      allTotal: number;
-      allDedupedTotal: number;
-      allDedupedPaid: number;
-      allDedupedFailed: number;
-      allGmv: number;
-      allFees: number;
-      rawReceipts: any[];
-      brands: Record<string, { paid: number; failed: number; total: number; dedupedTotal: number; dedupedPaid: number; dedupedFailed: number; gmv: number; fees: number; rawReceipts: any[] }>
-    }> = {};
 
-    for (const r of allReceiptsLight) {
-      if (!r.createdAt) continue;
-      const d = new Date(r.createdAt);
-      // Group by absolute date string (e.g. "Jul 12") formatted in target timezone
-      const dateParts = new Intl.DateTimeFormat("en-US", {
-        timeZone: targetTimezone,
-        month: "short",
-        day: "numeric",
-      }).formatToParts(d);
-      const monthPart = dateParts.find(p => p.type === "month")?.value || "";
-      const dayPart = dateParts.find(p => p.type === "day")?.value || "";
-      const dateStr = `${monthPart} ${dayPart}`;
-
-      const ymd = formatYMDInTimeZone(targetTimezone, d);
-      const { start } = getDayRangeForYmdInTz(targetTimezone, ymd);
-      const dayStartTimestamp = start.getTime();
-
-      if (!dailySeriesMap[ymd]) {
-        dailySeriesMap[ymd] = {
-          dateLabel: dateStr,
-          timestamp: dayStartTimestamp,
-          allPaid: 0,
-          allFailed: 0,
-          allTotal: 0,
-          allDedupedTotal: 0,
-          allDedupedPaid: 0,
-          allDedupedFailed: 0,
-          allGmv: 0,
-          allFees: 0,
-          rawReceipts: [],
-          brands: {}
-        };
-      }
-
-      const g = dailySeriesMap[ymd];
-      g.rawReceipts.push(r);
-      const status = r.status || "pending";
-      g.allTotal++;
-      
-      const isPaid = isAnalyticsPaidReceipt(r);
-      const isFailed = isFailedStatus(status);
-      const paymentGmv = isPaid ? Number(r.totalUsd || 0) : 0;
-      const paymentFees = isPaid ? getReceiptFeeUsd(r) : 0;
-      
-      if (isPaid) {
-        g.allPaid++;
-        g.allGmv += paymentGmv;
-        g.allFees += paymentFees;
-      } else if (isFailed) {
-        g.allFailed++;
-      }
-
-      const bKey = getReceiptBrandKey(r);
-      if (!g.brands[bKey]) {
-        g.brands[bKey] = { paid: 0, failed: 0, total: 0, dedupedTotal: 0, dedupedPaid: 0, dedupedFailed: 0, gmv: 0, fees: 0, rawReceipts: [] };
-      }
-      g.brands[bKey].rawReceipts.push(r);
-      g.brands[bKey].total++;
-      if (isPaid) {
-        g.brands[bKey].paid++;
-        g.brands[bKey].gmv += paymentGmv;
-        g.brands[bKey].fees += paymentFees;
-      } else if (isFailed) {
-        g.brands[bKey].failed++;
-      }
-    }
-
-    // Run deduplication for each daily bucket and brand sub-bucket
-    Object.values(dailySeriesMap).forEach(dayBucket => {
-      const dayDedup = deduplicateReceiptList(dayBucket.rawReceipts);
-      dayBucket.allDedupedTotal = dayDedup.dedupedTotalCreated;
-      dayBucket.allDedupedPaid = dayDedup.dedupedTotalPaid;
-      dayBucket.allDedupedFailed = dayDedup.dedupedTotalFailed;
-
-      Object.values(dayBucket.brands).forEach(brandBucket => {
-        const bDedup = deduplicateReceiptList(brandBucket.rawReceipts);
-        brandBucket.dedupedTotal = bDedup.dedupedTotalCreated;
-        brandBucket.dedupedPaid = bDedup.dedupedTotalPaid;
-        brandBucket.dedupedFailed = bDedup.dedupedTotalFailed;
-        delete (brandBucket as any).rawReceipts;
-      });
-      delete (dayBucket as any).rawReceipts;
-    });
-
-    const dailySeries = Object.values(dailySeriesMap).sort((a, b) => a.timestamp - b.timestamp);
-
-    // Compute deduplication per brand across all-time
-    Object.keys(brandMap).forEach(bk => {
-      const brandReceipts = allReceiptsLight.filter(r => getReceiptBrandKey(r) === bk);
-      const bDedup = deduplicateReceiptList(brandReceipts);
-      brandMap[bk].dedupedTotal = bDedup.dedupedTotalCreated;
-      brandMap[bk].dedupedPaid = bDedup.dedupedTotalPaid;
-      brandMap[bk].dedupedFailed = bDedup.dedupedTotalFailed;
-      brandMap[bk].trueSuccessRate = bDedup.trueIntegrationRate;
-    });
-
-    const successRate = totalCreated > 0 ? (totalPaid / totalCreated) * 100 : 0;
-    const aov = totalPaid > 0 ? totalGmv / totalPaid : 0;
+    const aggregates = aggregateAnalyticsReceipts(includeAggregates ? allReceiptsLight : [], scope.timeZone);
+    const failureAnalytics = buildAnalyticsFailureHeatmap(includeAggregates ? allReceiptsLight : []);
+    const previousReceipts = includeAggregates && scope.comparison ? projected.filter(receipt => analyticsReceiptInRange(receipt, scope.comparison!)) : [];
+    const comparison = includeAggregates && scope.comparison ? {
+      label: "Previous period, equal elapsed time",
+      ...scope.comparison,
+      available: previousReceipts.length > 0 && new Date(scope.comparison.end).getTime() - new Date(scope.comparison.start!).getTime() === new Date(scope.end).getTime() - new Date(scope.start!).getTime(),
+      currentDurationMs: new Date(scope.end).getTime() - new Date(scope.start!).getTime(),
+      previousDurationMs: new Date(scope.comparison.end).getTime() - new Date(scope.comparison.start!).getTime(),
+      stats: aggregateAnalyticsReceipts(previousReceipts, scope.timeZone).stats,
+    } : null;
 
     return NextResponse.json({
       ok: true,
-      stats: {
-        totalCreated,
-        totalPaid,
-        totalFailed,
-        successRate: +successRate.toFixed(1),
-        dedupedTotalCreated: allTimeDedup.dedupedTotalCreated,
-        dedupedTotalPaid: allTimeDedup.dedupedTotalPaid,
-        dedupedTotalFailed: allTimeDedup.dedupedTotalFailed,
-        trueIntegrationRate: allTimeDedup.trueIntegrationRate,
-        trueProcessRate: allTimeDedup.trueProcessRate,
-        completionRate: allTimeDedup.completionRate,
-        resolvedSuccessRate: allTimeDedup.resolvedSuccessRate,
-        totalGmv: +totalGmv.toFixed(2),
-        totalFees: +totalFees.toFixed(2),
-        feeKnownCount,
-        feeUnknownCount,
-        feeCoveragePct: totalPaid > 0 ? +((feeKnownCount / totalPaid) * 100).toFixed(1) : 100,
-        aov: +aov.toFixed(2),
-        cardTypes: cardTypeMap,
-        kycProfile
-      },
+      stats: aggregates.stats,
       failureReasons: failureAnalytics.reasonCounts,
-      failureHeatmap: {
-        topReasons: failureAnalytics.topReasons,
-        matrix: failureAnalytics.matrix,
-        affectedReceiptCount: failureAnalytics.affectedReceiptCount,
-      },
-      brandStats: Object.values(brandMap)
-        .map(b => ({
-          ...b,
-          successRate: b.total > 0 ? +((b.paid / b.total) * 100).toFixed(1) : 0,
-          trueSuccessRate: b.trueSuccessRate ?? (b.total > 0 ? +((b.paid / b.total) * 100).toFixed(1) : 0),
-          gmv: +b.gmv.toFixed(2),
-          fees: +b.fees.toFixed(2),
-          feeCoveragePct: b.paid > 0 ? +((b.feeKnownCount / b.paid) * 100).toFixed(1) : 100
-        }))
-        .sort((a, b) => b.gmv - a.gmv),
+      failureHeatmap: failureAnalytics,
+      brandStats: aggregates.brandStats,
       recentReceipts: processedReceipts,
-      dailySeries,
+      dailySeries: aggregates.dailySeries,
+      comparison,
+      metadata: {
+        definitionVersion: ANALYTICS_DEFINITION_VERSION,
+        generatedAt,
+        aggregateGeneratedAt,
+        queryKey,
+        query: scope,
+        facets,
+        countingUnit: "receipt",
+        intentCohort: "First observed receipt within the selected query; immutable revisions across days count once.",
+        consistency: "bounded-live",
+        consistencyDescription: "Created-at bounds are fixed; projected results may be reused for 60 seconds. Detail evidence may be newer. Updates, deletions and backfills are not frozen into an immutable report snapshot.",
+        aggregatesIncluded: includeAggregates,
+        cachedProjection: usedCachedProjection,
+        configuration: { available: configAvailable, generatedAt: configGeneratedAt, maxCacheAgeSeconds: 60 },
+        completeness: { matchingReceipts: allReceiptsLight.length, loadedReceipts: processedReceipts.length, detailUnavailableCount: receipts.filter(receipt => receipt.detailUnavailable).length },
+        feePolicy: { minimumBps: 50, known: "Recorded fee evidence", unknown: "Contractual minimum model" },
+        timeBoundary: "start-inclusive,end-exclusive",
+      },
       pagination: {
         offset,
         limit,
         loadedCount: processedReceipts.length,
-        totalMatchingCount: totalDetailedMatches,
-        hasMore: nextContinuationToken
-          ? true
-          : offset + processedReceipts.length < totalDetailedMatches,
-        snapshotEnd: snapshotEndIso,
-        continuationToken: nextContinuationToken
-      }
+        totalMatchingCount: allReceiptsLight.length,
+        hasMore: page.hasMore,
+        snapshotEnd: scope.snapshotEnd,
+        resolvedStart: scope.start,
+        resolvedEnd: scope.end,
+        nextCursor: page.nextCursor,
+        continuationToken: page.nextCursor,
+      },
     });
-  } catch (e: any) {
-    console.error("[PLATFORM ANALYTICS API] Error:", e);
-    return NextResponse.json({ ok: false, error: e?.message || "Internal server error" }, { status: 500 });
+  } catch (error: any) {
+    console.error("[PLATFORM ANALYTICS API] Error:", error);
+    return NextResponse.json({ ok: false, error: "Analytics could not be loaded. Please retry." }, { status: 500 });
   }
 }
 

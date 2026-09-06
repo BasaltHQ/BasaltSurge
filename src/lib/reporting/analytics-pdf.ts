@@ -1,6 +1,7 @@
 // BasaltSurge analytics PDF reports. Heavy PDF libraries are loaded only when an
 // administrator requests an export so the analytics panel stays lightweight.
 import { isAnalyticsPaidReceipt, type AnalyticsKycProfile } from "@/lib/platform-analytics-metrics";
+import { extractAnalyticsFailureReasons, getAnalyticsFailureReportData, type AnalyticsFailureReceipt } from "@/lib/platform-analytics-failures";
 
 export interface AnalyticsReportStat {
   totalCreated: number;
@@ -19,6 +20,8 @@ export interface AnalyticsReportStat {
   feeKnownCount?: number;
   feeUnknownCount?: number;
   feeCoveragePct?: number;
+  feeRecordedTotal?: number;
+  feeModeledTotal?: number;
   aov: number;
   cardTypes: { credit: number; debit: number; bank: number; unknown: number };
   kycLevels?: { none: number; l1: number; l2: number };
@@ -41,6 +44,8 @@ export interface AnalyticsBrandStat {
   feeKnownCount?: number;
   feeUnknownCount?: number;
   feeCoveragePct?: number;
+  feeRecordedTotal?: number;
+  feeModeledTotal?: number;
 }
 
 export interface AnalyticsFailureReason {
@@ -48,7 +53,7 @@ export interface AnalyticsFailureReason {
   count: number;
 }
 
-export interface AnalyticsReceiptItem {
+export interface AnalyticsReceiptItem extends AnalyticsFailureReceipt {
   storageId?: string;
   id?: string;
   receiptId: string;
@@ -195,6 +200,7 @@ function downloadPdf(doc: any, filename: string) {
 }
 
 function setMetadata(doc: any, title: string, scope: string) {
+  doc.__analyticsFullScope = scope;
   doc.setProperties({
     title: pdfText(title),
     subject: pdfText(scope),
@@ -276,7 +282,36 @@ function continuationHeader(doc: any, title: string, subtitle: string, scope: st
   };
 }
 
+function appendReportScope(doc: any) {
+  if (!doc.__analyticsFullScope || doc.__analyticsScopeAppended) return;
+  doc.__analyticsScopeAppended = true;
+  const orientation: PdfOrientation = doc.internal.pageSize.getWidth() > doc.internal.pageSize.getHeight() ? "landscape" : "portrait";
+  const title = "Report scope and data definitions";
+  const subtitle = "Complete collection context; retained without the header preview limit";
+  const newPage = () => {
+    doc.addPage("a4", orientation);
+    drawHeader(doc, title, subtitle, "Full report context below", orientation, true);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(...COLORS.slate);
+    return 47;
+  };
+  let y = newPage();
+  const fullContext = pdfText(doc.__analyticsFullScope, Number.MAX_SAFE_INTEGER);
+  const paragraphs = fullContext.split(" | ");
+  for (const paragraph of paragraphs) {
+    const lines = doc.splitTextToSize(paragraph, doc.internal.pageSize.getWidth() - 30);
+    for (const line of lines) {
+      if (y > doc.internal.pageSize.getHeight() - 21) y = newPage();
+      doc.text(line, 15, y);
+      y += 4.7;
+    }
+    y += 2;
+  }
+}
+
 function drawFooters(doc: any) {
+  appendReportScope(doc);
   const pageCount = doc.internal.getNumberOfPages();
   for (let page = 1; page <= pageCount; page++) {
     doc.setPage(page);
@@ -288,7 +323,7 @@ function drawFooters(doc: any) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
     doc.setTextColor(...COLORS.muted);
-    doc.text("CONFIDENTIAL | Generated from a snapshot-pinned analytics export", 13, height - 6.5);
+    doc.text("CONFIDENTIAL | Scope and collection version appear in the report metadata", 13, height - 6.5);
     doc.text(`Page ${page} of ${pageCount}`, width - 13, height - 6.5, { align: "right" });
   }
 }
@@ -355,37 +390,39 @@ function standardTableOptions(doc: any, title: string, subtitle: string, scope: 
   };
 }
 
-function reportQuality(stats: AnalyticsReportStat | null, failureReasons: AnalyticsFailureReason[]) {
+function reportQuality(stats: AnalyticsReportStat | null, failureData?: ReturnType<typeof getAnalyticsFailureReportData>) {
   const created = stats?.totalCreated || 0;
   const paid = stats?.totalPaid || 0;
   const failed = stats?.totalFailed || 0;
   const unresolved = Math.max(0, created - paid - failed);
-  const missingFailureDetail = failureReasons
-    .filter(item => item.reason.toLowerCase() === "no recorded failure detail")
-    .reduce((sum, item) => sum + item.count, 0);
-  const failureDetailCoverage = failed > 0 ? ((failed - missingFailureDetail) / failed) * 100 : 100;
-  const feeCoverage = stats?.feeCoveragePct ?? (paid > 0 ? ((stats?.feeKnownCount || 0) / paid) * 100 : 100);
-  return { created, paid, failed, unresolved, missingFailureDetail, failureDetailCoverage, feeCoverage };
+  const missingFailureDetail = failureData?.missingDetailCount || 0;
+  const affected = failureData?.affectedReceiptCount || 0;
+  const failureDetailCoverage = affected > 0 ? percent(failureData?.detailCoveragePct) : "N/A";
+  const feeCoverage = paid > 0 ? (stats?.feeCoveragePct ?? ((stats?.feeKnownCount || 0) / paid) * 100) : 0;
+  return { created, paid, failed, unresolved, affected, missingFailureDetail, failureDetailCoverage, feeCoverage };
 }
 
 export async function exportExecutiveSummaryPDF(
   stats: AnalyticsReportStat | null,
   brandStats: AnalyticsBrandStat[],
   failureReasons: AnalyticsFailureReason[],
-  filterContext = "All Time | All Brands"
+  filterContext = "All Time | All Brands",
+  receipts?: AnalyticsReceiptItem[]
 ): Promise<void> {
   const title = "Executive Analytics Brief";
   const subtitle = "Performance, conversion, and data-quality review";
   const { doc, autoTable } = await createPdfDoc("portrait");
   setMetadata(doc, title, filterContext);
   let y = drawHeader(doc, title, subtitle, filterContext, "portrait");
-  const quality = reportQuality(stats, failureReasons);
+  const failureData = receipts ? getAnalyticsFailureReportData(receipts) : undefined;
+  const reportReasons = failureData?.reasonCounts || failureReasons;
+  const quality = reportQuality(stats, failureData);
 
   y = drawSectionTitle(doc, "1", "Executive scorecard", y);
   y = drawKpiGrid(doc, y, [
-    { label: "Settled GMV", value: currency(stats?.totalGmv), note: `${quality.paid.toLocaleString()} settled records`, color: COLORS.emerald },
+    { label: "Accepted GMV", value: currency(stats?.totalGmv), note: `${quality.paid.toLocaleString()} accepted records`, color: COLORS.emerald },
     { label: "Platform fee revenue", value: currency(stats?.totalFees), note: "Persisted evidence or 50 BPS contractual floor", color: COLORS.violet },
-    { label: "Average order value", value: currency(stats?.aov), note: "Settled GMV / settled records", color: COLORS.blue },
+    { label: "Average order value", value: currency(stats?.aov), note: "Accepted GMV / accepted records", color: COLORS.blue },
     { label: "Raw receipt completion", value: percent(stats?.successRate), note: "Paid records / all raw records", color: COLORS.blue },
     { label: "Checkout completion", value: percent(stats?.completionRate ?? stats?.trueIntegrationRate), note: "Unique paid / all unique intents", color: COLORS.violet },
     { label: "Resolved outcome rate", value: percent(stats?.resolvedSuccessRate ?? stats?.trueProcessRate), note: "Excludes open and unresolved", color: COLORS.emerald }
@@ -398,7 +435,7 @@ export async function exportExecutiveSummaryPDF(
     head: [["Population", "Count", "Share", "Definition"]],
     body: sanitizeRows([
       ["All receipt records", quality.created.toLocaleString(), "100.0%", "Every stored receipt in the selected scope"],
-      ["Settled", quality.paid.toLocaleString(), quality.created ? percent((quality.paid / quality.created) * 100) : "0.0%", "Recognized completion statuses"],
+      ["Paid / accepted", quality.paid.toLocaleString(), quality.created ? percent((quality.paid / quality.created) * 100) : "0.0%", "Recognized completion statuses; not a bank settlement assertion"],
       ["Failed", quality.failed.toLocaleString(), quality.created ? percent((quality.failed / quality.created) * 100) : "0.0%", "Records explicitly marked failed"],
       ["Open / other", quality.unresolved.toLocaleString(), quality.created ? percent((quality.unresolved / quality.created) * 100) : "0.0%", "Pending, expired, refunded, or other statuses"]
     ]),
@@ -412,9 +449,10 @@ export async function exportExecutiveSummaryPDF(
     startY: y,
     head: [["Control", "Result", "Interpretation"]],
     body: sanitizeRows([
-      ["Status reconciliation", quality.created === quality.paid + quality.failed + quality.unresolved ? "PASS" : "REVIEW", `${quality.paid} settled + ${quality.failed} failed + ${quality.unresolved} other = ${quality.created}`],
-      ["Fee basis coverage", percent(quality.feeCoverage), "Every paid record uses persisted fee evidence or the contractual 50 BPS floor"],
-      ["Failure-detail coverage", percent(quality.failureDetailCoverage), `${quality.missingFailureDetail.toLocaleString()} failed records have no stored reason`],
+      ["Status reconciliation", quality.created === quality.paid + quality.failed + quality.unresolved ? "PASS" : "REVIEW", `${quality.paid} accepted + ${quality.failed} failed + ${quality.unresolved} other = ${quality.created}`],
+      ["Recorded fee evidence", quality.paid ? percent(quality.feeCoverage) : "N/A", `${stats?.feeKnownCount || 0} accepted records with recorded evidence; ${stats?.feeUnknownCount || 0} use the contractual model`],
+      ["Fee provenance", `${currency(stats?.feeRecordedTotal)} recorded`, `${currency(stats?.feeModeledTotal)} contractual model; both contribute to platform fee revenue`],
+      ["Error-detail coverage", quality.failureDetailCoverage, `${quality.missingFailureDetail.toLocaleString()} of ${quality.affected.toLocaleString()} affected receipts have no stored reason`],
       ["Intent metric", "EVIDENCE-BASED", "Stable receipt, session, payment, transaction, email, and wallet evidence; never IP-only"]
     ]),
     columnStyles: { 1: { halign: "center", fontStyle: "bold", cellWidth: 31 } }
@@ -437,7 +475,7 @@ export async function exportExecutiveSummaryPDF(
   autoTable(doc, {
     ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
     startY: y,
-    head: [["Partner", "Key", "Raw", "Est. intents", "Settled", "GMV", "Platform fees", "Fee basis", "Est. conv."]],
+    head: [["Partner", "Key", "Raw", "Est. intents", "Accepted", "GMV", "Platform fees", "Fee basis", "Est. conv."]],
     body: sanitizeRows(brandRows.length ? brandRows : [["No partner data", "-", "0", "0", "0", "$0.00", "$0.00", "100.0%", "0.0%"]]),
     styles: { fontSize: 6.5, cellPadding: 1.65, textColor: COLORS.slate },
     headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 6.4, cellPadding: 1.7 },
@@ -454,13 +492,13 @@ export async function exportExecutiveSummaryPDF(
     doc.addPage();
     y = drawHeader(doc, title, "Funding and failure detail", filterContext, "portrait", true);
   }
-  y = drawSectionTitle(doc, "5", "Settled funding mix", y, COLORS.emerald);
+  y = drawSectionTitle(doc, "5", "Accepted funding mix", y, COLORS.emerald);
   const methods = stats?.cardTypes || { credit: 0, debit: 0, bank: 0, unknown: 0 };
   const methodTotal = methods.credit + methods.debit + methods.bank + methods.unknown;
   autoTable(doc, {
     ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
     startY: y,
-    head: [["Funding classification", "Settled records", "Share of settled"]],
+    head: [["Funding classification", "Accepted records", "Share of accepted"]],
     body: sanitizeRows([
       ["Credit card", methods.credit.toLocaleString(), methodTotal ? percent((methods.credit / methodTotal) * 100) : "0.0%"],
       ["Debit card", methods.debit.toLocaleString(), methodTotal ? percent((methods.debit / methodTotal) * 100) : "0.0%"],
@@ -498,17 +536,17 @@ export async function exportExecutiveSummaryPDF(
     y = drawHeader(doc, title, "Failure detail", filterContext, "portrait", true);
   }
   y = drawSectionTitle(doc, "7", "Complete recorded failure summary", y, COLORS.rose);
-  const failureRows = failureReasons.map((reason, index) => [
+  const failureRows = reportReasons.map((reason, index) => [
     index + 1,
     reason.reason,
     reason.count.toLocaleString(),
-    quality.failed ? percent((reason.count / quality.failed) * 100) : "0.0%"
+    quality.affected ? percent((reason.count / quality.affected) * 100) : "N/A"
   ]);
   autoTable(doc, {
     ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
     startY: y,
-    head: [["#", "Recorded reason", "Count", "Share of failed"]],
-    body: sanitizeRows(failureRows.length ? failureRows : [["-", "No failed records in scope", "0", "0.0%"]]),
+    head: [["#", "Recorded reason (non-exclusive)", "Receipts", "Share of affected"]],
+    body: sanitizeRows(failureRows.length ? failureRows : [["-", "No error signals in scope", "0", "N/A"]]),
     headStyles: { fillColor: COLORS.rose, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7.5, cellPadding: 2.1 },
     columnStyles: { 0: { halign: "center", cellWidth: 10 }, 2: { halign: "right", fontStyle: "bold", cellWidth: 22 }, 3: { halign: "right", cellWidth: 27 } }
   });
@@ -557,7 +595,7 @@ export async function exportTransactionLedgerPDF(
         receipt.cardFunding || "unclassified",
         `${receipt.kycInitialVerifiedLevel || receipt.kycInitialLevel || "Unknown"} -> ${receipt.kycCompletedLevel || receipt.kycVerifiedLevel || receipt.kycFinalLevel || receipt.kycLevel || "Unknown"}`,
         pdfText(session, 28),
-        receipt.failureReason || tx
+        extractAnalyticsFailureReasons(receipt).join(" | ") || tx
       ];
     });
 
@@ -592,13 +630,13 @@ export async function exportBrandFinancialPDF(
   const { doc, autoTable } = await createPdfDoc("landscape");
   setMetadata(doc, title, scope);
   let y = drawHeader(doc, title, subtitle, scope, "landscape");
-  const quality = reportQuality(stats, []);
+  const quality = reportQuality(stats);
 
   y = drawSectionTitle(doc, "1", "Financial overview", y);
   y = drawKpiGrid(doc, y, [
-    { label: "Settled GMV", value: currency(stats?.totalGmv), note: "Gross value of recognized settled records", color: COLORS.emerald },
+    { label: "Accepted GMV", value: currency(stats?.totalGmv), note: "Gross value of recognized completion records", color: COLORS.emerald },
     { label: "Platform fee revenue", value: currency(stats?.totalFees), note: "Includes the contractual 50 BPS minimum", color: COLORS.violet },
-    { label: "Fee basis coverage", value: percent(quality.feeCoverage), note: `${stats?.feeKnownCount || 0} of ${quality.paid} paid records`, color: quality.feeCoverage < 100 ? COLORS.amber : COLORS.emerald }
+    { label: "Recorded fee evidence", value: quality.paid ? percent(quality.feeCoverage) : "N/A", note: `${stats?.feeKnownCount || 0} recorded; ${stats?.feeUnknownCount || 0} contractual model`, color: quality.feeCoverage < 100 ? COLORS.amber : COLORS.emerald }
   ], "landscape");
 
   y = drawSectionTitle(doc, "2", "Partner reconciliation matrix", y + 1, COLORS.violet);
@@ -614,14 +652,14 @@ export async function exportBrandFinancialPDF(
     percent(brand.trueSuccessRate ?? brand.successRate),
     currency(brand.gmv),
     currency(brand.fees),
-    percent(brand.feeCoveragePct ?? 100),
-    brand.gmv > 0 && (brand.feeCoveragePct ?? 100) === 100 ? `${((brand.fees / brand.gmv) * 10000).toFixed(0)} BPS` : "N/A"
+    brand.paid > 0 ? percent(brand.feeCoveragePct) : "N/A",
+    brand.gmv > 0 ? `${((brand.fees / brand.gmv) * 10000).toFixed(0)} BPS` : "N/A"
   ]);
 
   autoTable(doc, {
     ...standardTableOptions(doc, title, subtitle, scope, "landscape"),
     startY: y,
-    head: [["Partner", "Key", "Raw", "Est. intents", "Settled", "Failed", "Other", "Raw conv.", "Est. conv.", "GMV", "Platform fees", "Fee basis", "Effective rate"]],
+    head: [["Partner", "Key", "Raw", "Est. intents", "Accepted", "Failed", "Other", "Raw conv.", "Est. conv.", "GMV", "Platform fees", "Recorded basis", "Blended rate"]],
     body: sanitizeRows(rows.length ? rows : [["No partner data", "-", "0", "0", "0", "0", "0", "0.0%", "0.0%", "$0.00", "$0.00", "100.0%", "N/A"]]),
     styles: { fontSize: 6.4, cellPadding: 1.7, textColor: COLORS.slate },
     headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 6.3, cellPadding: 1.7 },
@@ -657,43 +695,45 @@ export async function exportFailureDiagnosticsPDF(
   reportTimezone = "America/Los_Angeles"
 ): Promise<void> {
   const title = "Failure Diagnostics";
-  const subtitle = "Recorded failure reasons and transaction-level evidence";
+  const subtitle = "Persisted error signals, including recovered receipts; inclusive reason counts";
   const { doc, autoTable } = await createPdfDoc("landscape");
   setMetadata(doc, title, scope);
   let y = drawHeader(doc, title, subtitle, scope, "landscape");
-  const quality = reportQuality(stats, failureReasons);
+  const failureData = getAnalyticsFailureReportData(receipts);
+  const quality = reportQuality(stats, failureData);
+  const recoveredCount = failureData.receipts.filter(isAnalyticsPaidReceipt).length;
 
   y = drawSectionTitle(doc, "1", "Failure overview", y, COLORS.rose);
   y = drawKpiGrid(doc, y, [
-    { label: "Failed records", value: quality.failed.toLocaleString(), note: `${quality.created.toLocaleString()} total receipt records`, color: COLORS.rose },
-    { label: "Recorded failure rate", value: quality.created ? percent((quality.failed / quality.created) * 100) : "0.0%", note: "Failed / all receipt records", color: COLORS.rose },
-    { label: "Failure-detail coverage", value: percent(quality.failureDetailCoverage), note: `${quality.missingFailureDetail.toLocaleString()} records missing a reason`, color: quality.failureDetailCoverage < 100 ? COLORS.amber : COLORS.emerald }
+    { label: "Affected receipts", value: quality.affected.toLocaleString(), note: `${quality.created.toLocaleString()} total receipts in scope`, color: COLORS.rose },
+    { label: "Currently failed / rejected", value: quality.failed.toLocaleString(), note: `${recoveredCount.toLocaleString()} affected receipts now accepted`, color: COLORS.rose },
+    { label: "Error-detail coverage", value: quality.failureDetailCoverage, note: `${quality.missingFailureDetail.toLocaleString()} affected receipts missing a reason`, color: quality.missingFailureDetail > 0 ? COLORS.amber : COLORS.emerald }
   ], "landscape");
 
   y = drawSectionTitle(doc, "2", "Complete recorded failure summary", y + 1, COLORS.rose);
-  const reasonRows = failureReasons.map((reason, index) => [
+  const reasonRows = failureData.reasonCounts.map((reason, index) => [
     index + 1,
     reason.reason,
     reason.count.toLocaleString(),
-    quality.failed ? percent((reason.count / quality.failed) * 100) : "0.0%"
+    quality.affected ? percent((reason.count / quality.affected) * 100) : "N/A"
   ]);
   autoTable(doc, {
     ...standardTableOptions(doc, title, subtitle, scope, "landscape"),
     startY: y,
-    head: [["Rank", "Recorded reason", "Count", "Share of failed records"]],
-    body: sanitizeRows(reasonRows.length ? reasonRows : [["-", "No failed records in scope", "0", "0.0%"]]),
+    head: [["Rank", "Recorded reason (non-exclusive)", "Receipts", "Share of affected receipts"]],
+    body: sanitizeRows(reasonRows.length ? reasonRows : [["-", "No error signals in scope", "0", "N/A"]]),
     headStyles: { fillColor: COLORS.rose, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 7.5, cellPadding: 2.1 },
     columnStyles: { 0: { halign: "center", cellWidth: 17 }, 2: { halign: "right", fontStyle: "bold", cellWidth: 27 }, 3: { halign: "right", cellWidth: 38 } }
   });
 
-  const failedReceipts = receipts.filter(receipt => String(receipt.status || "").toLowerCase() === "failed");
+  const failedReceipts = failureData.receipts;
   const evidenceSource = failedReceipts.length ? failedReceipts : [null];
   const chunkSize = 1500;
   for (let start = 0; start < evidenceSource.length; start += chunkSize) {
     doc.addPage();
-    drawHeader(doc, title, `${failedReceipts.length.toLocaleString()} failed transaction records`, scope, "landscape", true);
+    drawHeader(doc, title, `${failedReceipts.length.toLocaleString()} affected receipts, regardless of current outcome`, scope, "landscape", true);
     const rows = evidenceSource.slice(start, start + chunkSize).map(receipt => {
-      if (!receipt) return ["No failed transactions", "", "", "", "", "", "", ""];
+      if (!receipt) return ["No affected receipts", "", "", "", "", "", "", ""];
       return [
         receipt.receiptId || "-",
         formatDate(receipt.createdAt, reportTimezone),
@@ -701,14 +741,14 @@ export async function exportFailureDiagnosticsPDF(
         receipt.merchantName || "-",
         receipt.email || "anonymous",
         currency(receipt.totalUsd),
-        receipt.cardFunding || "unclassified",
-        receipt.failureReason || "No recorded failure detail"
+        `${receipt.status || "unknown"} / ${receipt.cardFunding || "unclassified"}`,
+        extractAnalyticsFailureReasons(receipt).join(" | ")
       ];
     });
     autoTable(doc, {
       ...standardTableOptions(doc, title, subtitle, scope, "landscape"),
       startY: 43,
-      head: [["Receipt ID", "Date / time", "Partner", "Merchant", "Customer", "Amount", "Funding", "Recorded failure detail"]],
+      head: [["Receipt ID", "Date / time", "Partner", "Merchant", "Customer", "Amount", "Status / funding", "All recorded error signals"]],
       body: sanitizeRows(rows),
       styles: { fontSize: 6.5, cellPadding: 1.65, overflow: "linebreak", textColor: COLORS.slate },
       headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 6.6, cellPadding: 1.8 },
