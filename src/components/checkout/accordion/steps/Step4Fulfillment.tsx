@@ -15,6 +15,7 @@ import { AccordionCard } from "../AccordionCard";
 import { AccordionContent } from "../AccordionContent";
 import { Step4FulfillmentProps } from "../types";
 import { getContrastingTextColor } from "../utils";
+import { isCheckoutPaymentInFlight } from "../checkoutPhase";
 
 export function Step4Fulfillment({
   isOpen,
@@ -89,8 +90,10 @@ export function Step4Fulfillment({
     ? 20
     : 0;
 
-  // Modal active during active in-flight processing or during the smooth decline feedback transition (yields to Stripe native identity modal)
-  const isProcessingModalActive = isOpen && !isConfirmed && !isIdentityVerifying;
+  // Hide immediately when the SDK returns to identity/auth/payment collection,
+  // even before the parent effect moves the accordion off Step 4.
+  const isProcessingModalActive = isOpen && !isConfirmed &&
+    (isCheckoutPaymentInFlight(headlessStep) || headlessStep === "error");
 
   // ─── Scroll Locking Guard for Processing Modal ───
   useEffect(() => {
