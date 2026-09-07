@@ -245,6 +245,30 @@ test('worker snapshots retain concurrent reservations and persist the unique pai
   assert.equal(h.doc.stripePaidSessionId, 'cos_old');
 });
 
+test('a stale worker cannot erase settlement hashes or regress completed provider state', async () => {
+  const tx = '0x' + 'a'.repeat(64);
+  const h = harness({...base,status:'paid',stripePaidSessionId:'cos_old',stripeSessionStatus:'fulfillment_complete',checkoutStatus:'fulfillment_complete',transactionHash:tx,leg2TxHash:tx});
+  await h.helpers.persistStripeReceiptUpdate(h.container,{...base,status:'paid',stripeSessionStatus:'fulfillment_processing',checkoutStatus:'fulfillment_processing',transactionHash:null,leg2TxHash:null});
+  assert.equal(h.doc.transactionHash,tx);assert.equal(h.doc.leg2TxHash,tx);
+  assert.equal(h.doc.stripeSessionStatus,'fulfillment_complete');assert.equal(h.doc.checkoutStatus,'fulfillment_complete');
+});
+
+test('worker updates preserve the latest order amounts and refuse conflicting settlement hashes', async () => {
+  const tx='0x'+'a'.repeat(64);
+  const h=harness({...base,status:'paid',totalUsd:1000,orderTotalUsd:1000,tipAmount:58,lineItems:[{name:'Latest order'}],transactionHash:tx});
+  await h.helpers.persistStripeReceiptUpdate(h.container,{...base,status:'paid',totalUsd:942,orderTotalUsd:942,tipAmount:0,lineItems:[]});
+  assert.equal(h.doc.totalUsd,1000);assert.equal(h.doc.orderTotalUsd,1000);assert.equal(h.doc.tipAmount,58);assert.equal(h.doc.lineItems.length,1);
+  await assert.rejects(h.helpers.persistStripeReceiptUpdate(h.container,{...base,status:'paid',transactionHash:'0x'+'b'.repeat(64)}),/settlement_hash_conflict/);
+  assert.equal(h.doc.transactionHash,tx);
+});
+
+test('settlement evidence arriving between the worker read and write defeats its condition', async () => {
+  const h=harness({...base,status:'paid'});const tx='0x'+'a'.repeat(64);
+  h.race(doc=>{doc.leg2TxHash=tx;});
+  await assert.rejects(h.helpers.persistStripeReceiptUpdate(h.container,{...base,status:'paid',leg2TxHash:null}),error=>error.code===412);
+  assert.equal(h.doc.leg2TxHash,tx);
+});
+
 test('the session that actually paid wins even if a newer unused session was generated later', async () => {
   const h = harness({ ...base, stripeSessionCreatedAt: 500 }, 'requires_payment');
   const successfulEarlierSession = { ...incoming, id: 'cos_earlier_success', created: 100 };

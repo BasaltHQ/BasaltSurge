@@ -1,5 +1,5 @@
 import { isProtectedPaymentStatus, shouldIgnoreCanonicalStatusTransition } from "@/lib/receipt-status-policy";
-import { isStripePaymentAcceptedStatus, shouldRestoreStripeAchPendingStatus } from "@/lib/stripe-onramp-status";
+import { isStripePaymentAcceptedStatus, isStripeFulfillmentCompleteStatus, shouldRestoreStripeAchPendingStatus } from "@/lib/stripe-onramp-status";
 import { isStripeSourceAmountSufficient, resolveStripeSourceAmount } from "@/lib/stripe-onramp-amounts";
 
 const normalize = (value: unknown) => String(value || "").trim().toLowerCase();
@@ -41,7 +41,7 @@ export function assertStripeReceiptUnpaid(receipt: any): void {
 
 export function stripeReceiptWriteCondition(current: any) {
   return {
-    matchFields: Object.fromEntries(["stripeSessionId", "stripeSessionStatus", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "status", "transactionHash", "lastUpdatedAt"]
+    matchFields: Object.fromEntries(["stripeSessionId", "stripeSessionStatus", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "status", "transactionHash", "leg1TxHash", "leg2TxHash", "lastUpdatedAt"]
       .map(key => [key, current[key] ?? null])),
     ...(current._etag ? { accessCondition: { type: "IfMatch", condition: current._etag } } : {}),
   };
@@ -63,6 +63,19 @@ export async function persistStripeReceiptUpdate(container: any, receipt: any): 
   const fields = Object.fromEntries(Object.entries(receipt).filter(([key, value]) => value !== undefined
     && !key.startsWith("_") && !["id", "wallet", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId"].includes(key)));
   if (receipt.stripeSessionId && isStripePaymentAcceptedStatus(receipt.stripeSessionStatus)) fields.stripePaidSessionId = receipt.stripeSessionId;
+  // Workers update provider/settlement observations, not the merchant's order.
+  for (const key of ["totalUsd", "tipAmount", "lineItems"]) delete fields[key];
+  if (current.orderTotalUsd != null && Number.isFinite(Number(current.orderTotalUsd))) delete fields.orderTotalUsd;
+  for (const key of ["transactionHash", "leg1TxHash", "leg2TxHash"]) {
+    if (/^0x[a-f0-9]{64}$/i.test(String(current[key] || ""))) {
+      if (/^0x[a-f0-9]{64}$/i.test(String(fields[key] || "")) && normalize(fields[key]) !== normalize(current[key])) throw new Error("receipt_settlement_hash_conflict");
+      delete fields[key];
+    }
+  }
+  for (const key of ["stripeSessionStatus", "checkoutStatus"]) {
+    if (isStripeFulfillmentCompleteStatus(current[key])
+      || (isStripePaymentAcceptedStatus(current[key]) && !isStripePaymentAcceptedStatus(fields[key]))) delete fields[key];
+  }
   await item.patch(Object.entries(fields).map(([key, value]) => ({ op: "set", path: `/${key}`, value })), stripeReceiptWriteCondition(current));
 }
 

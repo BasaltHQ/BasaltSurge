@@ -13,6 +13,18 @@ import { dispatchReceiptStatusWebhookBestEffort } from "@/lib/webhook-dispatch";
 export const dynamic = "force-dynamic";
 const validRunId = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
+async function createAuditDocument(container: any, document: any) {
+  // The compatibility adapter's business `id` index is not unique. MongoDB's
+  // built-in _id uniqueness must arbitrate concurrent run/slot creation.
+  if (typeof container.getCollection === "function") {
+    await container.getCollection().insertOne({ ...document, _id: document.id }, {
+      writeConcern: { w: "majority", wtimeoutMS: 5000 },
+    });
+    return;
+  }
+  await container.items.create(document);
+}
+
 async function readOptional(container: any, id: string) {
   try { return (await container.item(id, "audit").read()).resource; }
   catch (error: any) { if (Number(error?.code || error?.statusCode) === 404) return null; throw error; }
@@ -29,7 +41,7 @@ async function reserveAuditRun(container: any, journal: any): Promise<string> {
       if (!previous || ["queued", "running", "unknown"].includes(previous.status)) return slot.runId;
     }
     try {
-      if (!slot) await container.items.create({ id: slotId, wallet: "audit", type: "stripe_audit_slot", runId: journal.runId });
+      if (!slot) await createAuditDocument(container, { id: slotId, wallet: "audit", type: "stripe_audit_slot", runId: journal.runId });
       else await container.item(slotId, "audit").patch([{ op: "set", path: "/runId", value: journal.runId }], {
         matchFields: { runId: slot.runId }, ...(slot._etag ? { accessCondition: { type: "IfMatch", condition: slot._etag } } : {}),
       });
@@ -188,7 +200,7 @@ export async function POST(req: NextRequest) {
     if (!assessment.eligible) return NextResponse.json({ ok: assessment.finding === "settled", row: assessment, error: assessment.finding === "settled" ? undefined : assessment.reason }, { status: assessment.finding === "settled" ? 200 : 409 });
     const journal = { id: `stripe_audit:${runId}`, runId, wallet: "audit", type: "stripe_audit_action", actor: auth.wallet, sessionId: session.id, receiptId: assessment.receiptId, merchantWallet: assessment.merchantWallet, brandKey: assessment.brand, startedAt: Date.now(), status: "queued" };
     stage = "run_creation";
-    try { await container.items.create(journal); }
+    try { await createAuditDocument(container, journal); }
     catch (error: any) { if ([409, 11000].includes(Number(error?.code || error?.statusCode))) return NextResponse.json({ ok: true, runId, status: "queued" }, { status: 202 }); throw error; }
     try {
       stage = "run_reservation";

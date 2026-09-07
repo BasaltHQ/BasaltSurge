@@ -509,6 +509,18 @@ async function settleUntil(predicate) {
   assert.fail("Expected hook transition did not settle");
 }
 
+test("Thirdweb token authentication rejection does not interrupt Stripe payment collection", { timeout: 5000 }, async (t) => {
+  const harness=createHarness();t.after(harness.unmount);harness.state.kycVerified=true;
+  const checkout=harness.render().startOnramp();
+  await settleUntil(()=>harness.calls.paymentOptions.length===1);
+  const thirdwebError=Object.assign(new Error("Authentication required"),{code:"UNAUTHORIZED",statusCode:401,correlationId:undefined});
+  assert.equal(harness.rejectGlobally(thirdwebError),false);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(harness.calls.authenticate,1);assert.equal(harness.calls.paymentOptions.length,1);
+  harness.state.paymentCompletion({});await checkout;
+  assert.equal(harness.calls.authenticate,1);
+});
+
 test("SDK internal Authentication required rejection settles payment collection and reconnects only once", { timeout: 5000 }, async (t) => {
   const harness = createHarness();
   t.after(harness.unmount);

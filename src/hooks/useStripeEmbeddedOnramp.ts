@@ -1137,6 +1137,12 @@ export function useStripeEmbeddedOnramp({
       const err = event.reason;
       const errMessage = String(err?.message || err || "").toLowerCase();
 
+      // Thirdweb Bridge ApiError uses these fields even when correlationId is
+      // undefined. Its token-price failures are unrelated to Stripe Link;
+      // leave them observable without rejecting Stripe's payment element.
+      if (err && typeof err === "object" && typeof err.statusCode === "number"
+        && typeof err.code === "string" && "correlationId" in err) return;
+
       // The embedded SDK can reject its internal payment-selection promise
       // without rejecting collectPaymentMethod's element promise or callback.
       // Settle our pending selection so the normal Link recovery path can run.
@@ -1764,7 +1770,9 @@ export function useStripeEmbeddedOnramp({
           }
           const errMessage = String(errData.error || "").toLowerCase();
           const errCode = String(errData.code || "").toLowerCase();
-          console.error("[EMBEDDED ONRAMP] Stripe session creation rejected:", {
+          console.error(errMessage === "stripe_session_receipt_attachment_failed"
+            ? "[EMBEDDED ONRAMP] Stripe session created but receipt attachment failed:"
+            : "[EMBEDDED ONRAMP] Stripe session creation rejected:", {
             receiptId,
             status: sessionRes.status,
             code: errData.code || null,

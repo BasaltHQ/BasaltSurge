@@ -18,10 +18,15 @@ function harness(options={}) {
   const container={
     items:{
       query:()=>({fetchAll:async()=>({resources:options.missing ? [] : [structuredClone(documents.get(receipt.id))]})}),
-      create:async d=>{if(documents.has(d.id))throw Object.assign(new Error('exists'),{code:options.mongo?11000:409});documents.set(d.id,structuredClone(d));return {resource:d};},
+      create:async d=>{assert.ok(!options.mongo,'Mongo audit creation must use a deterministic _id, not nonunique business id');if(documents.has(d.id))throw Object.assign(new Error('exists'),{code:409});documents.set(d.id,structuredClone(d));return {resource:d};},
     },
     item:id=>({read:async()=>({resource:structuredClone(documents.get(id))}),patch:async (ops,options={})=>{const doc=documents.get(id);for(const [key,value] of Object.entries(options.matchFields||{})){if((doc[key]??null)!==value)throw Object.assign(new Error('conflict'),{code:412});}ops.forEach(op=>doc[op.path.slice(1)]=op.value);return {resource:structuredClone(doc)};}}),
   };
+  if(options.mongo)container.getCollection=()=>({insertOne:async(d,opts)=>{
+    assert.equal(d._id,d.id);assert.equal(opts.writeConcern.w,'majority');
+    if(documents.has(d._id))throw Object.assign(new Error('duplicate _id'),{code:11000});
+    documents.set(d._id,structuredClone(d));
+  }});
   const mocks={
     '@/lib/webhook-dispatch':{dispatchReceiptStatusWebhookBestEffort:async()=>({ok:true})},
     'next/server':{after:callback=>{if(options.dispatchFails)throw new Error('after_unavailable');afters.push(callback);},NextRequest:MockRequest,NextResponse:{json:(body,init)=>new Response(JSON.stringify(body),init)}},

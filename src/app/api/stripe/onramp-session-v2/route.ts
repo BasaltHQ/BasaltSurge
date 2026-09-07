@@ -296,8 +296,8 @@ export async function POST(req: NextRequest) {
       } catch (dbErr: any) {
         if (dbErr?.code === "receipt_payment_in_progress") return NextResponse.json({ ok: false, error: dbErr.message, code: dbErr.code }, { status: 409 });
         if (dbErr?.code === "receipt_already_paid") return NextResponse.json({ ok: false, error: "This receipt has already been paid.", code: dbErr.code }, { status: 409 });
-        console.error("[ONRAMP V2] Failed to persist Stripe session ID to receipt:", dbErr);
-        return NextResponse.json({ ok: false, error: "stripe_session_receipt_attachment_failed" }, { status: 503 });
+        console.error("[ONRAMP V2] Failed to persist Stripe session ID to receipt:", { receiptId, sessionId: data.id, requestId: response.headers.get("request-id") }, dbErr);
+        return NextResponse.json({ ok: false, error: "stripe_session_receipt_attachment_failed", code: "stripe_session_receipt_attachment_failed", requestId: response.headers.get("request-id"), stage: "receipt_attachment" }, { status: 503 });
       }
     }
 

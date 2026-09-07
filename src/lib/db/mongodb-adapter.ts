@@ -161,9 +161,9 @@ class MongoItemReference {
     async read<T = any>(readOptions?: MongoQueryOptions): Promise<ItemResponse<T>> {
         const filter = this.buildFilter();
         const opts = { ...this._options, ...readOptions };
-        // Point lookups prefer PRIMARY_PREFERRED or active causal session for fresh state,
-        // with automatic transparent fallback to secondaries.
-        const readPref = opts.readPreference || ReadPreference.PRIMARY_PREFERRED;
+        // Payment-critical reads must not fall back to a lagging secondary.
+        // Ordinary point reads retain the existing primary-preferred behavior.
+        const readPref = opts.readPreference || (opts.profile === "critical" ? ReadPreference.PRIMARY : ReadPreference.PRIMARY_PREFERRED);
         
         // Sort by updatedAt descending to prefer the most recently updated document.
         // After Cosmos→MongoDB migration, duplicate documents with the same {id, wallet}
@@ -229,14 +229,23 @@ class MongoItemReference {
             }
         }
 
-        if (Object.keys(setOps).length) update.$set = setOps;
+        if (Object.keys(setOps).length) update.$set = cosmosDocToMongo(setOps);
         if (Object.keys(unsetOps).length) update.$unset = unsetOps;
         if (Object.keys(incOps).length) update.$inc = incOps;
 
         const filter = this.buildFilter();
         const opts = { ...this._options, ...patchOptions };
         const conditionalFilter = opts.matchFields
-            ? { $and: [filter, ...Object.entries(opts.matchFields).map(([field, value]) => ({ [field]: { $eq: value ?? null } }))] }
+            ? { $and: [filter, ...Object.entries(opts.matchFields).map(([field, value]) => {
+                // Reads expose BSON Dates as epoch milliseconds. Older patches
+                // stored numbers, while creates/replaces stored Dates. Match
+                // either representation of exactly the observed instant so a
+                // type mismatch cannot masquerade as a concurrent payment.
+                const timestamp = TIMESTAMP_FIELDS.includes(field) && typeof value === "number"
+                    && value > 1_000_000_000_000 && Number.isFinite(value)
+                    && !isNaN(new Date(value).getTime());
+                return { [field]: timestamp ? { $in: [value, new Date(value)] } : { $eq: value ?? null } };
+            })] }
             : filter;
         const result = await this.collection.findOneAndUpdate(conditionalFilter, update, {
             returnDocument: "after",
