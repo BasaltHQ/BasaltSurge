@@ -7,14 +7,6 @@ import {
   MessageSquare,
   X,
   Send,
-  HelpCircle,
-  AlertTriangle,
-  Image as ImageIcon,
-  Minimize2,
-  ChevronUp,
-  Clock,
-  CheckCircle2,
-  Paperclip
 } from "lucide-react";
 
 interface CheckoutChatWidgetProps {
@@ -67,8 +59,6 @@ export function CheckoutChatWidget({
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [showProactiveBanner, setShowProactiveBanner] = useState(false);
-  const [proactiveDismissed, setProactiveDismissed] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -146,24 +136,6 @@ export function CheckoutChatWidget({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Proactive alert trigger: active error OR hesitation timer on Step 2 (Identity / SSN)
-  useEffect(() => {
-    if (activeError && !proactiveDismissed) {
-      setShowProactiveBanner(true);
-      return;
-    }
-
-    if (activeStep === 2 && !proactiveDismissed) {
-      // Step 2 hesitation timer (12 seconds on identity verification step)
-      const timer = setTimeout(() => {
-        if (!isOpen && !proactiveDismissed) {
-          setShowProactiveBanner(true);
-        }
-      }, 12000);
-      return () => clearTimeout(timer);
-    }
-  }, [activeError, activeStep, isOpen, proactiveDismissed]);
-
   // Scroll to bottom of chat
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -175,26 +147,6 @@ export function CheckoutChatWidget({
       setUnreadCount(0);
     }
   }, [isOpen, messages.length]);
-
-  // Dynamic proactive banner text based on step & error
-  const proactiveBannerText = React.useMemo(() => {
-    if (activeError) {
-      return {
-        title: "Need help resolving error?",
-        message: activeError
-      };
-    }
-    if (activeStep === 2) {
-      return {
-        title: "Questions about Identity & SSN?",
-        message: "Your SSN & DOB data is encrypted for regulatory compliance. Chat live with us if you have privacy questions!"
-      };
-    }
-    return {
-      title: "Need help with checkout?",
-      message: "Our team is live and ready to assist with your order."
-    };
-  }, [activeError, activeStep]);
 
   // Dynamic step-aware quick helper chips
   const quickChips = React.useMemo(() => {
@@ -414,50 +366,9 @@ export function CheckoutChatWidget({
       )}
 
       <div className="fixed bottom-3 right-3 sm:bottom-5 sm:right-5 z-50 flex flex-col items-end font-sans antialiased max-w-full">
-        {/* Proactive Help Alert Box */}
-        {showProactiveBanner && !isOpen && (
-          <div className="mb-3 w-[calc(100vw-24px)] max-w-[380px] p-3.5 rounded-2xl border bg-black/95 text-white shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom-3 duration-300 border-amber-500/40 relative">
-            <button
-              onClick={() => {
-                setShowProactiveBanner(false);
-                setProactiveDismissed(true);
-              }}
-              className="absolute top-2.5 right-2.5 p-1 text-neutral-400 hover:text-white"
-              title="Dismiss notification"
-            >
-              <X className="w-4 h-4" />
-            </button>
-            <div className="flex items-start gap-2.5 pr-5">
-              <div className="p-1.5 bg-amber-500/20 rounded-xl text-amber-400 shrink-0">
-                <AlertTriangle className="w-4 h-4" />
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-bold text-amber-300">{proactiveBannerText.title}</p>
-                <p className="text-[11px] text-neutral-300 leading-snug line-clamp-2">
-                  {proactiveBannerText.message}
-                </p>
-                <button
-                  onClick={() => {
-                    setIsOpen(true);
-                    setShowProactiveBanner(false);
-                    if (activeError) {
-                      handleSendMessage(`I need assistance with checkout error: ${activeError}`);
-                    } else if (activeStep === 2) {
-                      handleSendMessage(`Hi! I'm on Step 2 (Identity Verification) and have a question regarding SSN / identity requirements.`);
-                    }
-                  }}
-                  className="mt-1 text-[11px] font-bold text-amber-400 hover:underline flex items-center gap-1"
-                >
-                  Chat with merchant <ChevronUp className="w-3 h-3 rotate-90" />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Expanded Chat Drawer / Mobile Bottom Sheet */}
         {isOpen ? (
-          <div className="fixed inset-x-0 bottom-0 sm:bottom-5 sm:right-5 sm:left-auto w-full sm:w-96 h-[78vh] max-h-[78vh] sm:h-[480px] sm:max-h-[85vh] rounded-t-3xl sm:rounded-2xl border-t sm:border border-white/15 bg-neutral-950 text-white shadow-2xl flex flex-col overflow-hidden z-50 animate-in slide-in-from-bottom-5 sm:zoom-in-95 duration-250 backdrop-blur-2xl">
+          <div id="checkout-support-chat" role="dialog" aria-label="Checkout support" className="fixed inset-x-0 bottom-0 sm:bottom-5 sm:right-5 sm:left-auto w-full sm:w-96 h-[78vh] max-h-[78vh] sm:h-[480px] sm:max-h-[85vh] rounded-t-3xl sm:rounded-2xl border-t sm:border border-white/15 bg-neutral-950 text-white shadow-2xl flex flex-col overflow-hidden z-50 animate-in slide-in-from-bottom-5 sm:zoom-in-95 duration-250 backdrop-blur-2xl">
             {/* Mobile Top Drag Indicator */}
             <div className="sm:hidden w-12 h-1 rounded-full bg-white/30 mx-auto my-2 shrink-0" />
 
@@ -480,12 +391,11 @@ export function CheckoutChatWidget({
                 <div className="space-y-0.5 overflow-hidden">
                   <div className="flex items-center gap-1.5">
                     <h4 className="text-xs font-extrabold text-white truncate tracking-wide leading-tight">
-                      {brandName !== "Merchant Support" ? `${brandName} Support` : "Live Merchant Support"}
+                      {brandName !== "Merchant Support" ? `${brandName} Support` : "Merchant Support"}
                     </h4>
                   </div>
-                  <div className="flex items-center gap-1 text-[10px] text-emerald-400 font-semibold">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>Live & Online</span>
+                  <div className="text-[10px] text-neutral-400">
+                    <span>Checkout support</span>
                   </div>
                 </div>
               </div>
@@ -503,7 +413,30 @@ export function CheckoutChatWidget({
               {/* Introductory Support Banner */}
               <div className="p-3 rounded-xl border border-neutral-800 bg-neutral-800/80 text-[11px] text-neutral-300 text-center space-y-1 shadow-inner">
                 <p className="font-bold text-white">Have questions about your checkout?</p>
-                <p className="text-neutral-400 leading-snug">Send a message directly to the merchant. Messages wire live to their Admin panel.</p>
+                <p className="text-neutral-400 leading-snug">Ask the merchant about your payment, verification, or order.</p>
+              </div>
+
+              {/* Checkout context stays inside the chat. Opening it never sends a message. */}
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/60 p-3 space-y-2 text-[11px] text-neutral-400">
+                <p className="font-semibold text-neutral-200">Checkout details</p>
+                <p className="break-all">Receipt: {receiptId}</p>
+                <p>Step {activeStep} of 4</p>
+                {activeError && activeError !== "none" ? (
+                  <>
+                    <p className="max-h-32 overflow-y-auto whitespace-pre-wrap break-words leading-relaxed text-neutral-300">{activeError}</p>
+                    <button type="button"
+                      onClick={() => {
+                        const details = `Receipt ${receiptId}, checkout step ${activeStep}. Details: ${activeError}`;
+                        setComposerText(current => current.includes(details) ? current : current.trim() ? `${current}\n\n${details}` : `Hi! I need help with checkout. ${details}`);
+                        inputRef.current?.focus();
+                      }}
+                      className="text-xs font-medium text-white underline decoration-neutral-600 underline-offset-4 hover:decoration-white">
+                      Add details to my message
+                    </button>
+                  </>
+                ) : activeStep === 2 ? (
+                  <p className="leading-relaxed">Questions about identity verification? Ask here before continuing.</p>
+                ) : null}
               </div>
 
               {loading && messages.length === 0 && (
@@ -592,25 +525,28 @@ export function CheckoutChatWidget({
         ) : (
         /* Collapsed Floating Trigger Button */
         <button
+          type="button"
           onClick={() => setIsOpen(true)}
-          className="relative group h-12 px-4 rounded-full text-white font-bold text-xs shadow-2xl flex items-center gap-2.5 hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer border border-white/20"
-          style={{ backgroundColor: primaryColor }}
+          aria-label={unreadCount > 0 ? `Chat with us, ${unreadCount} unread messages` : "Chat with us"}
+          aria-expanded={false}
+          aria-controls="checkout-support-chat"
+          className={`relative min-h-11 px-3.5 rounded-full text-xs shadow-sm flex items-center gap-2 transition-colors duration-150 cursor-pointer backdrop-blur-md border focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 ${isLightText ? "bg-neutral-950/85 border-white/15 text-neutral-200 hover:bg-neutral-900" : "bg-white/90 border-neutral-200 text-neutral-700 hover:bg-neutral-50"}`}
         >
           <div className="relative flex items-center shrink-0">
             {logoUrl ? (
               /* eslint-disable-next-line @next/next/no-img-element */
               <img src={logoUrl} alt={brandName} className="w-5 h-5 object-contain rounded-full bg-white p-0.5" />
             ) : (
-              <MessageSquare className="w-5 h-5" />
+              <MessageSquare className="w-4 h-4" style={{ color: primaryColor }} />
             )}
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-amber-400 text-black text-[9px] font-extrabold flex items-center justify-center animate-bounce">
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-neutral-200 text-neutral-900 text-[9px] font-semibold flex items-center justify-center">
                 {unreadCount}
               </span>
             )}
           </div>
           <span className="font-semibold tracking-wide truncate max-w-[140px]">
-            {brandName && brandName !== "Merchant Support" ? `${brandName} Help` : "Live Help"}
+            Chat with us
           </span>
         </button>
       )}

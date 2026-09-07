@@ -100,6 +100,7 @@ export function Step2Identity({
   onSelectSuggestion,
   onSubmit,
   onVerifyDocuments,
+  onCheckKycStatus,
   onSubmitKycIdentifiers,
   missingKycIdentifiers = [],
   kycIdentifierAlternatives = [],
@@ -256,7 +257,17 @@ export function Step2Identity({
         overflowVisible={showSuggestions || isCalendarOpen}
       >
         <div className="p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10">
-        {isIdentifierStage ? (
+        {headlessStep === "kyc_pending" || headlessStep === "checking_kyc" ? (
+          <div role="status" aria-live="polite" className="mt-3 rounded-xl border border-current/15 bg-current/5 p-4 space-y-3">
+            <div className="flex items-center gap-2 font-semibold text-sm"><Clock className="h-4 w-4" /> Verification pending</div>
+            <p className="text-xs opacity-75">We’re waiting for your verification result. You don’t need to resubmit your details.</p>
+            <button type="button" onClick={() => { void onCheckKycStatus?.(); }}
+              disabled={headlessStep === "checking_kyc" || !onCheckKycStatus}
+              className="rounded-lg border border-current/20 px-3 py-2 text-xs font-semibold disabled:opacity-50">
+              {headlessStep === "checking_kyc" ? "Checking verification…" : "Check verification status"}
+            </button>
+          </div>
+        ) : isIdentifierStage ? (
           <form
             className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/25 space-y-3.5 mt-2 text-left"
             onSubmit={async (event) => {

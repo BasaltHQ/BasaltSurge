@@ -85,8 +85,8 @@ export const STRIPE_ONRAMP_ERRORS: Record<string, OnrampErrorDefinition> = {
     defaultTargetStep: 3,
     title: "Purchase Amount Exceeds Limit",
     userMessage:
-      "This purchase exceeds the maximum allowed limit for your current payment method or verification tier. Please complete identity verification to increase your limit, or pay using a bank account.",
-    recoveryAction: "prompt_limit_step_up",
+      "This purchase exceeds Stripe's current purchase limit. Reduce the order amount or contact checkout support. Additional verification may be requested separately by Stripe.",
+    recoveryAction: "contact_support",
   },
   crypto_onramp_amount_below_minimum: {
     code: "crypto_onramp_amount_below_minimum",
@@ -473,13 +473,13 @@ export function parseOnrampError(
     rawLower.includes("insufficient_funds") ||
     rawLower.includes("do_not_honor");
 
-  const isKycRequirement =
+  const isKycRequirement = isRecoverableCode(matchedCode) && (
     matchedCode === "crypto_onramp_missing_minimum_identity_verification" ||
     matchedCode === "crypto_onramp_missing_identity_verification" ||
     matchedCode === "crypto_onramp_missing_document_verification" ||
     matchedCode === "crypto_onramp_verification_error" ||
     rawLower.includes("missing_kyc") ||
-    rawLower.includes("identity_verification");
+    rawLower.includes("identity_verification"));
 
   const isAmountLimit =
     matchedCode === "crypto_onramp_amount_above_maximum" ||
@@ -493,7 +493,10 @@ export function parseOnrampError(
   let recoveryAction: RecoveryAction = def?.recoveryAction || "none";
   let kycTargetTier: "l0" | "l1" | "l2" | undefined = undefined;
 
-  if (matchedCode === "crypto_onramp_missing_minimum_identity_verification") {
+  if (!isRecoverableCode(matchedCode)) {
+    targetStep = 3;
+    recoveryAction = "contact_support";
+  } else if (matchedCode === "crypto_onramp_missing_minimum_identity_verification") {
     targetStep = 2;
     kycTargetTier = "l0";
     recoveryAction = "prompt_l0_kyc";
@@ -506,22 +509,9 @@ export function parseOnrampError(
     kycTargetTier = "l2";
     recoveryAction = "prompt_l2_id_doc";
   } else if (isAmountLimit) {
-    // Check if customer can step up KYC to unlock higher purchase limits
-    const isL1Done = kycState ? Boolean(kycState.isL1Verified || kycState.isL1Approved) : false;
-    const isL2Done = kycState ? Boolean(kycState.isL2Verified || kycState.isL2Approved) : false;
-
-    if (!isL1Done) {
-      targetStep = 2;
-      kycTargetTier = "l1";
-      recoveryAction = "prompt_l1_step_up";
-    } else if (!isL2Done) {
-      targetStep = 2;
-      kycTargetTier = "l2";
-      recoveryAction = "prompt_l2_id_doc";
-    } else {
-      targetStep = 3;
-      recoveryAction = "switch_to_bank";
-    }
+    // A spending limit is not evidence that additional KYC will raise it.
+    targetStep = 3;
+    recoveryAction = "contact_support";
   } else if (isDecline || matchedCode === "crypto_onramp_bank_institution_block" || matchedCode === "crypto_onramp_invalid_payment_method") {
     targetStep = 3;
   } else if (matchedCode === "authentication_required" || rawLower.includes("authentication required") || rawLower.includes("not authenticated") || rawLower.includes("unauthenticated")) {
@@ -559,6 +549,7 @@ export function parseOnrampError(
  * Searches the error text for known Stripe error identifiers
  */
 function findMatchingErrorCode(text: string): string | null {
+  if (/couldn.t verify your identity|unable to verify your identity/.test(text) && text.includes("support")) return "crypto_onramp_identity_verification_failed";
   for (const code of Object.keys(STRIPE_ONRAMP_ERRORS)) {
     if (text.includes(code)) return code;
   }
@@ -597,7 +588,7 @@ function isRecoverableCode(code: string): boolean {
 }
 
 function formatFallbackErrorMessage(lower: string): string {
-  if (lower.includes("declined") || lower.includes("card")) {
+  if (lower.includes("declined") || lower.includes("card was declined")) {
     return "Your card was declined by your issuing bank. Please try another payment method or contact your bank.";
   }
   if (

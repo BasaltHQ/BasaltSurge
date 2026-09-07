@@ -3971,6 +3971,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const {
     step: headlessStep,
     statusMessage: headlessStatus,
+    checkPaymentStatus: checkHeadlessPaymentStatus,
+    checkKycStatus: checkHeadlessKycStatus,
     error: headlessError,
     authElement: headlessAuthElement,
     paymentElement: headlessPaymentElement,
@@ -4898,6 +4900,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           paymentElement={headlessPaymentElement}
           authElement={headlessAuthElement}
           headlessStatus={headlessStatus}
+          onCheckPaymentStatus={checkHeadlessPaymentStatus}
+          onCheckKycStatus={checkHeadlessKycStatus}
           headlessStep={headlessStep}
           paymentConfirmed={paymentConfirmed}
           detectedCardFunding={stripeDetectedFunding || detectedCardFunding}

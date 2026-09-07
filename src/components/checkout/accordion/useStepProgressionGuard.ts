@@ -152,7 +152,7 @@ export function useStepProgressionGuard({
         logTransition(
           4,
           3,
-          `Payment Declined / Returned to Payment Method (${parsed?.code || headlessStep || headlessStatus || "card_declined"}) - Waiting 2s before return`
+          `${parsed?.isDecline ? "Payment Declined" : "Checkout Needs Attention"} / Returned to Payment Method (${parsed?.code || headlessStep || headlessStatus || "checkout_error"}) - Waiting 2s before return`
         );
         declineTimerRef.current = setTimeout(() => {
           setActiveStep(3);
@@ -216,6 +216,7 @@ export function useStepProgressionGuard({
       headlessStep === "confirming_fees";
 
     const needsKycStep =
+      headlessStep === "kyc_pending" || headlessStep === "checking_kyc" ||
       (!isStep2Satisfied && headlessStep === "collecting_kyc" && !isPaymentReady) ||
       headlessStep === "collecting_identifiers" ||
       headlessStep === "accepting_terms" ||
@@ -258,6 +259,11 @@ export function useStepProgressionGuard({
     // stalled progression. Keep it open until their next submission. The
     // payment/fulfillment and KYC safety rules above still take precedence.
     if (manualStepOverride === activeStep) return;
+
+    if (headlessStep === "kyc_pending" || headlessStep === "checking_kyc") {
+      if (activeStep !== 2) setActiveStep(2);
+      return;
+    }
 
     const recovery = parseOnrampError(activeError || effectiveError);
     if (recovery?.targetStep === 1 || recovery?.targetStep === 2) return;

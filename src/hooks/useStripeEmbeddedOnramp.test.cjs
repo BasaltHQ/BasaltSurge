@@ -114,6 +114,7 @@ function createHarness({ accordion = false, ownership = null } = {}) {
       return { result: "success" };
     },
     registerWalletAddress: async (walletAddress, network) => {
+      calls.walletRegistrations = (calls.walletRegistrations || 0) + 1;
       assert.equal(sdkAuthenticated, true, "wallet registration requires SDK authentication");
       return { id: "ccw_test", wallet_address: walletAddress, network };
     },
@@ -151,6 +152,9 @@ function createHarness({ accordion = false, ownership = null } = {}) {
       calls.performCheckout++;
       if (!ownership) assert.fail("A failed session must never reach performCheckout");
       calls.checkoutSessions.push(sessionId);
+      if (state.sdkError) throw state.sdkError;
+      if (state.sdkUnsuccessful) return { successful: false };
+      if (state.sdkFailuresRemaining > 0) { state.sdkFailuresRemaining--; return { successful: false }; }
       if (!state.walletVerified && ownership.source === "sdk") {
         throw Object.assign(new Error("Additional approval required"), { code: "crypto_onramp_wallet_ownership_verification_required" });
       }
@@ -179,30 +183,41 @@ function createHarness({ accordion = false, ownership = null } = {}) {
     if (pathname === "/api/auth/mark-verified") return jsonResponse({ verificationToken: "verification_test" });
     if (["/api/users/profile", "/api/receipts/status", "/api/portal/log"].includes(pathname)) return jsonResponse({ ok: true });
     if (pathname === "/api/stripe/onramp-limits") return jsonResponse({ ok: true, limits: [] });
+    if (pathname === "/api/stripe/onramp-session-v2" && state.hangSession) return new Promise((_, reject) => {
+      options.signal.addEventListener("abort", () => reject(new Error("session_request_aborted")), { once: true });
+    });
     if (pathname === "/api/stripe/onramp-session-v2" && state.sessionFailure) {
       return { ok: false, status: 400, json: async () => state.sessionFailure };
     }
     if (ownership && pathname === "/api/stripe/onramp-session-v2") return jsonResponse({ id: "cos_test_ownership" });
+    if (pathname === "/api/stripe/onramp-quote-refresh") return jsonResponse({ ok: true });
     if (ownership && pathname === "/api/stripe/onramp-status") {
       if (state.hangStatus) return new Promise((_, reject) => {
         options.signal.addEventListener("abort", () => reject(new Error("status_request_aborted")), { once: true });
       });
-      if (ownership.statusOutage && calls.performCheckout > 0) throw new Error("Status endpoint temporarily unavailable");
-      return jsonResponse({ ok: true, status: state.providerStatus || "requires_payment", transactionDetails: {}, ...state.providerData });
+      if (ownership.statusOutage && calls.performCheckout > 0 && !state.checkoutAccepted) throw new Error("Status endpoint temporarily unavailable");
+      return jsonResponse({ ok: true, receiptAccepted: state.receiptAccepted !== false,
+        status: state.providerStatus || (state.checkoutAccepted ? state.backgroundStatus || "fulfillment_processing" : "requires_payment"), transactionDetails: {}, ...state.providerData });
     }
     if (ownership && pathname === "/api/stripe/onramp-checkout/cos_test_ownership") {
-      if (state.walletVerified) return jsonResponse({ ok: true, client_secret: "test_client_secret" });
+      if (state.hangCheckout) return new Promise((_, reject) => {
+        options.signal.addEventListener("abort", () => reject(new Error("checkout_request_aborted")), { once: true });
+      });
+      if (state.checkoutFailure) return { ok: false, status: 409, json: async () => state.checkoutFailure };
+      if (state.walletVerified) { state.checkoutAccepted = true; return jsonResponse({ ok: true, client_secret: "test_client_secret" }); }
       if (ownership.source === "lastError") {
         return jsonResponse({ ok: false, client_secret: null, lastError: "wallet_ownership_verification_required", status: "requires_payment" });
       }
       return { ok: false, status: 400, json: async () => ({ ok: false, error: "Additional approval required", code: "crypto_onramp_wallet_ownership_verification_required" }) };
     }
     if (ownership && pathname === "/api/stripe/background-poll") {
+      if (state.hangBackground) return new Promise(() => {});
       if (state.backgroundOutage) throw new Error("Background response lost");
       return jsonResponse({ ok: true, stripeStatus: state.backgroundStatus || "fulfillment_processing" });
     }
     if (pathname === `/api/stripe/crypto-customer/${CUSTOMER_ID}`) {
-      const verificationStatus = state.kycVerified ? "verified" : "not_started";
+      if (state.hangFinalKyc && String(url).includes("trackingPhase=final")) return new Promise(() => {});
+      const verificationStatus = state.kycStatusOverride || (state.kycVerified ? "verified" : "not_started");
       const tiers = ["l0", "l1", "l2"].map((tier) => ({
         tier,
         verification_status: tier === "l2" ? verificationStatus : "not_available",
@@ -216,13 +231,13 @@ function createHarness({ accordion = false, ownership = null } = {}) {
         kycSnapshot: {
           currentTier: "L2",
           currentStatus: verificationStatus,
-          verifiedTier: state.kycVerified ? "L2" : null,
+          verifiedTier: verificationStatus === "verified" ? "L2" : null,
           region: "eu",
           tiers,
           providedFields: [],
           identifiersSatisfied: true,
           attestationAccepted: true,
-          euFullyVerified: state.kycVerified,
+          euFullyVerified: verificationStatus === "verified",
         },
       });
     }
@@ -655,6 +670,246 @@ async function completeOwnershipCheckout(harness) {
   return harness.render();
 }
 
+test("accepted receipt completes while final KYC telemetry and settlement launch are stalled", { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } }); t.after(h.unmount);
+  h.state.hangFinalKyc = true;
+  h.state.hangBackground = true;
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, "completed");
+  assert.equal(h.calls.successes[0].paymentAccepted, true);
+  assert.equal(h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-session-v2").length, 1);
+});
+
+test("provider acceptance stays pending until the receipt write succeeds, without another checkout", { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } }); t.after(h.unmount);
+  h.state.receiptAccepted = false;
+  const flow = completeOwnershipCheckout(h);
+  await settleUntil(() => h.hasTimer(2000));
+  assert.equal(h.render().step, "awaiting_funds");
+  assert.equal(h.calls.successes.length, 0);
+  const attempts = h.calls.performCheckout;
+  h.state.receiptAccepted = true;
+  await h.runTimer(2000);
+  assert.equal((await flow).step, "completed");
+  assert.equal(h.calls.performCheckout, attempts);
+});
+
+test("KYC review exhaustion stays at identity and can resume after later approval", { timeout: 10000 }, async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.kycStatusOverride = "pending";
+  const initial = h.render().startOnramp();
+  // EU compliance is already submitted in this fixture; only Stripe review is outstanding.
+  for (let i = 0; i < 90; i++) await h.runTimer(2000);
+  await initial;
+  assert.equal(h.render().step, "kyc_pending");
+  assert.equal(h.calls.errors.length, 0);
+  assert.equal(h.calls.paymentOptions.length, 0);
+  h.state.kycStatusOverride = "verified";
+  await h.render().checkKycStatus();
+  h.runResumeTimer();
+  await settleUntil(() => h.calls.paymentOptions.length === 1);
+  assert.equal(h.calls.authenticate, 1);
+  assert.equal(h.calls.verifyDocuments, 0);
+});
+
+test("pending KYC keeps Step 2 open despite a retained payment element and stale verified details", t => {
+  const h = createHarness({ accordion: true }); t.after(h.unmount);
+  const state = h.render({ headlessStep: "kyc_pending", kycLevel: "L1", paymentElement: h.paymentElement });
+  assert.equal(state.activeStep, 2);
+  assert.equal(state.isStep2Satisfied, false);
+});
+
+test("document step-up after checkout invalidates cached approval and resumes the same payment session", { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } }); t.after(h.unmount);
+  h.state.sdkUnsuccessful = true;
+  h.state.providerData = { transactionDetails: { last_error: "missing_document_verification" } };
+  const needsKyc = await completeOwnershipCheckout(h);
+  assert.equal(needsKyc.step, "collecting_kyc");
+  assert.equal(needsKyc.kycTierRequired, "l2");
+  assert.equal(needsKyc.kycTiers.find(tier => tier.tier === "l2").verification_status, "not_started");
+  h.state.sdkUnsuccessful = false;
+  h.state.providerData = {};
+  await needsKyc.verifyDocuments();
+  await settleUntil(() => h.calls.successes.length === 1);
+  assert.equal(h.render().step, "completed");
+  assert.equal(h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-session-v2").length, 1);
+  assert.equal(h.calls.paymentOptions.length, 1);
+  assert.equal(h.calls.authenticate, 1);
+  assert.ok(h.calls.checkoutSessions.every(id => id === "cos_test_ownership"));
+});
+
+for (const phase of ["creation", "confirmation"]) {
+  test(`a ${phase} reservation conflict monitors the existing session and completes without another charge`, { timeout: 10000 }, async t => {
+    const h = createHarness({ ownership: { source: "backend", wrapCheckoutError: true } });
+    t.after(h.unmount);
+    h.state.kycVerified = true;
+    const failure = { code: "receipt_payment_in_progress", error: "Already in progress", sessionId: "cos_test_ownership" };
+    h.state[phase === "creation" ? "sessionFailure" : "checkoutFailure"] = failure;
+    const flow = h.render().startOnramp();
+    await settleUntil(() => h.state.paymentCompletion);
+    h.state.paymentCompletion({ cryptoPaymentToken: "cpt_retry", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
+    await settleUntil(() => h.hasTimer(4000));
+    assert.equal(h.render().step, "awaiting_funds");
+    assert.equal(h.calls.successes.length, 0);
+    h.state.providerStatus = "fulfillment_processing";
+    await h.runTimer(4000);
+    await settleUntil(() => h.calls.successes.length === 1);
+    await flow;
+    assert.equal(h.render().step, "completed");
+    assert.equal(h.calls.performCheckout, phase === "creation" ? 0 : 1);
+    assert.equal(h.calls.paymentOptions.length, 1);
+    assert.equal(h.calls.successes[0].sessionId, "cos_test_ownership");
+  });
+}
+
+test("unknown payment stays locked after observation expires, and manual status check can finish it", { timeout: 10000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } });
+  t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.sessionFailure = { code: "receipt_payment_in_progress", sessionId: "cos_test_ownership" };
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: "cpt_pending", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
+  for (let i = 0; i < 29; i++) await h.runTimer(4000);
+  await flow;
+  assert.match(h.render().statusMessage, /Check status again/);
+  await h.render().startOnramp(undefined, undefined, undefined, true);
+  assert.equal(h.calls.paymentOptions.length, 1);
+  h.state.providerStatus = "fulfillment_complete";
+  await h.render().checkPaymentStatus();
+  assert.equal(h.render().step, "completed");
+  assert.equal(h.calls.performCheckout, 0);
+});
+
+for (const lastError of ["transaction_failed", { code: "crypto_onramp_identity_verification_failed", message: "Contact support" }]) {
+  test(`unsuccessful SDK result respects authoritative terminal last_error ${JSON.stringify(lastError)}`, { timeout: 5000 }, async t => {
+    const h = createHarness({ ownership: { source: "backend" } });
+    t.after(h.unmount);
+    h.state.sdkUnsuccessful = true;
+    h.state.providerData = { transactionDetails: { last_error: lastError } };
+    const hook = await completeOwnershipCheckout(h);
+    assert.equal(hook.step, "error");
+    assert.equal(h.calls.performCheckout, 1);
+    assert.equal(h.calls.verifyDocuments, 0);
+    assert.equal(h.calls.successes.length, 0);
+  });
+}
+
+test("permanent identity failure during creation never prompts repeated KYC", { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } });
+  t.after(h.unmount);
+  h.state.sessionFailure = { code: "crypto_onramp_identity_verification_failed", error: "We could not verify your identity. Contact support." };
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, "error");
+  assert.equal(h.calls.performCheckout, 0);
+  assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-session-v2").length, 1);
+});
+
+for (const [code, tier] of [["missing_kyc", "l1"], ["crypto_onramp_missing_minimum_identity_verification", "l0"], ["missing_document_verification", "l2"]]) {
+  test(`unsuccessful checkout routes ${code} to the correct KYC step`, { timeout: 5000 }, async t => {
+    const h = createHarness({ ownership: { source: "backend" } });
+    t.after(h.unmount);
+    h.state.sdkUnsuccessful = true;
+    h.state.providerData = { transactionDetails: { last_error: { code } } };
+    const hook = await completeOwnershipCheckout(h);
+    assert.equal(hook.step, "collecting_kyc");
+    assert.equal(hook.kycTierRequired, tier);
+    assert.equal(h.calls.performCheckout, 1);
+    assert.equal(h.calls.paymentOptions.length, 1);
+  });
+}
+
+for (const code of ["charged_with_expired_quote", "quote_rate_drifted", "missing_consumer_wallet"]) {
+  test(`unsuccessful checkout recovers ${code} before retrying`, { timeout: 5000 }, async t => {
+    const h = createHarness({ ownership: { source: "backend" } });
+    t.after(h.unmount);
+    h.state.walletVerified = true;
+    h.state.sdkFailuresRemaining = 1;
+    h.state.providerData = { transactionDetails: { last_error: code } };
+    const hook = await completeOwnershipCheckout(h);
+    assert.equal(hook.step, "completed");
+    assert.equal(h.calls.performCheckout, 2);
+    assert.equal(h.calls.paymentOptions.length, 1);
+    assert.equal(h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-quote-refresh").length, code === "charged_with_expired_quote" ? 1 : 0);
+    const sessions = h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-session-v2");
+    assert.equal(sessions.length, code === "quote_rate_drifted" ? 2 : 1);
+    if (sessions.length === 2) assert.equal(JSON.parse(sessions[1].options.body).sourceAmountUsd, JSON.parse(sessions[0].options.body).sourceAmountUsd);
+    if (code === "missing_consumer_wallet") assert.ok(h.calls.walletRegistrations >= 2);
+  });
+}
+
+test("an unsuccessful SDK result without an authoritative failure is pending, never a fabricated card decline", { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } });
+  t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.sdkUnsuccessful = true;
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: "cpt_unknown", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
+  await settleUntil(() => h.hasTimer(4000));
+  assert.equal(h.render().step, "awaiting_funds");
+  assert.equal(h.calls.errors.length, 0);
+  assert.equal(h.calls.performCheckout, 1);
+  h.state.providerStatus = "fulfillment_complete";
+  await h.runTimer(4000);
+  await flow;
+  assert.equal(h.render().step, "completed");
+});
+
+test("stalled confirmation is observed after its deadline without resubmitting", { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend", wrapCheckoutError: true } });
+  t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.walletVerified = true;
+  h.state.hangCheckout = true;
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: "cpt_timeout", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
+  await h.runTimer(45000);
+  await settleUntil(() => h.hasTimer(4000));
+  assert.equal(h.render().step, "awaiting_funds");
+  assert.equal(h.calls.errors.length, 0);
+  h.state.providerStatus = "fulfillment_processing";
+  await h.runTimer(4000);
+  await flow;
+  assert.equal(h.render().step, "completed");
+  assert.equal(h.calls.performCheckout, 1);
+});
+
+test("creation outage has bounded backoff and never charges or prompts KYC", { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } });
+  t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.sessionFailure = { code: "crypto_onramp_service_error", error: "Service unavailable" };
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: "cpt_service", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
+  await h.runTimer(1000);
+  await h.runTimer(2000);
+  await flow;
+  assert.equal(h.render().step, "error");
+  assert.equal(h.calls.performCheckout, 0);
+  assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-session-v2").length, 3);
+});
+
+test("stalled creation permits manual recovery without claiming a decline or repeating Link authentication", { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } });
+  t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.hangSession = true;
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: "cpt_creation", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
+  await h.runTimer(15000);
+  await flow;
+  assert.equal(h.render().step, "error");
+  assert.equal(h.calls.performCheckout, 0);
+  assert.equal(h.calls.destroy, 0);
+  assert.equal(h.calls.paymentOptions.length, 1);
+});
+
 test("omitting checkout mode creates an ecommerce session by default", { timeout: 5000 }, async t => {
   const harness = createHarness({ ownership: { source: "backend" } });
   t.after(harness.unmount);
@@ -752,7 +1007,7 @@ for (const mode of ["ecommerce", "full"]) {
       });
       await settleUntil(() => harness.calls.steps.includes("awaiting_funds"));
       harness.state.providerStatus = outcome === "accepted" ? "fulfillment_processing" : outcome === "declined" ? "rejected" : "requires_payment";
-      const polls = outcome === "declined" || (outcome === "accepted" && mode === "ecommerce") ? 1 : mode === "ecommerce" ? 90 : 60;
+      const polls = outcome === "declined" || (outcome === "accepted" && mode === "ecommerce") ? 1 : mode === "ecommerce" ? 89 : 60;
       for (let i = 0; i < polls; i++) await harness.runTimer(mode === "ecommerce" ? 2000 : 5000);
       await checkout;
       const hook = harness.render();

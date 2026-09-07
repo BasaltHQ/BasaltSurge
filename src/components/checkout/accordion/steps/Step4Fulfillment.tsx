@@ -34,9 +34,11 @@ export function Step4Fulfillment({
   selectedPaymentType = "card",
   paymentConfirmed,
   onEmailReceipt,
+  onCheckPaymentStatus,
 }: Step4FulfillmentProps) {
   const buttonTextColor = getContrastingTextColor(primaryColor);
   const [mounted, setMounted] = useState(false);
+  const [checkingStatus, setCheckingStatus] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -60,13 +62,14 @@ export function Step4Fulfillment({
       (headlessStatus || "").toLowerCase().includes("select payment"));
 
   const modalAccentColor = isDeclined ? "#F59E0B" : primaryColor;
+  const explicitDecline = isDeclined && /declin|frozen|freeze|insufficient funds|card.*blocked/i.test(headlessStatus || "");
 
   const isIdentityVerifying =
     headlessStep === "verifying_identity" ||
     headlessStep === "checking_kyc";
 
   // Step stage resolution for the timeline stepper
-  const isStep1Done = ["awaiting_funds", "transferring", "completed"].includes(headlessStep || "");
+  const isStep1Done = ["transferring", "completed"].includes(headlessStep || "");
   const isStep1Active = ["checking_out", "creating_session", "confirming_fees"].includes(headlessStep || "") || !headlessStep;
 
   const isStep2Done = ["completed"].includes(headlessStep || "");
@@ -182,7 +185,7 @@ export function Step4Fulfillment({
                     : "text-neutral-900"
                 }`}
               >
-                {isDeclined ? "Payment Declined" : "Processing Payment"}
+                {isDeclined ? explicitDecline ? "Payment Declined" : "Checkout Needs Attention" : "Processing Payment"}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -329,7 +332,7 @@ export function Step4Fulfillment({
                 }`}
               >
                 {isDeclined
-                  ? "Card Declined or Not Supported"
+                  ? explicitDecline ? "Card Declined or Not Supported" : headlessStatus || "Payment could not be completed"
                   : headlessStatus || "Authorizing payment method with Stripe..."}
               </span>
             </div>
@@ -343,9 +346,27 @@ export function Step4Fulfillment({
               }`}
             >
               {isDeclined
-                ? "The payment was not authorized by your bank. Returning to payment selection so you can choose another method..."
-                : "Please keep this window open while Stripe authorizes funds and settles your order. Thank you for your patience."}
+                ? explicitDecline ? "The payment was not authorized by your bank. Returning to payment selection so you can choose another method..." : "Returning to checkout so you can review the message and next steps."
+                : headlessStep === "awaiting_funds"
+                ? "We are checking Stripe for confirmation. A delay does not mean your payment failed."
+                : "Please keep this window open while Stripe processes your payment."}
             </p>
+            {headlessStep === "awaiting_funds" && (
+              <div className="mt-4 space-y-3 text-xs">
+                <p className="break-all">Receipt reference: {receiptId}</p>
+                {onCheckPaymentStatus && (
+                  <button type="button" disabled={checkingStatus}
+                    className="rounded-lg border border-current/30 px-4 py-2 font-semibold disabled:opacity-50"
+                    onClick={async () => {
+                      setCheckingStatus(true);
+                      try { await onCheckPaymentStatus(); } finally { setCheckingStatus(false); }
+                    }}>
+                    {checkingStatus ? "Checking status…" : "Check payment status"}
+                  </button>
+                )}
+                <p>Contact checkout support with this reference if confirmation remains unavailable.</p>
+              </div>
+            )}
           </div>
 
           {/* Refined Connected Glass Stepper */}
@@ -557,7 +578,7 @@ export function Step4Fulfillment({
             }`}
           >
             <Lock className="w-3.5 h-3.5" style={{ color: primaryColor }} />
-            <span>256-Bit SSL Encrypted • Guaranteed Settlement</span>
+            <span>Secure payment processing by Stripe</span>
           </div>
         </div>
       </div>,

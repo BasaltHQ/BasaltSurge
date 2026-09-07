@@ -1,9 +1,48 @@
 import { isProtectedPaymentStatus, shouldIgnoreCanonicalStatusTransition } from "@/lib/receipt-status-policy";
-import { isStripePaymentAcceptedStatus, isStripeFulfillmentCompleteStatus, shouldRestoreStripeAchPendingStatus } from "@/lib/stripe-onramp-status";
+import { isStripePaymentAcceptedStatus, isStripeFulfillmentCompleteStatus, shouldRestoreStripeAchPendingStatus, resolveStripeAcceptedReceiptStatus } from "@/lib/stripe-onramp-status";
+import { resolveStripeOnrampFunding } from "@/lib/payment-split-routing";
 import { isStripeSourceAmountSufficient, resolveStripeSourceAmount } from "@/lib/stripe-onramp-amounts";
+import { isDefinitiveOnrampDecline, onrampErrorCode } from "@/lib/stripe-onramp-errors";
 
 const normalize = (value: unknown) => String(value || "").trim().toLowerCase();
 const receiptKey = (value: unknown) => normalize(value).replace(/^receipt:/, "");
+
+/** Persist provider acceptance independently of KYC telemetry and settlement setup.
+ * Call only with a session retrieved from Stripe on the server, never client data.
+ */
+export async function acceptVerifiedStripeReceiptSession(container: any, session: any): Promise<void> {
+  if (!isStripePaymentAcceptedStatus(session.status)) throw new Error("stripe_payment_not_accepted");
+  const metadata = session.metadata || {};
+  if (!metadata.receiptId || !metadata.merchantWallet) throw new Error("stripe_receipt_metadata_missing");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let receipt = await readStripeReceiptForPayment(container, metadata.receiptId, metadata.merchantWallet);
+    if (receipt.brandKey && normalize(receipt.brandKey) !== normalize(metadata.brandKey)) throw new Error("stripe_receipt_brand_mismatch");
+    if (!isStripeSourceAmountSufficient(resolveStripeSourceAmount(session), receipt.totalUsd)) throw new Error("stripe_receipt_amount_mismatch");
+    if (!receipt.stripeSessionId) throw new Error("stripe_receipt_session_missing");
+    receipt = await recoverStripeReceiptSession(container, receipt, session);
+    if (receipt.stripePaidSessionId && receipt.stripePaidSessionId !== session.id) throw new Error("receipt_paid_session_conflict");
+    const stripeStatus = isStripeFulfillmentCompleteStatus(receipt.stripeSessionStatus) ? receipt.stripeSessionStatus : session.status;
+    const funding = resolveStripeOnrampFunding(session, receipt.detectedCardFunding, receipt.isCreditCard);
+    const nextStatus = resolveStripeAcceptedReceiptStatus(stripeStatus, { isAch: funding === "us_bank_account" })!;
+    const restoreAch = shouldRestoreStripeAchPendingStatus({ currentReceiptStatus: receipt.status, incomingReceiptStatus: nextStatus,
+      stripeStatus, currentStripeStatus: receipt.stripeSessionStatus,
+      hasVerifiedSettlementTx: [receipt.transactionHash, receipt.leg2TxHash].some(hash => /^0x[a-f0-9]{64}$/i.test(String(hash || ""))) });
+    if (receipt.stripePaidSessionId === session.id && receipt.stripeSessionStatus === stripeStatus
+      && isProtectedPaymentStatus(receipt.status) && !restoreAch) return;
+    const previousStatus = receipt.status;
+    if (!shouldIgnoreCanonicalStatusTransition(receipt.status, nextStatus) || restoreAch) receipt.status = nextStatus;
+    if (receipt.status !== previousStatus) receipt.statusHistory = [...(receipt.statusHistory || []), { status: receipt.status, ts: Date.now() }];
+    Object.assign(receipt, { stripeSessionId: session.id, stripeSessionStatus: stripeStatus, checkoutStatus: stripeStatus,
+      checkoutStatusSource: "stripe_status_verified", checkoutStatusUpdatedAt: Date.now(), lastUpdatedAt: Date.now(),
+      detectedCardFunding: funding, isCreditCard: funding === "credit", ttl: -1 });
+    try {
+      await persistStripeReceiptUpdate(container, receipt);
+      return;
+    } catch (error: any) {
+      if (Number(error?.code || error?.statusCode) !== 412 || attempt === 2) throw error;
+    }
+  }
+}
 
 /** Critical read before creating or confirming a receipt-linked payment. */
 export async function readStripeReceiptForPayment(container: any, receiptId: string, merchantWallet?: string) {
@@ -41,7 +80,7 @@ export function assertStripeReceiptUnpaid(receipt: any): void {
 
 export function stripeReceiptWriteCondition(current: any) {
   return {
-    matchFields: Object.fromEntries(["stripeSessionId", "stripeSessionStatus", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "status", "transactionHash", "leg1TxHash", "leg2TxHash", "lastUpdatedAt"]
+    matchFields: Object.fromEntries(["stripeSessionId", "stripeSessionStatus", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "stripeCheckoutDeclineCode", "status", "transactionHash", "leg1TxHash", "leg2TxHash", "lastUpdatedAt"]
       .map(key => [key, current[key] ?? null])),
     ...(current._etag ? { accessCondition: { type: "IfMatch", condition: current._etag } } : {}),
   };
@@ -61,7 +100,7 @@ export async function persistStripeReceiptUpdate(container: any, receipt: any): 
   });
   if (shouldIgnoreCanonicalStatusTransition(current.status, receipt.status) && !achCorrection) throw new Error("receipt_status_changed");
   const fields = Object.fromEntries(Object.entries(receipt).filter(([key, value]) => value !== undefined
-    && !key.startsWith("_") && !["id", "wallet", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId"].includes(key)));
+    && !key.startsWith("_") && !["id", "wallet", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "stripeCheckoutDeclineCode"].includes(key)));
   if (receipt.stripeSessionId && isStripePaymentAcceptedStatus(receipt.stripeSessionStatus)) fields.stripePaidSessionId = receipt.stripeSessionId;
   // Workers update provider/settlement observations, not the merchant's order.
   for (const key of ["totalUsd", "tipAmount", "lineItems"]) delete fields[key];
@@ -87,7 +126,7 @@ export async function attachCreatedStripeSession(container: any, snapshot: any, 
     if (!current) throw new Error("receipt_not_found");
     try { assertStripeReceiptUnpaid(current); }
     catch { throw Object.assign(new Error("receipt_already_has_accepted_payment"), { code: "receipt_already_paid", statusCode: 409 }); }
-    if (current.stripePaymentAttemptSessionId && current.stripePaymentAttemptSessionId !== session.id) throw paymentInProgress();
+    if (current.stripePaymentAttemptSessionId && current.stripePaymentAttemptSessionId !== session.id) throw paymentInProgress(current);
     if (current.stripeSessionId && current.stripeSessionId !== session.id
       && current.stripeSessionCreatedAt && Number(current.stripeSessionCreatedAt) >= Number(session.created || 0)) {
       throw new Error("receipt_has_newer_stripe_session");
@@ -113,8 +152,18 @@ export async function attachCreatedStripeSession(container: any, snapshot: any, 
   }
 }
 
-function paymentInProgress() {
-  return Object.assign(new Error("This receipt already has a payment in progress. Wait for its outcome before trying again."), { code: "receipt_payment_in_progress", statusCode: 409 });
+function paymentInProgress(receipt?: any) {
+  return Object.assign(new Error("This receipt already has a payment in progress. Wait for its outcome before trying again."), { code: "receipt_payment_in_progress", statusCode: 409, sessionId: receipt?.stripePaymentAttemptSessionId || receipt?.stripeSessionId });
+}
+
+/** Observational only. An active/unknown HTTP call is never unlocked by a stale last_error. */
+export function stripeReceiptAttemptCanRetry(receipt: any, session: any): boolean {
+  try { assertStripeReceiptUnpaid(receipt); } catch { return false; }
+  if (isStripePaymentAcceptedStatus(session.status) || receipt.stripeCheckoutRequestId) return false;
+  if (session.id !== receipt.stripeSessionId || session.id !== receipt.stripePaymentAttemptSessionId) return false;
+  if (["rejected", "canceled", "cancelled", "expired"].includes(normalize(session.status))) return true;
+  return receipt.stripePaymentAttemptKind === "headless" && normalize(session.status) === "requires_payment" &&
+    Boolean(session.transaction_details?.last_error || isDefinitiveOnrampDecline(receipt.stripeCheckoutDeclineCode));
 }
 
 /** A new session may replace only an attempt whose failure is confirmed by Stripe. */
@@ -125,32 +174,33 @@ export async function assertStripeReceiptCanCreateSession(container: any, receip
     // Webhook persistence can lag provider acceptance. Never infer unpaid
     // solely from the receipt when an earlier Stripe session already exists.
     const existing = await retrieve(receipt.stripeSessionId);
-    if (existing.id !== receipt.stripeSessionId) throw paymentInProgress();
+    if (existing.id !== receipt.stripeSessionId) throw paymentInProgress(receipt);
     if (isStripePaymentAcceptedStatus(existing.status)) throw Object.assign(new Error("This receipt has already been paid."), { code: "receipt_already_paid", statusCode: 409 });
     const status = normalize(existing.status);
     if (["rejected", "canceled", "cancelled", "expired"].includes(status)) return;
     if (existing.ui_mode === "headless" && ["initialized", "requires_payment"].includes(status)) return;
-    throw paymentInProgress();
+    throw paymentInProgress(receipt);
   }
   // No time-based unlock: the provider outcome may still be unknown after a crash.
   const previous = await retrieve(receipt.stripePaymentAttemptSessionId);
-  if (previous.id !== receipt.stripePaymentAttemptSessionId) throw paymentInProgress();
+  if (previous.id !== receipt.stripePaymentAttemptSessionId) throw paymentInProgress(receipt);
   if (isStripePaymentAcceptedStatus(previous.status)) throw Object.assign(new Error("This receipt has already been paid."), { code: "receipt_already_paid", statusCode: 409 });
   const status = normalize(previous.status);
   const terminal = ["rejected", "canceled", "cancelled", "expired"].includes(status);
   // A headless failed attempt can no longer confirm after replacement: every
   // callback must reacquire the receipt reservation. An embedded client secret
   // can operate outside our callback, so only a terminal session releases it.
-  const failedHeadless = !receipt.stripeCheckoutRequestId && receipt.stripePaymentAttemptKind === "headless" && status === "requires_payment" && Boolean(previous.transaction_details?.last_error);
-  if (!terminal && !failedHeadless) throw paymentInProgress();
+  const failedHeadless = stripeReceiptAttemptCanRetry(receipt, previous);
+  if (!terminal && !failedHeadless) throw paymentInProgress(receipt);
   try {
     await container.item(receipt.id, receipt.wallet).patch([
       { op: "set", path: "/stripePaymentAttemptSessionId", value: null },
       { op: "set", path: "/stripePaymentAttemptKind", value: null },
       { op: "set", path: "/stripeCheckoutRequestId", value: null },
+      { op: "set", path: "/stripeCheckoutDeclineCode", value: null },
     ], stripeReceiptWriteCondition(receipt));
   } catch (error: any) {
-    if (Number(error?.code || error?.statusCode) === 412) throw paymentInProgress();
+    if (Number(error?.code || error?.statusCode) === 412) throw paymentInProgress(receipt);
     throw error;
   }
 }
@@ -159,27 +209,31 @@ export async function assertStripeReceiptCanCreateSession(container: any, receip
 export async function claimStripeReceiptCheckout(container: any, receipt: any, sessionId: string, requestId: string): Promise<void> {
   assertStripeReceiptUnpaid(receipt);
   if (receipt.stripeSessionId !== sessionId) throw Object.assign(new Error("This payment session was replaced. Reopen the current receipt."), { code: "receipt_session_superseded", statusCode: 409 });
-  if (receipt.stripeCheckoutRequestId || (receipt.stripePaymentAttemptSessionId && receipt.stripePaymentAttemptSessionId !== sessionId)) throw paymentInProgress();
+  if (receipt.stripeCheckoutRequestId || (receipt.stripePaymentAttemptSessionId && receipt.stripePaymentAttemptSessionId !== sessionId)) throw paymentInProgress(receipt);
   try {
     await container.item(receipt.id, receipt.wallet).patch([
       { op: "set", path: "/stripePaymentAttemptSessionId", value: sessionId },
       { op: "set", path: "/stripePaymentAttemptKind", value: "headless" },
       { op: "set", path: "/stripeCheckoutRequestId", value: requestId },
+      { op: "set", path: "/stripeCheckoutDeclineCode", value: null },
     ], stripeReceiptWriteCondition(receipt));
   } catch (error: any) {
-    if (Number(error?.code || error?.statusCode) === 412) throw paymentInProgress();
+    if (Number(error?.code || error?.statusCode) === 412) throw paymentInProgress(receipt);
     throw error;
   }
 }
 
 /** Clear only a completed HTTP call; keep the session reserved through 3DS. */
-export async function finishStripeReceiptCheckout(container: any, receipt: any, requestId: string): Promise<void> {
+export async function finishStripeReceiptCheckout(container: any, receipt: any, requestId: string, decline?: unknown): Promise<void> {
   const item = container.item(receipt.id, receipt.wallet);
   for (let attempt = 0; attempt < 3; attempt++) {
     const { resource: current } = await item.read();
     if (!current || current.stripeCheckoutRequestId !== requestId) return;
     try {
-      await item.patch([{ op: "set", path: "/stripeCheckoutRequestId", value: null }], stripeReceiptWriteCondition(current));
+      await item.patch([
+        { op: "set", path: "/stripeCheckoutRequestId", value: null },
+        { op: "set", path: "/stripeCheckoutDeclineCode", value: isDefinitiveOnrampDecline(decline) ? onrampErrorCode(decline) : null },
+      ], stripeReceiptWriteCondition(current));
       return;
     } catch (error: any) {
       if (Number(error?.code || error?.statusCode) !== 412 || attempt === 2) throw error;

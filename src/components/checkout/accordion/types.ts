@@ -101,6 +101,8 @@ export interface PortalPayAccordionCheckoutV2Props {
   onVerifyDocuments?: () => Promise<void | boolean>;
   onSelectPaymentMethod?: (type: string) => Promise<void>;
   onCompleteCheckout?: () => Promise<void>;
+  onCheckPaymentStatus?: () => Promise<void>;
+  onCheckKycStatus?: () => Promise<void>;
   paymentElement?: HTMLElement | React.ReactNode | null;
   authElement?: HTMLElement | React.ReactNode | null;
   headlessStatus?: string;
@@ -235,6 +237,7 @@ export interface Step2Props {
   onSelectSuggestion: (item: any) => void;
   onSubmit: (e: React.FormEvent) => void;
   onVerifyDocuments?: () => Promise<void | boolean>;
+  onCheckKycStatus?: () => Promise<void>;
   onSubmitKycIdentifiers?: (identifiers: Record<string, string>) => Promise<void>;
   missingKycIdentifiers?: Array<{ type: string; regulation: string }>;
   kycIdentifierAlternatives?: Array<{ original_missing_identifiers: string[]; alternative_missing_identifiers: string[] }>;
@@ -278,6 +281,7 @@ export interface Step3PaymentProps extends Step3Props {
 }
 
 export interface Step4Props {
+  onCheckPaymentStatus?: () => Promise<void>;
   receiptId?: string;
   amountUsd?: number;
   email?: string;

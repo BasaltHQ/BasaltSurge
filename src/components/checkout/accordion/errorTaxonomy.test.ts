@@ -66,6 +66,25 @@ test("real provider card declines and identity requirements retain their recover
   assert.equal(kyc?.kycTargetTier, "l2");
 });
 
+test("permanent identity failure stays a support case after message formatting", () => {
+  const error = { code: "crypto_onramp_identity_verification_failed", message: "We couldn't verify your identity. Contact support." };
+  for (const value of [error, formatOnrampErrorMessage(error), error.message]) {
+    const result = parseOnrampError(value);
+    assert.equal(result?.isKycRequirement, false);
+    assert.equal(result?.recoveryAction, "contact_support");
+    assert.equal(result?.targetStep, 3);
+  }
+});
+
+test("limits do not invent a KYC requirement or recommend another payment rail", () => {
+  for (const code of ["crypto_onramp_amount_above_maximum", "crypto_onramp_limit_exceeded"]) {
+    const result = parseOnrampError({ code }, { isL1Verified: false, isL2Verified: false });
+    assert.equal(result?.targetStep, 3);
+    assert.equal(result?.kycTargetTier, undefined);
+    assert.equal(result?.recoveryAction, "contact_support");
+  }
+});
+
 test("wallet signature failures keep wallet recovery without suggesting a fabricated signature", () => {
   const error = { code: "invalid_wallet_ownership_signature", message: "Signature rejected" };
   const formatted = formatOnrampErrorMessage(error);
