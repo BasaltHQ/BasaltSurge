@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getContainer } from "@/lib/cosmos";
+import { acceptVerifiedStripeReceiptSession, readStripeReceiptForPayment, stripeReceiptAttemptCanRetry } from "@/lib/stripe-receipt-session";
+import { isStripePaymentAcceptedStatus } from "@/lib/stripe-onramp-status";
 
 export const dynamic = 'force-dynamic';
 
@@ -58,6 +61,7 @@ export async function GET(req: NextRequest) {
       {
         method: "GET",
         headers,
+        signal: AbortSignal.timeout(15_000),
       }
     );
 
@@ -78,6 +82,7 @@ export async function GET(req: NextRequest) {
           {
             method: "GET",
             headers,
+            signal: AbortSignal.timeout(15_000),
           }
         );
         data = await response.json();
@@ -92,7 +97,33 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    if (data.id !== sessionId) throw new Error("stripe_session_lookup_mismatch");
     const paymentDetails = data.payment_details || data.payment_method_details || null;
+    let receiptAccepted = false;
+    if (isStripePaymentAcceptedStatus(data.status) && data.metadata?.receiptId) {
+      try {
+        const container = await getContainer(undefined, undefined, { profile: "critical" });
+        await acceptVerifiedStripeReceiptSession(container, data);
+        receiptAccepted = true;
+      } catch (error) {
+        // Payment may be accepted even when the receipt write is unavailable.
+        // Keep observing this session; never authorize another payment.
+        console.error("[STRIPE ONRAMP STATUS] Acceptance persistence pending:", error);
+      }
+    }
+    let paymentAttempt: { canRetry: boolean; lastError?: string } = { canRetry: false };
+    if (data.id === sessionId && data.metadata?.receiptId) {
+      try {
+        const container = await getContainer(undefined, undefined, { profile: "critical" });
+        const receipt = await readStripeReceiptForPayment(container, data.metadata.receiptId, data.metadata.merchantWallet);
+        paymentAttempt = {
+          canRetry: stripeReceiptAttemptCanRetry(receipt, data),
+          lastError: receipt.stripePaymentAttemptSessionId === sessionId ? receipt.stripeCheckoutDeclineCode || undefined : undefined,
+        };
+      } catch {
+        // An unavailable receipt journal cannot authorize a second payment.
+      }
+    }
 
     return NextResponse.json({
       ok: true,
@@ -101,6 +132,8 @@ export async function GET(req: NextRequest) {
       transactionDetails: data.transaction_details || null,
       paymentDetails,
       paymentMethod: data.payment_method || null,
+      paymentAttempt,
+      receiptAccepted,
       metadata: data.metadata || null,
       ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
     });

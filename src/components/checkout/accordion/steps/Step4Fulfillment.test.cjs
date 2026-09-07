@@ -70,3 +70,17 @@ test("idle and payment collection transitions do not fabricate a payment decline
     assert.doesNotMatch(textOf(render({ headlessStep })), /Payment Declined/);
   }
 });
+
+test("unknown pending offers a read-only status action and a support reference", () => {
+  const action = async () => {};
+  const nodes = render({ headlessStep: "awaiting_funds", receiptId: "R-UNKNOWN", onCheckPaymentStatus: action });
+  assert.match(textOf(nodes), /Receipt reference:\s+R-UNKNOWN/);
+  assert.ok(nodes.some(node => node?.type === "button" && node.props.onClick));
+  assert.doesNotMatch(textOf(nodes), /Guaranteed Settlement/);
+});
+
+test("service errors are not labeled as a bank decline", () => {
+  const text = textOf(render({ headlessStep: "error", headlessStatus: "Stripe is temporarily unavailable" }));
+  assert.match(text, /Checkout Needs Attention/);
+  assert.doesNotMatch(text, /Payment Declined|not authorized by your bank/);
+});

@@ -22,6 +22,8 @@ export async function POST(
 ) {
   let reservation: { container: any; receipt: any; requestId: string } | undefined;
   let checkoutResponseReceived = false;
+  let definitiveDecline: unknown;
+  let requestedSessionId: string | undefined;
   try {
     const stripeKey = process.env.STRIPE_API_KEY;
     if (!stripeKey) {
@@ -32,6 +34,7 @@ export async function POST(
     }
 
     const { sessionId } = await params;
+    requestedSessionId = sessionId;
     if (!sessionId) {
       return NextResponse.json(
         { ok: false, error: "missing_session_id" },
@@ -77,7 +80,7 @@ export async function POST(
     if (!sessionResponse.ok) return NextResponse.json({ ok: false, error: "Unable to verify the payment session. Please try again.", code: "session_verification_unavailable" }, { status: 503 });
     const session = await sessionResponse.json();
     if (session.id !== sessionId) throw new Error("session_verification_mismatch");
-    if (isStripePaymentAcceptedStatus(session.status)) {
+    if (isStripePaymentAcceptedStatus(session.status) || session.status === "awaiting_funds") {
       return NextResponse.json({ ok: true, status: session.status, client_secret: null, ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}) });
     }
     const assertPayable = async (reserve = false) => {
@@ -127,11 +130,14 @@ export async function POST(
           "Stripe-Version": STRIPE_API_VERSION,
         },
         body: formParams.toString(),
+        signal: AbortSignal.timeout(25_000),
       }
     );
 
     let data = await response.json();
+    if (response.status >= 500 || response.status === 408) throw new Error("stripe_checkout_outcome_unknown");
     checkoutResponseReceived = true;
+    if (response.status >= 400 && response.status < 500) definitiveDecline = data.error;
 
     // Auto-refresh token if Stripe returns 401/unauthorized due to expired oauth token
     if ((response.status === 401 || (data.error && String(data.error.message || "").toLowerCase().includes("oauth"))) && cryptoCustomerId) {
@@ -144,6 +150,7 @@ export async function POST(
         await assertPayable();
         console.log("[ONRAMP CHECKOUT] Retrying checkout with refreshed OAuth token...");
         checkoutResponseReceived = false;
+        definitiveDecline = undefined;
         response = await fetch(
           `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}/checkout`,
           {
@@ -155,10 +162,13 @@ export async function POST(
               "Stripe-Version": STRIPE_API_VERSION,
             },
             body: formParams.toString(),
+            signal: AbortSignal.timeout(25_000),
           }
         );
         data = await response.json();
+        if (response.status >= 500 || response.status === 408) throw new Error("stripe_checkout_outcome_unknown");
         checkoutResponseReceived = true;
+        if (response.status >= 400 && response.status < 500) definitiveDecline = data.error;
       }
     }
 
@@ -237,14 +247,14 @@ export async function POST(
     });
   } catch (e: any) {
     console.error("[ONRAMP CHECKOUT] Error:", e);
-    if (reservation && !checkoutResponseReceived) return NextResponse.json({ ok: false, error: "Payment confirmation is pending. Do not submit another payment.", code: "receipt_payment_in_progress" }, { status: 409 });
+    if (reservation && !checkoutResponseReceived) return NextResponse.json({ ok: false, error: "Payment confirmation is pending. Do not submit another payment.", code: "receipt_payment_in_progress", sessionId: requestedSessionId }, { status: 409 });
     return NextResponse.json(
-      { ok: false, error: e?.message || "internal_error", code: e?.code },
+      { ok: false, error: e?.message || "internal_error", code: e?.code || "checkout_not_submitted", sessionId: e?.sessionId },
       { status: e?.statusCode === 409 ? 409 : 500 }
     );
   } finally {
     if (reservation && checkoutResponseReceived) {
-      try { await finishStripeReceiptCheckout(reservation.container, reservation.receipt, reservation.requestId); }
+      try { await finishStripeReceiptCheckout(reservation.container, reservation.receipt, reservation.requestId, definitiveDecline); }
       catch (error) { console.error("[ONRAMP CHECKOUT] Receipt remains reserved pending recovery:", error); }
     }
   }

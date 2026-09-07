@@ -294,7 +294,7 @@ export async function POST(req: NextRequest) {
           throw new Error("receipt_not_found");
         }
       } catch (dbErr: any) {
-        if (dbErr?.code === "receipt_payment_in_progress") return NextResponse.json({ ok: false, error: dbErr.message, code: dbErr.code }, { status: 409 });
+        if (dbErr?.code === "receipt_payment_in_progress") return NextResponse.json({ ok: false, error: dbErr.message, code: dbErr.code, sessionId: dbErr.sessionId }, { status: 409 });
         if (dbErr?.code === "receipt_already_paid") return NextResponse.json({ ok: false, error: "This receipt has already been paid.", code: dbErr.code }, { status: 409 });
         console.error("[ONRAMP V2] Failed to persist Stripe session ID to receipt:", { receiptId, sessionId: data.id, requestId: response.headers.get("request-id") }, dbErr);
         return NextResponse.json({ ok: false, error: "stripe_session_receipt_attachment_failed", code: "stripe_session_receipt_attachment_failed", requestId: response.headers.get("request-id"), stage: "receipt_attachment" }, { status: 503 });
@@ -318,7 +318,7 @@ export async function POST(req: NextRequest) {
     }
     console.error("[ONRAMP V2] Error:", e);
     return NextResponse.json(
-      { ok: false, error: e?.message || "internal_error", code: e?.code },
+      { ok: false, error: e?.message || "internal_error", code: e?.code, sessionId: e?.sessionId },
       { status: e?.statusCode === 409 ? 409 : 500 }
     );
   }

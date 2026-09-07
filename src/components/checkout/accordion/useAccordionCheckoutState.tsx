@@ -370,6 +370,9 @@ export function useAccordionCheckoutState(
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [isSubmittingIdentity, setIsSubmittingIdentity] = useState(false);
   const [docVerificationSuccess, setDocVerificationSuccess] = useState(false);
+  useEffect(() => {
+    if (headlessStep === "collecting_kyc" || headlessStep === "kyc_pending") setDocVerificationSuccess(false);
+  }, [headlessStep, kycTierRequired]);
 
   // Step 2 Form validation tracking & visual highlighting
   const [attemptedIdentitySubmit, setAttemptedIdentitySubmit] = useState(false);
@@ -797,6 +800,7 @@ export function useAccordionCheckoutState(
 
   // Step 2 satisfaction check: KYC / Demographics are verified and no further step-up / doc verification is required
   const isStep2Satisfied = Boolean(
+    effectiveHeadlessStep !== "kyc_pending" && effectiveHeadlessStep !== "checking_kyc" &&
     (isIdentityComplete || isL0Approved || isAllKycCompleted || effectiveStatus === "verified" || isL2Approved || docVerificationSuccess) &&
     !showStepUpForm &&
     (!showVerifyDocs || isL2Approved || docVerificationSuccess)
@@ -1296,6 +1300,7 @@ export function useAccordionCheckoutState(
       onSelectSuggestion: handleSelectSuggestion,
       onSubmit: handleIdentitySubmit,
       onVerifyDocuments: handleVerifyDocuments,
+      onCheckKycStatus: props.onCheckKycStatus,
       onSubmitKycIdentifiers,
       missingKycIdentifiers,
       kycIdentifierAlternatives,
@@ -1324,6 +1329,7 @@ export function useAccordionCheckoutState(
     },
     // Step 4 Props Bundle
     step4Props: {
+      onCheckPaymentStatus: props.onCheckPaymentStatus,
       receiptId,
       amountUsd,
       email,

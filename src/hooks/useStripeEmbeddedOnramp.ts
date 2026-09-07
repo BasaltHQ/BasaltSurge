@@ -7,6 +7,7 @@ import { resolveStripeOnrampFunding } from "@/lib/payment-split-routing";
 import { canReuseStripeCoordinatorSession } from "@/lib/stripe-coordinator-session";
 import { getStripeOnrampPreflightError } from "@/lib/stripe-onramp-preflight";
 import { getStripeOnrampPaymentMethodTypes } from "@/lib/stripe-onramp-payment-methods";
+import { onrampErrorCode, onrampRecovery } from "@/lib/stripe-onramp-errors";
 import {
   isStripeFulfillmentCompleteStatus,
   isStripeOnrampTerminalFailure,
@@ -95,6 +96,7 @@ export type OnrampStep =
   | "authenticating"
   | "exchanging_tokens"
   | "checking_kyc"
+  | "kyc_pending"
   | "collecting_kyc"
   | "collecting_identifiers"
   | "accepting_terms"
@@ -365,6 +367,9 @@ export type UseStripeEmbeddedOnrampReturn = {
   authElement: HTMLElement | null;
   /** The payment method element to render */
   paymentElement: HTMLElement | null;
+  /** Read the existing payment outcome without submitting another checkout. */
+  checkPaymentStatus: () => Promise<void>;
+  checkKycStatus: () => Promise<void>;
   /** Start the full onramp flow */
   startOnramp: (
     overrideEmail?: string,
@@ -428,6 +433,7 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
   authenticating: "Authenticating with Link...",
   exchanging_tokens: "Securing session...",
   checking_kyc: "Checking verification...",
+  kyc_pending: "Verification is still pending. Check its status to continue.",
   collecting_kyc: "Collecting identity info...",
   collecting_identifiers: "Collecting required tax identifiers...",
   accepting_terms: "Confirming regulatory attestation...",
@@ -446,10 +452,10 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
   error: "Something went wrong",
 };
 
-/** Bound observational requests, including a stalled response body. Never retry a payment submission here. */
-async function fetchOnrampObservation(url: string, init: RequestInit = {}) {
+/** Bound requests including response bodies. This helper never retries a submission. */
+async function fetchOnrampObservation(url: string, init: RequestInit = {}, timeoutMs = 15_000) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
     const data = await response.json().catch(() => ({}));
@@ -522,6 +528,8 @@ const ONRAMP_ERROR_MAPPINGS: Record<string, string> = {
 
 export function getFriendlyOnrampErrorMessage(code: string, fallbackMessage: string): string {
   const normalizedCode = String(code || "").trim().toLowerCase();
+  if (["crypto_onramp_verification_error", "crypto_onramp_invalid_payment_method", "crypto_onramp_unsupported", "crypto_onramp_session_error"].includes(normalizedCode)
+    && fallbackMessage && fallbackMessage !== code) return fallbackMessage;
   const matched = ONRAMP_ERROR_MAPPINGS[normalizedCode];
   if (matched) return matched;
   const lowerFallback = String(fallbackMessage || "").toLowerCase();
@@ -590,92 +598,15 @@ export function formatToE164(phone: string, countryOrCallingCode = "US"): string
 }
 
 function checkIfCardDecline(err: any, lastError?: string): boolean {
-  if (!err && !lastError) return false;
-  
-  // Extract all possible error strings from any shape of error object/primitive
-  const errStr = typeof err === "string" ? err : "";
-  const nestedErrObj = (err && typeof err === "object" && typeof err.error === "object") ? err.error : {};
-  const errorPropStr = (err && typeof err === "object" && typeof err.error === "string") ? err.error : "";
-  
-  const msg = String(err?.message || nestedErrObj?.message || errorPropStr || errStr || "").toLowerCase();
-  const code = String(err?.code || nestedErrObj?.code || err?.error_code || "").toLowerCase();
-  const declineCode = String(err?.decline_code || nestedErrObj?.decline_code || "").toLowerCase();
-  const type = String(err?.type || nestedErrObj?.type || "").toLowerCase();
-  const lastErr = String(lastError || "").toLowerCase();
-
-  // 1. Check if the thrown error is a KYC error or session state error first
-  const isThrownKyc = msg.includes("identity") || msg.includes("verification") || msg.includes("kyc") ||
-                      code.includes("identity") || code.includes("verification") || code.includes("kyc");
-
-  const isInvalidStateError = msg.includes("valid state") ||
-                              msg.includes("purchase confirmation") ||
-                              msg.includes("already confirmed");
-
-  if (isThrownKyc || isInvalidStateError) {
-    return false;
-  }
-
-  // 2. If the thrown error is an active payment failure or decline, prioritize it immediately
-  const isThrownCardDecline =
-    msg.includes("decline") ||
-    msg.includes("card") ||
-    msg.includes("bank") ||
-    msg.includes("institution") ||
-    msg.includes("payment_failed") ||
-    msg.includes("payment failed") ||
-    msg.includes("card_failed") ||
-    msg.includes("funds") ||
-    msg.includes("cvc") ||
-    msg.includes("zip") ||
-    msg.includes("expired") ||
-    msg.includes("invalid card") ||
-    msg.includes("invalid_number") ||
-    msg.includes("invalid_cvc") ||
-    msg.includes("invalid_expiry") ||
-    msg.includes("frozen") ||
-    msg.includes("freeze") ||
-    msg.includes("blocked") ||
-    msg.includes("honor") ||
-    msg.includes("not allowed") ||
-    msg.includes("unauthorized") ||
-    msg.includes("refused") ||
-    msg.includes("rejected") ||
-    msg.includes("checkout_unsuccessful") ||
-    msg.includes("authenticate") ||
-    msg.includes("authentication") ||
-    code.includes("decline") ||
-    code.includes("card") ||
-    code.includes("payment_method") ||
-    code.includes("bank") ||
-    code.includes("payment_failed") ||
-    code.includes("payment failed") ||
-    code.includes("card_failed") ||
-    code.includes("funds") ||
-    code.includes("cvc") ||
-    code.includes("zip") ||
-    code.includes("frozen") ||
-    code.includes("blocked") ||
-    Boolean(declineCode);
-
-  if (isThrownCardDecline) {
-    return true;
-  }
-
-  // 3. Fallback: Check matches (including session lastError) for KYC terms
-  const isKycError = [msg, code, declineCode, type, lastErr].some(val =>
-    val.includes("identity") ||
-    val.includes("verification") ||
-    val.includes("kyc")
-  );
-
-  if (isKycError) {
-    return false;
-  }
-
-  // 4. Otherwise, do not assume it is a card decline.
-  return false;
+  const recovery = onrampRecovery(lastError || err, err?.message || err?.error?.message);
+  if (recovery === "payment_method") return true;
+  if (recovery !== "context") return false;
+  if (err?.decline_code || err?.error?.decline_code || err?.type === "card_error") return true;
+  const message = String(err?.message || err?.error?.message || (typeof err === "string" ? err : "")).toLowerCase();
+  // Unsuccessful checkout, generic auth errors, and references to funds/banks
+  // do not prove a decline. Match explicit payment-method failures only.
+  return /card (?:was |is )?(?:declined|frozen|expired)|payment method (?:was )?declined|insufficient funds|incorrect cvc|unable to authenticate your payment method|(?:card|bank).*(?:blocked|does not support|doesn't support)/.test(message);
 }
-
 export function useStripeEmbeddedOnramp({
   email,
   phone,
@@ -706,6 +637,10 @@ export function useStripeEmbeddedOnramp({
 }: UseStripeEmbeddedOnrampProps): UseStripeEmbeddedOnrampReturn {
   const [step, setStep] = useState<OnrampStep>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [pendingPaymentMessage, setPendingPaymentMessage] = useState<string | null>(null);
+  const pendingRecoveryRef = useRef<(sessionId?: string) => Promise<void>>(async () => {});
+  const pendingRecoveryRunningRef = useRef(false);
+  const messengerRecoveryCountRef = useRef(0);
   const lastErrorSetTimeRef = useRef<number>(0);
   const setPersistedError = useCallback((msg: string | null) => {
     if (msg) lastErrorSetTimeRef.current = Date.now();
@@ -769,6 +704,22 @@ export function useStripeEmbeddedOnramp({
 
   const [kycTiers, setKycTiers] = useState<Array<{ tier: string; verification_status: string }>>([]);
   const [isAllKycCompleted, setIsAllKycCompleted] = useState<boolean>(false);
+  const requestKycVerification = useCallback((tier: "l0" | "l1" | "l2") => {
+    const ranks = { l0: 0, l1: 1, l2: 2 };
+    setKycTierRequired(tier);
+    setKycTiers(previous => previous.map(entry => ranks[entry.tier as keyof typeof ranks] >= ranks[tier]
+      ? { ...entry, verification_status: "not_started" } : entry));
+    // A fresh provider requirement takes precedence over cached verification.
+    setIsAllKycCompleted(false);
+    const lowerVerified = [...kycTiers].reverse().find(entry =>
+      ranks[entry.tier as keyof typeof ranks] < ranks[tier] && entry.verification_status === "verified");
+    const level = lowerVerified?.tier === "l1" ? "L1" : lowerVerified?.tier === "l0" ? "L0" : "REQUIRES_KYC";
+    setKycLevel(level);
+    kycLevelRef.current = level;
+    setError(null);
+    updateStep("collecting_kyc");
+    isRunningRef.current = false;
+  }, [setKycTierRequired, kycTiers]);
   const [missingKycIdentifiers, setMissingKycIdentifiers] = useState<MicaIdentifierRequirement[]>([]);
   const [kycIdentifierAlternatives, setKycIdentifierAlternatives] = useState<Array<{
     original_missing_identifiers: string[];
@@ -1277,6 +1228,7 @@ export function useStripeEmbeddedOnramp({
             isRunningRef.current = false;
           } catch (err: any) {
             console.warn("[EMBEDDED ONRAMP] Global KYC check failed, defaulting to L1 demographics:", err);
+            if (err?.code === "kyc_observation_pending") return;
             setKycTierRequired("l1");
             updateStep("collecting_kyc");
             isVerifyingRef.current = false;
@@ -1302,6 +1254,7 @@ export function useStripeEmbeddedOnramp({
 
   const handleError = useCallback((message: string, err?: any) => {
     if (!mountedRef.current) return;
+    if (err?.code === "kyc_observation_pending") return;
     
     // Resolve programmatic code from error object if present
     const code = err?.code || (err instanceof Error ? (err as any).code : undefined) || "";
@@ -1313,9 +1266,16 @@ export function useStripeEmbeddedOnramp({
       return;
     }
     if (code === "receipt_payment_in_progress") {
-      isRunningRef.current = false;
+      isRunningRef.current = true;
       setError(null);
       updateStep("awaiting_funds");
+      const pendingSession = err?.sessionId || sessionIdRef.current;
+      if (pendingSession) {
+        sessionIdRef.current = pendingSession;
+        setSessionId(pendingSession);
+        sessionStorage.setItem(sessionKey, pendingSession);
+      }
+      void pendingRecoveryRef.current(pendingSession || undefined);
       return;
     }
     const friendlyMessage = code ? getFriendlyOnrampErrorMessage(code, message) : message;
@@ -1324,7 +1284,16 @@ export function useStripeEmbeddedOnramp({
     const isAbortOrMessengerDestroyed = friendlyMessage.toLowerCase().includes("messenger has been destroyed") || 
                                         friendlyMessage.toLowerCase().includes("operation was aborted");
 
-    if (isAbortOrMessengerDestroyed) {
+    if (isAbortOrMessengerDestroyed && sessionIdRef.current) {
+      // The SDK may have been destroyed after sending checkout. Never restart
+      // authentication/payment automatically while that outcome is unknown.
+      isRunningRef.current = true;
+      setError(null);
+      updateStep("awaiting_funds");
+      void pendingRecoveryRef.current(sessionIdRef.current);
+      return;
+    }
+    if (isAbortOrMessengerDestroyed && messengerRecoveryCountRef.current++ === 0) {
       console.warn("[EMBEDDED ONRAMP] Suppressed internal Stripe messenger abort error. Cleanly reinitializing onramp in background...");
       isRunningRef.current = false;
       if (onrampRef.current) {
@@ -1397,10 +1366,22 @@ export function useStripeEmbeddedOnramp({
     }
     authenticatedCoordinatorRef.current = null;
     updateStep(isCancellation ? "idle" : "error");
-    onErrorRef.current?.(err instanceof Error ? err : new Error(friendlyMessage));
+    onErrorRef.current?.(err instanceof Error ? err : Object.assign(new Error(friendlyMessage), { code }));
   }, [detectedCardFunding, updateStep, receiptId, merchantWallet]);
 
   const pollKycStatus = useCallback(async (custId: string, targetTier?: "l0" | "l1" | "l2"): Promise<boolean> => {
+    const pause = (): never => {
+      if (mountedRef.current) {
+        setKycTierRequired(targetTier || kycTierRequiredRef.current);
+        setKycLevel("PENDING");
+        kycLevelRef.current = "PENDING";
+        setError(null);
+        isRunningRef.current = false;
+        isVerifyingRef.current = false;
+        updateStep("kyc_pending");
+      }
+      throw Object.assign(new Error("Verification status is pending. Check its status to continue."), { code: "kyc_observation_pending" });
+    };
     const startMsg = `[KYC POLL START] Polling KYC status for customer ${custId} (target: ${targetTier || 'legacy'})`;
     console.log(startMsg);
     fetch("/api/portal/log", {
@@ -1421,10 +1402,10 @@ export function useStripeEmbeddedOnramp({
 
     let consecutiveErrors = 0;
     for (let i = 0; i < 90; i++) {
-      if (!mountedRef.current) return false;
+      if (!mountedRef.current) return pause();
       if (!isRunningRef.current) {
         console.log("[EMBEDDED ONRAMP] Polling aborted because run was stopped/reset.");
-        return false;
+        return pause();
       }
       let isRejected = false;
       const controller = new AbortController();
@@ -1556,18 +1537,19 @@ export function useStripeEmbeddedOnramp({
           }
           consecutiveErrors++;
           if (consecutiveErrors >= 5) {
-            throw new Error(`KYC status check failed repeatedly (HTTP status: ${res.status}). Please check your connection.`);
+            pause();
           }
         }
       } catch (err: any) {
         if (typeof timeoutId !== "undefined") clearTimeout(timeoutId);
+        if (err?.code === "kyc_observation_pending") throw err;
         console.warn("[EMBEDDED ONRAMP] Error polling KYC status:", err);
         if (err?.message?.includes("expired") || err?.message?.includes("repeatedly")) {
           throw err;
         }
         consecutiveErrors++;
         if (consecutiveErrors >= 5) {
-          throw new Error(`KYC status check failed repeatedly (Network error: ${err.message || 'Timeout'}). Please check your connection.`);
+          pause();
         }
       }
       if (isRejected) {
@@ -1580,8 +1562,7 @@ export function useStripeEmbeddedOnramp({
       }
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
-    console.warn("[EMBEDDED ONRAMP] Polling KYC status timed out after 180 seconds.");
-    return false;
+    return pause();
   }, [receiptId, buildTrackedCustomerUrl, consumeKycTrackingResponse]);
 
   const reset = useCallback(() => {
@@ -1731,15 +1712,19 @@ export function useStripeEmbeddedOnramp({
     funding?: "credit" | "debit" | "us_bank_account" | null
   ): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
     updateStep("creating_session");
-    
+    let creationAttempts = 0;
     const execute = async (amt?: number): Promise<{ sessionId: string; paymentDetails: any; paymentMethod?: string | null } | null> => {
+      if (++creationAttempts > 3) {
+        handleError("Stripe could not finish verification for this payment. Please contact checkout support.");
+        return null;
+      }
       try {
         const fundingTypeToUse = funding !== undefined ? funding : (detectedCardFunding || sessionFundingRef.current);
         const settlementSpeed = (fundingTypeToUse === "credit" || fundingTypeToUse === "debit") ? "instant" : "standard";
         const region = latestKycSnapshotRef.current?.region;
         const isEuCustomer = region === "eu" || (!region && isEuEeaCountry(activeCountryRef.current));
 
-        const sessionRes = await fetch("/api/stripe/onramp-session-v2", {
+        const { response: sessionRes, data: sessionData } = await fetchOnrampObservation("/api/stripe/onramp-session-v2", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1763,13 +1748,27 @@ export function useStripeEmbeddedOnramp({
         });
 
         if (!sessionRes.ok) {
-          const errData = await sessionRes.json().catch(() => ({}));
+          const errData = sessionData;
           if (errData.code === "receipt_already_paid" || errData.code === "receipt_payment_in_progress") {
             handleError(errData.error, errData);
             return null;
           }
           const errMessage = String(errData.error || "").toLowerCase();
           const errCode = String(errData.code || "").toLowerCase();
+          const creationRecovery = onrampRecovery(errData.code, errData.error);
+          if (creationRecovery === "backoff") {
+            if (creationAttempts < 3) {
+              await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** (creationAttempts - 1)));
+              if (!mountedRef.current) return null;
+              return execute(amt);
+            }
+            handleError(errData.error || "Stripe is temporarily unavailable. Please contact checkout support.", errData);
+            return null;
+          }
+          if (creationRecovery === "stop") {
+            handleError(errData.error || "Stripe could not start this payment. Please contact support.", errData);
+            return null;
+          }
           console.error(errMessage === "stripe_session_receipt_attachment_failed"
             ? "[EMBEDDED ONRAMP] Stripe session created but receipt attachment failed:"
             : "[EMBEDDED ONRAMP] Stripe session creation rejected:", {
@@ -1938,6 +1937,7 @@ export function useStripeEmbeddedOnramp({
                 return null;
               }
             } catch (checkErr) {
+              if ((checkErr as any)?.code === "kyc_observation_pending") return null;
               console.warn("[EMBEDDED ONRAMP] Failed to pre-check customer status:", checkErr);
             }
 
@@ -1960,7 +1960,7 @@ export function useStripeEmbeddedOnramp({
           }
         }
 
-        const successData = await sessionRes.json().catch(() => ({}));
+        const successData = sessionData;
         if (successData.refreshedToken) {
           console.log("[EMBEDDED ONRAMP] Session creation returned refreshed OAuth token, updating ref...");
           oauthTokenRef.current = successData.refreshedToken;
@@ -1981,8 +1981,17 @@ export function useStripeEmbeddedOnramp({
           paymentMethod: successData.paymentMethod,
         };
       } catch (err: any) {
-        console.warn("[EMBEDDED ONRAMP] Error in session creation helper, propagating to checkout loop:", err);
-        throw err;
+        console.warn("[EMBEDDED ONRAMP] Session creation did not complete:", err);
+        if (checkIfCardDecline(err)) throw err;
+        // No performCheckout call was made for this creation. Preserve Link
+        // authentication and allow a deliberate retry, without inventing a decline.
+        if (!mountedRef.current) return null;
+        isRunningRef.current = false;
+        setPaymentElement(null);
+        setPersistedError(err?.message || "Stripe could not prepare this payment. Please try again.");
+        updateStep("error");
+        onErrorRef.current?.(err);
+        return null;
       }
     };
 
@@ -2009,18 +2018,18 @@ export function useStripeEmbeddedOnramp({
   const postCheckoutHandler = useCallback(async (
     sessionId: string,
     activeEmail: string,
-    overrideFunding?: "credit" | "debit" | "us_bank_account" | null
+    overrideFunding?: "credit" | "debit" | "us_bank_account" | null,
+    acceptedReceiptStatus = ""
   ) => {
     let fundingTypeToUse = overrideFunding !== undefined ? overrideFunding : (detectedCardFunding || sessionFundingRef.current);
     if (customerIdRef.current) {
-      try {
-        const { response: finalKycResponse, data: finalKycData } = await fetchOnrampObservation(buildTrackedCustomerUrl(customerIdRef.current, "final"), {
+      void fetchOnrampObservation(buildTrackedCustomerUrl(customerIdRef.current, "final"), {
           headers: { "x-stripe-oauth-token": oauthTokenRef.current || "" },
-        });
-        if (finalKycResponse.ok) consumeKycTrackingResponse(finalKycData);
-      } catch (finalKycError) {
+        }).then(({ response, data }) => {
+          if (mountedRef.current && response.ok) consumeKycTrackingResponse(data);
+        }).catch((finalKycError) => {
         console.warn("[EMBEDDED ONRAMP] Final provider KYC snapshot could not be refreshed:", finalKycError);
-      }
+        });
     }
     const resolvedKycLevel = latestKycSnapshotRef.current?.verifiedTier
       || latestKycSnapshotRef.current?.currentTier
@@ -2059,7 +2068,7 @@ export function useStripeEmbeddedOnramp({
             body: JSON.stringify(backgroundPollPayload),
           });
           const launchStatus = String(launchData.stripeStatus || "");
-          if (!isStripePaymentAcceptedStatus(currentStripeStatus) || isStripeFulfillmentCompleteStatus(launchStatus)) {
+          if (!isStripePaymentAcceptedStatus(launchStatus) && !isStripePaymentAcceptedStatus(currentStripeStatus)) {
             currentStripeStatus = launchStatus || currentStripeStatus;
           }
           if (!launchResponse.ok || launchData.ok === false) {
@@ -2082,14 +2091,15 @@ export function useStripeEmbeddedOnramp({
         }
       };
 
-      await launchBackgroundPoll(true);
+      // Settlement initialization must never block payment acceptance reads.
+      void launchBackgroundPoll(true);
 
       // eCommerce paid status is tied to Stripe's signed provider state, not
       // merely to performCheckout returning. Poll every two seconds so the UI
       // transitions as soon as fulfillment_processing is visible. This applies
       // equally to card and ACH; ACH only waits before the later funds sweep.
       for (let poll = 0; poll < maxPolls && !isStripePaymentAcceptedStatus(currentStripeStatus); poll++) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (poll > 0) await new Promise((resolve) => setTimeout(resolve, 2000));
         if (!mountedRef.current) return;
 
         try {
@@ -2114,17 +2124,18 @@ export function useStripeEmbeddedOnramp({
             }
           }
 
-          currentStripeStatus = String(statusData.status || "");
+          currentStripeStatus = isStripePaymentAcceptedStatus(statusData.status) && statusData.receiptAccepted !== true
+            ? "awaiting_receipt_confirmation" : String(statusData.status || "");
           if (
             isStripePaymentAcceptedStatus(currentStripeStatus) &&
             !backgroundPollLaunched &&
             retryLaunchWhenStripeAccepts
           ) {
             retryLaunchWhenStripeAccepts = false;
-            await launchBackgroundPoll(false);
+            void launchBackgroundPoll(false);
           }
-          if (isStripeOnrampTerminalFailure(statusData)) {
-            handleError("Stripe declined or rejected this payment before fulfillment.");
+          if (isStripeOnrampTerminalFailure(statusData) || statusData.paymentAttempt?.canRetry === true) {
+            handleError("Stripe did not complete this payment. Please review the payment details or contact support.", { code: onrampErrorCode(statusData.transactionDetails?.last_error || statusData.paymentAttempt?.lastError) });
             return;
           }
         } catch (statusError) {
@@ -2165,7 +2176,7 @@ export function useStripeEmbeddedOnramp({
 
     const isAch = fundingTypeToUse === "us_bank_account";
     if (isEcommerceMode || isAch) {
-      await awaitBackgroundConfirmation();
+      await awaitBackgroundConfirmation(acceptedReceiptStatus);
       return;
     }
 
@@ -2173,6 +2184,7 @@ export function useStripeEmbeddedOnramp({
 
     let fundsDelivered = false;
     let lastStripeStatus = "";
+    let confirmedReceiptStatus = acceptedReceiptStatus;
     console.log(`[EMBEDDED ONRAMP] Starting to poll status for session: ${sessionId}`);
     for (let poll = 0; poll < 60; poll++) {
       await new Promise(r => setTimeout(r, 5000));
@@ -2193,11 +2205,12 @@ export function useStripeEmbeddedOnramp({
           continue;
         }
         if (statusData.ok === false) continue;
+        if (statusData.receiptAccepted === true && isStripePaymentAcceptedStatus(statusData.status)) confirmedReceiptStatus = statusData.status;
         if (isStripePaymentAcceptedStatus(statusData.status) || !isStripePaymentAcceptedStatus(lastStripeStatus)) {
           lastStripeStatus = String(statusData.status || lastStripeStatus);
         }
-        if (!isStripePaymentAcceptedStatus(lastStripeStatus) && isStripeOnrampTerminalFailure(statusData)) {
-          handleError("Stripe declined or rejected this payment before fulfillment.");
+        if (!isStripePaymentAcceptedStatus(lastStripeStatus) && (isStripeOnrampTerminalFailure(statusData) || statusData.paymentAttempt?.canRetry === true)) {
+          handleError("Stripe did not complete this payment. Please review the payment details or contact support.", { code: onrampErrorCode(statusData.transactionDetails?.last_error || statusData.paymentAttempt?.lastError) });
           return;
         }
         if (statusData.refreshedToken) {
@@ -2223,7 +2236,7 @@ export function useStripeEmbeddedOnramp({
     if (!fundsDelivered) {
       // Expiry of the foreground polling budget is not a provider failure.
       // Hand off this same session; never recollect payment or start a new one.
-      await awaitBackgroundConfirmation(lastStripeStatus, 0);
+      await awaitBackgroundConfirmation(confirmedReceiptStatus, 0);
       return;
     }
 
@@ -2234,7 +2247,7 @@ export function useStripeEmbeddedOnramp({
     // All settlement execution must share the server wallet claim and receipt
     // journal. A direct browser transfer can race the webhook/cron sweeper.
     // The server re-reads Stripe's exact destination amount and funding type.
-    await awaitBackgroundConfirmation("fulfillment_complete", 0);
+    await awaitBackgroundConfirmation(confirmedReceiptStatus, confirmedReceiptStatus ? 0 : 90);
   }, [
     isEcommerceMode,
     receiptId,
@@ -2251,6 +2264,58 @@ export function useStripeEmbeddedOnramp({
     consumeKycTrackingResponse,
     currentKycResult,
   ]);
+
+  // Observe the exact reserved session; never submit checkout from a status retry.
+  const checkPaymentStatus = useCallback(async (pendingSession = sessionIdRef.current || undefined) => {
+    if (pendingRecoveryRunningRef.current || !mountedRef.current || stepRef.current === "completed") return;
+    pendingRecoveryRunningRef.current = true;
+    isRunningRef.current = true;
+    setError(null);
+    updateStep("awaiting_funds");
+    setPendingPaymentMessage("Checking your existing payment. Please do not submit another payment.");
+    try {
+      for (let attempt = 0; pendingSession && attempt < 30 && mountedRef.current; attempt++) {
+        if (attempt) await new Promise(resolve => setTimeout(resolve, 4000));
+        if (!mountedRef.current || String(stepRef.current) === "completed") return;
+        try {
+          const { response, data } = await fetchOnrampObservation(
+            `/api/stripe/onramp-status?sessionId=${encodeURIComponent(pendingSession)}`,
+            { headers: { "x-stripe-oauth-token": oauthTokenRef.current || "", "x-crypto-customer-id": customerIdRef.current || "" } },
+          );
+          if (!response.ok || data.ok === false) continue;
+          if (data.refreshedToken) oauthTokenRef.current = data.refreshedToken;
+          if (isStripePaymentAcceptedStatus(data.status)) {
+            setPendingPaymentMessage(null);
+            await postCheckoutHandler(pendingSession, activeEmailRef.current || email || "", resolveStripeOnrampFunding(data, sessionFundingRef.current), data.receiptAccepted === true ? data.status : "");
+            return;
+          }
+          if (data.paymentAttempt?.canRetry === true) {
+            const rawError = data.transactionDetails?.last_error || data.paymentAttempt.lastError;
+            const code = onrampErrorCode(rawError);
+            setPendingPaymentMessage(null);
+            handleError(typeof rawError?.message === "string" ? rawError.message :
+              "Stripe did not complete this payment. Please review the payment method or contact support.", { code });
+            return;
+          }
+          if (isStripeOnrampTerminalFailure(data)) {
+            setPendingPaymentMessage(null);
+            handleError("Stripe could not complete this purchase. Please contact support.", { code: onrampErrorCode(data.transactionDetails?.last_error) });
+            return;
+          }
+        } catch {
+          // Network/HTML/timeout responses are unknown outcomes, never declines.
+        }
+      }
+      if (mountedRef.current && stepRef.current === "awaiting_funds") {
+        setPendingPaymentMessage("We could not confirm the payment outcome yet. Check status again or contact checkout support with your receipt reference. Do not submit another payment.");
+      }
+    } catch {
+      if (mountedRef.current) setPendingPaymentMessage("Payment confirmation is unavailable. Check status again or contact checkout support. Do not submit another payment.");
+    } finally {
+      pendingRecoveryRunningRef.current = false;
+    }
+  }, [email, handleError, postCheckoutHandler, updateStep]);
+  pendingRecoveryRef.current = checkPaymentStatus;
 
   const verifyWalletOwnershipForCheckout = useCallback(async (walletAddress: string): Promise<void> => {
     const coordinator = onrampRef.current;
@@ -2319,6 +2384,7 @@ export function useStripeEmbeddedOnramp({
 
     const MAX_ATTEMPTS = 5;
     let checkoutSucceeded = false;
+    let confirmedReceiptStatus = "";
     let resolvedFunding = initialFunding || detectedCardFunding || null;
 
     let currentSessionId = sessionIdRef.current;
@@ -2408,16 +2474,16 @@ export function useStripeEmbeddedOnramp({
       if (customerId) {
         statusHeaders["x-crypto-customer-id"] = customerId;
       }
-      const checkRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId || "")}`, {
+      const { response: checkRes, data: statusData } = await fetchOnrampObservation(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId || "")}`, {
         headers: statusHeaders
       });
       if (checkRes.ok) {
-        const statusData = await checkRes.json();
         console.log("[EMBEDDED ONRAMP] Initial session status:", statusData.status);
         const isFinalStatus = ["awaiting_funds", "fulfillment_processing", "fulfillment_complete"].includes(statusData.status);
         if (statusData.ok !== false && isFinalStatus) {
           console.log("[EMBEDDED ONRAMP] Session is already authorized/succeeded. Skipping performCheckout.");
           checkoutSucceeded = true;
+          if (statusData.receiptAccepted === true) confirmedReceiptStatus = statusData.status;
         }
       }
     } catch (statusErr) {
@@ -2437,16 +2503,14 @@ export function useStripeEmbeddedOnramp({
           // The SDK can invoke this callback again after handling a next action.
           // Keep only the current response's error if the SDK wraps the rejection.
           checkoutResponseError = undefined;
-          const checkoutRes = await fetch(`/api/stripe/onramp-checkout/${encodeURIComponent(onrampSessionId)}`, {
+          const { response: checkoutRes, data: checkoutData } = await fetchOnrampObservation(`/api/stripe/onramp-checkout/${encodeURIComponent(onrampSessionId)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               oauthToken: oauthTokenRef.current,
               cryptoCustomerId: customerId,
             }),
-          });
-
-          const checkoutData = await checkoutRes.json().catch(() => ({}));
+          }, 45_000);
 
           if (checkoutData.refreshedToken) {
             console.log("[EMBEDDED ONRAMP] Checkout returned refreshed OAuth token, updating ref...");
@@ -2464,11 +2528,12 @@ export function useStripeEmbeddedOnramp({
               console.log("[EMBEDDED ONRAMP] Checkout completed with status:", checkoutData.status);
               return "";
             }
-            const lastError = checkoutData.lastError || checkoutData.transactionDetails?.last_error;
+            const rawLastError = checkoutData.lastError || checkoutData.transactionDetails?.last_error;
+            const lastError = onrampErrorCode(rawLastError);
             const code = checkoutData.code || lastError;
             checkoutResponseError = Object.assign(
-              new Error(checkoutData.error || lastError || "No client_secret returned"),
-              { code, lastError },
+              new Error(checkoutData.error || rawLastError?.message || lastError || "No client_secret returned"),
+              { code, lastError, sessionId: checkoutData.sessionId || onrampSessionId },
             );
             throw checkoutResponseError;
           }
@@ -2500,11 +2565,11 @@ export function useStripeEmbeddedOnramp({
           }
           let statusData: any = {};
           try {
-            const statusRes = await fetch(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId || "")}`, {
+            const { response: statusRes, data: observation } = await fetchOnrampObservation(`/api/stripe/onramp-status?sessionId=${encodeURIComponent(currentSessionId || "")}`, {
               headers: statusHeaders
             });
             if (statusRes.ok) {
-              statusData = await statusRes.json().catch(() => ({}));
+              statusData = observation;
             } else {
               console.warn("[EMBEDDED ONRAMP] Session status unavailable after checkout error:", statusRes.status);
             }
@@ -2519,6 +2584,7 @@ export function useStripeEmbeddedOnramp({
           if (statusData.ok !== false && isFinalStatus) {
             console.log("[EMBEDDED ONRAMP] Transaction was already authorized/succeeded. Completing checkout flow.");
             checkoutSucceeded = true;
+            if (statusData.receiptAccepted === true) confirmedReceiptStatus = statusData.status;
             break;
           }
 
@@ -2526,7 +2592,17 @@ export function useStripeEmbeddedOnramp({
             console.log("[EMBEDDED ONRAMP] Status check returned refreshed OAuth token, updating ref...");
             oauthTokenRef.current = statusData.refreshedToken;
           }
-          const lastError = statusData.transactionDetails?.last_error || checkoutErr?.lastError;
+          const rawLastError = statusData.transactionDetails?.last_error || statusData.transaction_details?.last_error || checkoutErr?.lastError;
+          const lastError = onrampErrorCode(rawLastError);
+          const recovery = onrampRecovery(lastError || checkoutErr, rawLastError?.message || checkoutErr?.message);
+          if (recovery === "stop") {
+            handleError(rawLastError?.message || checkoutErr?.message || "Stripe could not complete this purchase. Contact support.", { code: lastError || onrampErrorCode(checkoutErr) });
+            return;
+          }
+          if (["kyc_l0", "kyc_l1", "kyc_l2"].includes(recovery)) {
+            requestKycVerification(recovery === "kyc_l0" ? "l0" : recovery === "kyc_l2" ? "l2" : "l1");
+            return;
+          }
 
           console.log(`[EMBEDDED ONRAMP] Inspecting lastError from session status:`, lastError);
 
@@ -2550,7 +2626,7 @@ export function useStripeEmbeddedOnramp({
           const errMessage = String(checkoutErr?.message || nestedErr?.message || "").toLowerCase();
           const errCode = String(checkoutErr?.code || nestedErr?.code || "").toLowerCase();
 
-          isCardDecline = checkIfCardDecline(checkoutErr, lastError);
+          isCardDecline = recovery === "payment_method" || checkIfCardDecline(checkoutErr, lastError);
 
           if (!isCardDecline) {
             const isL0Error = errCode === "crypto_onramp_missing_minimum_identity_verification" ||
@@ -2570,25 +2646,22 @@ export function useStripeEmbeddedOnramp({
                               errMessage.includes("document_verification") ||
                               errMessage.includes("missing_document");
 
-            const isGenericKycError = errMessage.includes("kyc") || 
-                                      errCode.includes("kyc") ||
-                                      errMessage.includes("verification") ||
-                                      errCode.includes("verification");
+            const isGenericKycError = recovery !== "backoff" && (errMessage.includes("kyc") || errCode.includes("kyc"));
 
-            const isQuoteExpired = lastError === "charged_with_expired_quote" ||
+            const isQuoteExpired = recovery === "refresh_quote" || recovery === "new_quote" || lastError === "charged_with_expired_quote" ||
                                    lastError === "quote_rate_drifted" ||
                                    errCode === "crypto_onramp_quote_expired" ||
                                    errMessage.includes("quote_expired") ||
                                    errMessage.includes("quote was locked");
 
-            const isWalletMissing = lastError === "missing_consumer_wallet" ||
+            const isWalletMissing = recovery === "wallet" || lastError === "missing_consumer_wallet" ||
                                     errCode === "crypto_onramp_consumer_wallet_doesnt_exist" ||
                                     errMessage.includes("consumer_wallet");
 
             const isVerificationError = errCode === "crypto_onramp_verification_error" ||
                                         errMessage.includes("verification_error");
 
-            const isTransientServiceError = errCode === "crypto_onramp_service_error" ||
+            const isTransientServiceError = recovery === "backoff" || errCode === "crypto_onramp_service_error" ||
                                             errCode === "crypto_onramp_session_error" ||
                                             errCode === "zerohash_api_error" ||
                                             errMessage.includes("server error") ||
@@ -2739,6 +2812,7 @@ export function useStripeEmbeddedOnramp({
                     return;
                   }
                 } catch (checkErr) {
+                  if ((checkErr as any)?.code === "kyc_observation_pending") return;
                   console.warn("[EMBEDDED ONRAMP] Failed to pre-check status inside checkout loop:", checkErr);
                   console.log("[EMBEDDED ONRAMP] Defaulting to L1 verification checklist due to pre-check exception.");
                   setKycTierRequired("l1");
@@ -2788,7 +2862,7 @@ export function useStripeEmbeddedOnramp({
 
             if (isQuoteExpired || isInvalidState) {
               console.log("[EMBEDDED ONRAMP] Quote expired or session state invalid. Recreating fresh session & PaymentIntent...");
-              if (isQuoteExpired && !isInvalidState) {
+              if (isQuoteExpired && !isInvalidState && recovery !== "new_quote") {
                 updateStep("creating_session");
                 try {
                   const refreshRes = await fetch("/api/stripe/onramp-quote-refresh", {
@@ -2823,7 +2897,7 @@ export function useStripeEmbeddedOnramp({
               continue;
             }
 
-            if (isVerificationError) {
+            if (isVerificationError && recovery !== "backoff") {
               const isDoc = errMessage.includes("document") || errMessage.includes("id");
               const isL0 = errMessage.includes("address") || errMessage.includes("name");
               if (isDoc) {
@@ -2855,6 +2929,11 @@ export function useStripeEmbeddedOnramp({
               continue;
             }
 
+            if (isTransientServiceError && statusData.ok !== false && statusData.status === "requires_payment" && lastError) {
+              handleError("Stripe could not complete this payment after several attempts. Please contact checkout support.", { code: lastError });
+              return;
+            }
+
             if (
               lastError === "transaction_limit_reached" ||
               lastError === "location_not_supported" ||
@@ -2874,10 +2953,11 @@ export function useStripeEmbeddedOnramp({
           throw checkoutErr;
         }
 
-        if (attempt === MAX_ATTEMPTS - 1) {
-          handleError(checkoutErr?.message || "Checkout failed after max attempts");
-          return;
-        }
+        // Unknown failures (including lost responses) must not blindly confirm
+        // again. Continue observing the same session and expose a status action.
+        await pendingRecoveryRef.current(currentSessionId || undefined);
+        return;
+
       }
     }
   }
@@ -2887,7 +2967,7 @@ export function useStripeEmbeddedOnramp({
       return;
     }
 
-    await postCheckoutHandler(currentSessionId || "", activeEmail, resolvedFunding);
+    await postCheckoutHandler(currentSessionId || "", activeEmail, resolvedFunding, confirmedReceiptStatus);
   }, [
     createSessionHelper,
     postCheckoutHandler,
@@ -2897,6 +2977,7 @@ export function useStripeEmbeddedOnramp({
     getOnrampAmount,
     detectedCardFunding,
     verifyWalletOwnershipForCheckout,
+    requestKycVerification,
   ]);
 
   const resumeAfterKyc = useCallback(() => {
@@ -2915,6 +2996,28 @@ export function useStripeEmbeddedOnramp({
       startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, undefined, true);
     }, 50);
   }, [detectedCardFunding, handleError, runCheckoutLoop]);
+
+  const checkKycStatus = useCallback(async () => {
+    if (stepRef.current !== "kyc_pending" || !customerIdRef.current || isRunningRef.current) return;
+    isRunningRef.current = true;
+    updateStep("checking_kyc");
+    try {
+      if (await pollKycStatus(customerIdRef.current, kycTierRequiredRef.current)) {
+        setError(null);
+        setPersistedError(null);
+        resumeAfterKyc();
+      }
+    } catch (err: any) {
+      if (err?.code === "kyc_observation_pending") return;
+      if (/^kyc_l[012]_rejected$/.test(err?.code || "")) {
+        setError(err.message);
+        updateStep("collecting_kyc");
+        isRunningRef.current = false;
+        return;
+      }
+      handleError(err?.message || "Verification status is unavailable", err);
+    }
+  }, [pollKycStatus, resumeAfterKyc, handleError, updateStep, setPersistedError]);
 
   const completeEuKyc = useCallback(async (): Promise<void> => {
     const coordinator = onrampRef.current;
@@ -2949,7 +3052,8 @@ export function useStripeEmbeddedOnramp({
       reportKycEvent("attestation_confirmed", "l2");
     }
 
-    if (latestKycSnapshotRef.current?.verifiedTier !== "L2") {
+    const l2UnderReview = latestKycSnapshotRef.current?.tiers.some(tier => tier.tier === "l2" && tier.verification_status === "pending");
+    if (latestKycSnapshotRef.current?.verifiedTier !== "L2" && !l2UnderReview) {
       reportKycEvent("documents_started", "l2");
       updateStep("verifying_identity");
       const verifyResult = await coordinator.verifyDocuments();
@@ -3293,6 +3397,7 @@ export function useStripeEmbeddedOnramp({
       }
     } catch (err: any) {
       const errMsg = String(err?.message || err || "").toLowerCase();
+      if (err?.code === "kyc_observation_pending") return;
       const rejectionCode = String(err?.code || "").toLowerCase();
       if (rejectionCode === "kyc_l0_rejected" || rejectionCode === "kyc_l1_rejected") {
         const failedTier = rejectionCode === "kyc_l0_rejected" ? "L0" : "L1";
@@ -3493,18 +3598,13 @@ export function useStripeEmbeddedOnramp({
       kycFinalStatusRef.current = "verified";
       kycVerifiedLevelRef.current = "L2";
       reportKycEvent("completed", "l2");
-      setPaymentElement(null);
-      isRunningRef.current = false;
-      updateStep("collecting_payment");
-
-      if (startOnrampRef.current) {
-        setTimeout(() => {
-          startOnrampRef.current?.(activeEmailRef.current || undefined);
-        }, 50);
-      }
+      setError(null);
+      setPersistedError(null);
+      resumeAfterKyc();
       return true;
     } catch (err: any) {
       console.error("[EMBEDDED ONRAMP] verifyDocuments failed:", err);
+      if (err?.code === "kyc_observation_pending") return false;
       isVerifyingRef.current = false;
       isRunningRef.current = false;
       const errMsg = String(err?.message || err || "").toLowerCase();
@@ -3548,7 +3648,7 @@ export function useStripeEmbeddedOnramp({
       handleError(err?.message || "Identity verification failed", err);
       return false;
     }
-  }, [pollKycStatus, updateStep, handleError, reportKycEvent, setKycTierRequired]);
+  }, [pollKycStatus, updateStep, handleError, reportKycEvent, setKycTierRequired, resumeAfterKyc, setPersistedError]);
 
   const startOnramp = useCallback(async (
     overrideEmail?: string,
@@ -4687,6 +4787,7 @@ export function useStripeEmbeddedOnramp({
               return;
             }
           } catch (kycErr: any) {
+            if (kycErr?.code === "kyc_observation_pending") return;
             console.warn("[EMBEDDED ONRAMP] Failed during ACH KYC enforcement check:", kycErr);
             setError(kycErr?.message || "Identity verification required for ACH payments.");
             setPaymentElement(null);
@@ -4711,6 +4812,10 @@ export function useStripeEmbeddedOnramp({
         } catch (checkoutErr: any) {
           const errMsg = String(checkoutErr?.message || "").toLowerCase();
           const errCode = String(checkoutErr?.code || "").toLowerCase();
+          if (onrampRecovery(checkoutErr) === "stop") {
+            handleError(checkoutErr.message, checkoutErr);
+            return;
+          }
 
           const isDocReq = errCode.includes("document") || 
                            errMsg.includes("document") || 
@@ -4752,7 +4857,12 @@ export function useStripeEmbeddedOnramp({
 
     } catch (err: any) {
       const errMessage = String(err?.message || "").toLowerCase();
+      if (err?.code === "kyc_observation_pending") return;
       const errCode = String(err?.code || "").toLowerCase();
+      if (onrampRecovery(err) === "stop") {
+        handleError(err?.message || "Stripe could not complete this purchase.", err);
+        return;
+      }
       
       const isL0Error = errCode === "crypto_onramp_missing_minimum_identity_verification" ||
                         errMessage.includes("missing_minimum_identity_verification") ||
@@ -4855,6 +4965,7 @@ export function useStripeEmbeddedOnramp({
             }
           }
         } catch (statusCheckErr) {
+          if ((statusCheckErr as any)?.code === "kyc_observation_pending") return;
           console.warn("[EMBEDDED ONRAMP] Status check failed before document verification:", statusCheckErr);
         }
 
@@ -4871,7 +4982,7 @@ export function useStripeEmbeddedOnramp({
         return;
       }
 
-      handleError(err?.message || "Onramp flow failed");
+      handleError(err?.message || "Onramp flow failed", err);
     }
   }, [
     enabled, email, phone, fullName, localPhone, splitAddress, splitAddressCredit, amount, network,
@@ -4904,7 +5015,7 @@ export function useStripeEmbeddedOnramp({
     startOnramp(emailOverride || activeEmailRef.current || undefined, formatted, undefined, true, countryOverride || activeCountryRef.current);
   }, [startOnramp]);
 
-  const statusMessage = useMemo(() => STEP_MESSAGES[step], [step]);
+  const statusMessage = useMemo(() => step === "awaiting_funds" && pendingPaymentMessage ? pendingPaymentMessage : STEP_MESSAGES[step], [step, pendingPaymentMessage]);
 
   const isActive = useMemo(() =>
     step !== "idle" && step !== "completed" && step !== "error",
@@ -4914,6 +5025,8 @@ export function useStripeEmbeddedOnramp({
   return {
     step,
     statusMessage,
+    checkPaymentStatus,
+    checkKycStatus,
     error,
     authElement,
     paymentElement,

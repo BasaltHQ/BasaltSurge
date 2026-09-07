@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const test = require("node:test");
 const ts = require("typescript");
 
-function harness({ receiptOverrides = {}, providerStatus = "requires_payment", readError = null, postError = null } = {}) {
+function harness({ receiptOverrides = {}, providerStatus = "requires_payment", readError = null, postError = null, postResponse = null } = {}) {
   const wallet = "0x1111111111111111111111111111111111111111";
   const receipt = { id: "receipt:R1", receiptId: "R1", wallet, status: "pending", stripeSessionId: "cos_current", ...receiptOverrides };
   const requests = [];
@@ -39,6 +39,7 @@ function harness({ receiptOverrides = {}, providerStatus = "requires_payment", r
         requests.push({ url: String(url), options });
         if (options.method === "POST") {
           if (postError) throw postError;
+          if (postResponse) return postResponse();
           return response({ client_secret: "cos_mock_secret_test", status: "requires_payment" });
         }
         return response({ id: "cos_current", status: providerStatus, metadata: { receiptId: "R1", merchantWallet: wallet } });
@@ -88,7 +89,7 @@ test("pending current receipt confirms once using the provider receipt metadata"
   assert.equal((await h.post()).status, 409);
   assert.equal(h.requests.filter(r => r.options.method === "POST").length, 1);
 });
-for (const providerStatus of ["fulfillment_processing", "fulfillment_complete"]) {
+for (const providerStatus of ["awaiting_funds", "fulfillment_processing", "fulfillment_complete"]) {
   test(`accepted provider session ${providerStatus} is observed without a second checkout`, async () => {
     const h = harness({ providerStatus });
     const result = await h.post();
@@ -121,4 +122,34 @@ test("a lost Stripe response retains the reservation and reports pending instead
   assert.equal(h.receipt.stripePaymentAttemptSessionId, 'cos_current');
   await h.post();
   assert.equal(h.requests.filter(r => r.options.method === 'POST').length, 1);
+});
+
+test("definitive Stripe decline releases the call and journals its code for payment reselection", async () => {
+  const h = harness({ postResponse: () => new Response(JSON.stringify({ error: { code: "card_declined", message: "Declined" } }), { status: 402 }) });
+  assert.equal((await h.post()).status, 402);
+  assert.equal(h.receipt.stripeCheckoutRequestId, null);
+  assert.equal(h.receipt.stripeCheckoutDeclineCode, "card_declined");
+  assert.equal(h.receipt.stripePaymentAttemptSessionId, "cos_current");
+});
+
+for (const kind of ["html", "json"]) {
+  test(`upstream ${kind} 502 preserves the unknown reservation`, async () => {
+    const h = harness({ postResponse: () => new Response(kind === "html" ? "<!DOCTYPE html>bad gateway" : JSON.stringify({ error: { code: "card_declined" } }), { status: 502 }) });
+    const result = await h.post();
+    assert.equal(result.data.code, "receipt_payment_in_progress");
+    assert.equal(result.data.sessionId, "cos_current");
+    assert.ok(h.receipt.stripeCheckoutRequestId);
+    assert.equal(h.receipt.stripeCheckoutDeclineCode, null);
+    await h.post();
+    assert.equal(h.requests.filter(r => r.options.method === "POST").length, 1);
+  });
+}
+
+test("sequential SDK callbacks for 3DS can reacquire the same session reservation", async () => {
+  const h = harness();
+  for (let i = 0; i < 2; i++) {
+    assert.equal((await h.post()).status, 200);
+    assert.equal(h.receipt.stripeCheckoutRequestId, null);
+  }
+  assert.equal(h.requests.filter(r => r.options.method === "POST").length, 2);
 });

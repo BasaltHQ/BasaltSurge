@@ -210,6 +210,34 @@ test('provider-confirmed headless failure permits a new attempt without enabling
   await assert.rejects(h.helpers.claimStripeReceiptCheckout(h.container, h.doc, 'cos_old', 'stale'), { code: 'receipt_session_superseded' });
 });
 
+test('HTTP decline permits replacement even when Stripe last_error is empty, but a new call clears that evidence', async () => {
+  const h = harness();
+  await h.helpers.claimStripeReceiptCheckout(h.container, h.doc, 'cos_old', 'declined_request');
+  await h.helpers.finishStripeReceiptCheckout(h.container, h.doc, 'declined_request', { code: 'card_declined' });
+  const provider = { id: 'cos_old', status: 'requires_payment', transaction_details: { last_error: null } };
+  assert.equal(h.helpers.stripeReceiptAttemptCanRetry(h.doc, provider), true);
+  await h.helpers.assertStripeReceiptCanCreateSession(h.container, h.doc, async () => provider);
+  await h.helpers.attachCreatedStripeSession(h.container, h.doc, { id: 'cos_new', created: 300 });
+  await h.helpers.claimStripeReceiptCheckout(h.container, h.doc, 'cos_new', 'new_request');
+  assert.equal(h.doc.stripeCheckoutDeclineCode, null);
+  assert.equal(h.helpers.stripeReceiptAttemptCanRetry(h.doc, { ...provider, id: 'cos_new' }), false);
+  await assert.rejects(h.helpers.claimStripeReceiptCheckout(h.container, h.doc, 'cos_old', 'stale_callback'), { code: 'receipt_session_superseded' });
+});
+
+test('a stale Stripe error cannot unlock an active request or an accepted payment', async () => {
+  const h = harness({ ...base, stripePaymentAttemptSessionId: 'cos_old', stripePaymentAttemptKind: 'headless', stripeCheckoutRequestId: 'active', stripeCheckoutDeclineCode: 'card_declined' });
+  const provider = { id: 'cos_old', status: 'requires_payment', transaction_details: { last_error: 'card_declined' } };
+  assert.equal(h.helpers.stripeReceiptAttemptCanRetry(h.doc, provider), false);
+  await assert.rejects(h.helpers.assertStripeReceiptCanCreateSession(h.container, h.doc, async () => provider), { code: 'receipt_payment_in_progress', sessionId: 'cos_old' });
+  assert.equal(h.helpers.stripeReceiptAttemptCanRetry({ ...h.doc, stripeCheckoutRequestId: null }, { ...provider, status: 'fulfillment_complete' }), false);
+});
+
+test('stale workers cannot restore a cleared decline marker or clear a newer one', async () => {
+  const h = harness({ ...base, stripeCheckoutDeclineCode: 'card_declined' });
+  await h.helpers.persistStripeReceiptUpdate(h.container, { ...base, stripeCheckoutDeclineCode: null });
+  assert.equal(h.doc.stripeCheckoutDeclineCode, 'card_declined');
+});
+
 test('embedded client secret remains reserved after a retryable decline', async () => {
   const h = harness({ ...base, stripePaymentAttemptSessionId: 'cos_old', stripePaymentAttemptKind: 'embedded' });
   await assert.rejects(h.helpers.assertStripeReceiptCanCreateSession(h.container, h.doc, async () => ({ id: 'cos_old', status: 'requires_payment', transaction_details: { last_error: { code: 'card_declined' } } })), { code: 'receipt_payment_in_progress' });
@@ -300,4 +328,33 @@ test('replacement for corrected pricing works before payment starts and reserves
   assert.equal(h.doc.stripePaymentAttemptSessionId, 'cos_repriced');
   assert.equal(h.doc.onrampAmount, 950);
   await assert.rejects(h.helpers.claimStripeReceiptCheckout(h.container, h.doc, 'cos_old', 'stale_request'), { code: 'receipt_session_superseded' });
+});
+
+test('foreground acceptance repairs the stale session, persists paid once, and preserves receipt totals', async () => {
+  const h = harness();
+  await h.helpers.acceptVerifiedStripeReceiptSession(h.container, incoming);
+  assert.equal(h.doc.stripePaidSessionId, incoming.id);
+  assert.equal(h.doc.status, 'paid');
+  assert.equal(h.doc.totalUsd, 942);
+  const writes = h.calls.length;
+  await h.helpers.acceptVerifiedStripeReceiptSession(h.container, incoming);
+  assert.equal(h.calls.length, writes, 'accepted polling is idempotent');
+});
+
+test('foreground acceptance retries a Mongo compare-and-set collision without losing an unrelated edit', async () => {
+  const h = harness({ ...base, stripeSessionId: incoming.id });
+  h.race(doc => { doc.lastUpdatedAt = 999; doc.customerNote = 'preserve'; });
+  await h.helpers.acceptVerifiedStripeReceiptSession(h.container, incoming);
+  assert.equal(h.doc.status, 'paid');
+  assert.equal(h.doc.customerNote, 'preserve');
+});
+
+test('foreground acceptance refuses a second funded session and never regresses completed ACH', async () => {
+  const h = harness({ ...base, stripeSessionId: incoming.id, stripePaidSessionId: incoming.id,
+    stripeSessionStatus: 'fulfillment_complete', status: 'paid', detectedCardFunding: 'us_bank_account' });
+  await h.helpers.acceptVerifiedStripeReceiptSession(h.container, { ...incoming, status: 'fulfillment_processing', payment_method: 'us_bank_account' });
+  assert.equal(h.doc.status, 'paid');
+  assert.equal(h.doc.stripeSessionStatus, 'fulfillment_complete');
+  await assert.rejects(h.helpers.acceptVerifiedStripeReceiptSession(h.container, { ...incoming, id: 'cos_duplicate' }));
+  assert.equal(h.doc.stripePaidSessionId, incoming.id);
 });
