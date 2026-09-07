@@ -42,18 +42,16 @@ export function Step4Fulfillment({
     setMounted(true);
   }, []);
 
-  const isAchPending =
+  const hasSettlementTransaction = /^0x[a-f0-9]{64}$/i.test(paymentConfirmed?.txHash || "");
+  const isAchPending = !hasSettlementTransaction && (
     detectedCardFunding === "us_bank_account" ||
-    paymentConfirmed?.funding === "us_bank_account" ||
-    headlessStep === "awaiting_funds";
+    paymentConfirmed?.funding === "us_bank_account"
+  );
 
   const isDeclined =
     !isConfirmed &&
-    !isAchPending &&
-    (headlessStep === "collecting_payment" ||
-      headlessStep === "error" ||
-      headlessStep === "idle" ||
-      headlessStep === "initializing" ||
+    headlessStep !== "awaiting_funds" &&
+    (headlessStep === "error" ||
       (headlessStatus || "").toLowerCase().includes("decline") ||
       (headlessStatus || "").toLowerCase().includes("failed") ||
       (headlessStatus || "").toLowerCase().includes("frozen") ||
@@ -65,11 +63,7 @@ export function Step4Fulfillment({
 
   const isIdentityVerifying =
     headlessStep === "verifying_identity" ||
-    headlessStep === "checking_kyc" ||
-    (headlessStatus || "").toLowerCase().includes("verif") ||
-    (headlessStatus || "").toLowerCase().includes("identity") ||
-    (headlessStatus || "").toLowerCase().includes("document") ||
-    kycLevel === "L2";
+    headlessStep === "checking_kyc";
 
   // Step stage resolution for the timeline stepper
   const isStep1Done = ["awaiting_funds", "transferring", "completed"].includes(headlessStep || "");
@@ -681,7 +675,7 @@ export function Step4Fulfillment({
                     isLightText ? "text-white/70" : "text-neutral-600"
                   }`}
                 >
-                  Please keep this page open while we confirm and fulfill your order. Thank you for your patience.
+                  Confirmation can take longer than expected. Keep this page open for updates and do not submit another payment.
                 </p>
               </div>
 
@@ -853,7 +847,7 @@ export function Step4Fulfillment({
                   </span>
                 </div>
 
-                {paymentConfirmed?.txHash && (
+                {hasSettlementTransaction && paymentConfirmed?.txHash && (
                   <div className="flex justify-between items-center text-sm">
                     <span className={isLightText ? "text-white/60" : "text-neutral-500"}>Verification:</span>
                     <a

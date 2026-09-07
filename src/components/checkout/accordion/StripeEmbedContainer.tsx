@@ -14,6 +14,8 @@ export interface StripeEmbedContainerProps {
   loadingMessage?: string;
   /** Optional explicit error message to display if initialization encounters an issue */
   errorMessage?: string;
+  /** The flow has stopped; do not describe an absent element as connecting. */
+  isFailed?: boolean;
   /** Watchdog timeout in seconds before displaying a retry banner (default: 12s) */
   timeoutSeconds?: number;
   /** Callback triggered when user clicks retry after timeout */
@@ -42,6 +44,7 @@ export function StripeEmbedContainer({
   containerRef,
   loadingMessage = "Initializing secure Stripe form...",
   errorMessage,
+  isFailed = false,
   timeoutSeconds = 30,
   onTimeoutRetry,
   isLightText = true,
@@ -100,7 +103,7 @@ export function StripeEmbedContainer({
 
   // Stall watchdog timer
   useEffect(() => {
-    if (!element && isVisible) {
+    if (!element && isVisible && !isFailed) {
       setIsStalled(false);
       if (timeoutTimerRef.current) clearTimeout(timeoutTimerRef.current);
       timeoutTimerRef.current = setTimeout(() => {
@@ -122,7 +125,7 @@ export function StripeEmbedContainer({
         timeoutTimerRef.current = null;
       }
     };
-  }, [element, isVisible, timeoutSeconds]);
+  }, [element, isVisible, timeoutSeconds, isFailed]);
 
   const isRawDomElement = element && typeof element === "object" && "nodeType" in element;
   const isReactNode = element && !isRawDomElement;
@@ -148,7 +151,11 @@ export function StripeEmbedContainer({
       {/* Loading Skeleton & Stall Notice (Shown when element is null) */}
       {!element && (
         <div className="w-full space-y-3 py-1 animate-in fade-in duration-300">
-          {isStalled ? (
+          {isFailed ? (
+            <p role="status" className={`rounded-xl border p-3.5 text-xs ${isLightText ? "border-white/10 text-white/75" : "border-black/10 text-black/75"}`}>
+              The secure payment form is no longer active. Retry checkout to reopen it.
+            </p>
+          ) : isStalled ? (
             /* Timeout / Stalled Fallback Notice */
             <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm space-y-2.5 text-left backdrop-blur-sm">
               <div className="flex items-center gap-2 font-bold text-amber-400">

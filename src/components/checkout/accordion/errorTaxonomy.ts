@@ -59,6 +59,20 @@ export interface ParsedOnrampError {
   kycTargetTier?: "l0" | "l1" | "l2";
 }
 
+// These are application notices, whose wording is already suitable for buyers.
+// Preserve them across repeated formatting instead of inferring an issuer
+// decline from "card" or an identity requirement from a provider's explanation.
+const CHECKOUT_SERVICE_NOTICES = new Map([
+  ["Card checkout is unavailable for this order or region.", "checkout_disabled"],
+  ["Enter your email to continue checkout.", "email_required"],
+  ["Card checkout is not configured. Please contact the merchant.", "publishable_key_missing"],
+  ["The merchant's payment destination is not ready. Please wait a moment and retry.", "split_address_missing"],
+  ["The checkout amount is invalid. Please reload the order and retry.", "invalid_amount"],
+  ["Checkout is still loading. Please wait a moment and try again.", "checkout_loading"],
+  ["We could not retrieve the EUR exchange rate. Please try again.", "fx_rate_unavailable"],
+]);
+const VERIFIED_SESSION_FAILURE_PREFIX = "Stripe could not create the payment session after identity verification.";
+
 /**
  * Canonical registry of all official Stripe Crypto Onramp error codes
  */
@@ -350,7 +364,7 @@ export const STRIPE_ONRAMP_ERRORS: Record<string, OnrampErrorDefinition> = {
     defaultTargetStep: 3,
     title: "Invalid Authorization Signature",
     userMessage:
-      "The security authorization signature could not be verified. In test mode, use 'abcd'.",
+      "Stripe could not verify ownership of your destination wallet. Restart checkout and try again.",
     recoveryAction: "retry_payment",
   },
 
@@ -423,6 +437,26 @@ export function parseOnrampError(
     extractedCode = String(rawError.code || rawError.error?.code || "").toLowerCase();
     extractedDeclineCode = String(rawError.decline_code || rawError.error?.decline_code || "").toLowerCase();
     rawString = String(rawError.message || rawError.error?.message || rawError.last_error || "");
+  }
+
+  const notice = rawString.trim();
+  const serviceCode = CHECKOUT_SERVICE_NOTICES.get(notice)
+    || (notice.startsWith(VERIFIED_SESSION_FAILURE_PREFIX) ? "verified_session_creation_failed" : null);
+  if (serviceCode) {
+    return {
+      raw: rawError,
+      code: serviceCode,
+      category: "service",
+      actionable: true,
+      targetStep: 3,
+      title: "Checkout Notice",
+      userMessage: notice,
+      recoveryAction: serviceCode === "verified_session_creation_failed" ? "contact_support" : "none",
+      isDecline: false,
+      isKycRequirement: false,
+      isAmountLimit: false,
+      isRecoverable: true,
+    };
   }
 
   const rawLower = rawString.toLowerCase();
@@ -545,6 +579,7 @@ function findMatchingErrorCode(text: string): string | null {
   if (text.includes("unsupported_region") || text.includes("unsupported for headless mode")) return "crypto_onramp_unsupported";
   if (text.includes("quote_expired") || text.includes("quote was locked")) return "crypto_onramp_quote_expired";
   if (text.includes("consumer_wallet")) return "crypto_onramp_consumer_wallet_doesnt_exist";
+  if (text.includes("could not verify ownership of") && text.includes("wallet")) return "invalid_wallet_ownership_signature";
   if (text.includes("travel rule") || text.includes("wallet_ownership")) return "invalid_wallet_ownership_signature";
   return null;
 }

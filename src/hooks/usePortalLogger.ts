@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { maskSensitiveData } from "@/lib/sanitize-logs";
 
 export type PortalLoggerProps = {
   receiptId?: string;
@@ -40,6 +41,7 @@ export function usePortalLogger({
     const sendLogToServer = async (level: "log" | "warn" | "error", args: any[]) => {
       // Only capture errors
       if (level !== "error") return;
+      args = args.map(arg => maskSensitiveData(arg));
 
       // Basic protection: do not recursively log if we are already sending, or if we hit the cap
       if (isSending || logCount >= MAX_LOGS) return;
@@ -117,6 +119,7 @@ export function usePortalLogger({
 
     // Override console.log (this also un-silences it for the portal page so developers can see it in devtools)
     console.log = (...args: any[]) => {
+      args = args.map(arg => maskSensitiveData(arg));
       originalLog.apply(console, args);
       // Suppress noisy hydration and standard CSS warnings
       const firstArg = String(args[0] || "");
@@ -130,12 +133,14 @@ export function usePortalLogger({
 
     // Override console.warn
     console.warn = (...args: any[]) => {
+      args = args.map(arg => maskSensitiveData(arg));
       originalWarn.apply(console, args);
       sendLogToServer("warn", args);
     };
 
     // Override console.error
     console.error = (...args: any[]) => {
+      args = args.map(arg => maskSensitiveData(arg));
       originalError.apply(console, args);
       sendLogToServer("error", args);
     };

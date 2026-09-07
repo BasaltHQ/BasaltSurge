@@ -26,10 +26,26 @@ function transactionDetails(session: any): any {
   return session?.transaction_details || session?.transactionDetails || {};
 }
 
-/** The fiat amount exchanged by Stripe, excluding Stripe's onramp fees. */
+/** The fiat amount exchanged by Stripe, normalized to USD for receipt accounting. */
 export function resolveStripeSourceAmount(session: any): number | null {
   const details = transactionDetails(session);
-  return positiveAmount(details.source_amount ?? details.sourceAmount ?? details.source_exchange_amount);
+  const sourceAmount = positiveAmount(details.source_amount ?? details.sourceAmount ?? details.source_exchange_amount);
+  if (!sourceAmount) return null;
+  const metadata = session?.metadata || {};
+  const currency = String(details.source_currency ?? details.sourceCurrency ?? metadata.onrampSourceCurrency ?? "usd").trim().toLowerCase();
+  if (currency === "usd") return sourceAmount;
+  const conversionCurrency = String(metadata.onrampSourceCurrency || "").trim().toLowerCase();
+  const usdPerSource = positiveAmount(metadata.onrampSourceToUsdRate);
+  if (conversionCurrency !== currency || !usdPerSource) {
+    // Callers historically skip amount guards on null. A known foreign amount
+    // without a matching server rate must stop reconciliation, not skip it.
+    throw new Error("Stripe source currency conversion is unavailable for USD reconciliation.");
+  }
+  const amountUsd = sourceAmount * usdPerSource;
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+    throw new Error("Stripe source currency conversion produced an invalid USD amount.");
+  }
+  return Math.round(amountUsd * 1_000_000) / 1_000_000;
 }
 
 /**

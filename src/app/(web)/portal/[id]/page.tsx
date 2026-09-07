@@ -24,6 +24,10 @@ import { usePortalLogger } from "@/hooks/usePortalLogger";
 import { extractThirdwebTxHash, extractThirdwebTransactionMetadata } from "@/lib/thirdweb/tx-extractor";
 import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
 import { isValidIsoCountryCode, micaIdentifierLabel, normalizeMicaIdentifier, validateMicaIdentifier } from "@/lib/stripe-kyc-tracking";
+import { isStripeEmbeddedCheckoutEnabled, isUnsupportedStripeCheckoutRegion } from "@/lib/stripe-checkout-eligibility";
+import { isStripeOnrampPreflightErrorCode } from "@/lib/stripe-onramp-preflight";
+import { resolvePortalCheckoutMode } from "@/lib/stripe-onramp-status";
+import { resolveFundingOnrampAmount } from "@/lib/portal-checkout-pricing";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
 // Embedded mode (embedded=1 or iframe) removes page background to fit seamlessly in host modals.
@@ -1993,7 +1997,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const canUseFullLogo = !!fullLogoCandidate && (hasPartnerPath || !genericRe.test(fileName));
   const effectiveNavbarMode: "symbol" | "logo" = (navbarMode === "logo" && canUseFullLogo) ? "logo" : "symbol";
   // Card Detection & Countdown States
-  const [awaitingFundsSeconds, setAwaitingFundsSeconds] = useState(40);
   const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | "us_bank_account" | null>(null);
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
@@ -2263,11 +2266,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const unscaleFactor = useMemo(() => {
     if (!feeMinusEnabled || !receipt) return 1;
-    if (storedProcessingFeeUsd > 0) return 1;
     const shipItem = items.find((it) => /^shipping/i.test(it.label || ""));
     const dbShippingCostUsd = shipItem ? Number(shipItem.priceUsd || 0) : 0;
     const baseSum = itemsSubtotalUsd + taxUsd + dbShippingCostUsd;
     if (baseSum <= 0) return 1;
+    // Fee− receipts can contain an internal fee allocation. Restore it for
+    // display; it is already included in the customer's fixed amount due.
+    if (storedProcessingFeeUsd > 0) return (baseSum + storedProcessingFeeUsd) / baseSum;
     const dbTotal = Number(receipt.totalUsd || 0);
     if (dbTotal <= 0) return 1;
     return dbTotal / baseSum;
@@ -2809,10 +2814,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [detectedCardFunding, achSpeed, debitStripeFeePct, creditStripeFeePct]);
 
   const activeFeePct = useMemo(() => {
-    const hasPresentedBps = presentedFeeBps !== undefined || creditPresentedFeeBps !== undefined;
+    const hasPresentedBps = detectedCardFunding === "credit"
+      ? (creditPresentedFeeBps ?? presentedFeeBps) !== undefined
+      : presentedFeeBps !== undefined;
     const stripePct = (feeMinusEnabled || hasPresentedBps) ? 0 : stripeFeePct;
     return Math.max(0, effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct);
-  }, [effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps]);
+  }, [effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps, detectedCardFunding]);
 
   const processingFeeUsd = useMemo(() => {
     return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * (activeFeePct / 100)).toFixed(2);
@@ -2821,10 +2828,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const totalUsd = useMemo(() => {
     if (!receipt) return 0;
     if (feeMinusEnabled) {
-      return +(itemsSubtotalUsd + taxUsd + shippingCostUsd + tipUsd).toFixed(2);
+      return +(itemsSubtotalUsd + taxUsd + shippingCostUsd + tipUsd + storedProcessingFeeUsd).toFixed(2);
     }
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + processingFeeUsd).toFixed(2);
-  }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd, feeMinusEnabled]);
+  }, [receipt, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, processingFeeUsd, feeMinusEnabled, storedProcessingFeeUsd]);
 
   const creditTotalUsd = useMemo(() => {
     if (feeMinusEnabled) return totalUsd;
@@ -2847,19 +2854,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       ? (achSpeed === "standard" ? 0.6 : 4.0)
       : (funding === "credit" ? creditStripeFeePct : debitStripeFeePct);
 
-    if (feeMinusEnabled) {
-      return +(totalUsd / (1 + stripePct / 100)).toFixed(2);
-    }
-
-    const hasPresentedBps = presentedFeeBps !== undefined || creditPresentedFeeBps !== undefined;
-    const activeStripePct = hasPresentedBps ? 0 : stripePct;
-
-    const feePctFraction = Math.max(0, (effectiveBasePlatformFeePct + Number(processingFeePct || 0) + activeStripePct) / 100);
-    const feeUsd = +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * feePctFraction).toFixed(2);
-    const totalForFunding = +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + feeUsd).toFixed(2);
-
-    return +(totalForFunding / (1 + stripePct / 100)).toFixed(2);
-  }, [receipt, achSpeed, creditStripeFeePct, debitStripeFeePct, feeMinusEnabled, totalUsd, effectiveBasePlatformFeePct, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, presentedFeeBps, creditPresentedFeeBps]);
+    return resolveFundingOnrampAmount({
+      funding, feeMinusEnabled, customerTotalUsd: totalUsd,
+      baseUsd: itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd,
+      stripeFeePct: stripePct, splitConfig, splitConfigCredit,
+      presentedFeeBps, creditPresentedFeeBps, processingFeePct,
+    });
+  }, [receipt, achSpeed, creditStripeFeePct, debitStripeFeePct, feeMinusEnabled, totalUsd, splitConfig, splitConfigCredit, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, presentedFeeBps, creditPresentedFeeBps]);
 
   const stripeProcessingFeeUsd = useMemo(() => {
     return +(totalUsd - stripeTotalUsd).toFixed(2);
@@ -3762,43 +3763,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // ── Stripe Onramp Mode Toggle & Region Support Check ──
   // NEXT_PUBLIC_STRIPE_HEADLESS=TRUE → New Embedded Components headless flow (Smart Wallet Bridge)
   // Supported ONLY in US and EU/EEA countries (including UK, Switzerland, Norway, Iceland, Liechtenstein).
-  const isExplicitlyUnsupportedRegion = useMemo(() => {
-    const STRIPE_ONRAMP_SUPPORTED_COUNTRIES = new Set([
-      "US", "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI",
-      "FR", "GR", "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT",
-      "NL", "PL", "PT", "RO", "SE", "SI", "SK", "NO", "IS", "LI", "CH", "GB"
-    ]);
-
-    const normalizeCountry = (code: string) => {
-      let c = String(code || "").trim().toUpperCase();
-      if (c === "CAN" || c === "CANADA") c = "CA";
-      if (c === "USA" || c === "UNITED STATES" || c === "UNITED STATES OF AMERICA") c = "US";
-      if (c === "GBR" || c === "UK" || c === "UNITED KINGDOM" || c === "GREAT BRITAIN") c = "GB";
-      return c;
-    };
-
-    // 1. Explicit billing address country takes highest priority
-    const billingCountry = normalizeCountry(receipt?.billingAddress?.country || "");
-    if (billingCountry && billingCountry !== "UNKNOWN" && billingCountry !== "XX") {
-      return !STRIPE_ONRAMP_SUPPORTED_COUNTRIES.has(billingCountry);
-    }
-
-    // 2. Explicit shipping address country takes second priority
-    const shippingCountry = normalizeCountry(receipt?.shippingAddress?.country || "");
-    if (shippingCountry && shippingCountry !== "UNKNOWN" && shippingCountry !== "XX") {
-      return !STRIPE_ONRAMP_SUPPORTED_COUNTRIES.has(shippingCountry);
-    }
-
-    // 3. Fallback to IP-based country code
-    const country = normalizeCountry(clientCountry);
-    if (country && country !== "UNKNOWN" && country !== "XX") {
-      return !STRIPE_ONRAMP_SUPPORTED_COUNTRIES.has(country);
-    }
-
-    return false;
-  }, [receipt?.billingAddress?.country, receipt?.shippingAddress?.country, clientCountry]);
-
-  const stripeHeadless = (String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE") && !isExplicitlyUnsupportedRegion;
+  const isExplicitlyUnsupportedRegion = useMemo(() => isUnsupportedStripeCheckoutRegion(
+    receipt?.billingAddress?.country,
+    receipt?.shippingAddress?.country,
+    clientCountry,
+  ), [receipt?.billingAddress?.country, receipt?.shippingAddress?.country, clientCountry]);
 
   const isV2Active = useMemo(() => {
     if (isExplicitlyUnsupportedRegion) return false;
@@ -3812,8 +3781,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       if (cookies.includes("pp_sandbox_stripe_v2=false")) return false;
     }
     const envV2 = process.env.NEXT_PUBLIC_STRIPEV2 === "true" || process.env.STRIPEV2 === "true" || process.env.NEXT_PUBLIC_STRIPE_HEADLESS_V2 === "TRUE";
-    return partnerStripeV2Enabled || (theme as any)?.stripeOnrampV2Enabled === true || (theme as any)?.v2CheckoutEnabled === true || envV2;
-  }, [isExplicitlyUnsupportedRegion, partnerStripeV2Enabled, theme]);
+    return stripeOnrampV2Enabled || partnerStripeV2Enabled || (theme as any)?.stripeOnrampV2Enabled === true || (theme as any)?.v2CheckoutEnabled === true || envV2;
+  }, [isExplicitlyUnsupportedRegion, stripeOnrampV2Enabled, partnerStripeV2Enabled, theme]);
+
+  const stripeHeadless = isStripeEmbeddedCheckoutEnabled({
+    legacyHeadlessEnabled: String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE",
+    v2Active: isV2Active,
+    unsupportedRegion: isExplicitlyUnsupportedRegion,
+  });
 
   const payRef = useRef<HTMLDivElement | null>(null);
   const widgetRootRef = useRef<HTMLDivElement | null>(null);
@@ -3988,18 +3963,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [theme.bodyTextColor]);
 
   // eCommerce mode check: default is true (e=1 behavior). Can be disabled/forced to full flow with ?f=1 or ?f
-  const isEcommerceMode = (() => {
-    if (typeof window !== "undefined") {
-      const search = window.location.search;
-      if (search.includes("=f") || search === "?f" || search.includes("&f") || search.includes("?f&")) return false;
-    }
-    if (searchParams) {
-      if (searchParams.get("") === "f" || searchParams.has("f")) return false;
-    }
-    return true;
-  })();
-
-  console.log("[PORTAL PAGE] isEcommerceMode:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
+  const isEcommerceMode = resolvePortalCheckoutMode(searchParams?.toString() || "") === "ecommerce";
 
   // Headless: New Embedded Components flow with Smart Wallet Bridge
   // If buyer is already connected via Thirdweb (account?.address), uses their existing wallet.
@@ -4113,6 +4077,10 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       });
     },
     onSuccess: (result) => {
+      if (result.receiptAlreadyPaid) {
+        setPaymentConfirmed({ txHash: receipt?.transactionHash || "", amount: totalUsd, token: "USDC" });
+        return;
+      }
       console.log("[STRIPE HEADLESS] Checkout handoff completed:", result);
       console.log("[STRIPE HEADLESS SUCCESS] Stripe accepted the checkout handoff. Session:", result.sessionId, "Tx:", result.txHash);
       // A real on-chain transaction is authoritative here. ECommerce
@@ -4132,7 +4100,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       // means the on-chain sweep is pending; it does not mean the order is
       // unpaid. Canonical persistence/webhook delivery remains server-owned.
       if (isPendingSettlement) {
-        if (isEcommerceMode && providerAccepted) {
+        if (providerAccepted) {
           setPaymentConfirmed({
             txHash,
             amount: totalUsd,
@@ -4207,7 +4175,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         }
       }
 
-      if (!isV2Active) {
+      if (!isV2Active && !isStripeOnrampPreflightErrorCode((error as any)?.code)) {
         resetHeadlessOnramp();
         setHeadlessEmailPrompt(true);
         setHeadlessInitiated(false);
@@ -4357,18 +4325,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     sessionId: headlessSessionId,
   });
 
-  // Countdown timer for awaiting_funds step in Stripe headless flow
-  useEffect(() => {
-    if (headlessStep !== "awaiting_funds") {
-      setAwaitingFundsSeconds(40);
-      return;
-    }
-    const timer = setInterval(() => {
-      setAwaitingFundsSeconds(prev => (prev <= 1 ? 0 : prev - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [headlessStep]);
-
   // Swap out BasaltHQ / BasaltHQ, Inc. with the partner brand name in the Link / Stripe interface
   useEffect(() => {
     const targetBrand = theme.brandName || "BasaltSurge";
@@ -4433,6 +4389,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       configLoaded &&
       receipt &&
       stripeHeadless &&
+      !isV2Active &&
       isStripeOnly &&
       paymentReady &&
       !userOptedOutOfStripeBypass &&
@@ -4457,6 +4414,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     configLoaded,
     receipt,
     stripeHeadless,
+    isV2Active,
     stripeOnrampEnabled,
     coinbaseOnrampEnabled,
     transakOnrampEnabled,
@@ -4922,7 +4880,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           kycTiers={headlessKycTiers}
           isAllKycCompleted={isAllKycCompleted}
           onrampLimits={headlessOnrampLimits}
-          onHeadlessSubmitEmailPhone={(email, phone, country, isForceRetry, fullName) => startHeadlessOnramp(email, phone, country, isForceRetry, fullName)}
+          onHeadlessSubmitEmailPhone={configLoaded ? (email, phone, country, isForceRetry, fullName) => startHeadlessOnramp(email, phone, country, isForceRetry, fullName) : undefined}
           onSubmitPhone={headlessSubmitPhone}
           onSubmitKycInfo={submitKycInfo}
           onSubmitKycIdentifiers={headlessSubmitKycIdentifiers}
@@ -6554,14 +6512,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   <div className="w-full max-w-xs flex flex-col items-stretch px-2 animate-in fade-in zoom-in duration-500">
                     <div className={`w-full h-2 rounded-full overflow-hidden relative ${isLightText ? 'bg-white/10' : 'bg-black/10'}`}>
                       <div
-                        className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-1000 ease-linear rounded-full"
-                        style={{ width: `${((40 - awaitingFundsSeconds) / 40) * 100}%` }}
+                        className="h-full w-full bg-gradient-to-r from-emerald-500 to-teal-400 animate-pulse rounded-full"
                       />
                     </div>
                     <div className="flex justify-between w-full mt-2.5 text-[11px]">
                       <span className={isLightText ? 'text-white/50' : 'text-black/50'}>Fulfillment Status</span>
                       <span className="text-emerald-400 font-mono font-bold animate-pulse">
-                        {awaitingFundsSeconds > 0 ? `${awaitingFundsSeconds}s remaining` : 'Finalizing transfer...'}
+                        Awaiting confirmation
                       </span>
                     </div>
                   </div>

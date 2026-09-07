@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { attachCreatedStripeSession, readStripeReceiptForPayment, assertStripeReceiptCanCreateSession } from "@/lib/stripe-receipt-session";
+import { normalizeStripeOnrampCheckoutMode } from "@/lib/stripe-onramp-status";
 
 export const dynamic = 'force-dynamic';
 
@@ -21,11 +23,16 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
+    const checkoutMode = normalizeStripeOnrampCheckoutMode(body.checkoutMode);
     const walletAddress = String(body.walletAddress || "").trim();
     const amount = body.amount ? String(body.amount) : undefined;
     const receiptId = String(body.receiptId || "").trim();
     const brandKey = String(body.brandKey || "").trim();
     const merchantWallet = String(body.merchantWallet || "").trim();
+    if (receiptId) {
+      const container = await getContainer(undefined, undefined, { profile: "critical" });
+      await assertStripeReceiptCanCreateSession(container, await readStripeReceiptForPayment(container, receiptId, merchantWallet));
+    }
     const destinationCurrency = String(body.destinationCurrency || "usdc").trim().toLowerCase();
     const redirectUrl = String(body.redirectUrl || "").trim() || undefined;
 
@@ -57,6 +64,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Attach metadata for reconciliation
+    params.append("metadata[checkoutMode]", checkoutMode);
     if (receiptId) params.append("metadata[receiptId]", receiptId);
     if (brandKey) params.append("metadata[brandKey]", brandKey);
     if (merchantWallet) params.append("metadata[merchantWallet]", merchantWallet);
@@ -103,7 +111,7 @@ export async function POST(req: NextRequest) {
 
     if (receiptId) {
       try {
-        const container = await getContainer();
+        const container = await getContainer(undefined, undefined, { profile: "critical" });
         const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
         const rawId = receiptId.replace(/^receipt:/, "");
         let receipt: any = null;
@@ -157,14 +165,19 @@ export async function POST(req: NextRequest) {
             receipt.onrampAmount = Number(amount);
           }
           receipt.stripeSessionId = data.id;
+          receipt.checkoutMode = checkoutMode;
           receipt.lastUpdatedAt = Date.now();
-          await container.items.upsert(receipt);
+          await attachCreatedStripeSession(container, receipt, data, true);
           console.log(`[STRIPE ONRAMP] Successfully linked Stripe session ${data.id} for receipt ${receiptId}`);
         } else {
           console.warn(`[STRIPE ONRAMP] Receipt ${receiptId} not found in DB`);
+          throw new Error("receipt_not_found");
         }
       } catch (dbErr: any) {
+        if (dbErr?.code === "receipt_payment_in_progress") return NextResponse.json({ ok: false, error: dbErr.message, code: dbErr.code }, { status: 409 });
+        if (dbErr?.code === "receipt_already_paid") return NextResponse.json({ ok: false, error: "This receipt has already been paid.", code: dbErr.code }, { status: 409 });
         console.error("[STRIPE ONRAMP] Failed to persist Stripe session ID to receipt:", dbErr);
+        return NextResponse.json({ ok: false, error: "stripe_session_receipt_attachment_failed" }, { status: 503 });
       }
     }
 
@@ -178,8 +191,8 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     console.error("[STRIPE ONRAMP] Error:", e);
     return NextResponse.json(
-      { ok: false, error: e?.message || "internal_error" },
-      { status: 500 }
+      { ok: false, error: e?.message || "internal_error", code: e?.code },
+      { status: e?.statusCode === 409 ? 409 : 500 }
     );
   }
 }

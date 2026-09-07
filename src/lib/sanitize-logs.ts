@@ -1,14 +1,19 @@
 /**
  * Utility to obscure SSNs, Tax IDs, and sensitive PII from client & server logs.
  */
-export function maskSensitiveData(data: any): any {
+export function maskSensitiveData(data: any, seen = new WeakSet<object>()): any {
   if (data === null || data === undefined) {
     return data;
   }
 
   if (typeof data === "string") {
     // Obscure 9-digit SSN numbers (e.g. 492949611 or 492-94-9611) -> ***-**-9611
-    return data.replace(/\b(\d{3})[-]?(\d{2})[-]?(\d{4})\b/g, "***-**-$3");
+    return data
+      .replace(/\b(cos_[A-Za-z0-9]+)_secret_[A-Za-z0-9]+\b/g, "$1_secret_[REDACTED]")
+      .replace(/\b(?:liwltoken|sk_live|sk_test|rk_live|rk_test)_[A-Za-z0-9_]+\b/g, "[REDACTED]")
+      .replace(/\bBearer\s+[^\s"',}]+/gi, "Bearer [REDACTED]")
+      .replace(/(["']?(?:client_?secret|oauth_?token|access_?token|refresh_?token|verification_?token|crypto_?payment_?token)["']?\s*[:=]\s*["']?)[^\s"',}&]+/gi, "$1[REDACTED]")
+      .replace(/\b(\d{3})[-]?(\d{2})[-]?(\d{4})\b/g, "***-**-$3");
   }
 
   if (data instanceof Error) {
@@ -21,13 +26,20 @@ export function maskSensitiveData(data: any): any {
   }
 
   if (typeof data === "object") {
+    if (seen.has(data)) return "[Circular]";
+    seen.add(data);
     if (Array.isArray(data)) {
-      return data.map(maskSensitiveData);
+      return data.map(value => maskSensitiveData(value, seen));
     }
 
     const sanitized: Record<string, any> = {};
     for (const [key, val] of Object.entries(data)) {
       const lowerKey = key.toLowerCase();
+      const credentialKey = lowerKey.replace(/[^a-z]/g, "");
+      if (["clientsecret", "oauthtoken", "accesstoken", "refreshtoken", "refreshedtoken", "verificationtoken", "cryptopaymenttoken", "authorization", "password", "secretkey"].includes(credentialKey)) {
+        sanitized[key] = "[REDACTED]";
+        continue;
+      }
       const isSensitiveKey =
         lowerKey.includes("ssn") ||
         lowerKey.includes("tax_id") ||
@@ -55,7 +67,7 @@ export function maskSensitiveData(data: any): any {
           sanitized[key] = "***-**-****";
         }
       } else {
-        sanitized[key] = maskSensitiveData(val);
+        sanitized[key] = maskSensitiveData(val, seen);
       }
     }
     return sanitized;

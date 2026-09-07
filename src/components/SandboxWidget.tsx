@@ -163,25 +163,24 @@ export function SandboxWidget() {
   };
 
   useEffect(() => {
-    if (selectedBrand) {
-      fetchBrandConfig(selectedBrand);
-    }
-  }, [selectedBrand]);
-
-  const fetchBrandConfig = async (brandKey: string) => {
+    if (!visible || !selectedBrand) return;
+    const controller = new AbortController();
     setIsConfigLoading(true);
-    try {
-      const res = await fetch(`/api/admin/system/brand-config?brand=${brandKey}`);
-      if (res.ok) {
+    setBrandConfig(null);
+    fetch(`/api/platform/brands/${encodeURIComponent(selectedBrand)}/config`, { signal: controller.signal })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`Brand config request failed (${res.status})`);
         const data = await res.json();
-        setBrandConfig(data);
-      }
-    } catch (e) {
-      console.warn("Failed to fetch brand config:", e);
-    } finally {
-      setIsConfigLoading(false);
-    }
-  };
+        if (!controller.signal.aborted) setBrandConfig(data.brand || null);
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) console.warn("Failed to fetch brand config:", e);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsConfigLoading(false);
+      });
+    return () => controller.abort();
+  }, [visible, selectedBrand]);
 
   const updateCookie = (name: string, val: string) => {
     const isSecure = typeof window !== "undefined" && window.location.protocol === "https:";

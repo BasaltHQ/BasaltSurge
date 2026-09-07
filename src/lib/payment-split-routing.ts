@@ -35,7 +35,7 @@ export function normalizeSettlementFunding(
     return "us_bank_account";
   }
   if (value.includes("credit")) return "credit";
-  if (value.includes("debit")) return "debit";
+  if (value.includes("debit") || value === "prepaid") return "debit";
 
   return isCreditCard ? "credit" : "debit";
 }
@@ -50,7 +50,7 @@ export function resolveStripeOnrampFunding(
   const paymentMethodDetails = session?.payment_method_details || session?.paymentDetails || {};
   const paymentDetailsType = String(paymentDetails?.type || paymentMethodDetails?.type || "").toLowerCase();
   const paymentMethod = String(
-    session?.payment_method || paymentDetails?.payment_method || paymentMethodDetails?.payment_method || ""
+    session?.payment_method || session?.paymentMethod || paymentDetails?.payment_method || paymentMethodDetails?.payment_method || ""
   ).toLowerCase();
   const cardFunding = paymentDetails?.card?.funding || paymentMethodDetails?.card?.funding;
 

@@ -77,6 +77,7 @@ export function useStepProgressionGuard({
   };
 
   const isFulfillmentInFlight =
+    headlessStep === "verifying_wallet_ownership" ||
     headlessStep === "creating_session" ||
     headlessStep === "confirming_fees" ||
     headlessStep === "checking_out" ||
@@ -100,6 +101,9 @@ export function useStepProgressionGuard({
 
   // ─── Rule 2: Card Decline & Payment Error Fallback (Step 4 ➔ Step 3) with Smooth Delay ───
   const declineTimerRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => () => {
+    if (declineTimerRef.current) clearTimeout(declineTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (isPaid || isOrderConfirmed) {
@@ -119,8 +123,9 @@ export function useStepProgressionGuard({
       return;
     }
 
-    // Payment is no longer in-flight and not confirmed while at Step 4 -> Show decline state in modal, then return to Step 3 smoothly after 2.2s
-    if (activeStep === 4) {
+    // Returning to auth/KYC is a recovery step, not evidence of a decline.
+    // Only payment collection/error states may schedule this delayed return.
+    if (activeStep === 4 && (headlessStep === "error" || headlessStep === "collecting_payment")) {
       const actualError = (activeError && activeError !== "none") ? activeError : (effectiveError && effectiveError !== "none") ? effectiveError : null;
       const parsed = actualError
         ? parseOnrampError(actualError, {
@@ -130,10 +135,16 @@ export function useStepProgressionGuard({
           })
         : null;
 
+      if (parsed?.targetStep === 1 || parsed?.targetStep === 2) {
+        if (declineTimerRef.current) clearTimeout(declineTimerRef.current);
+        declineTimerRef.current = null;
+        return;
+      }
+
       const declineReason =
         actualError ||
         parsed?.userMessage ||
-        "Your card was declined or frozen by your bank. Please choose or enter a different card, Apple Pay, Google Pay, or US Bank Account.";
+        "Payment was not completed. Please review your payment method to continue.";
 
       onPaymentDeclined?.(declineReason);
 
@@ -175,7 +186,7 @@ export function useStepProgressionGuard({
 
   // ─── Rule 3: KYC Escalation Guard (Step 3/4 ➔ Step 2) ───
   useEffect(() => {
-    if (isPaid || isOrderConfirmed) return;
+    if (isPaid || isOrderConfirmed || isFulfillmentInFlight) return;
 
     const parsed = parseOnrampError(activeError || effectiveError, {
       isL1Verified: kyc.isL1Verified,
@@ -235,17 +246,21 @@ export function useStepProgressionGuard({
     activeStep,
     isPaid,
     isOrderConfirmed,
+    isFulfillmentInFlight,
     setActiveStep,
   ]);
 
   // ─── Rule 4: Onramp Step Progression & Pre-Verified Auto-Advance (Step 1/2 ➔ Step 3) ───
   useEffect(() => {
-    if (isPaid || isOrderConfirmed) return;
+    if (isPaid || isOrderConfirmed || isFulfillmentInFlight) return;
 
     // A completed step reopened by the customer is an intentional edit, not a
     // stalled progression. Keep it open until their next submission. The
     // payment/fulfillment and KYC safety rules above still take precedence.
     if (manualStepOverride === activeStep) return;
+
+    const recovery = parseOnrampError(activeError || effectiveError);
+    if (recovery?.targetStep === 1 || recovery?.targetStep === 2) return;
 
     // Case 0: Link OTP or phone authentication active in Step 1
     if (
@@ -286,23 +301,6 @@ export function useStepProgressionGuard({
       return;
     }
 
-    // Case B: Explicit KYC or Document Verification step from Onramp
-    if (
-      (!isStep2Satisfied && headlessStep === "collecting_kyc" && !isPaymentReady) ||
-      headlessStep === "collecting_identifiers" ||
-      headlessStep === "accepting_terms" ||
-      (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
-      showStepUpForm ||
-      (isL2Requirement && !kyc.isL2Verified)
-    ) {
-      if (activeStep !== 2) {
-        logTransition(activeStep, 2, `Onramp Step: ${headlessStep || "kyc_required"}`);
-        setActiveStep(2);
-      }
-      return;
-    }
-
-    // Case D: Customer is authenticated via Link session or OTP (only once progressed past auth phase)
     const isAuthComplete =
       isLinkOtpVerified ||
       Boolean(
@@ -327,6 +325,23 @@ export function useStepProgressionGuard({
         ].includes(headlessStep)
       );
 
+    // Case B: Explicit KYC or Document Verification step from Onramp.
+    // A country's derived KYC requirements cannot skip Link authentication.
+    if (
+      (!isStep2Satisfied && headlessStep === "collecting_kyc" && !isPaymentReady) ||
+      headlessStep === "collecting_identifiers" ||
+      headlessStep === "accepting_terms" ||
+      (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
+      (isAuthComplete && (showStepUpForm || (isL2Requirement && !kyc.isL2Verified)))
+    ) {
+      if (activeStep !== 2) {
+        logTransition(activeStep, 2, `Onramp Step: ${headlessStep || "kyc_required"}`);
+        setActiveStep(2);
+      }
+      return;
+    }
+
+    // Case D: Customer is authenticated via Link session or OTP (only once progressed past auth phase)
     if (isAuthComplete && activeStep === 1) {
       if (isStep2Satisfied) {
         logTransition(1, 3, "Customer Pre-Verified / KYC Satisfied");
@@ -350,8 +365,11 @@ export function useStepProgressionGuard({
     isStep2Satisfied,
     isPaid,
     isOrderConfirmed,
+    isFulfillmentInFlight,
     activeStep,
     setActiveStep,
     manualStepOverride,
+    activeError,
+    effectiveError,
   ]);
 }

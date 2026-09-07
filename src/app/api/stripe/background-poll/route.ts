@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { recoverStripeReceiptSession, stripeReceiptWriteCondition, persistStripeReceiptUpdate } from "@/lib/stripe-receipt-session";
 import { sendEmail } from "@/lib/aws/ses";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { generateHtmlEmailTemplate } from "@/lib/notifications/email-template";
@@ -39,10 +40,15 @@ import {
 } from "@/lib/settlement-execution-claim";
 
 export const dynamic = 'force-dynamic';
+export const runtime = "nodejs";
 
 const STRIPE_API_VERSION = "2026-06-24.dahlia";
 const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const activeBackgroundPolls = new Set<string>();
+const SETTLEMENT_ATTEMPTS = 6;
+const SETTLEMENT_RETRY_DELAY_MS = 5000;
+
+class SettlementSubmissionUncertainError extends Error {}
 
 export type SettlementExecutionContext = {
   source: string;
@@ -284,6 +290,9 @@ export async function executeGaslessTransferServer(
       console.log(`[BACKGROUND POLL] USDC balance: ${balance.toString()}`);
     } catch (balErr) {
       console.warn("[BACKGROUND POLL] Failed to read balance:", balErr);
+      // An unavailable balance is not evidence that an earlier transfer
+      // emptied the wallet. Let the caller retry this read.
+      throw balErr;
     }
 
     const requiredUnits = usdcAmountToBaseUnits(usdcAmount);
@@ -319,6 +328,8 @@ export async function executeGaslessTransferServer(
       amountInUnits = balance;
     }
 
+    if (balance < amountInUnits) return null;
+
     console.log(`[BACKGROUND POLL] Transferring ${amountInUnits.toString()} units to ${toAddress}`);
     const tx = prepareContractCall({
       contract: usdcContract,
@@ -326,10 +337,21 @@ export async function executeGaslessTransferServer(
       params: [toAddress, amountInUnits],
     });
 
-    const result = await sendTransaction({
-      account,
-      transaction: tx,
-    });
+    let result: { transactionHash: string };
+    try {
+      result = await sendTransaction({
+        account,
+        transaction: tx,
+      });
+    } catch (submissionError) {
+      // The relayer can accept a sponsored transfer before hash polling
+      // fails. A fresh send may duplicate it; keep the wallet claim and leave
+      // recovery to reconciliation instead of immediately submitting again.
+      retainClaimUntilExpiry = true;
+      throw new SettlementSubmissionUncertainError(
+        submissionError instanceof Error ? submissionError.message : "settlement_submission_uncertain"
+      );
+    }
 
     console.log(`[BACKGROUND POLL] Transaction complete: ${result.transactionHash}`);
     if (executionContext?.onSubmitted) {
@@ -355,6 +377,7 @@ export async function executeGaslessTransferServer(
   } catch (err: any) {
     const errorMsg = err?.message || String(err || "Gasless transfer execution error");
     console.error("[BACKGROUND POLL] executeGaslessTransferServer error:", errorMsg, err?.stack);
+    if (err instanceof SettlementSubmissionUncertainError) throw err;
     throw new Error(errorMsg);
   }
 }
@@ -454,7 +477,7 @@ async function recordStripeFulfillmentProcessing(params: {
     receipt.webhookLastDeliveryOk = false;
     receipt.webhookLastAttemptAt = Date.now();
   }
-  await container.items.upsert(receipt);
+  await persistStripeReceiptUpdate(container, receipt);
 
   if (!shouldDeliver) return;
   void dispatchReceiptStatusWebhookBestEffort(container, receipt, nextStatus, previousStatus, {
@@ -558,6 +581,7 @@ async function runBackgroundPoll(params: {
       const response = await fetch(
         `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
         {
+          signal: AbortSignal.timeout(15_000),
           method: "GET",
           headers: {
             "Authorization": `Bearer ${stripeKey}`,
@@ -607,7 +631,7 @@ async function runBackgroundPoll(params: {
         // Query database receipt to check if client has already stored the card funding type
         let dbFunding = null;
         try {
-          const container = await getContainer();
+          const container = await getContainer(undefined, undefined, { profile: "critical" });
           const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
           const { resource: receipt } = await container.item(docId, merchantWallet).read();
           if (receipt) {
@@ -671,6 +695,7 @@ async function runBackgroundPoll(params: {
               "Stripe-OAuth-Token": customerOAuthToken,
               "Stripe-Version": STRIPE_API_VERSION,
             },
+            signal: AbortSignal.timeout(10_000),
           }
         );
         if (custResponse.ok) {
@@ -701,8 +726,17 @@ async function runBackgroundPoll(params: {
       console.error("[BACKGROUND POLL] Stripe completed fulfillment without a verified USDC destination amount; deferring settlement.");
       resolvedStatus = "failed";
     }
-    const txHash = settlementAmount
-      ? await executeGaslessTransferServer(
+    let txHash: string | null = null;
+    // Stripe fulfillment and Base RPC visibility do not necessarily arrive
+    // together. Every retry still claims the wallet and checks the journal.
+    for (let attempt = 1; settlementAmount && attempt <= SETTLEMENT_ATTEMPTS; attempt++) {
+      if (attempt > 1) {
+        await new Promise((resolve) => setTimeout(resolve, SETTLEMENT_RETRY_DELAY_MS));
+      }
+      let attemptError: string | null = null;
+      let submissionUncertain = false;
+      try {
+        txHash = await executeGaslessTransferServer(
           email,
           targetSplitAddress,
           settlementAmount,
@@ -732,8 +766,34 @@ async function runBackgroundPoll(params: {
               });
             },
           }
-        )
-      : null;
+        );
+        if (!txHash) attemptError = "settlement_deferred_balance_or_claim_unavailable";
+      } catch (error) {
+        attemptError = error instanceof Error ? error.message : "settlement_transfer_failed";
+        submissionUncertain = error instanceof SettlementSubmissionUncertainError;
+        console.warn(`[BACKGROUND POLL] Settlement attempt ${attempt}/${SETTLEMENT_ATTEMPTS} failed:`, error);
+      }
+
+      try {
+        const receiptContainer = await getContainer(undefined, undefined, { profile: "critical" });
+        const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
+        const item = receiptContainer.item(docId, merchantWallet);
+        const { resource: currentReceipt } = await item.read<any>();
+        if (currentReceipt?.stripeSessionId === sessionId) {
+          // A concurrent worker may have completed settlement while this one
+          // waited. Do not overwrite its outcome with a retry error.
+          if (!txHash && (isRecordedSettlementHash(currentReceipt.transactionHash) || isRecordedSettlementHash(currentReceipt.leg2TxHash))) return;
+          await item.patch([
+            { op: "set", path: "/settlementLastAttemptAt", value: Date.now() },
+            { op: "set", path: "/settlementRetryCount", value: attempt },
+            { op: "set", path: "/settlementLastError", value: attemptError },
+          ] as any);
+        }
+      } catch (recordError) {
+        console.warn("[BACKGROUND POLL] Could not record settlement attempt:", recordError);
+      }
+      if (txHash || submissionUncertain) break;
+    }
 
     if (txHash) {
       finalTxHash = txHash;
@@ -741,11 +801,11 @@ async function runBackgroundPoll(params: {
 
       // Update receipt in Cosmos DB
       try {
-        const container = await getContainer();
+        const container = await getContainer(undefined, undefined, { profile: "critical" });
         const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
         let receipt: any = null;
         try {
-          const { resource } = await container.item(docId, merchantWallet ? merchantWallet.toLowerCase() : undefined).read();
+          const { resource } = await container.item(docId, merchantWallet).read();
           receipt = resource;
         } catch {}
 
@@ -861,12 +921,17 @@ async function runBackgroundPoll(params: {
 
     // 1. Update Cosmos DB
     try {
-      const container = await getContainer();
+      const container = await getContainer(undefined, undefined, { profile: "critical" });
       const docId = receiptId.startsWith("receipt:") ? receiptId : `receipt:${receiptId}`;
       const { resource: receipt } = await container.item(docId, merchantWallet).read();
 
       if (receipt) {
-        if (isProtectedPaymentStatus(receipt.status) || receipt.transactionHash || receipt.leg2TxHash || receipt.leg1TxHash) {
+        if (receipt.stripeSessionId !== sessionId) {
+          console.warn(`[BACKGROUND POLL] Ignoring old session ${sessionId}; receipt now belongs to another attempt.`);
+          return;
+        }
+        if (isProtectedPaymentStatus(receipt.status) || isStripePaymentAcceptedStatus(receipt.stripeSessionStatus)
+          || [receipt.transactionHash, receipt.leg2TxHash, receipt.leg1TxHash].some(hash => /^0x[a-f0-9]{64}$/i.test(String(hash || "")))) {
           console.log(`[BACKGROUND POLL] Receipt ${receiptId} is already paid or confirmed on-chain. Skipping failure update.`);
           return;
         }
@@ -886,6 +951,7 @@ async function runBackgroundPoll(params: {
         const nextStatus = paymentAcceptedByStripe
           ? (fallbackAcceptedStatus || "paid")
           : (isDefinitiveFailure ? "failed" : "pending");
+        const writeCondition = stripeReceiptWriteCondition(receipt);
         const previousStatus = String(receipt.status || "pending");
         receipt.status = nextStatus;
         if (fallbackFunding === "us_bank_account") {
@@ -904,7 +970,14 @@ async function runBackgroundPoll(params: {
           receipt.webhookLastAttemptAt = Date.now();
         }
 
-        await container.items.upsert(receipt);
+        // A webhook can mark the receipt paid or replace its session while
+        // this worker is finishing. Never overwrite that newer observation.
+        const fields = ["status", "detectedCardFunding", "isCreditCard", "ttl", "lastUpdatedAt", "statusHistory",
+          "webhookLastStatus", "webhookLastPreviousStatus", "webhookLastDeliveryOk", "webhookLastAttemptAt"];
+        await container.item(docId, merchantWallet).patch(
+          fields.filter(key => receipt[key] !== undefined).map(key => ({ op: "set", path: `/${key}`, value: receipt[key] })),
+          writeCondition
+        );
         if (paymentAcceptedByStripe && receipt.webhookUrl) {
           void dispatchReceiptStatusWebhookBestEffort(container, receipt, nextStatus, previousStatus, {
             merchantWallet,
@@ -915,12 +988,14 @@ async function runBackgroundPoll(params: {
         console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to ${nextStatus} in DB`);
       } else {
         console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found in DB for failure tagging`);
+        return;
       }
     } catch (dbErr) {
       console.error("[BACKGROUND POLL] Database failure update error:", dbErr);
+      return;
     }
 
-    if (isDefinitiveFailure) {
+    if (isDefinitiveFailure && !paymentAcceptedByStripe) {
       // 2. Send transaction failure email to customer
       try {
         console.log(`[BACKGROUND POLL] Sending failure email to ${email}`);
@@ -942,12 +1017,12 @@ async function runBackgroundPoll(params: {
           logoUrl: absoluteLogoUrl || undefined,
           title: "Transaction Failed",
           subtitle: `Receipt #${receiptId}`,
-          message: `Your transaction of $${amount.toFixed(2)} could not be processed. Your payment has failed and you have not been charged. Please try again.`,
+          message: `Stripe reported that your payment of $${amount.toFixed(2)} could not be completed. Check your receipt for its latest status before trying again. Your bank may temporarily show an authorization hold.`,
           details: [
             { label: "Receipt ID", value: receiptId },
             { label: "Amount", value: `$${amount.toFixed(2)}` },
             { label: "Status", value: "Failed" },
-            { label: "Reason", value: "Onramp transaction failed or timed out" },
+            { label: "Reason", value: "Stripe reported a terminal payment failure" },
           ],
           ctaText: "Try Payment Again",
           ctaUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3001"}/portal/${receiptId}?recipient=${encodeURIComponent(merchantWallet)}`,
@@ -1048,14 +1123,10 @@ export async function POST(req: NextRequest) {
       }
       merchantWallet = storedMerchantWallet;
 
-      if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
-        console.error(`[BACKGROUND POLL] Receipt ${receiptId} is bound to ${receipt.stripeSessionId}; rejected ${sessionId}`);
-        return NextResponse.json({ ok: false, error: "receipt_session_mismatch" }, { status: 409 });
-      }
-
       const stripeResponse = await fetch(
         `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
         {
+          signal: AbortSignal.timeout(15_000),
           method: "GET",
           headers: {
             "Authorization": `Bearer ${stripeKey}`,
@@ -1079,6 +1150,13 @@ export async function POST(req: NextRequest) {
       const stripeMerchantWallet = String(stripeSession.metadata?.merchantWallet || stripeSession.metadata?.wallet || "").trim().toLowerCase();
       if (stripeMerchantWallet && stripeMerchantWallet !== merchantWallet.toLowerCase()) {
         return NextResponse.json({ ok: false, error: "stripe_metadata_merchant_mismatch" }, { status: 409 });
+      }
+      if (receipt.stripeSessionId && receipt.stripeSessionId !== sessionId) {
+        try {
+          receipt = await recoverStripeReceiptSession(container, receipt, stripeSession);
+        } catch {
+          return NextResponse.json({ ok: false, error: "receipt_session_mismatch" }, { status: 409 });
+        }
       }
 
       const stripeEmail = String(stripeSession.customer_information?.email || stripeSession.customer_details?.email || "").trim().toLowerCase();
@@ -1158,7 +1236,7 @@ export async function POST(req: NextRequest) {
         receipt.kycRequiredLevel = highestKycTier(receipt.kycRequiredLevel, kycRequiredLevel);
       }
       receipt.lastUpdatedAt = Date.now();
-      await container.items.upsert(receipt);
+      await persistStripeReceiptUpdate(container, receipt);
       verifiedReceipt = receipt;
       console.log(`[BACKGROUND POLL] Verified and saved Stripe metadata for receipt ${receiptId}`);
 
@@ -1198,30 +1276,36 @@ export async function POST(req: NextRequest) {
     }
     activeBackgroundPolls.add(sessionId);
 
-    // Launch background task asynchronously without awaiting
-    (async () => {
-      try {
-        await runBackgroundPoll({
-          sessionId,
-          receiptId,
-          merchantWallet,
-          email,
-          amount,
-          splitAddress,
-          splitAddressCredit,
-          brandKey,
-          detectedCardFunding,
-          kycOccurred,
-          kycLevel,
-          kycRequiredLevel,
-          checkoutMode,
-        });
-      } catch (err) {
-        console.error("[BACKGROUND POLL] Unhandled error in background poll execution task:", err);
-      } finally {
-        activeBackgroundPolls.delete(sessionId);
-      }
-    })();
+    // Track work after the response through the request lifecycle. Persisted
+    // receipts remain recoverable by the scheduler across process restarts.
+    try {
+      after(async () => {
+        try {
+          await runBackgroundPoll({
+            sessionId,
+            receiptId,
+            merchantWallet,
+            email,
+            amount,
+            splitAddress,
+            splitAddressCredit,
+            brandKey,
+            detectedCardFunding,
+            kycOccurred,
+            kycLevel,
+            kycRequiredLevel,
+            checkoutMode,
+          });
+        } catch (err) {
+          console.error("[BACKGROUND POLL] Unhandled error in background poll execution task:", err);
+        } finally {
+          activeBackgroundPolls.delete(sessionId);
+        }
+      });
+    } catch (scheduleError) {
+      activeBackgroundPolls.delete(sessionId);
+      throw scheduleError;
+    }
 
     return NextResponse.json({
       ok: true,

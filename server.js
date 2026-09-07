@@ -7,15 +7,14 @@ const next = require('next');
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = 'localhost';
-// Preserve the existing production/start default when Plesk does not inject a
-// port. The scheduler receives this exact value after the server starts.
+// Preserve the existing production/start default when Plesk does not inject a port.
 const port = process.env.PORT || 3001;
 // when using middleware `hostname` and `port` must be provided below
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
-    createServer(async (req, res) => {
+    const server = createServer(async (req, res) => {
         try {
             // Be sure to pass `true` as the second argument to `url.parse`.
             // This tells it to parse the query portion of the URL.
@@ -40,15 +39,14 @@ app.prepare().then(() => {
             process.exit(1);
         })
         .listen(port, () => {
-            console.log(`> Ready on http://${hostname}:${port}`);
+            const address = server.address();
+            console.log(`> Ready on ${typeof address === 'string' ? address : `http://${hostname}:${address?.port || port}`}`);
             // Start background cron scheduler in production or when START_SCHEDULER is enabled
             if (process.env.NODE_ENV === 'production' || process.env.START_SCHEDULER === 'true') {
                 try {
-                    // Keep the in-process scheduler on the exact port selected
-                    // by this server. This also covers deployments where Plesk
-                    // does not explicitly inject PORT.
-                    process.env.PORT = String(port);
-                    require('./scripts/start-scheduler.js');
+                    // Passenger replaces listen(port) with a Unix socket. Use
+                    // the actual bound address, not the requested TCP port.
+                    require('./scripts/start-scheduler.js').init({ address });
                 } catch (e) {
                     console.error('Failed to load startup scheduler:', e);
                 }

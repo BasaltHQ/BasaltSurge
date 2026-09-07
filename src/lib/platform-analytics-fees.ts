@@ -20,6 +20,7 @@ type ReceiptFeeFields = {
   platformFeeBps?: unknown;
   platformBps?: unknown;
   splitConfig?: { platformFeeBps?: unknown } | null;
+  platformFeeSource?: unknown;
 };
 
 function persistedNonNegativeNumber(value: unknown): number | null {
@@ -37,6 +38,13 @@ export function getPlatformAnalyticsFeeData(receipt: ReceiptFeeFields): Platform
   const parsedTotalUsd = Number(receipt.totalUsd || 0);
   const totalUsd = Number.isFinite(parsedTotalUsd) && parsedTotalUsd > 0 ? parsedTotalUsd : 0;
   const minimumFee = (totalUsd * PLATFORM_ANALYTICS_MIN_FEE_BPS) / 10000;
+
+  // Processed analytics rows expose the calculated fee as platformFee. Preserve
+  // its provenance when reports re-read those rows instead of treating the
+  // contractual floor as newly recorded evidence.
+  if (receipt.platformFeeSource === "minimum_50bps") {
+    return { amount: minimumFee, source: "minimum_50bps" };
+  }
 
   const recordedCandidates: Array<{ amount: number | null; source: PlatformAnalyticsFeeSource }> = [
     {

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
+// @ts-expect-error allowImportingTsExtensions is intentionally disabled for the app build.
+import * as ownership from "./stripe-wallet-ownership.ts";
+const {
   isWalletOwnershipChallengeExpired,
   isWalletOwnershipVerificationRequired,
   isWalletOwnershipVerified,
-} from "./stripe-wallet-ownership";
+} = ownership;
 
 test("recognizes Stripe Travel Rule checkout requirements from SDK and session errors", () => {
   assert.equal(isWalletOwnershipVerificationRequired("wallet_ownership_verification_required"), true);

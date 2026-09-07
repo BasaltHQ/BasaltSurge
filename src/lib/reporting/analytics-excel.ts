@@ -5,6 +5,7 @@ import type {
   AnalyticsReportStat
 } from "./analytics-pdf";
 import { isAnalyticsPaidReceipt } from "@/lib/platform-analytics-metrics";
+import { extractAnalyticsFailureReasons, getAnalyticsFailureReportData } from "@/lib/platform-analytics-failures";
 
 type ReportKind = "executive" | "ledger" | "brands" | "diagnostics";
 
@@ -156,13 +157,15 @@ function summaryRows(stats: AnalyticsReportStat | null): unknown[][] {
   const other = Math.max(0, total - paid - failed);
   return [
     ["All receipt records", total, "records", "All stored receipts in the selected scope"],
-    ["Settled records", paid, "records", "Recognized completed-payment statuses"],
-    ["Failed records", failed, "records", "Records explicitly marked failed"],
+    ["Accepted payment records", paid, "records", "Recognized payment statuses, including pending settlement"],
+    ["Failed / rejected records", failed, "records", "Records currently marked failed or rejected"],
     ["Open / other records", other, "records", "Pending, expired, refunded, or other statuses"],
-    ["Settled GMV", stats?.totalGmv || 0, "USD", "Gross value of settled records"],
+    ["Accepted payment GMV", stats?.totalGmv || 0, "USD", "Gross value of accepted payment records; not a settlement ledger"],
     ["Platform fee revenue", stats?.totalFees || 0, "USD", "Persisted fee evidence or the contractual 50 BPS minimum"],
-    ["Fee-data coverage", (stats?.feeCoveragePct ?? 100) / 100, "ratio", `${stats?.feeKnownCount || 0} settled records with known fee evidence`],
-    ["Average order value", stats?.aov || 0, "USD", "Settled GMV / settled records"],
+    ["Recorded fee evidence", paid > 0 ? (stats?.feeCoveragePct ?? 0) / 100 : null, "ratio", `${stats?.feeKnownCount || 0} accepted records with recorded evidence; excludes contractual model`],
+    ["Recorded platform fees", stats?.feeRecordedTotal || 0, "USD", "Platform fees attributed to recorded evidence"],
+    ["Contractual model fees", stats?.feeModeledTotal || 0, "USD", `${stats?.feeUnknownCount || 0} accepted records use the 50 BPS contractual model`],
+    ["Average order value", stats?.aov || 0, "USD", "Accepted payment GMV / accepted records"],
     ["Raw receipt completion", (stats?.successRate || 0) / 100, "ratio", "Paid records / all raw receipt records"],
     ["Checkout completion", (stats?.completionRate ?? stats?.trueIntegrationRate ?? 0) / 100, "ratio", "Unique paid intents / all unique checkout intents"],
     ["Resolved outcome rate", (stats?.resolvedSuccessRate ?? stats?.trueProcessRate ?? 0) / 100, "ratio", "Unique paid / (unique paid + unique failed); excludes open intents"]
@@ -182,8 +185,10 @@ function brandRows(brands: AnalyticsBrandStat[]): unknown[][] {
     (brand.trueSuccessRate ?? brand.successRate) / 100,
     brand.gmv,
     brand.fees,
-    (brand.feeCoveragePct ?? 100) / 100,
-    brand.gmv > 0 && (brand.feeCoveragePct ?? 100) === 100 ? brand.fees / brand.gmv : null
+    brand.paid > 0 ? (brand.feeCoveragePct ?? 0) / 100 : null,
+    brand.gmv > 0 ? brand.fees / brand.gmv : null,
+    brand.feeRecordedTotal || 0,
+    brand.feeModeledTotal || 0
   ]);
 }
 
@@ -211,9 +216,8 @@ function kycProfileRows(stats: AnalyticsReportStat | null): unknown[][] {
   ];
 }
 
-function failureRows(failures: AnalyticsFailureReason[], stats: AnalyticsReportStat | null): unknown[][] {
-  const failed = stats?.totalFailed || 0;
-  return failures.map((failure, index) => [index + 1, failure.reason, failure.count, failed ? failure.count / failed : 0]);
+function failureRows(failures: ReturnType<typeof getAnalyticsFailureReportData>["reasonCounts"], affected: number): unknown[][] {
+  return failures.map((failure, index) => [index + 1, failure.id, failure.reason, failure.count, affected > 0 ? failure.count / affected : null]);
 }
 
 function receiptRows(receipts: AnalyticsReceiptItem[], timeZone: string): unknown[][] {
@@ -255,7 +259,7 @@ function receiptRows(receipts: AnalyticsReceiptItem[], timeZone: string): unknow
       receipt.stripeSessionId || "",
       receipt.paymentId || "",
       receipt.transactionHash || "",
-      receipt.failureReason || "",
+      extractAnalyticsFailureReasons(receipt).join(" | "),
       items.length,
       text(JSON.stringify(items))
     ];
@@ -278,28 +282,29 @@ const SUMMARY_COLUMNS: SheetColumn[] = [
 ];
 const BRAND_COLUMNS: SheetColumn[] = [
   { label: "Partner", width: 24 }, { label: "Brand Key", width: 18 }, { label: "Raw Receipts", width: 14 },
-  { label: "Estimated Intents", width: 17 }, { label: "Settled", width: 12 }, { label: "Failed", width: 12 },
+   { label: "Estimated Intents", width: 17 }, { label: "Accepted", width: 12 }, { label: "Failed / Rejected", width: 18 },
   { label: "Open / Other", width: 13 }, { label: "Raw Conversion", width: 15, format: "0.0%" },
-  { label: "Estimated Intent Conversion", width: 22, format: "0.0%" }, { label: "Settled GMV", width: 16, format: "$#,##0.00" },
-  { label: "Recorded Platform Fees", width: 21, format: "$#,##0.00" }, { label: "Fee Coverage", width: 14, format: "0.0%" },
-  { label: "Effective Recorded Rate", width: 20, format: "0.00%" }
+   { label: "Estimated Intent Conversion", width: 22, format: "0.0%" }, { label: "Accepted GMV", width: 16, format: "$#,##0.00" },
+   { label: "Platform Fees (Recorded + Model)", width: 28, format: "$#,##0.00" }, { label: "Recorded Fee Coverage", width: 22, format: "0.0%" },
+   { label: "Blended Fee Rate", width: 20, format: "0.00%" },
+   { label: "Recorded Fees USD", width: 20, format: "$#,##0.00" }, { label: "Contractual Model USD", width: 23, format: "$#,##0.00" }
 ];
 const TRANSACTION_COLUMNS: SheetColumn[] = [
   { label: "Storage ID", width: 28 }, { label: "Receipt ID", width: 28 }, { label: "Document ID", width: 28 },
   { label: "Created At", width: 22 }, { label: "Partner", width: 22 }, { label: "Brand Key", width: 17 },
   { label: "Merchant", width: 28 }, { label: "Receipt Wallet", width: 44 }, { label: "Merchant Wallet", width: 44 },
   { label: "Buyer Wallet", width: 44 }, { label: "Customer Email", width: 32 }, { label: "Status", width: 20 },
-  { label: "Amount USD", width: 15, format: "$#,##0.00" }, { label: "Recorded Platform Fee USD", width: 23, format: "$#,##0.00" },
+  { label: "Amount USD", width: 15, format: "$#,##0.00" }, { label: "Platform Fee USD", width: 23, format: "$#,##0.00" },
   { label: "Fee Evidence", width: 20 }, { label: "Funding", width: 18 },
   { label: "Initial Verified KYC", width: 19 }, { label: "Required KYC", width: 15 },
   { label: "Completed During Payment", width: 24 }, { label: "Final Verified KYC", width: 19 },
   { label: "Final KYC Status", width: 18 }, { label: "EU Compliance", width: 36 },
   { label: "Stripe Session ID", width: 34 }, { label: "Payment ID", width: 34 }, { label: "Transaction Hash", width: 68 },
-  { label: "Failure Detail", width: 60 }, { label: "Line Item Count", width: 15 }, { label: "Line Items JSON", width: 80 }
+  { label: "All Recorded Error Signals", width: 80 }, { label: "Line Item Count", width: 15 }, { label: "Line Items JSON", width: 80 }
 ];
 const FAILURE_COLUMNS: SheetColumn[] = [
-  { label: "Rank", width: 10 }, { label: "Recorded Failure Reason", width: 75 }, { label: "Count", width: 14 },
-  { label: "Share of Failed Records", width: 22, format: "0.0%" }
+  { label: "Rank", width: 10 }, { label: "Stable Reason ID", width: 25 }, { label: "Recorded Error Reason", width: 75 }, { label: "Affected Receipts", width: 18 },
+  { label: "Share of Affected Receipts", width: 28, format: "0.0%" }
 ];
 const STATUS_COLUMNS: SheetColumn[] = [
   { label: "Stored Status", width: 28 }, { label: "Record Count", width: 16 }, { label: "Share of Scope", width: 18, format: "0.0%" }
@@ -311,11 +316,14 @@ function definitionRows(): unknown[][] {
     ["Checkout completion", "Unique paid checkout intents divided by all unique intents, including open and unresolved checkouts."],
     ["Resolved outcome rate", "Unique paid intents divided by unique paid plus explicitly failed intents. This deliberately excludes open intents."],
     ["Intent deduplication", "Uses stable receipt, Stripe session, payment, transaction, and non-conflicting recent email/wallet evidence. IP-only and anonymous proximity never merge intents."],
-    ["Settled GMV", "Gross USD value for recognized completion statuses."],
+    ["Accepted payment GMV", "Gross USD value for recognized payment statuses, including ACH pending settlement. This is not a settlement ledger."],
     ["Platform fee revenue", "Uses persisted amountPlatformMinor, platform-fee USD, or platform BPS when available, with a contractual 50 BPS minimum."],
-    ["Fee basis coverage", "Share of paid records assigned either persisted fee evidence or the contractual floor."],
-    ["No recorded failure detail", "The receipt is marked failed but no reason was found in its receipt data, status history, or retained logs."],
-    ["Snapshot", "All sheets in a workbook are built from one complete, snapshot-pinned, filtered batch result."]
+    ["Recorded fee evidence", "Share of accepted records with recorded fee evidence. Contractual minimum_50bps amounts are modeled and excluded from this coverage."],
+    ["Affected receipts", "Raw receipts with persisted error signals in receipt, session, lifecycle or KYC evidence, including receipts that later recovered."],
+    ["Reason share", "Receipts carrying the reason divided by all affected receipts. Counts are inclusive and non-exclusive; percentages need not sum to 100%."],
+    ["Co-occurring pairs", "Each unordered pair is reported once. A counted receipt carries both reasons and may carry additional reasons. No order or causality is implied."],
+    ["No recorded failure detail", "A failure-like status is recorded but no persisted reason was found in the available receipt evidence."],
+    ["Collection version", "All sheets use the same complete collected result. Exact bounds, timezone and any server collection version are included in Scope; a creation cutoff alone does not freeze later updates."]
   ];
 }
 
@@ -329,6 +337,7 @@ export async function exportAnalyticsXLSX(
   timeZone: string
 ): Promise<void> {
   const XLSX = await loadXlsx();
+  const failureData = getAnalyticsFailureReportData(receipts);
   const workbook = XLSX.utils.book_new();
   workbook.Props = {
     Title: `BasaltSurge ${kind} analytics report`,
@@ -346,8 +355,8 @@ export async function exportAnalyticsXLSX(
     BRAND_COLUMNS, brandRows(brands)
   ));
   const addFailures = () => addSheet(XLSX, workbook, "Failure Reasons", buildSheet(
-    XLSX, "Failure Reasons", "Complete distribution of recorded failure details", scope,
-    FAILURE_COLUMNS, failureRows(failures, stats)
+    XLSX, "Failure Reasons", `${failureData.affectedReceiptCount.toLocaleString()} affected receipts; inclusive counts, including recovered receipts`, scope,
+    FAILURE_COLUMNS, failureRows(failureData.reasonCounts, failureData.affectedReceiptCount)
   ));
   const addTransactions = (name = "Transactions", source = receipts) => addSheet(XLSX, workbook, name, buildSheet(
     XLSX, "Transaction Detail", `${source.length.toLocaleString()} complete filtered receipt records`, scope,
@@ -366,8 +375,8 @@ export async function exportAnalyticsXLSX(
     addSummary();
     addBrands();
     addSheet(XLSX, workbook, "Funding Mix", buildSheet(
-      XLSX, "Settled Funding Mix", "Funding classification for recognized settled records", scope,
-      [{ label: "Funding Classification", width: 32 }, { label: "Settled Records", width: 18 }, { label: "Share of Settled", width: 20, format: "0.0%" }],
+      XLSX, "Accepted Funding Mix", "Funding classification for accepted payment records, including pending settlement", scope,
+      [{ label: "Funding Classification", width: 32 }, { label: "Accepted Records", width: 18 }, { label: "Share of Accepted", width: 20, format: "0.0%" }],
       fundingRows(stats)
     ));
     addSheet(XLSX, workbook, "KYC Lifecycle", buildSheet(
@@ -387,7 +396,12 @@ export async function exportAnalyticsXLSX(
     addSummary();
   } else {
     addFailures();
-    addTransactions("Failed Transactions", receipts.filter(receipt => String(receipt.status || "").toLowerCase() === "failed"));
+    addTransactions("Affected Transactions", failureData.receipts);
+    addSheet(XLSX, workbook, "Error Coverage", buildSheet(
+      XLSX, "Error Evidence Coverage", "Raw receipts with any persisted error signal", scope,
+      [{ label: "Metric", width: 34 }, { label: "Count / Value", width: 20 }],
+      [["Receipts in scope", receipts.length], ["Affected receipts", failureData.affectedReceiptCount], ["Affected now accepted", failureData.receipts.filter(isAnalyticsPaidReceipt).length], ["Currently failed / rejected", stats?.totalFailed || 0], ["Missing error detail", failureData.missingDetailCount], ["Detail coverage", failureData.affectedReceiptCount > 0 ? `${failureData.detailCoveragePct.toFixed(1)}%` : "N/A"]]
+    ));
     addStatuses();
     addSummary();
   }

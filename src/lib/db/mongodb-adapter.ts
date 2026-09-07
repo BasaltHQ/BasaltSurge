@@ -19,6 +19,8 @@ export interface MongoQueryOptions {
     session?: ClientSession;
     maxStalenessSeconds?: number;
     profile?: "operational" | "critical" | "analytics" | "cache";
+    /** Atomic compare-and-set for a patch after a point read. */
+    matchFields?: Record<string, unknown>;
 }
 
 // ── Connection pool (cached on globalThis to survive Next.js hot-reloads) ──
@@ -233,11 +235,17 @@ class MongoItemReference {
 
         const filter = this.buildFilter();
         const opts = { ...this._options, ...patchOptions };
-        const result = await this.collection.findOneAndUpdate(filter, update, {
+        const conditionalFilter = opts.matchFields
+            ? { $and: [filter, ...Object.entries(opts.matchFields).map(([field, value]) => ({ [field]: { $eq: value ?? null } }))] }
+            : filter;
+        const result = await this.collection.findOneAndUpdate(conditionalFilter, update, {
             returnDocument: "after",
             session: opts.session,
             writeConcern: { w: "majority", wtimeoutMS: 5000 }
         });
+        if (!result && opts.matchFields) {
+            throw Object.assign(new Error("Patch precondition failed"), { code: 412, statusCode: 412 });
+        }
         return {
             resource: result ? mongoDocToCosmos(result) as T : undefined,
             statusCode: 200,

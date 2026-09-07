@@ -1,7 +1,19 @@
 "use client";
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { createPortal } from "react-dom";
+import { getTransactionExplorerUrl } from "@/lib/transaction-explorer";
+import { getDistinctBrandColor } from "@/components/admin/analytics/analytics-brand-colors";
+export { getDistinctBrandColor, BRAND_COLOR_MAP, DISTINCT_BRAND_PALETTE } from "@/components/admin/analytics/analytics-brand-colors";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import FailureExplorer from "@/components/admin/analytics/FailureExplorer";
+import AnalyticsLoadingScreen from "@/components/admin/analytics/AnalyticsLoadingScreen";
+import StripeAuditExplorer from "@/components/admin/analytics/StripeAuditExplorer";
+import ReceiptInvestigation from "@/components/admin/analytics/ReceiptInvestigation";
+import { CustomInteractiveLineChart, CustomInteractiveBarChart, type GitCommitEvent } from "@/components/admin/analytics/TrendExplorer";
+import SafeInteractiveLineChart from "@/components/admin/analytics/TreasuryExplorer";
+import { aggregateAnalyticsReceipts } from "@/lib/platform-analytics-aggregation";
+import { parseAnalyticsViewState, writeAnalyticsViewState, analyticsMetricValue, type AnalyticsWorkspace, type AnalyticsViewState } from "@/lib/platform-analytics-view-state";
+import "@/components/admin/analytics/analytics-workspace.css";
 import { useActiveAccount } from "thirdweb/react";
 import {
   LineChart,
@@ -75,20 +87,22 @@ import {
   isAnalyticsFailedReceipt,
   isAnalyticsPaidReceipt,
   summarizeAnalyticsKycProfile,
+  resolveAnalyticsKyc,
   type AnalyticsKycProfile,
 } from "@/lib/platform-analytics-metrics";
 import {
   buildAnalyticsFailureHeatmap,
   extractAnalyticsFailureReasons,
+  getAnalyticsFailureReportData,
   type AnalyticsFailureHeatmap,
 } from "@/lib/platform-analytics-failures";
 
 const SYSTEM_TIMEZONE = "America/Los_Angeles";
 const DYNAMIC_TIMEZONE = typeof window !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "America/Los_Angeles";
 
-function getPacificComponents(date: Date) {
+function getPacificComponents(date: Date, timeZone = SYSTEM_TIMEZONE) {
   const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: SYSTEM_TIMEZONE,
+    timeZone,
     year: "numeric",
     month: "numeric",
     day: "numeric",
@@ -101,7 +115,7 @@ function getPacificComponents(date: Date) {
   const map: Record<string, string> = {};
   for (const p of parts) map[p.type] = p.value;
   
-  const dtf = new Intl.DateTimeFormat("en-US", { timeZone: SYSTEM_TIMEZONE, weekday: "short" });
+  const dtf = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" });
   const dayName = dtf.format(date);
   const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const day = dayNames.indexOf(dayName);
@@ -115,87 +129,6 @@ function getPacificComponents(date: Date) {
 }
 
 // ─── Shared Brand Color Engine with Strong Perceptual Contrast ───
-export const BRAND_COLOR_MAP: Record<string, string> = {
-  aggregate: "#c084fc",   // Vibrant Purple / Orchid (Platform Aggregate)
-  aipowerpay: "#38bdf8",  // Clear Sky Blue
-  basaltsurge: "#f43f5e", // Crimson Rose
-  lucky13: "#eab308",     // Warm Amber Gold
-  "data-opt": "#10b981",  // Vivid Emerald Green
-  dataopt: "#10b981",     // Vivid Emerald Green
-  xoinpay: "#ec4899",     // Hot Magenta / Fuchsia
-  lumina: "#06b6d4",      // Cyan / Teal
-  luminapms: "#06b6d4",   // Cyan / Teal
-  chickenbones: "#f97316",// Deep Orange
-  varuna: "#14b8a6",      // Aquamarine Teal
-  osiris: "#8b5cf6",      // Deep Lavender Violet
-  skynetpod: "#6366f1",   // Indigo
-  portalpay: "#a855f7",   // Violet Orchid
-};
-
-export const DISTINCT_BRAND_PALETTE: string[] = [
-  "#10b981", // Emerald Green
-  "#f59e0b", // Golden Amber
-  "#ec4899", // Hot Magenta
-  "#06b6d4", // Bright Cyan
-  "#f97316", // Deep Orange
-  "#8b5cf6", // Rich Violet
-  "#84cc16", // Lime Chartreuse
-  "#f43f5e", // Crimson Rose
-  "#3b82f6", // Royal Blue
-  "#14b8a6", // Aquamarine
-  "#d946ef", // Fuchsia
-  "#eab308", // Warm Gold
-  "#6366f1", // Indigo
-  "#059669", // Dark Mint
-  "#fb7185", // Soft Rose
-  "#0284c7", // Deep Sky Blue
-];
-
-export function getDistinctBrandColor(key?: string, idx?: number): string {
-  if (!key) return DISTINCT_BRAND_PALETTE[0];
-  const normalized = key.toLowerCase().trim();
-  if (BRAND_COLOR_MAP[normalized]) {
-    return BRAND_COLOR_MAP[normalized];
-  }
-  let hash = 0;
-  for (let i = 0; i < normalized.length; i++) {
-    hash = (hash << 5) - hash + normalized.charCodeAt(i);
-    hash |= 0;
-  }
-  const colorIndex = Math.abs(hash + (idx !== undefined ? idx : 0)) % DISTINCT_BRAND_PALETTE.length;
-  return DISTINCT_BRAND_PALETTE[colorIndex];
-}
-
-function getBlockExplorerTxUrl(chainId?: number | string | null, txHash?: string | null): string {
-  if (!txHash) return "";
-  const num = Number(chainId);
-  if (num === 8453) return `https://basescan.org/tx/${txHash}`;
-  if (num === 84532) return `https://sepolia.basescan.org/tx/${txHash}`;
-  if (num === 1) return `https://etherscan.io/tx/${txHash}`;
-  if (num === 137) return `https://polygonscan.com/tx/${txHash}`;
-  if (num === 42161) return `https://arbiscan.io/tx/${txHash}`;
-  if (num === 10) return `https://optimistic.etherscan.com/tx/${txHash}`;
-  if (num === 56) return `https://bscscan.com/tx/${txHash}`;
-  if (num === 43114) return `https://snowtrace.io/tx/${txHash}`;
-  if (num === 101 || txHash.length > 70 || !txHash.startsWith("0x")) return `https://solscan.io/tx/${txHash}`;
-  return `https://basescan.org/tx/${txHash}`;
-}
-
-function getChainDisplayName(chainId?: number | string | null): string {
-  const num = Number(chainId);
-  if (num === 8453) return "Base (8453)";
-  if (num === 84532) return "Base Sepolia (84532)";
-  if (num === 1) return "Ethereum Mainnet (1)";
-  if (num === 137) return "Polygon (137)";
-  if (num === 42161) return "Arbitrum One (42161)";
-  if (num === 10) return "Optimism (10)";
-  if (num === 56) return "BNB Chain (56)";
-  if (num === 43114) return "Avalanche C-Chain (43114)";
-  if (num === 101) return "Solana";
-  if (!chainId) return "Base (8453)";
-  return `Chain ID ${chainId}`;
-}
-
 interface Stat {
   totalCreated: number;
   totalPaid: number;
@@ -210,6 +143,9 @@ interface Stat {
   resolvedSuccessRate?: number;
   totalGmv: number;
   totalFees: number;
+  feeRecordedTotal?: number;
+  feeModeledTotal?: number;
+  fundingProfile?: { all: { credit: number; debit: number; bank: number; unknown: number }; paid: { credit: number; debit: number; bank: number; unknown: number }; total: number; paidTotal: number };
   feeKnownCount?: number;
   feeUnknownCount?: number;
   feeCoveragePct?: number;
@@ -355,13 +291,14 @@ interface ReceiptInfo {
   transactions?: any[];
   originChainId?: number | null;
   destinationChainId?: number | null;
+  chainId?: number | null;
   originToken?: any;
   destinationToken?: any;
   originAmount?: string | number | null;
   quoteSummary?: any;
 }
 
-type FailureHeatmapData = Pick<AnalyticsFailureHeatmap, "topReasons" | "matrix" | "affectedReceiptCount">;
+type FailureHeatmapData = AnalyticsFailureHeatmap;
 
 type AnalyticsReportType = "executive" | "ledger" | "brands" | "diagnostics";
 type AnalyticsReportFormat = "pdf" | "xlsx";
@@ -385,7 +322,7 @@ const REPORT_NAMES: Record<AnalyticsReportType, string> = {
 function getReportErrorGuidance(message: string, format: AnalyticsReportFormat): string {
   const normalized = message.toLowerCase();
   if (normalized.includes("duplicate") || normalized.includes("snapshot")) {
-    return "The analytics snapshot changed or repeated a storage record while it was being collected. Retry to start a fresh, pinned snapshot.";
+    return "The analytics snapshot changed or repeated a storage record while it was being collected. Retry to start a fresh bounded query.";
   }
   if (normalized.includes("ended early") || normalized.includes("batch") || normalized.includes("network") || normalized.includes("fetch")) {
     return "The complete data set could not be collected. Check the connection and retry; the report will restart from the first batch.";
@@ -396,104 +333,14 @@ function getReportErrorGuidance(message: string, format: AnalyticsReportFormat):
   return `The ${format === "pdf" ? "PDF" : "Excel workbook"} was not downloaded. Retry once; if the issue persists, copy the technical detail below for investigation.`;
 }
 
-const getKycLevel = (r: ReceiptInfo): "L0" | "L1" | "L2" | "Unknown" => {
-  const kyc = String(
-    r.kycVerifiedLevel
-    || r.kycCompletedLevel
-    || r.kycFinalLevel
-    || r.kycLevel
-    || r.kyc
-    || ""
-  ).toUpperCase().trim();
-  if (kyc === "L2" || kyc === "LEVEL 2" || kyc === "LEVEL2") return "L2";
-  if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
-    for (const s of r.customerSessions) {
-      const sKyc = String(s?.kycLevel || s?.kyc_level || "").toUpperCase().trim();
-      if (sKyc === "L2") return "L2";
-    }
-  }
-
-  if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1") return "L1";
-  if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
-    for (const s of r.customerSessions) {
-      const sKyc = String(s?.kycLevel || s?.kyc_level || "").toUpperCase().trim();
-      if (sKyc === "L1") return "L1";
-    }
-  }
-
-  // A payment amount or KYC trigger does not prove verification completed.
-  // Only persisted receipt/session tiers are shown as verified.
-  if (kyc === "L0" || kyc === "LEVEL 0" || kyc === "LEVEL0") return "L0";
-  return "Unknown";
-};
+const getKycLevel = (receipt: ReceiptInfo): string => resolveAnalyticsKyc(receipt).highestCompleted;
 
 const isFailedStatus = (status?: string | null) => isAnalyticsFailedReceipt(status);
 
 export const deduplicateReceipts = deduplicateAnalyticsReceipts;
 
 function calculateReceiptStats(receipts: ReceiptInfo[]): Stat {
-  const deduped = deduplicateReceipts(receipts);
-  const kycProfile = summarizeAnalyticsKycProfile(deduped.clusters);
-  let totalPaid = 0;
-  let totalFailed = 0;
-  let totalGmv = 0;
-  let totalFees = 0;
-  let feeKnownCount = 0;
-  let feeUnknownCount = 0;
-  const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
-  const kycLevels = { none: 0, l1: 0, l2: 0 };
-
-  receipts.forEach(receipt => {
-    if (isAnalyticsPaidReceipt(receipt)) {
-      totalPaid += 1;
-      totalGmv += Number(receipt.totalUsd || 0);
-      const hasKnownFee = receipt.platformFeeSource
-        ? receipt.platformFeeSource !== "unavailable"
-        : typeof receipt.platformFee === "number";
-      if (hasKnownFee) {
-        totalFees += Number(receipt.platformFee || 0);
-        feeKnownCount += 1;
-      } else {
-        feeUnknownCount += 1;
-      }
-      const funding = String(receipt.detectedCardFunding || receipt.cardFunding || receipt.funding || "").toLowerCase();
-      if (["bank", "ach", "us_bank_account"].includes(funding)) cardTypes.bank += 1;
-      else if (funding === "credit") cardTypes.credit += 1;
-      else if (funding === "debit") cardTypes.debit += 1;
-      else cardTypes.unknown += 1;
-    } else if (isFailedStatus(receipt.status)) {
-      totalFailed += 1;
-    }
-
-    const kyc = getKycLevel(receipt);
-    if (kyc === "L2") kycLevels.l2 += 1;
-    else if (kyc === "L1") kycLevels.l1 += 1;
-    else kycLevels.none += 1;
-  });
-
-  const totalCreated = receipts.length;
-  return {
-    totalCreated,
-    totalPaid,
-    totalFailed,
-    successRate: totalCreated > 0 ? +((totalPaid / totalCreated) * 100).toFixed(1) : 0,
-    dedupedTotalCreated: deduped.dedupedTotalCreated,
-    dedupedTotalPaid: deduped.dedupedTotalPaid,
-    dedupedTotalFailed: deduped.dedupedTotalFailed,
-    trueIntegrationRate: deduped.trueIntegrationRate,
-    trueProcessRate: deduped.trueProcessRate,
-    completionRate: deduped.completionRate,
-    resolvedSuccessRate: deduped.resolvedSuccessRate,
-    totalGmv: +totalGmv.toFixed(2),
-    totalFees: +totalFees.toFixed(2),
-    feeKnownCount,
-    feeUnknownCount,
-    feeCoveragePct: totalPaid > 0 ? +((feeKnownCount / totalPaid) * 100).toFixed(1) : 100,
-    aov: totalPaid > 0 ? +(totalGmv / totalPaid).toFixed(2) : 0,
-    cardTypes,
-    kycLevels,
-    kycProfile
-  };
+  return aggregateAnalyticsReceipts(receipts, SYSTEM_TIMEZONE).stats;
 }
 
 function resolveReportBrandName(brandKey: string, rows: ReceiptInfo[]): string {
@@ -522,390 +369,39 @@ function resolveReportBrandName(brandKey: string, rows: ReceiptInfo[]): string {
 }
 
 function calculateBrandReportStats(receipts: ReceiptInfo[]): BrandStat[] {
-  const grouped = new Map<string, ReceiptInfo[]>();
-  receipts.forEach(receipt => {
-    const key = receipt.brandKey || "unknown";
-    const bucket = grouped.get(key);
-    if (bucket) bucket.push(receipt);
-    else grouped.set(key, [receipt]);
-  });
-
-  return Array.from(grouped.entries()).map(([brandKey, rows]) => {
-    const stats = calculateReceiptStats(rows);
-    return {
-      brandKey,
-      brandName: resolveReportBrandName(brandKey, rows),
-      total: stats.totalCreated,
-      paid: stats.totalPaid,
-      failed: stats.totalFailed,
-      gmv: stats.totalGmv,
-      fees: stats.totalFees,
-      successRate: stats.successRate,
-      dedupedTotal: stats.dedupedTotalCreated,
-      dedupedPaid: stats.dedupedTotalPaid,
-      dedupedFailed: stats.dedupedTotalFailed,
-      trueSuccessRate: stats.trueIntegrationRate,
-      feeKnownCount: stats.feeKnownCount,
-      feeUnknownCount: stats.feeUnknownCount,
-      feeCoveragePct: stats.feeCoveragePct
-    };
-  }).sort((a, b) => b.gmv - a.gmv);
+  return aggregateAnalyticsReceipts(receipts, SYSTEM_TIMEZONE).brandStats;
 }
 
 function calculateFailureReportReasons(receipts: ReceiptInfo[]): FailureReason[] {
-  const counts = new Map<string, number>();
-  receipts.forEach(receipt => {
-    if (!isFailedStatus(receipt.status)) return;
-    const reason = String(receipt.failureReason || "No recorded failure detail").trim() || "No recorded failure detail";
-    counts.set(reason, (counts.get(reason) || 0) + 1);
-  });
-  return Array.from(counts, ([reason, count]) => ({ reason, count }))
-    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+  return getAnalyticsFailureReportData(receipts).reasonCounts;
 }
 
-const LOADING_STAGES = [
-  { label: "Connecting to Analytics Gateway", detail: "Establishing secure session with platform API..." },
-  { label: "Querying MongoDB Receipts", detail: "Fetching transaction history from 'surge' database..." },
-  { label: "Syncing Gnosis Safe Reserves", detail: "Reading multi-asset treasury balances..." },
-  { label: "Calculating Failure Heatmaps", detail: "Analyzing conversion rates & failure reasons..." },
-  { label: "Finalizing Dashboard UI", detail: "Rendering chart visualizations & controls..." },
-];
-
-function AnalyticsPageLoadingState() {
-  const [progress, setProgress] = useState(15);
-  const [currentStageIdx, setCurrentStageIdx] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 95) return 95;
-        const next = prev + Math.floor(Math.random() * 8) + 4;
-        const capped = Math.min(next, 95);
-        if (capped > 75) setCurrentStageIdx(3);
-        else if (capped > 50) setCurrentStageIdx(2);
-        else if (capped > 25) setCurrentStageIdx(1);
-        return capped;
-      });
-    }, 180);
-
-    return () => clearInterval(timer);
-  }, []);
-
-  const currentStage = LOADING_STAGES[currentStageIdx] || LOADING_STAGES[0];
-  const radius = 50;
-  const circumference = 2 * Math.PI * radius; // Approx 314.16
-  const strokeDashoffset = circumference - (circumference * progress) / 100;
-
-  return (
-    <div className="relative w-[calc(100%+2rem)] sm:w-[calc(100%+3rem)] lg:w-[calc(100%+4rem)] -mx-4 sm:-mx-6 lg:-mx-8 -mt-6 sm:-mt-8 h-[calc(100vh-88px)] max-h-[calc(100vh-88px)] p-6 flex flex-col justify-between overflow-hidden text-left bg-zinc-950 text-white animate-in fade-in duration-300">
-      
-      {/* Background Cyber Mesh Grid */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff03_1px,transparent_1px),linear-gradient(to_bottom,#ffffff03_1px,transparent_1px)] bg-[size:3rem_3rem] pointer-events-none" />
-      <div className="absolute -top-32 -left-32 w-[500px] h-[500px] bg-primary/10 rounded-full blur-[140px] pointer-events-none" />
-      <div className="absolute -bottom-32 -right-32 w-[500px] h-[500px] bg-purple-500/10 rounded-full blur-[140px] pointer-events-none" />
-
-      {/* Top Header Telemetry Banner (Flush Edge-to-Edge) */}
-      <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3.5 border-b border-white/10 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/20 via-purple-500/20 to-emerald-500/20 border border-primary/40 flex items-center justify-center text-primary shadow-[0_0_20px_rgba(59,130,246,0.4)]">
-            <Activity className="w-5 h-5 animate-pulse text-primary" />
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-widest font-mono font-bold text-primary flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              <span>SYSTEM TELEMETRY INITIALIZING • NODE #1</span>
-            </div>
-            <h2 className="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5 bg-gradient-to-r from-white via-white to-purple-300 bg-clip-text text-transparent">
-              Platform Analytics Engine
-            </h2>
-          </div>
-        </div>
-
-        {/* Live Gateway Diagnostics Chips */}
-        <div className="flex flex-wrap items-center gap-2 bg-white/[0.03] border border-white/10 p-1.5 rounded-xl text-[11px] font-mono">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04]">
-            <span className="text-white/40">LATENCY:</span>
-            <span className="text-emerald-400 font-bold">14ms</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04]">
-            <span className="text-white/40">GATEWAY:</span>
-            <span className="text-primary font-bold">ONLINE</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04]">
-            <span className="text-white/40">MONGO (surge):</span>
-            <span className="text-purple-400 font-bold">SYNCING</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04]">
-            <span className="text-white/40">SAFE TREASURY:</span>
-            <span className="text-emerald-400 font-bold">READY</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Center Section: Grid (Radial Gauge + Pipeline Stages) */}
-      <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-6 items-center shrink-0 my-1">
-        
-        {/* Left Column: Centerpiece Radial HUD Gauge */}
-        <div className="lg:col-span-5 flex flex-col items-center justify-center p-4 rounded-2xl bg-white/[0.02] border border-white/10 relative overflow-visible shadow-xl backdrop-blur-xl">
-          <div className="relative w-36 h-36 flex items-center justify-center overflow-visible">
-            {/* Outer Spinning Decorative Tick Lines */}
-            <div className="absolute inset-0 rounded-full border border-dashed border-primary/30 animate-[spin_15s_linear_infinite]" />
-            <div className="absolute -inset-1.5 rounded-full border border-purple-500/20 animate-[spin_25s_linear_infinite_reverse]" />
-
-            {/* Radial Progress SVG Gauge */}
-            <svg className="w-full h-full transform -rotate-90 overflow-visible" viewBox="0 0 130 130">
-              <circle
-                cx="65"
-                cy="65"
-                r={radius}
-                className="stroke-zinc-800/80"
-                strokeWidth="8"
-                fill="transparent"
-              />
-              <circle
-                cx="65"
-                cy="65"
-                r={radius}
-                className="stroke-primary transition-all duration-300 ease-out"
-                strokeWidth="8"
-                strokeDasharray={circumference}
-                strokeDashoffset={strokeDashoffset}
-                strokeLinecap="round"
-                fill="transparent"
-                style={{
-                  filter: "drop-shadow(0 0 10px rgba(59, 130, 246, 0.9)) drop-shadow(0 0 18px rgba(168, 85, 247, 0.5))",
-                }}
-              />
-            </svg>
-
-            {/* Central Dynamic Numeric Counter */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-center select-none">
-              <span className="text-3xl font-black text-white font-mono tracking-tight drop-shadow-[0_0_12px_rgba(255,255,255,0.6)]">
-                {progress}%
-              </span>
-              <span className="text-[9px] uppercase tracking-widest text-primary font-bold font-mono mt-0.5 bg-primary/10 px-2 py-0.5 rounded-full border border-primary/30">
-                INITIALIZED
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-3 text-center space-y-0.5">
-            <div className="text-xs font-bold text-white flex items-center justify-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-ping" />
-              <span>{currentStage.label}</span>
-            </div>
-            <div className="text-[10px] text-muted-foreground max-w-xs truncate">{currentStage.detail}</div>
-          </div>
-        </div>
-
-        {/* Right Column: Compact Command Pipeline Checklist */}
-        <div className="lg:col-span-7 space-y-2">
-          <div className="text-[10px] font-mono font-bold text-white/50 uppercase tracking-widest flex items-center justify-between pb-0.5">
-            <span>EXECUTION PIPELINE STAGES</span>
-            <span>STATUS DISPATCH</span>
-          </div>
-
-          {LOADING_STAGES.map((stg, idx) => {
-            const isDone = idx < currentStageIdx;
-            const isCurrent = idx === currentStageIdx;
-
-            return (
-              <div
-                key={idx}
-                className={`p-2.5 rounded-xl border transition-all duration-300 flex items-center justify-between gap-3 ${
-                  isCurrent
-                    ? "bg-primary/15 border-primary/50 shadow-[0_0_20px_rgba(59,130,246,0.2)]"
-                    : isDone
-                    ? "bg-white/[0.03] border-emerald-500/25 text-white/90"
-                    : "bg-white/[0.01] border-white/5 text-white/30"
-                }`}
-              >
-                <div className="flex items-center gap-3 min-w-0">
-                  {isDone ? (
-                    <div className="w-6 h-6 rounded-lg bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(16,185,129,0.3)]">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                    </div>
-                  ) : isCurrent ? (
-                    <div className="w-6 h-6 rounded-lg bg-primary/25 border border-primary/50 flex items-center justify-center shrink-0 shadow-[0_0_12px_rgba(59,130,246,0.4)]">
-                      <RefreshCw className="w-3.5 h-3.5 text-primary animate-spin" />
-                    </div>
-                  ) : (
-                    <div className="w-6 h-6 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
-                      <span className="text-[10px] font-mono text-white/30 font-bold">{idx + 1}</span>
-                    </div>
-                  )}
-                  <div className="truncate">
-                    <div className={`text-xs font-bold truncate ${isDone ? "text-white" : isCurrent ? "text-white" : "text-white/40"}`}>
-                      {stg.label}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground truncate hidden sm:block">
-                      {stg.detail}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="shrink-0 font-mono text-[9px] font-bold">
-                  {isDone && <span className="text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-lg border border-emerald-500/30">READY</span>}
-                  {isCurrent && <span className="text-primary bg-primary/20 px-2 py-0.5 rounded-lg border border-primary/40 animate-pulse">EXECUTING</span>}
-                  {!isDone && !isCurrent && <span className="text-white/30 px-2 py-0.5">QUEUED</span>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Deployment Engine Progress Bar */}
-      <div className="relative z-10 space-y-1.5 shrink-0 my-1">
-        <div className="flex items-center justify-between text-[11px] font-mono font-bold">
-          <span className="text-white/70 uppercase tracking-wider flex items-center gap-2">
-            <RefreshCw className="w-3.5 h-3.5 text-primary animate-spin" />
-            <span>OVERALL TELEMETRY DEPLOYMENT ENGINE</span>
-          </span>
-          <span className="text-primary text-xs">{progress}% COMPLETE</span>
-        </div>
-
-        <div className="h-3.5 w-full bg-zinc-900/90 rounded-full border border-white/15 p-0.5 shadow-inner overflow-hidden relative">
-          <div
-            className="h-full bg-gradient-to-r from-primary via-purple-500 to-emerald-400 rounded-full transition-all duration-300 shadow-[0_0_20px_rgba(59,130,246,0.9)] relative"
-            style={{ width: `${progress}%` }}
-          >
-            <div className="absolute right-0 top-0 bottom-0 w-3 bg-white rounded-full animate-pulse shadow-[0_0_12px_#ffffff]" />
-          </div>
-        </div>
-
-        {/* Metric Tick Marks */}
-        <div className="flex items-center justify-between text-[9px] text-white/40 font-mono font-bold px-1">
-          <span>0% (IDLE)</span>
-          <span>25% (GATEWAY)</span>
-          <span>50% (MONGO)</span>
-          <span>75% (SAFE)</span>
-          <span>100% (READY)</span>
-        </div>
-      </div>
-
-      {/* LOWER SECTION: Industrial-Grade High-Tech Telemetry Metrics Grid & Terminal Log Feed */}
-      <div className="relative z-10 shrink-0 pt-2 border-t border-white/10 space-y-3">
-        <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-primary animate-pulse" />
-            <span className="text-xs font-extrabold text-white font-mono tracking-tight uppercase">
-              Real-Time System Telemetry & Pipeline Metrics
-            </span>
-          </div>
-          <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-            <span>TELEMETRY METRICS ACTIVE</span>
-          </span>
-        </div>
-
-        {/* 4-Column High-Tech Telemetry Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          
-          {/* Card 1: MongoDB 'surge' Database Metadata */}
-          <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/10 space-y-1.5 backdrop-blur-xl shadow-lg relative overflow-hidden">
-            <div className="flex items-center justify-between text-[10px] font-mono font-bold text-white/50">
-              <span className="flex items-center gap-1.5 text-purple-400">
-                <Database className="w-3.5 h-3.5" />
-                <span>MONGODB (surge)</span>
-              </span>
-              <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">ONLINE</span>
-            </div>
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm font-black font-mono text-white tracking-tight">surge <span className="text-[10px] font-normal text-white/40">database</span></span>
-              <span className="text-[10px] font-mono text-primary font-bold">14ms latency</span>
-            </div>
-            <div className="text-[9px] text-white/40 font-mono truncate">receipts collection (skynetpod)</div>
-            <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden relative mt-1">
-              <div className="h-full bg-purple-500 rounded-full w-[100%]" />
-            </div>
-          </div>
-
-          {/* Card 2: Stripe Onramp Headless Regional Scope */}
-          <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/10 space-y-1.5 backdrop-blur-xl shadow-lg relative overflow-hidden">
-            <div className="flex items-center justify-between text-[10px] font-mono font-bold text-white/50">
-              <span className="flex items-center gap-1.5 text-primary">
-                <Sliders className="w-3.5 h-3.5" />
-                <span>STRIPE ONRAMP</span>
-              </span>
-              <span className="text-primary bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20">EU + US SCOPE</span>
-            </div>
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm font-black font-mono text-white tracking-tight">$10,000 <span className="text-[10px] font-normal text-white/40">max limit</span></span>
-              <span className="text-[10px] font-mono text-emerald-400 font-bold">ACTIVE</span>
-            </div>
-            <div className="text-[9px] text-white/40 font-mono truncate">skynetpod merchant brand scope</div>
-            <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden relative mt-1">
-              <div className="h-full bg-primary rounded-full w-[100%]" />
-            </div>
-          </div>
-
-          {/* Card 3: Gnosis Safe Treasury Reserves */}
-          <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/10 space-y-1.5 backdrop-blur-xl shadow-lg relative overflow-hidden">
-            <div className="flex items-center justify-between text-[10px] font-mono font-bold text-white/50">
-              <span className="flex items-center gap-1.5 text-emerald-400">
-                <Building2 className="w-3.5 h-3.5" />
-                <span>GNOSIS SAFE</span>
-              </span>
-              <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">ON-CHAIN</span>
-            </div>
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm font-black font-mono text-white tracking-tight">3 ASSETS <span className="text-[10px] font-normal text-white/40">USDC/USDT</span></span>
-              <span className="text-[10px] font-mono text-emerald-400 font-bold">100% SYNCED</span>
-            </div>
-            <div className="text-[9px] text-white/40 font-mono truncate">Multi-sig reserve verification</div>
-            <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden relative mt-1">
-              <div className="h-full bg-emerald-400 rounded-full w-[100%]" />
-            </div>
-          </div>
-
-          {/* Card 4: Failure Heatmap Matrix AI */}
-          <div className="p-3 rounded-2xl bg-white/[0.02] border border-white/10 space-y-1.5 backdrop-blur-xl shadow-lg relative overflow-hidden">
-            <div className="flex items-center justify-between text-[10px] font-mono font-bold text-white/50">
-              <span className="flex items-center gap-1.5 text-rose-400">
-                <BarChart2 className="w-3.5 h-3.5" />
-                <span>HEATMAP ENGINE</span>
-              </span>
-              <span className="text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">5x5 GRID</span>
-            </div>
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm font-black font-mono text-white tracking-tight">5 CATEGORIES <span className="text-[10px] font-normal text-white/40">25 combos</span></span>
-              <span className="text-[10px] font-mono text-purple-400 font-bold">SYNTHESIZED</span>
-            </div>
-            <div className="text-[9px] text-white/40 font-mono truncate">Payment & gateway exceptions</div>
-            <div className="h-1.5 w-full bg-zinc-900 rounded-full overflow-hidden relative mt-1">
-              <div className="h-full bg-rose-500 rounded-full w-[100%]" />
-            </div>
-          </div>
-
-        </div>
-
-        {/* Live Animated Console Terminal Stream Line */}
-        <div className="rounded-xl bg-black/60 border border-white/10 p-2.5 flex items-center justify-between text-[11px] font-mono shadow-inner">
-          <div className="flex items-center gap-2.5 truncate">
-            <Terminal className="w-4 h-4 text-primary shrink-0 animate-pulse" />
-            <span className="text-white/40">[0.180s]</span>
-            <span className="text-emerald-400 font-bold truncate">
-              [UI_DISPATCH] All platform telemetry streams verified • Instantiating TradingView charts & drawer controls...
-            </span>
-          </div>
-          <span className="text-[10px] text-white/40 shrink-0 font-bold hidden sm:block">BUFFER: 512 KB</span>
-        </div>
-
-      </div>
-
-      {/* DYNAMIC HEIGHT BOTTOM MODULE: Dynamic 2D Side-Scrolling Rollercoaster Chart Animation */}
-      <div className="flex-1 min-h-0 w-full mt-2.5">
-        <SideScrollerRollercoaster />
-      </div>
-
-    </div>
-  );
+function readAnalyticsView(): AnalyticsViewState {
+  if (typeof window === "undefined") return parseAnalyticsViewState(new URLSearchParams());
+  return parseAnalyticsViewState(new URLSearchParams(window.location.search));
 }
 
 export default function PlatformAnalyticsPanel() {
   const account = useActiveAccount();
   const wallet = account?.address || "";
+  const [initialView] = useState(readAnalyticsView);
+  const [workspace, setWorkspace] = useState<AnalyticsWorkspace>(initialView.workspace);
+  const [density, setDensity] = useState<"comfortable" | "compact">(initialView.density);
+  const [queryMetadata, setQueryMetadata] = useState<any>(null);
+  const [serverComparison, setServerComparison] = useState<any>(null);
+  const [safeMetadata, setSafeMetadata] = useState<any>(null);
+  const [receiptLinkMessage, setReceiptLinkMessage] = useState("");
+  const receiptLinkRestored = useRef(!initialView.receipt);
+  const dialogReturnFocus = useRef<HTMLElement | null>(null);
+  const rememberDialogFocus = () => { dialogReturnFocus.current = document.activeElement as HTMLElement | null; };
+  const restoreDialogFocus = (event: Event) => {
+    event.preventDefault();
+    const target = dialogReturnFocus.current;
+    if (target?.isConnected) target.focus();
+    else document.querySelector<HTMLButtonElement>('.analytics-workspaces [aria-current="page"]')?.focus();
+  };
+  const [logErrors, setLogErrors] = useState<Record<string, string>>({});
+  const logsInFlight = useRef(new Set<string>());
 
   const [loading, setLoading] = useState(true);
   const [isRefetching, setIsRefetching] = useState(false);
@@ -918,12 +414,10 @@ export default function PlatformAnalyticsPanel() {
   const [recentReceipts, setRecentReceipts] = useState<ReceiptInfo[]>([]);
   const [dailySeries, setDailySeries] = useState<any[]>([]);
   const [bpFlipped, setBpFlipped] = useState(false);
-  const [tfrFlipped, setTfrFlipped] = useState(false);
-  const [selectedErrorCombo, setSelectedErrorCombo] = useState<[string, string] | null>(null);
-  const [hoveredHeatmapCell, setHoveredHeatmapCell] = useState<{ x: number; y: number; reasonA: string; reasonB: string; val: number } | null>(null);
-  const [chartMetric, setChartMetric] = useState<"successRate" | "amountEarned">("successRate");
+  const [selectedErrorCombo, setSelectedErrorCombo] = useState<[string, string] | null>(initialView.reasons);
+  const [chartMetric, setChartMetric] = useState<"successRate" | "amountEarned">(initialView.metric);
   const [brandMetric, setBrandMetric] = useState<"successRate" | "amountEarned">("successRate");
-  const [scaleType, setScaleType] = useState<"linear" | "log">("linear");
+  const [scaleType, setScaleType] = useState<"linear" | "log">(initialView.scale);
   const [brandScale, setBrandScale] = useState<"linear" | "log">("linear");
   const [showCoaster, setShowCoaster] = useState(false);
   const [gitCommits, setGitCommits] = useState<GitCommitEvent[]>([]);
@@ -981,7 +475,7 @@ export default function PlatformAnalyticsPanel() {
 
   // Gnosis Safe states
   const [safeBalanceHistory, setSafeBalanceHistory] = useState<any[]>([]);
-  const [safeTokenPrices, setSafeTokenPrices] = useState<Record<string, number>>({ USDC: 1, USDT: 1, cbBTC: 60000, cbXRP: 1.5, SOL: 180, ETH: 3400 });
+  const [safeTokenPrices, setSafeTokenPrices] = useState<Record<string, number>>({});
   const [safeLoading, setSafeLoading] = useState(false);
   const [safeError, setSafeError] = useState<string | null>(null);
 
@@ -1020,22 +514,24 @@ export default function PlatformAnalyticsPanel() {
   }, [fetchedSiteConfigs]);
 
   // Filters
-  const [selectedBrand, setSelectedBrand] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [timeRange, setTimeRange] = useState<string>("today");
+  const [selectedBrand, setSelectedBrand] = useState<string>(initialView.brand);
+  const [statusFilter, setStatusFilter] = useState<string>(initialView.status);
+  const [timeRange, setTimeRange] = useState<string>(initialView.range);
   const [customStartDate, setCustomStartDate] = useState<string>(() => {
+    if (initialView.from) return initialView.from;
     const d = new Date();
     d.setDate(d.getDate() - 7);
     return d.toISOString().split("T")[0];
   });
   const [customEndDate, setCustomEndDate] = useState<string>(() => {
+    if (initialView.to) return initialView.to;
     return new Date().toISOString().split("T")[0];
   });
-  const [selectedWeekOffset, setSelectedWeekOffset] = useState<number>(0);
-  const [selectedMonthOffset, setSelectedMonthOffset] = useState<number>(0);
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [appliedSearch, setAppliedSearch] = useState<string>("");
-  const [searchMode, setSearchMode] = useState<"all" | "receiptId" | "email" | "session" | "wallet">("all");
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState<number>(initialView.week);
+  const [selectedMonthOffset, setSelectedMonthOffset] = useState<number>(initialView.month);
+  const [searchQuery, setSearchQuery] = useState<string>(initialView.search);
+  const [appliedSearch, setAppliedSearch] = useState<string>(initialView.search);
+  const [searchMode, setSearchMode] = useState<"all" | "receiptId" | "email" | "session" | "wallet">(initialView.searchMode);
   const [totalServerMatches, setTotalServerMatches] = useState<number>(0);
 
   // Batched Large Query Loading State
@@ -1058,7 +554,7 @@ export default function PlatformAnalyticsPanel() {
   const [activeExportFormat, setActiveExportFormat] = useState<AnalyticsReportFormat | null>(null);
   const [exportError, setExportError] = useState<ReportExportError | null>(null);
 
-  const [kycFilter, setKycFilter] = useState<string>("all");
+  const [kycFilter, setKycFilter] = useState<string>(initialView.kyc);
   const [isCardFundingFlipped, setIsCardFundingFlipped] = useState<boolean>(false);
 
   // Sorting
@@ -1075,28 +571,13 @@ export default function PlatformAnalyticsPanel() {
   };
 
   // Investigation target / Expanded receipt IDs set (supports multiple simultaneous rows!)
-  const [expandedReceiptIds, setExpandedReceiptIds] = useState<Set<string>>(new Set());
-  const [flippedReceiptIds, setFlippedReceiptIds] = useState<Set<string>>(new Set());
-  const [mobileCardActiveTab, setMobileCardActiveTab] = useState<Record<string, string | null>>({});
+  const [expandedReceiptIds, setExpandedReceiptIds] = useState<Set<string>>(new Set(initialView.receipt ? [initialView.receipt] : []));
   const [mobileDrawerReceipt, setMobileDrawerReceipt] = useState<any | null>(null);
-  const [activeTabMap, setActiveTabMap] = useState<Record<string, string>>({});
+  const [activeTabMap, setActiveTabMap] = useState<Record<string, string>>(initialView.receipt ? { [initialView.receipt]: initialView.receiptTab } : {});
   const [expandedLogs, setExpandedLogs] = useState<Record<string, any[]>>({});
   const [loadingLogs, setLoadingLogs] = useState<Record<string, boolean>>({});
   const [refreshingLimits, setRefreshingLimits] = useState<Record<string, boolean>>({});
   const [refreshLimitsStatus, setRefreshLimitsStatus] = useState<Record<string, string>>({});
-
-  const toggleFlipCard = (receiptId: string) => {
-    setFlippedReceiptIds(prev => {
-      const next = new Set(prev);
-      if (next.has(receiptId)) {
-        next.delete(receiptId);
-      } else {
-        next.add(receiptId);
-        fetchReceiptLogs(receiptId);
-      }
-      return next;
-    });
-  };
 
   const enrichCustomerLimits = useCallback(async (receiptId: string) => {
     if (!wallet || refreshingLimits[receiptId]) return;
@@ -1141,9 +622,26 @@ export default function PlatformAnalyticsPanel() {
   // Pagination State
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(25);
-  const [successRateMode, setSuccessRateMode] = useState<"true_integration" | "integration" | "process">("true_integration");
-  const [timezoneMode, setTimezoneMode] = useState<"system" | "dynamic">("system");
+  const [successRateMode, setSuccessRateMode] = useState<"true_integration" | "integration" | "process">(initialView.basis);
+  const [timezoneMode, setTimezoneMode] = useState<"system" | "dynamic">(initialView.timezone);
   const [fetchLimit, setFetchLimit] = useState<number | "all">(500);
+  const effectiveTimezone = timezoneMode === "dynamic" ? DYNAMIC_TIMEZONE : SYSTEM_TIMEZONE;
+  const resetAnalyticsQuery = () => {
+    setSelectedBrand("all"); setStatusFilter("all"); setKycFilter("all"); setTimeRange("today");
+    setSelectedWeekOffset(0); setSelectedMonthOffset(0); setSearchQuery(""); setAppliedSearch(""); setSelectedErrorCombo(null);
+  };
+  useEffect(() => {
+    const receipt = mobileDrawerReceipt?.receiptId || Array.from(expandedReceiptIds).at(-1) || "";
+    const state: AnalyticsViewState = { workspace, density, brand: selectedBrand, status: statusFilter, kyc: kycFilter,
+      range: timeRange, from: customStartDate, to: customEndDate, week: selectedWeekOffset, month: selectedMonthOffset,
+      search: appliedSearch, searchMode, basis: successRateMode, timezone: timezoneMode, reasons: selectedErrorCombo,
+      receipt, receiptTab: activeTabMap[receipt] || "overview", metric: chartMetric, scale: scaleType };
+    const url = new URL(window.location.href);
+    url.search = writeAnalyticsViewState(url.searchParams, state).toString();
+    window.history.replaceState(window.history.state, "", url);
+  }, [workspace, density, selectedBrand, statusFilter, kycFilter, timeRange, customStartDate, customEndDate,
+    selectedWeekOffset, selectedMonthOffset, appliedSearch, searchMode, successRateMode, timezoneMode, selectedErrorCombo,
+    mobileDrawerReceipt, expandedReceiptIds, activeTabMap, chartMetric, scaleType]);
 
   // Session deduplication cluster map for highlighting cart revisions
   const [isAlgorithmModalOpen, setIsAlgorithmModalOpen] = useState<boolean>(false);
@@ -1154,7 +652,7 @@ export default function PlatformAnalyticsPanel() {
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedBrand, statusFilter, timeRange, searchQuery, appliedSearch, searchMode, kycFilter, sortKey, sortDirection, fetchLimit]);
+  }, [selectedBrand, statusFilter, timeRange, appliedSearch, searchMode, kycFilter, sortKey, sortDirection, fetchLimit, selectedErrorCombo, customStartDate, customEndDate, selectedWeekOffset, selectedMonthOffset, timezoneMode, pageSize]);
 
   useEffect(() => {
     if (!exportError) return;
@@ -1176,7 +674,9 @@ export default function PlatformAnalyticsPanel() {
   }, [searchQuery, appliedSearch]);
 
   const fetchReceiptLogs = useCallback(async (receiptId: string) => {
-    if (expandedLogs[receiptId]) return; // Already loaded
+    if (expandedLogs[receiptId] || logsInFlight.current.has(receiptId)) return;
+    logsInFlight.current.add(receiptId);
+    setLogErrors(prev => ({ ...prev, [receiptId]: "" }));
     setLoadingLogs(prev => ({ ...prev, [receiptId]: true }));
     try {
       const res = await fetch(`/api/platform/receipt-logs?receiptId=${encodeURIComponent(receiptId)}`, {
@@ -1189,11 +689,12 @@ export default function PlatformAnalyticsPanel() {
       if (res.ok && data.ok) {
         setExpandedLogs(prev => ({ ...prev, [receiptId]: data.logs }));
       } else {
-        console.error("Failed to load logs:", data.error);
+        throw new Error(data.error || "Receipt logs could not be loaded");
       }
     } catch (err) {
-      console.error("Error loading logs:", err);
+      setLogErrors(prev => ({ ...prev, [receiptId]: err instanceof Error ? err.message : "Receipt logs could not be loaded" }));
     } finally {
+      logsInFlight.current.delete(receiptId);
       setLoadingLogs(prev => ({ ...prev, [receiptId]: false }));
     }
   }, [wallet, expandedLogs]);
@@ -1205,7 +706,6 @@ export default function PlatformAnalyticsPanel() {
         next.delete(receiptId);
       } else {
         next.add(receiptId);
-        fetchReceiptLogs(receiptId);
       }
       return next;
     });
@@ -1216,7 +716,6 @@ export default function PlatformAnalyticsPanel() {
       const next = new Set(prev);
       receiptIds.forEach(id => {
         next.add(id);
-        fetchReceiptLogs(id);
       });
       return next;
     });
@@ -1245,6 +744,7 @@ export default function PlatformAnalyticsPanel() {
       kycFilter,
       includeAggregates: includeAggregates ? "true" : "false"
     });
+    Array.from(new Set(selectedErrorCombo || [])).forEach(reason => params.append("failureReason", reason));
     if (customStartDate) params.set("customStart", customStartDate);
     if (customEndDate) params.set("customEnd", customEndDate);
     if (snapshotEnd) params.set("snapshotEnd", snapshotEnd);
@@ -1254,7 +754,7 @@ export default function PlatformAnalyticsPanel() {
       params.set("searchMode", searchMode);
     }
     return params;
-  }, [timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, statusFilter, kycFilter, customStartDate, customEndDate, appliedSearch, searchMode]);
+  }, [timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, statusFilter, kycFilter, customStartDate, customEndDate, appliedSearch, searchMode, selectedErrorCombo]);
 
   const fetchAnalyticsPage = useCallback(async (
     limit: number,
@@ -1289,7 +789,7 @@ export default function PlatformAnalyticsPanel() {
     seedData?: any;
     targetLimit?: number | "all";
     includeAggregates?: boolean;
-    onProgress?: (receipts: ReceiptInfo[], loaded: number, target: number, batch: number, totalBatches: number) => void;
+    onProgress?: (receipts: ReceiptInfo[], loaded: number, target: number, batch: number, totalBatches: number, firstData: any) => void;
   }) => {
     const batchSize = 500;
     const firstData = seedData || await fetchAnalyticsPage(batchSize, 0, signal, undefined, undefined, includeAggregates);
@@ -1298,16 +798,21 @@ export default function PlatformAnalyticsPanel() {
     const targetCount = targetLimit === "all" ? totalMatching : Math.min(totalMatching, targetLimit);
     const snapshotEnd = firstData.pagination?.snapshotEnd;
     let continuationToken = firstData.pagination?.continuationToken;
+    let hasMore = Boolean(firstData.pagination?.hasMore);
     const totalBatches = Math.max(1, Math.ceil(targetCount / batchSize));
     let batchNumber = 1;
 
-    onProgress?.([...accumulated], accumulated.length, targetCount, batchNumber, totalBatches);
+    onProgress?.([...accumulated], accumulated.length, targetCount, batchNumber, totalBatches, firstData);
 
     while (accumulated.length < targetCount) {
       if (signal.aborted) throw new DOMException("Analytics batching cancelled", "AbortError");
       const remaining = targetCount - accumulated.length;
       const pageSize = Math.min(batchSize, remaining);
       const pageData = await fetchAnalyticsPage(pageSize, accumulated.length, signal, snapshotEnd, continuationToken, false);
+      if (pageData.pagination?.totalMatchingCount !== totalMatching) {
+        throw new Error("The matching receipt population changed during collection. Retry with a fresh bounded query.");
+      }
+      hasMore = Boolean(pageData.pagination?.hasMore);
       const pageReceipts: ReceiptInfo[] = pageData.recentReceipts || [];
       if (pageReceipts.length === 0) {
         throw new Error(`Analytics snapshot ended early: loaded ${accumulated.length} of ${targetCount} records`);
@@ -1315,9 +820,12 @@ export default function PlatformAnalyticsPanel() {
       accumulated = [...accumulated, ...pageReceipts];
       continuationToken = pageData.pagination?.continuationToken;
       batchNumber += 1;
-      onProgress?.([...accumulated], accumulated.length, targetCount, batchNumber, totalBatches);
+      onProgress?.([...accumulated], accumulated.length, targetCount, batchNumber, totalBatches, firstData);
     }
 
+    if (targetLimit === "all" && (hasMore || accumulated.length !== totalMatching)) {
+      throw new Error("The complete result changed during collection. Retry with a fresh bounded query.");
+    }
     const uniqueKeys = new Set(accumulated.map(receipt =>
       receipt.storageId || `${receipt.receiptId || "missing"}:${receipt.createdAt || "unknown"}`
     ));
@@ -1325,6 +833,7 @@ export default function PlatformAnalyticsPanel() {
       throw new Error("Analytics snapshot contained duplicate records; retry the export to avoid an inconsistent report");
     }
 
+    if (signal.aborted) throw new DOMException("Analytics collection cancelled", "AbortError");
     return { firstData, receipts: accumulated, totalMatching, targetCount, snapshotEnd };
   }, [fetchAnalyticsPage]);
 
@@ -1336,7 +845,7 @@ export default function PlatformAnalyticsPanel() {
     setIsBatchLoading(false);
   }, []);
 
-  // Streams the complete, snapshot-pinned result set in deterministic batches.
+  // Streams the complete, bounded query result set in deterministic batches.
   const loadAllBatched = useCallback(async (targetLimit: number | "all" = "all", seedData?: any) => {
     if (!wallet || batchRunningRef.current) return;
     const generation = ++batchGenerationRef.current;
@@ -1351,8 +860,18 @@ export default function PlatformAnalyticsPanel() {
         signal: controller.signal,
         seedData,
         targetLimit,
-        onProgress: (receipts, loaded, target, batch, totalBatches) => {
+        onProgress: (receipts, loaded, target, batch, totalBatches, firstData) => {
           if (generation !== batchGenerationRef.current) return;
+          if (batch === 1) {
+            setQueryMetadata(firstData.metadata);
+            setServerComparison(firstData.comparison);
+            setStats(firstData.stats);
+            setFailureReasons(firstData.failureReasons || []);
+            setFailureHeatmap(firstData.failureHeatmap || null);
+            setBrandStats(firstData.brandStats || []);
+            setDailySeries(firstData.dailySeries || []);
+            setTotalServerMatches(firstData.pagination?.totalMatchingCount ?? target);
+          }
           setRecentReceipts(receipts);
           setBatchLoadedCount(loaded);
           setBatchTargetCount(target);
@@ -1363,6 +882,8 @@ export default function PlatformAnalyticsPanel() {
       });
 
       if (generation !== batchGenerationRef.current) return;
+      setQueryMetadata(result.firstData.metadata);
+      setServerComparison(result.firstData.comparison);
       setStats(result.firstData.stats);
       setFailureReasons(result.firstData.failureReasons || []);
       setFailureHeatmap(result.firstData.failureHeatmap || null);
@@ -1398,6 +919,9 @@ export default function PlatformAnalyticsPanel() {
     setError(null);
     try {
       const data = await fetchAnalyticsPage(fetchLimit === "all" ? 500 : fetchLimit, 0, controller.signal);
+      if (controller.signal.aborted || analyticsAbortRef.current !== controller) return;
+      setQueryMetadata(data.metadata);
+      setServerComparison(data.comparison);
       setStats(data.stats);
       setFailureReasons(data.failureReasons);
       setFailureHeatmap(data.failureHeatmap || null);
@@ -1504,12 +1028,12 @@ export default function PlatformAnalyticsPanel() {
     }
   }, []);
 
-  const fetchSafeBalances = useCallback(async () => {
+  const fetchSafeBalances = useCallback(async (force = false) => {
     if (!wallet) return;
     setSafeLoading(true);
     setSafeError(null);
     try {
-      const res = await fetch("/api/platform/safe-value", {
+      const res = await fetch(force ? "/api/platform/safe-value?live=true" : "/api/platform/safe-value", {
         headers: {
           "x-wallet": wallet,
         },
@@ -1519,6 +1043,7 @@ export default function PlatformAnalyticsPanel() {
       if (!res.ok) {
         throw new Error(data.error || "Failed to load Gnosis Safe balances");
       }
+      setSafeMetadata({ ...data.metadata, source: data.source, lastIndexedAt: data.lastIndexedAt });
       setSafeBalanceHistory(data.balanceHistory || []);
       if (data.tokenPrices) {
         setSafeTokenPrices(data.tokenPrices);
@@ -1546,11 +1071,9 @@ export default function PlatformAnalyticsPanel() {
     }
   }, [wallet]);
 
-  useEffect(() => {
-    fetchAnalytics();
-    fetchSafeBalances();
-    fetchGitCommits();
-  }, [fetchAnalytics, fetchSafeBalances, fetchGitCommits]);
+  useEffect(() => { void fetchAnalytics(); }, [fetchAnalytics]);
+  useEffect(() => { void fetchSafeBalances(); }, [fetchSafeBalances]);
+  useEffect(() => { void fetchGitCommits(); }, [fetchGitCommits]);
 
   useEffect(() => () => {
     analyticsAbortRef.current?.abort();
@@ -1562,10 +1085,15 @@ export default function PlatformAnalyticsPanel() {
   const allBrandKeys = useMemo(() => {
     const keys = new Set<string>();
     brandStats.forEach(b => {
-      if (b.brandKey && b.brandKey !== "unknown") keys.add(b.brandKey);
+      if (b.brandKey) keys.add(b.brandKey);
     });
     return Array.from(keys);
   }, [brandStats]);
+
+  const brandFilterKeys = useMemo(() => Array.from(new Set([
+    ...((queryMetadata?.facets?.brands || []).map((brand: { brandKey: string }) => brand.brandKey)),
+    ...allBrandKeys, ...(selectedBrand === "all" ? [] : [selectedBrand]),
+  ])) as string[], [queryMetadata, allBrandKeys, selectedBrand]);
 
   // Dynamically detected statuses from loaded dataset with counts
   const detectedStatuses = useMemo(() => {
@@ -1576,10 +1104,12 @@ export default function PlatformAnalyticsPanel() {
         map[s] = (map[s] || 0) + 1;
       }
     });
+    (queryMetadata?.facets?.statuses || []).forEach((status: string) => { map[status] ??= 0; });
+    if (statusFilter !== "all") map[statusFilter] ??= 0;
     return Object.entries(map)
       .sort((a, b) => b[1] - a[1])
       .map(([status, count]) => ({ status, count }));
-  }, [recentReceipts]);
+  }, [recentReceipts, queryMetadata, statusFilter]);
 
   // Shared brand colors matching all analytics views
   const getBrandColor = useCallback((key: string, idx?: number) => {
@@ -1589,66 +1119,26 @@ export default function PlatformAnalyticsPanel() {
   // Helper to resolve Monday-to-Sunday date range for a given week offset in System Time (Pacific)
   const getWeekRange = useCallback((offset: number) => {
     const now = new Date();
-    const { year, month, date, day } = getPacificComponents(now);
+    const { year, month, date, day } = getPacificComponents(now, effectiveTimezone);
     // Monday of this week (day: 0 is Sunday, so diff to Monday is 1 if Mon, -6 if Sun)
     const diff = date - day + (day === 0 ? -6 : 1);
-    const start = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, diff + offset * 7, 0, 0, 0, 0);
-    const end = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, diff + offset * 7 + 6, 23, 59, 59, 999);
+    const start = zonedTimeToUtcDate(effectiveTimezone, year, month, diff + offset * 7, 0, 0, 0, 0);
+    const end = zonedTimeToUtcDate(effectiveTimezone, year, month, diff + offset * 7 + 6, 23, 59, 59, 999);
     return { start, end };
-  }, []);
+  }, [effectiveTimezone]);
 
   // Helper to resolve month boundaries for a given month offset in System Time (Pacific)
   const getMonthRange = useCallback((offset: number) => {
     const now = new Date();
-    const { year, month } = getPacificComponents(now);
-    const start = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month + offset, 1, 0, 0, 0, 0);
-    const end = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month + offset + 1, 0, 23, 59, 59, 999);
+    const { year, month } = getPacificComponents(now, effectiveTimezone);
+    const start = zonedTimeToUtcDate(effectiveTimezone, year, month + offset, 1, 0, 0, 0, 0);
+    const end = zonedTimeToUtcDate(effectiveTimezone, year, month + offset + 1, 0, 23, 59, 59, 999);
     return { start, end };
-  }, []);
+  }, [effectiveTimezone]);
 
-  // Base Filter & Search Receipts (excluding selected combo)
-  const baseFilteredReceipts = useMemo(() => {
-    return recentReceipts.filter(r => {
-      const matchesBrand = selectedBrand === "all" || String(r.brandKey || "").toLowerCase() === selectedBrand.toLowerCase();
-      const matchesStatus = statusFilter === "all" || String(r.status || "").toLowerCase() === statusFilter.toLowerCase();
-
-      const q = appliedSearch.toLowerCase().trim();
-      const includes = (value?: string | null) => String(value || "").toLowerCase().includes(q);
-      let matchesQuery = !q;
-      if (q) {
-        if (searchMode === "receiptId") {
-          matchesQuery = includes(r.receiptId) || includes(r.id);
-        } else if (searchMode === "email") {
-          matchesQuery = includes(r.email) || includes(r.customerEmail) || includes(r.stripeEmail);
-        } else if (searchMode === "wallet") {
-          matchesQuery = includes(r.buyerWallet) || includes(r.wallet) || includes(r.merchantWallet);
-        } else if (searchMode === "session") {
-          matchesQuery = includes(r.stripeSessionId) || includes(r.paymentId);
-        } else {
-          matchesQuery = includes(r.receiptId) || includes(r.id) || includes(r.email) ||
-            includes(r.customerEmail) || includes(r.stripeEmail) || includes(r.stripeSessionId) ||
-            includes(r.paymentId) || includes(r.transactionHash) || includes(r.merchantName) ||
-            includes(r.shopName) || includes(r.shopSlug) || includes(r.buyerWallet) ||
-            includes(r.wallet) || includes(r.merchantWallet) || includes(r.brandKey);
-        }
-      }
-
-      return matchesBrand && matchesStatus && matchesQuery;
-    });
-  }, [recentReceipts, selectedBrand, statusFilter, appliedSearch, searchMode]);
-
-  // Final filtered receipts (including selected error combo filter)
-  const filteredReceipts = useMemo(() => {
-    if (!selectedErrorCombo) return baseFilteredReceipts;
-    const [reasonA, reasonB] = selectedErrorCombo;
-
-    return baseFilteredReceipts.filter(r => {
-      const receiptErrors = extractAnalyticsFailureReasons(r).map(reason => reason.toLowerCase());
-      const hasA = receiptErrors.includes(reasonA.toLowerCase());
-      const hasB = receiptErrors.includes(reasonB.toLowerCase());
-      return hasA && hasB;
-    });
-  }, [baseFilteredReceipts, selectedErrorCombo]);
+  // The API applies the complete canonical query before calculating metrics or paging.
+  const baseFilteredReceipts = recentReceipts;
+  const filteredReceipts = recentReceipts;
 
   // Prefer full-query server aggregates; retain a deterministic fallback for
   // older API responses during rolling deployments.
@@ -1656,14 +1146,6 @@ export default function PlatformAnalyticsPanel() {
     if (failureHeatmap) return failureHeatmap;
     return buildAnalyticsFailureHeatmap(baseFilteredReceipts);
   }, [failureHeatmap, baseFilteredReceipts]);
-
-  useEffect(() => {
-    if (!selectedErrorCombo) return;
-    const available = new Set(failureCombinations.topReasons.map(reason => reason.toLowerCase()));
-    if (!available.has(selectedErrorCombo[0].toLowerCase()) || !available.has(selectedErrorCombo[1].toLowerCase())) {
-      setSelectedErrorCombo(null);
-    }
-  }, [failureCombinations, selectedErrorCombo]);
 
   // Filtered & Sorted list for the table rows
   const tableReceipts = useMemo(() => {
@@ -1673,11 +1155,7 @@ export default function PlatformAnalyticsPanel() {
       kycLevel: getKycLevel(r)
     }));
 
-    // Filter by KYC level
-    const filteredByKyc = mapped.filter(r => {
-      if (kycFilter === "all") return true;
-      return r.kycLevel === kycFilter;
-    });
+    const filteredByKyc = mapped;
 
     // Apply sorting
     if (sortKey) {
@@ -1723,229 +1201,32 @@ export default function PlatformAnalyticsPanel() {
     return Math.max(1, Math.ceil(tableReceipts.length / pageSize));
   }, [tableReceipts.length, pageSize]);
 
-  // Compute dynamic stats based on filtered list to make HUD react to filters
-  const dynamicStats = useMemo(() => {
-    // If there is a search query, status filter, or KYC filter, we must use baseFilteredReceipts (client-side subset)
-    const hasComplexFilters = searchQuery.trim() !== "" || statusFilter !== "all" || kycFilter !== "all";
-
-    if (hasComplexFilters) {
-      const dedupResult = deduplicateReceipts(baseFilteredReceipts);
-      const totalCreated = baseFilteredReceipts.length;
-      let totalPaid = 0;
-      let totalFailed = 0;
-      let totalGmv = 0;
-      let totalFees = 0;
-      const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
-      const kycLevels = { none: 0, l1: 0, l2: 0 };
-      const receiptsForProfiles = baseFilteredReceipts;
-
-      receiptsForProfiles.forEach(r => {
-        if (isAnalyticsPaidReceipt(r)) {
-          totalPaid++;
-          totalGmv += r.totalUsd;
-          totalFees += r.platformFee || 0;
-        } else if (isFailedStatus(r.status)) {
-          totalFailed++;
-        }
-
-        const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase();
-        let funding = "unknown";
-        if (rawFunding === "us_bank_account" || rawFunding === "ach" || rawFunding === "bank") funding = "bank";
-        else if (rawFunding === "credit") funding = "credit";
-        else if (rawFunding === "debit") funding = "debit";
-        else if (r.isCreditCard === true) funding = "credit";
-        else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
-          const pm = r.customerSessions[0]?.paymentMethodDetails;
-          if (pm?.type === "us_bank_account") funding = "bank";
-          const f = pm?.card?.funding;
-          if (f === "credit") funding = "credit";
-          else if (f === "debit") funding = "debit";
-          else if (f === "us_bank_account") funding = "bank";
-        }
-
-        if (funding === "bank") cardTypes.bank++;
-        else if (funding === "credit") cardTypes.credit++;
-        else if (funding === "debit") cardTypes.debit++;
-        else cardTypes.unknown++;
-
-        let kyc = String(r.kycLevel || r.kyc || "").toUpperCase().trim();
-        if (kyc === "L2" || kyc === "LEVEL 2" || kyc === "LEVEL2") {
-          kycLevels.l2++;
-        } else if (kyc === "L1" || kyc === "LEVEL 1" || kyc === "LEVEL1") {
-          kycLevels.l1++;
-        } else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
-          const sKyc = String(r.customerSessions[0]?.kycLevel || r.customerSessions[0]?.kyc_level || "").toUpperCase().trim();
-          if (sKyc === "L2") kycLevels.l2++;
-          else if (sKyc === "L1") kycLevels.l1++;
-          else kycLevels.none++;
-        } else {
-          kycLevels.none++;
-        }
-      });
-
-      const successRate = totalCreated > 0 ? (totalPaid / totalCreated) * 100 : 0;
-      const aov = totalPaid > 0 ? totalGmv / totalPaid : 0;
-
-      return {
-        totalCreated,
-        totalPaid,
-        totalFailed,
-        successRate: +successRate.toFixed(1),
-        dedupedTotalCreated: dedupResult.dedupedTotalCreated,
-        dedupedTotalPaid: dedupResult.dedupedTotalPaid,
-        dedupedTotalFailed: dedupResult.dedupedTotalFailed,
-        trueIntegrationRate: dedupResult.trueIntegrationRate,
-        trueProcessRate: dedupResult.trueProcessRate,
-        completionRate: dedupResult.completionRate,
-        resolvedSuccessRate: dedupResult.resolvedSuccessRate,
-        totalGmv: +totalGmv.toFixed(2),
-        totalFees: +totalFees.toFixed(2),
-        aov: +aov.toFixed(2),
-        cardTypes,
-        kycLevels,
-        kycProfile: summarizeAnalyticsKycProfile(dedupResult.clusters)
-      };
+  useEffect(() => {
+    if (receiptLinkRestored.current || loading || isRefetching) return;
+    const index = tableReceipts.findIndex(receipt => receipt.receiptId === initialView.receipt);
+    if (index >= 0) {
+      receiptLinkRestored.current = true;
+      if (workspace !== "transactions" && workspace !== "failures") setWorkspace("transactions");
+      setCurrentPage(pageSize === -1 ? 1 : Math.floor(index / pageSize) + 1);
+      if (window.matchMedia("(max-width: 767px)").matches) setMobileDrawerReceipt(tableReceipts[index]);
+    } else if (!isBatchLoading && totalServerMatches > recentReceipts.length && fetchLimit !== "all") {
+      setFetchLimit("all");
+    } else if (!isBatchLoading && recentReceipts.length >= totalServerMatches) {
+      receiptLinkRestored.current = true;
+      setReceiptLinkMessage("The linked receipt is not present in the current query. Adjust the filters to search for it.");
     }
-
-    // Otherwise, aggregate dynamic stats directly from dailySeries which covers the entire database history!
-    let totalCreated = 0;
-    let totalPaid = 0;
-    let totalFailed = 0;
-    let dedupedTotalCreated = 0;
-    let dedupedTotalPaid = 0;
-    let dedupedTotalFailed = 0;
-    let totalGmv = 0;
-    let totalFees = 0;
-    const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
-    const kycLevels = { none: 0, l1: 0, l2: 0 };
-
-    const now = new Date();
-    const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
-    const { start: todayStart } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
-    const startOfTodayMs = todayStart.getTime();
-
-    let startMs = 0;
-    let endMs = Infinity;
-
-    if (timeRange === "today") {
-      startMs = startOfTodayMs;
-    } else if (timeRange === "yesterday") {
-      const { year, month, date } = getPacificComponents(now);
-      const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
-      startMs = yesterdayStart.getTime();
-      endMs = startOfTodayMs;
-    } else if (timeRange === "weekly") {
-      const { start, end } = getWeekRange(selectedWeekOffset);
-      startMs = start.getTime();
-      endMs = end.getTime();
-    } else if (timeRange === "monthly") {
-      const { start, end } = getMonthRange(selectedMonthOffset);
-      startMs = start.getTime();
-      endMs = end.getTime();
-    } else if (timeRange === "custom") {
-      const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStartDate);
-      const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEndDate);
-      startMs = start.getTime();
-      endMs = end.getTime();
-    }
-
-    dailySeries.forEach(day => {
-      if (day.timestamp < startMs || day.timestamp >= endMs) return;
-
-      if (selectedBrand === "all") {
-        totalCreated += day.allTotal || 0;
-        totalPaid += day.allPaid || 0;
-        totalFailed += day.allFailed || 0;
-        dedupedTotalCreated += day.allDedupedTotal ?? day.allTotal ?? 0;
-        dedupedTotalPaid += day.allDedupedPaid ?? day.allPaid ?? 0;
-        dedupedTotalFailed += day.allDedupedFailed ?? day.allFailed ?? 0;
-        totalGmv += day.allGmv || 0;
-        totalFees += day.allFees || 0;
-      } else {
-        const b = day.brands?.[selectedBrand];
-        if (b) {
-          totalCreated += b.total || 0;
-          totalPaid += b.paid || 0;
-          totalFailed += b.failed || 0;
-          dedupedTotalCreated += b.dedupedTotal ?? b.total ?? 0;
-          dedupedTotalPaid += b.dedupedPaid ?? b.paid ?? 0;
-          dedupedTotalFailed += b.dedupedFailed ?? b.failed ?? 0;
-          totalGmv += b.gmv || 0;
-          totalFees += b.fees || 0;
-        }
-      }
-    });
-
-    // Populate cardTypes and kycLevels from baseFilteredReceipts (or fall back to recentReceipts if baseFilteredReceipts is empty for offset time ranges)
-    const receiptsForProfiles = baseFilteredReceipts.length > 0 ? baseFilteredReceipts : recentReceipts;
-
-    receiptsForProfiles.forEach(r => {
-      const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase();
-      let funding = "unknown";
-      if (rawFunding === "us_bank_account" || rawFunding === "ach" || rawFunding === "bank") funding = "bank";
-      else if (rawFunding === "credit") funding = "credit";
-      else if (rawFunding === "debit") funding = "debit";
-      else if (r.isCreditCard === true) funding = "credit";
-      else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
-        const pm = r.customerSessions[0]?.paymentMethodDetails;
-        if (pm?.type === "us_bank_account") funding = "bank";
-        const f = pm?.card?.funding;
-        if (f === "credit") funding = "credit";
-        else if (f === "debit") funding = "debit";
-        else if (f === "us_bank_account") funding = "bank";
-      }
-
-      if (funding === "bank") cardTypes.bank++;
-      else if (funding === "credit") cardTypes.credit++;
-      else if (funding === "debit") cardTypes.debit++;
-      else cardTypes.unknown++;
-
-      const kyc = getKycLevel(r);
-      if (kyc === "L2") {
-        kycLevels.l2++;
-      } else if (kyc === "L1") {
-        kycLevels.l1++;
-      } else {
-        kycLevels.none++;
-      }
-    });
-
-    const successRate = totalCreated > 0 ? (totalPaid / totalCreated) * 100 : 0;
-    const trueIntegrationRate = dedupedTotalCreated > 0 ? (dedupedTotalPaid / dedupedTotalCreated) * 100 : 0;
-    const trueProcessRate = (dedupedTotalPaid + dedupedTotalFailed) > 0 ? (dedupedTotalPaid / (dedupedTotalPaid + dedupedTotalFailed)) * 100 : 0;
-    const aov = totalPaid > 0 ? totalGmv / totalPaid : 0;
-
-    return {
-      totalCreated,
-      totalPaid,
-      totalFailed,
-      successRate: +successRate.toFixed(1),
-      dedupedTotalCreated,
-      dedupedTotalPaid,
-      dedupedTotalFailed,
-      trueIntegrationRate: +trueIntegrationRate.toFixed(1),
-      trueProcessRate: +trueProcessRate.toFixed(1),
-      completionRate: +trueIntegrationRate.toFixed(1),
-      resolvedSuccessRate: +trueProcessRate.toFixed(1),
-      totalGmv: +totalGmv.toFixed(2),
-      totalFees: +totalFees.toFixed(2),
-      aov: +aov.toFixed(2),
-      cardTypes,
-      kycLevels,
-      kycProfile: summarizeAnalyticsKycProfile(deduplicateReceipts(receiptsForProfiles).clusters)
-    };
-  }, [baseFilteredReceipts, dailySeries, timeRange, selectedBrand, searchQuery, statusFilter, kycFilter, customStartDate, customEndDate, selectedWeekOffset, selectedMonthOffset, getWeekRange, getMonthRange]);
+  }, [tableReceipts, initialView.receipt, loading, isRefetching, isBatchLoading, totalServerMatches, recentReceipts.length, fetchLimit, pageSize, workspace]);
 
   const hasActiveFilters = useMemo(() => {
     return (
       selectedBrand !== "all" ||
       statusFilter !== "all" ||
-      timeRange !== "all" ||
+      timeRange !== "today" || selectedErrorCombo !== null ||
       searchQuery.trim() !== "" ||
       appliedSearch.trim() !== "" ||
       kycFilter !== "all"
     );
-  }, [selectedBrand, statusFilter, timeRange, searchQuery, appliedSearch, kycFilter]);
+  }, [selectedBrand, statusFilter, timeRange, searchQuery, appliedSearch, kycFilter, selectedErrorCombo]);
 
   const searchPlaceholder = useMemo(() => {
     switch (searchMode) {
@@ -1991,30 +1272,13 @@ export default function PlatformAnalyticsPanel() {
       const collected = await collectAnalyticsReceipts({
         signal: controller.signal,
         targetLimit: "all",
-        includeAggregates: false,
+        includeAggregates: true,
         onProgress: (_receipts, loaded, target) => {
           setExportProgress(target === 0 ? 70 : Math.min(70, Math.round((loaded / target) * 70)));
         }
       });
 
-      const reportReceipts = collected.receipts.filter(receipt => {
-        if (statusFilter !== "all" && String(receipt.status || "").toLowerCase() !== statusFilter.toLowerCase()) return false;
-        if (kycFilter !== "all" && getKycLevel(receipt) !== kycFilter) return false;
-        if (selectedErrorCombo) {
-          const [reasonA, reasonB] = selectedErrorCombo.map(reason => reason.toLowerCase());
-          const errors = new Set<string>();
-          if (receipt.failureReason) errors.add(receipt.failureReason.toLowerCase());
-          receipt.customerSessions?.forEach(session => {
-            if (session?.lastError) errors.add(String(session.lastError).toLowerCase());
-            if (session?.status === "failed" && session?.error) errors.add(String(session.error).toLowerCase());
-          });
-          const errorList = Array.from(errors);
-          const hasA = errorList.some(error => error.includes(reasonA) || reasonA.includes(error));
-          const hasB = errorList.some(error => error.includes(reasonB) || reasonB.includes(error));
-          if (!hasA || !hasB) return false;
-        }
-        return true;
-      });
+      const reportReceipts = collected.receipts;
 
       const reportStats = calculateReceiptStats(reportReceipts);
       const reportBrandStats = calculateBrandReportStats(reportReceipts);
@@ -2026,8 +1290,10 @@ export default function PlatformAnalyticsPanel() {
       const partnerLabel = selectedBrand === "all"
         ? "ALL"
         : resolveReportBrandName(selectedBrand, reportReceipts);
-      const filterContext = `${dateRangeStr} | Partner: ${partnerLabel} | Status: ${statusFilter.toUpperCase()} | KYC: ${kycFilter.toUpperCase()} | Search: ${searchLabel} | TZ: ${timezoneLabel}`;
+      const filterContext = `Definition: ${collected.firstData.metadata?.definitionVersion || "current"} | Generated: ${collected.firstData.metadata?.generatedAt || new Date().toISOString()} | Start inclusive: ${collected.firstData.metadata?.query?.start || "All history"} | End exclusive: ${collected.firstData.metadata?.query?.end || collected.snapshotEnd} | ${collected.firstData.metadata?.consistencyDescription || "Bounded live query; records may change"} | Basis: ${successRateMode} | Failure selection: ${selectedErrorCombo ? Array.from(new Set(selectedErrorCombo)).join(" AND ") : "All"} | ${dateRangeStr} | Partner: ${partnerLabel} | Status: ${statusFilter.toUpperCase()} | KYC: ${kycFilter.toUpperCase()} | Search: ${searchLabel} | TZ: ${timezoneLabel}`;
       setExportProgress(82);
+
+      if (controller.signal.aborted) throw new DOMException("Report export cancelled", "AbortError");
 
       if (format === "xlsx") {
         await exportAnalyticsXLSX(
@@ -2040,7 +1306,7 @@ export default function PlatformAnalyticsPanel() {
           timezoneLabel
         );
       } else if (type === "executive") {
-        await exportExecutiveSummaryPDF(reportStats, reportBrandStats, reportFailureReasons, filterContext);
+        await exportExecutiveSummaryPDF(reportStats, reportBrandStats, reportFailureReasons, filterContext, reportReceipts);
       } else if (type === "ledger") {
         await exportTransactionLedgerPDF(reportReceipts, reportStats, searchLabel, filterContext, timezoneLabel);
       } else if (type === "brands") {
@@ -2069,17 +1335,9 @@ export default function PlatformAnalyticsPanel() {
         setActiveExportFormat(null);
       }
     }
-  }, [collectAnalyticsReceipts, timeRange, customStartDate, customEndDate, selectedBrand, statusFilter, kycFilter, selectedErrorCombo, timezoneMode, appliedSearch, searchModeLabel]);
+  }, [collectAnalyticsReceipts, timeRange, customStartDate, customEndDate, selectedBrand, statusFilter, kycFilter, selectedErrorCombo, timezoneMode, appliedSearch, searchModeLabel, successRateMode]);
 
-  const displayStats = useMemo(() => {
-    if (!stats) return null;
-    // Current API responses aggregate over the complete server-filtered scope.
-    // Keep the older client calculation only as a compatibility fallback.
-    if (hasActiveFilters && typeof stats.completionRate !== "number") {
-      return dynamicStats;
-    }
-    return stats;
-  }, [stats, dynamicStats, hasActiveFilters]);
+  const displayStats = stats;
 
   // Refined Success Rate Calculations based on selector mode
   const trueIntegrationRate = useMemo(() => {
@@ -2112,89 +1370,13 @@ export default function PlatformAnalyticsPanel() {
     return processRate;
   }, [successRateMode, trueIntegrationRate, integrationRate, processRate]);
 
-  const displayedBrandStats = useMemo(() => {
-    const now = new Date();
-    const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
-    const { start: todayStart } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
-    const startOfTodayMs = todayStart.getTime();
-
-    let startMs = 0;
-    let endMs = Infinity;
-
-    if (timeRange === "today") {
-      startMs = startOfTodayMs;
-    } else if (timeRange === "yesterday") {
-      const { year, month, date } = getPacificComponents(now);
-      const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
-      startMs = yesterdayStart.getTime();
-      endMs = startOfTodayMs;
-    } else if (timeRange === "weekly") {
-      const { start, end } = getWeekRange(selectedWeekOffset);
-      startMs = start.getTime();
-      endMs = end.getTime();
-    } else if (timeRange === "monthly") {
-      const { start, end } = getMonthRange(selectedMonthOffset);
-      startMs = start.getTime();
-      endMs = end.getTime();
-    } else if (timeRange === "custom") {
-      const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStartDate);
-      const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEndDate);
-      startMs = start.getTime();
-      endMs = end.getTime();
-    }
-
-    const brandMap: Record<string, { brandKey: string; total: number; paid: number; failed: number; dedupedTotal: number; dedupedPaid: number; dedupedFailed: number; gmv: number; fees: number }> = {};
-    allBrandKeys.forEach(bk => {
-      brandMap[bk] = { brandKey: bk, total: 0, paid: 0, failed: 0, dedupedTotal: 0, dedupedPaid: 0, dedupedFailed: 0, gmv: 0, fees: 0 };
-    });
-
-    dailySeries.forEach(day => {
-      if (day.timestamp < startMs || day.timestamp >= endMs) return;
-
-      if (day.brands) {
-        Object.entries(day.brands).forEach(([bk, b]: [string, any]) => {
-          if (bk === "unknown") return;
-          if (!brandMap[bk]) {
-            brandMap[bk] = { brandKey: bk, total: 0, paid: 0, failed: 0, dedupedTotal: 0, dedupedPaid: 0, dedupedFailed: 0, gmv: 0, fees: 0 };
-          }
-          brandMap[bk].total += b.total || 0;
-          brandMap[bk].paid += b.paid || 0;
-          brandMap[bk].failed += b.failed || 0;
-          brandMap[bk].dedupedTotal += b.dedupedTotal ?? b.total ?? 0;
-          brandMap[bk].dedupedPaid += b.dedupedPaid ?? b.paid ?? 0;
-          brandMap[bk].dedupedFailed += b.dedupedFailed ?? b.failed ?? 0;
-          brandMap[bk].gmv += b.gmv || 0;
-          brandMap[bk].fees += b.fees || 0;
-        });
-      }
-    });
-
-    const list = Object.values(brandMap).filter(b => b.brandKey !== "unknown");
-    list.sort((a, b) => b.gmv - a.gmv);
-
-    return list.map(b => {
-      let sr = 0;
-      if (successRateMode === "true_integration") {
-        const tot = b.dedupedTotal > 0 ? b.dedupedTotal : b.total;
-        const pd = b.dedupedPaid > 0 ? b.dedupedPaid : b.paid;
-        sr = tot > 0 ? (pd / tot) * 100 : 0;
-      } else if (successRateMode === "integration") {
-        sr = b.total > 0 ? (b.paid / b.total) * 100 : 0;
-      } else {
-        const denom = b.paid + b.failed;
-        sr = denom > 0 ? (b.paid / denom) * 100 : 0;
-      }
-      return {
-        ...b,
-        successRate: +sr.toFixed(1),
-        sessionsText: successRateMode === "true_integration"
-          ? `${b.dedupedPaid > 0 ? b.dedupedPaid : b.paid} paid / ${b.dedupedTotal > 0 ? b.dedupedTotal : b.total} true intents`
-          : successRateMode === "integration"
-          ? `${b.paid} paid / ${b.total} sessions`
-          : `${b.paid} paid / ${b.paid + b.failed} finished`
-      };
-    });
-  }, [allBrandKeys, dailySeries, timeRange, successRateMode, selectedWeekOffset, selectedMonthOffset, customStartDate, customEndDate, getWeekRange, getMonthRange]);
+  const displayedBrandStats = useMemo(() => brandStats.map(b => {
+    const paid = successRateMode === "integration" ? b.paid : b.dedupedPaid ?? b.paid;
+    const total = successRateMode === "integration" ? b.total : successRateMode === "process"
+      ? paid + (b.dedupedFailed ?? b.failed) : b.dedupedTotal ?? b.total;
+    return { ...b, successRate: total > 0 ? paid / total * 100 : 0, hasPopulation: total > 0,
+      sessionsText: paid + " paid / " + total + (successRateMode === "integration" ? " receipts" : successRateMode === "process" ? " resolved unique intents" : " unique intents") };
+  }), [brandStats, successRateMode]);
 
   const maxBrandGmv = useMemo(() => {
     return Math.max(...displayedBrandStats.map(b => b.gmv), 1);
@@ -2209,43 +1391,9 @@ export default function PlatformAnalyticsPanel() {
     return Array.from(keys);
   }, [filteredReceipts]);
 
-  // Daily Time Series dataset (supporting Success Rate or Amount Earned) including separate brands
+  // Daily Time Series dataset (supporting Success Rate or Gross volume (GMV)) including separate brands
   const chartTimeSeries = useMemo(() => {
-    if (!dailySeries || dailySeries.length === 0) {
-      return [{ label: "No Data", aggregate: 0 }];
-    }
-
-    const filteredDays = dailySeries.filter(day => {
-      if (timeRange === "all") return true;
-      const now = new Date();
-      const todayYmd = formatYMDInTimeZone(SYSTEM_TIMEZONE, now);
-      const { start: todayStart } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, todayYmd);
-      const startOfTodayMs = todayStart.getTime();
-
-      if (timeRange === "today") {
-        return day.timestamp >= startOfTodayMs;
-      }
-      if (timeRange === "yesterday") {
-        const { year, month, date } = getPacificComponents(now);
-        const yesterdayStart = zonedTimeToUtcDate(SYSTEM_TIMEZONE, year, month, date - 1, 0, 0, 0, 0);
-        const startOfYesterdayMs = yesterdayStart.getTime();
-        return day.timestamp >= startOfYesterdayMs && day.timestamp < startOfTodayMs;
-      }
-      if (timeRange === "weekly") {
-        const { start, end } = getWeekRange(selectedWeekOffset);
-        return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
-      }
-      if (timeRange === "monthly") {
-        const { start, end } = getMonthRange(selectedMonthOffset);
-        return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
-      }
-      if (timeRange === "custom") {
-        const { start } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customStartDate);
-        const { end } = getDayRangeForYmdInTz(SYSTEM_TIMEZONE, customEndDate);
-        return day.timestamp >= start.getTime() && day.timestamp <= end.getTime();
-      }
-      return true;
-    });
+    const filteredDays = dailySeries || [];
 
     const list = filteredDays.map(g => {
       let aggregate = 0;
@@ -2261,8 +1409,8 @@ export default function PlatformAnalyticsPanel() {
           aggregate = g.allTotal > 0 ? (g.allPaid / g.allTotal) * 100 : 0;
           totalCountForDetails = g.allTotal;
         } else {
-          const denom = g.allPaid + g.allFailed;
-          aggregate = denom > 0 ? (g.allPaid / denom) * 100 : 0;
+          const denom = (g.allDedupedPaid ?? g.allPaid) + (g.allDedupedFailed ?? g.allFailed);
+          aggregate = denom > 0 ? ((g.allDedupedPaid ?? g.allPaid) / denom) * 100 : 0;
           totalCountForDetails = denom;
         }
       } else {
@@ -2272,9 +1420,10 @@ export default function PlatformAnalyticsPanel() {
 
       const pt: Record<string, any> = {
         label: g.dateLabel,
-        aggregate: +aggregate.toFixed(chartMetric === "successRate" ? 1 : 2),
+        timestamp: g.timestamp,
+        aggregate: chartMetric === "successRate" && totalCountForDetails === 0 ? null : +aggregate.toFixed(chartMetric === "successRate" ? 1 : 2),
         aggregateDetails: {
-          paid: successRateMode === "true_integration" ? (g.allDedupedPaid ?? g.allPaid) : g.allPaid,
+          paid: successRateMode !== "integration" ? (g.allDedupedPaid ?? g.allPaid) : g.allPaid,
           total: totalCountForDetails,
           gmv: g.allGmv || 0
         }
@@ -2297,15 +1446,16 @@ export default function PlatformAnalyticsPanel() {
               val = bData.total > 0 ? (bData.paid / bData.total) * 100 : 0;
               totalForBrandDetails = bData.total;
             } else {
-              const denom = bData.paid + bData.failed;
-              val = denom > 0 ? (bData.paid / denom) * 100 : 0;
+              const denom = (bData.dedupedPaid ?? bData.paid) + (bData.dedupedFailed ?? bData.failed);
+              paidForBrandDetails = bData.dedupedPaid ?? bData.paid;
+              val = denom > 0 ? (paidForBrandDetails / denom) * 100 : 0;
               totalForBrandDetails = denom;
             }
           } else {
             val = bData.gmv || 0;
             totalForBrandDetails = bData.total;
           }
-          pt[bk] = +val.toFixed(chartMetric === "successRate" ? 1 : 2);
+          pt[bk] = chartMetric === "successRate" && totalForBrandDetails === 0 ? null : +val.toFixed(chartMetric === "successRate" ? 1 : 2);
           pt[`${bk}Details`] = { paid: paidForBrandDetails, total: totalForBrandDetails, gmv: bData.gmv || 0 };
         } else {
           pt[bk] = null;
@@ -2316,115 +1466,22 @@ export default function PlatformAnalyticsPanel() {
     });
 
     if (list.length === 0) {
-      return [{ label: "No Data", aggregate: 0 }];
+      return [];
     }
     return list;
   }, [dailySeries, allBrandKeys, timeRange, successRateMode, chartMetric, selectedWeekOffset, selectedMonthOffset, customStartDate, customEndDate, getWeekRange, getMonthRange]);
 
-  // DTD, MTD, YTD comparisons
-  const comparisons = useMemo(() => {
-    const now = new Date();
-    
-    // Start of Today
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOfTodayMs = startOfToday.getTime();
-
-    // Start of Yesterday
-    const startOfYesterday = new Date(startOfToday);
-    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
-    const startOfYesterdayMs = startOfYesterday.getTime();
-
-    // Start of This Month
-    const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const startOfThisMonthMs = startOfThisMonth.getTime();
-
-    // Start of Last Month
-    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const startOfLastMonthMs = startOfLastMonth.getTime();
-
-    // Last Month equivalent day-of-month for MTD comparison
-    const lastMonthToDateEnd = new Date(startOfLastMonth);
-    lastMonthToDateEnd.setDate(Math.min(now.getDate(), new Date(now.getFullYear(), now.getMonth(), 0).getDate()));
-    lastMonthToDateEnd.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
-    const lastMonthToDateEndMs = lastMonthToDateEnd.getTime();
-
-    // Start of This Year
-    const startOfThisYear = new Date(now.getFullYear(), 0, 1);
-    const startOfThisYearMs = startOfThisYear.getTime();
-
-    // Start of Last Year
-    const startOfLastYear = new Date(now.getFullYear() - 1, 0, 1);
-    const startOfLastYearMs = startOfLastYear.getTime();
-
-    // Last Year equivalent date for YTD comparison
-    const lastYearToDateEnd = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-    lastYearToDateEnd.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
-    const lastYearToDateEndMs = lastYearToDateEnd.getTime();
-
-    // Helper to calculate stats for a range using dailySeries (all-time database aggregate)
-    const getSeriesRangeStats = (startMs: number, endMs?: number) => {
-      let paidCount = 0;
-      let failedCount = 0;
-      let totalCount = 0;
-      let dedupedTotalCount = 0;
-      let dedupedPaidCount = 0;
-      let dedupedFailedCount = 0;
-      let gmv = 0;
-      let fees = 0;
-
-      dailySeries.forEach(day => {
-        if (day.timestamp < startMs) return;
-        if (endMs !== undefined && day.timestamp >= endMs) return;
-
-        totalCount += day.allTotal || 0;
-        paidCount += day.allPaid || 0;
-        failedCount += day.allFailed || 0;
-        dedupedTotalCount += day.allDedupedTotal ?? day.allTotal ?? 0;
-        dedupedPaidCount += day.allDedupedPaid ?? day.allPaid ?? 0;
-        dedupedFailedCount += day.allDedupedFailed ?? day.allFailed ?? 0;
-        gmv += day.allGmv || 0;
-        fees += day.allFees || 0;
-      });
-
-      let denom = totalCount;
-      let pd = paidCount;
-      if (successRateMode === "true_integration") {
-        denom = dedupedTotalCount > 0 ? dedupedTotalCount : totalCount;
-        pd = dedupedPaidCount > 0 ? dedupedPaidCount : paidCount;
-      } else if (successRateMode === "process") {
-        denom = paidCount + failedCount;
-      }
-      const successRate = denom > 0 ? (pd / denom) * 100 : 0;
-
-      return { paidCount, totalCount, dedupedPaidCount, dedupedTotalCount, successRate, gmv, fees };
-    };
-
-    const todayStats = getSeriesRangeStats(startOfTodayMs);
-    const yesterdayStats = getSeriesRangeStats(startOfYesterdayMs, startOfTodayMs);
-    
-    const mtdThisMonth = getSeriesRangeStats(startOfThisMonthMs);
-    const mtdLastMonth = getSeriesRangeStats(startOfLastMonthMs, lastMonthToDateEndMs);
-
-    const ytdThisYear = getSeriesRangeStats(startOfThisYearMs);
-    const ytdLastYear = getSeriesRangeStats(startOfLastYearMs, lastYearToDateEndMs);
-
-    const pctChange = (current: number, previous: number) => {
-      if (previous === 0) return current > 0 ? 100 : 0;
-      return ((current - previous) / previous) * 100;
-    };
-
-    return {
-      today: todayStats,
-      yesterday: yesterdayStats,
-      mtdThisMonth,
-      mtdLastMonth,
-      ytdThisYear,
-      ytdLastYear,
-      gmvChangeMtd: pctChange(mtdThisMonth.gmv, mtdLastMonth.gmv),
-      feesChangeYtd: pctChange(ytdThisYear.fees, ytdLastYear.fees),
-    };
-  }, [dailySeries, successRateMode]);
+  const previousRate = serverComparison?.available ? analyticsMetricValue(serverComparison.stats, successRateMode) : null;
+  const currentRate = analyticsMetricValue(displayStats || {}, successRateMode);
+  const rateChange = currentRate !== null && previousRate !== null ? currentRate - previousRate : null;
+  const money = (value: number) => value.toLocaleString(undefined, { style: "currency", currency: "USD" });
+  const financialChange = (key: "totalGmv" | "totalFees") => {
+    const previous = serverComparison?.stats?.[key];
+    if (!serverComparison?.available || !displayStats || typeof previous !== "number") return "No comparable previous period";
+    const delta = displayStats[key] - previous;
+    return (delta >= 0 ? "+" : "-") + money(Math.abs(delta)) + " vs previous period";
+  };
+  useEffect(() => { setCurrentPage(page => Math.min(page, totalPages)); }, [totalPages]);
 
   // Overall status distribution for the complete server-filtered query. The
   // loaded receipt list is only a fallback during a rolling API deployment.
@@ -2446,7 +1503,7 @@ export default function PlatformAnalyticsPanel() {
     return [
       { label: "Successful", value: paidCount },
       { label: "Failed", value: failedCount },
-      { label: "Pending/Init", value: pendingCount }
+      { label: "Other / unresolved", value: pendingCount }
     ];
   }, [stats, baseFilteredReceipts]);
 
@@ -2472,11 +1529,22 @@ export default function PlatformAnalyticsPanel() {
     return "Mobile Browser";
   };
 
+  const renderReceiptInvestigation = (receipt: ReceiptInfo) => <ReceiptInvestigation
+    receipt={receipt} activeTab={activeTabMap[receipt.receiptId] || "overview"}
+    onTabChange={tab => setActiveTabMap(prev => ({ ...prev, [receipt.receiptId]: tab }))}
+    timezone={effectiveTimezone} siteConfig={fetchedSiteConfigs[receipt.receiptId]}
+    loadSiteConfigForReceipt={loadSiteConfigForReceipt} fetchReceiptLogs={fetchReceiptLogs}
+    expandedLogs={expandedLogs} loadingLogs={loadingLogs} logErrors={logErrors}
+    refreshingLimits={refreshingLimits} refreshLimitsStatus={refreshLimitsStatus} enrichCustomerLimits={enrichCustomerLimits}
+    copySuccess={copySuccess} handleCopy={handleCopy} actionLoading={actionLoading} actionFeedback={actionFeedback}
+    handleTargetedReconcile={handleTargetedReconcile} handleStripeTelemetryCheck={handleStripeTelemetryCheck}
+  />;
+
   if (loading) {
-    return <AnalyticsPageLoadingState />;
+    return <AnalyticsLoadingScreen />;
   }
 
-  if (error) {
+  if (error && !stats) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[300px] border border-red-500/20 bg-red-500/5 rounded-2xl p-6 text-center">
         <AlertCircle className="w-10 h-10 text-red-500 mb-2" />
@@ -2494,1253 +1562,31 @@ export default function PlatformAnalyticsPanel() {
   }
 
   return (
-    <div className="w-full space-y-6 pb-24 admin-panel-enter">
+    <div className="platform-analytics w-full space-y-5 pb-24" data-density={density}>
 
-      {/* Title Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur-xl shadow-xl">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0 shadow-inner">
-            <LineChart className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-xl font-extrabold text-white tracking-tight flex items-center gap-2">
-              <span>Platform Analytics</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-primary/10 text-primary border border-primary/20">Live</span>
-            </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Real-time success rates, transaction volumes, and technical diagnostics.
-            </p>
-          </div>
+      <header className="analytics-hero flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="analytics-eyebrow"><Activity size={13}/> PLATFORM INTELLIGENCE</div>
+          <h2 className="text-2xl font-semibold tracking-tight text-white">Platform <span>Analytics</span></h2>
+          <p className="mt-1 text-sm text-zinc-400">Performance, payment evidence and operational diagnostics.</p>
+          <p className="mt-2 text-xs text-zinc-400" role="status">{isRefetching ? "Updating metrics…" : queryMetadata?.generatedAt ? `Updated ${new Date(queryMetadata.aggregateGeneratedAt || queryMetadata.generatedAt).toLocaleString(undefined, { timeZone: effectiveTimezone })} · ${effectiveTimezone}` : "Manual refresh"}</p>
         </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex bg-white/[0.04] p-1 rounded-xl border border-white/10 h-10 items-center">
-            <button
-              onClick={() => setTimezoneMode("system")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold h-full transition-all duration-200 ${
-                timezoneMode === "system"
-                  ? "bg-primary text-white shadow-md shadow-primary/20"
-                  : "text-muted-foreground hover:text-white"
-              }`}
-              title="Fixed server timezone (America/Los_Angeles)"
-            >
-              System Time (PT)
-            </button>
-            <button
-              onClick={() => setTimezoneMode("dynamic")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold h-full transition-all duration-200 ${
-                timezoneMode === "dynamic"
-                  ? "bg-primary text-white shadow-md shadow-primary/20"
-                  : "text-muted-foreground hover:text-white"
-              }`}
-              title="Your local browser timezone"
-            >
-              Dynamic
-            </button>
-          </div>
-
-          <button
-            onClick={fetchAnalytics}
-            disabled={isRefetching || loading}
-            className={`group relative h-10 px-4 rounded-xl border font-bold text-xs transition-all duration-300 flex items-center gap-2.5 overflow-hidden select-none active:scale-95 disabled:pointer-events-none ${
-              isRefetching || loading
-                ? "bg-gradient-to-r from-primary/30 via-indigo-600/30 to-purple-600/30 border-primary/60 text-white shadow-[0_0_20px_rgba(99,91,255,0.4)]"
-                : "bg-gradient-to-r from-white/[0.06] via-white/[0.09] to-white/[0.04] border-white/15 text-white hover:border-primary/50 hover:bg-gradient-to-r hover:from-primary/20 hover:to-indigo-500/20 hover:shadow-[0_0_20px_rgba(99,91,255,0.25)] hover:scale-105"
-            }`}
-          >
-            {/* Cyber Ambient Glow Overlay */}
-            <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out pointer-events-none" />
-
-            {isRefetching || loading ? (
-              <div className="relative flex items-center justify-center">
-                <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
-                <span className="absolute w-2 h-2 rounded-full bg-primary animate-ping opacity-75" />
-              </div>
-            ) : (
-              <div className="relative flex items-center justify-center">
-                <RefreshCw className="w-3.5 h-3.5 text-primary group-hover:rotate-180 transition-transform duration-500 shrink-0" />
-                <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              </div>
-            )}
-
-            <span className="relative font-mono tracking-tight text-[11.5px]">
-              {isRefetching || loading ? (
-                <span className="flex items-center gap-1 text-primary-foreground font-extrabold">
-                  <span>Syncing Telemetry</span>
-                  <span className="inline-flex animate-pulse">...</span>
-                </span>
-              ) : (
-                <span>Refresh Metrics</span>
-              )}
-            </span>
-          </button>
+        <div className="flex flex-wrap gap-2">
+          <label className="sr-only" htmlFor="analytics-timezone">Display timezone</label>
+          <select id="analytics-timezone" value={timezoneMode} onChange={e => setTimezoneMode(e.target.value as "system" | "dynamic")} className="rounded-lg border border-white/20 bg-zinc-900 px-3 py-2 text-sm">
+            <option value="system">Pacific time</option><option value="dynamic">Local · {DYNAMIC_TIMEZONE}</option>
+          </select>
+          <button type="button" onClick={fetchAnalytics} disabled={isRefetching || loading} className="flex items-center gap-2 rounded-lg border border-white/20 px-3 py-2 text-sm disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${isRefetching ? "animate-spin" : ""}`} />Refresh</button>
+          <button type="button" onClick={() => handleCopy(window.location.href, "analytics-link")} className="rounded-lg border border-white/20 px-3 py-2 text-sm">{copySuccess["analytics-link"] ? "Link copied" : "Copy view link"}</button>
         </div>
-      </div>
-
-      {/* Calculation Mode Selector Tabs */}
-      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between p-4 rounded-2xl border border-white/10 bg-zinc-950/60 backdrop-blur-xl gap-3">
-        <div className="flex flex-wrap bg-white/[0.04] p-1 rounded-xl border border-white/10 w-full lg:w-auto gap-1">
-          <button
-            onClick={() => setSuccessRateMode("true_integration")}
-            className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-between gap-2.5 ${successRateMode === "true_integration"
-                ? "bg-primary text-white shadow-md shadow-primary/20"
-                : "text-muted-foreground hover:text-white"
-              }`}
-          >
-            <div className="flex items-center gap-1.5">
-              <span>Checkout Completion (Unique)</span>
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsAlgorithmModalOpen(true);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.stopPropagation();
-                    setIsAlgorithmModalOpen(true);
-                  }
-                }}
-                className="p-0.5 rounded-md hover:bg-white/20 text-white/70 hover:text-white transition-colors cursor-pointer inline-flex items-center justify-center"
-                title="Explain Deduplication Algorithm"
-              >
-                <HelpCircle className="w-3.5 h-3.5" />
-              </span>
-            </div>
-            <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full border ${
-              successRateMode === "true_integration" ? "bg-white/20 text-white border-white/30" : "bg-white/10 text-purple-400 border-white/10"
-            }`}>
-              {trueIntegrationRate}%
-            </span>
-          </button>
-          <button
-            onClick={() => setSuccessRateMode("integration")}
-            className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-between gap-2.5 ${successRateMode === "integration"
-                ? "bg-primary text-white shadow-md shadow-primary/20"
-                : "text-muted-foreground hover:text-white"
-              }`}
-          >
-            <span>Receipt Completion (Raw)</span>
-            <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full border ${
-              successRateMode === "integration" ? "bg-white/20 text-white border-white/30" : "bg-white/10 text-emerald-400 border-white/10"
-            }`}>
-              {integrationRate}%
-            </span>
-          </button>
-          <button
-            onClick={() => setSuccessRateMode("process")}
-            className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-lg text-xs font-semibold transition-all duration-200 flex items-center justify-between gap-2.5 ${successRateMode === "process"
-                ? "bg-primary text-white shadow-md shadow-primary/20"
-                : "text-muted-foreground hover:text-white"
-              }`}
-          >
-            <span>Resolved Outcome Rate</span>
-            <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full border ${
-              successRateMode === "process" ? "bg-white/20 text-white border-white/30" : "bg-white/10 text-cyan-400 border-white/10"
-            }`}>
-              {processRate}%
-            </span>
-          </button>
-        </div>
-        <div className="text-[11.5px] text-muted-foreground max-w-md leading-relaxed">
-          {successRateMode === "true_integration"
-            ? "Paid unique checkout intents divided by every unique intent, including open, failed, and abandoned checkouts."
-            : successRateMode === "integration"
-            ? "Paid receipt records divided by all raw receipt records. This intentionally shows the effect of stored revisions."
-            : "Paid unique intents divided only by paid plus failed intents. Open and unresolved checkouts are excluded, so this is not a completion rate."
-          }
-        </div>
-      </div>
-
-      {/* Analytics Grid HUD */}
-      {displayStats && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
-
-          <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">
-                  {successRateMode === "true_integration" ? "Checkout Completion" : successRateMode === "process" ? "Resolved Outcome Rate" : "Receipt Completion"}
-                </span>
-                {successRateMode === "true_integration" && (
-                  <span className="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                    Deduped
-                  </span>
-                )}
-              </div>
-              <div className="text-2xl sm:text-3xl font-extrabold mt-1 text-white tracking-tight flex items-baseline justify-between gap-2">
-                <span>{displayedSuccessRate}%</span>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${displayedSuccessRate >= 85 ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
-                  displayedSuccessRate >= 70 ? "bg-amber-500/15 text-amber-400 border-amber-500/30" :
-                    "bg-rose-500/15 text-rose-400 border-rose-500/30"
-                  }`}>
-                  {displayedSuccessRate >= 85 ? "Optimal" : displayedSuccessRate >= 70 ? "Warning" : "Critical"}
-                </span>
-              </div>
-            </div>
-            <div className="mt-4 text-[11px] border-t border-white/5 pt-2.5 space-y-1">
-              <div className="flex justify-between text-muted-foreground">
-                <span>DTD:</span>
-                <span className="font-semibold text-white/95">
-                  Today {comparisons.today.successRate.toFixed(1)}% vs Yest {comparisons.yesterday.successRate.toFixed(1)}%
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span>Total:</span>
-                <span className="font-semibold text-white/90">
-                  {successRateMode === "true_integration" ? (
-                    `${displayStats.dedupedTotalPaid ?? displayStats.totalPaid} unique paid / ${displayStats.dedupedTotalCreated ?? displayStats.totalCreated} unique intents`
-                  ) : successRateMode === "integration" ? (
-                    `${displayStats.totalPaid} paid / ${displayStats.totalCreated} intents`
-                  ) : (
-                    `${displayStats.dedupedTotalPaid ?? displayStats.totalPaid} paid / ${(displayStats.dedupedTotalPaid ?? displayStats.totalPaid) + (displayStats.dedupedTotalFailed ?? displayStats.totalFailed)} resolved`
-                  )}
-                </span>
-              </div>
-              {successRateMode === "true_integration" && (displayStats.totalCreated - (displayStats.dedupedTotalCreated ?? displayStats.totalCreated)) > 0 && (
-                <div className="flex items-center justify-between text-[10px] text-purple-400/80 font-mono pt-0.5">
-                  <span>Cart Revisions Deduped:</span>
-                  <span className="font-bold">+{displayStats.totalCreated - (displayStats.dedupedTotalCreated ?? displayStats.totalCreated)} duplicate receipts</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
-            <div>
-              <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">Gross Volume (GMV)</span>
-              <div className="text-2xl sm:text-3xl font-extrabold mt-1 text-white tracking-tight">
-                ${displayStats.totalGmv.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="mt-4 text-[11px] border-t border-white/5 pt-2.5 space-y-1">
-              <div className="flex justify-between text-muted-foreground">
-                <span>MTD GMV vs Last MTD:</span>
-                <span className={`font-bold ${comparisons.gmvChangeMtd >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                  ${comparisons.mtdThisMonth.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({comparisons.gmvChangeMtd >= 0 ? "+" : ""}{comparisons.gmvChangeMtd.toFixed(1)}%)
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-muted-foreground">
-                <span>Avg. Order Value (AOV):</span>
-                <span className="font-semibold text-white/90">${displayStats.aov}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
-            <div>
-              <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider">Platform Revenue (Fees)</span>
-              <div className="text-2xl sm:text-3xl font-extrabold mt-1 text-white tracking-tight">
-                ${displayStats.totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="mt-4 text-[11px] border-t border-white/5 pt-2.5 space-y-1">
-              <div className="flex justify-between text-muted-foreground">
-                <span>YTD Fees vs Last YTD:</span>
-                <span className={`font-bold ${comparisons.feesChangeYtd >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-                  ${comparisons.ytdThisYear.fees.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({comparisons.feesChangeYtd >= 0 ? "+" : ""}{comparisons.feesChangeYtd.toFixed(1)}%)
-                </span>
-              </div>
-              <div className="text-muted-foreground flex justify-between">
-                <span>Fee Basis:</span>
-                <span className="font-medium text-white/80">50 BPS Floor Model</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Card Funding & Consumer KYC Profile Flippable Card */}
-          <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
-            {(() => {
-              const rawList = baseFilteredReceipts;
-              const receiptsForProfiles = rawList.filter(r => {
-                if (successRateMode === "process") {
-                  return isAnalyticsPaidReceipt(r);
-                }
-                return true;
-              });
-
-              const cardTypes = { credit: 0, debit: 0, bank: 0, unknown: 0 };
-
-              receiptsForProfiles.forEach(r => {
-                const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase();
-                let funding = "unknown";
-                if (rawFunding === "us_bank_account" || rawFunding === "ach" || rawFunding === "bank") funding = "bank";
-                else if (rawFunding === "credit") funding = "credit";
-                else if (rawFunding === "debit") funding = "debit";
-                else if (r.isCreditCard === true) funding = "credit";
-                else if (Array.isArray(r.customerSessions) && r.customerSessions.length > 0) {
-                  const pm = r.customerSessions[0]?.paymentMethodDetails;
-                  if (pm?.type === "us_bank_account") funding = "bank";
-                  const f = pm?.card?.funding;
-                  if (f === "credit") funding = "credit";
-                  else if (f === "debit") funding = "debit";
-                  else if (f === "us_bank_account") funding = "bank";
-                }
-
-                if (funding === "bank") cardTypes.bank++;
-                else if (funding === "credit") cardTypes.credit++;
-                else if (funding === "debit") cardTypes.debit++;
-                else cardTypes.unknown++;
-
-              });
-
-              const totalCards = cardTypes.credit + cardTypes.debit + cardTypes.bank;
-              const creditPct = totalCards > 0 ? ((cardTypes.credit / totalCards) * 100).toFixed(1) : "0.0";
-              const debitPct = totalCards > 0 ? ((cardTypes.debit / totalCards) * 100).toFixed(1) : "0.0";
-              const bankPct = totalCards > 0 ? ((cardTypes.bank / totalCards) * 100).toFixed(1) : "0.0";
-
-              const fallbackKycProfile = summarizeAnalyticsKycProfile(deduplicateReceipts(receiptsForProfiles).clusters);
-              const kycProfile = displayStats.kycProfile || fallbackKycProfile;
-              const kycPct = (value: number) => kycProfile.total > 0 ? ((value / kycProfile.total) * 100).toFixed(1) : "0.0";
-
-              return !isCardFundingFlipped ? (
-                /* FRONT SIDE: Card Funding Profile */
-                <div className="flex flex-col justify-between h-full">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-muted-foreground font-bold uppercase tracking-wider flex items-center gap-1.5">
-                        <span>Card Funding Profile</span>
-                        {successRateMode === "process" && (
-                          <span className="text-[9px] text-emerald-400 font-mono font-semibold bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">PAID ONLY</span>
-                        )}
-                      </span>
-                      <button
-                        onClick={() => setIsCardFundingFlipped(true)}
-                        className="text-[10px] text-primary hover:underline flex items-center gap-1 font-semibold transition-colors"
-                        title="Flip to Consumer KYC Profile"
-                      >
-                        <span>KYC Profile</span>
-                        <RefreshCw className="w-3 h-3 text-primary" />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 mt-2.5">
-                      <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
-                        <div className="text-[10px] text-muted-foreground font-medium">Credit</div>
-                        <div className="text-base font-bold text-white mt-0.5">{cardTypes.credit}</div>
-                        <div className="text-[9px] font-mono text-emerald-400 font-medium mt-0.5">{creditPct}%</div>
-                      </div>
-                      <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
-                        <div className="text-[10px] text-muted-foreground font-medium">Debit</div>
-                        <div className="text-base font-bold text-white mt-0.5">{cardTypes.debit}</div>
-                        <div className="text-[9px] font-mono text-emerald-400 font-medium mt-0.5">{debitPct}%</div>
-                      </div>
-                      <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
-                        <div className="text-[10px] text-muted-foreground font-medium">Bank</div>
-                        <div className="text-base font-bold text-white mt-0.5">{cardTypes.bank}</div>
-                        <div className="text-[9px] font-mono text-emerald-400 font-medium mt-0.5">{bankPct}%</div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-2 text-[10px] text-muted-foreground text-center">
-                    Categorized via BIN & Card metadata {successRateMode === "process" ? "(Paid Transactions)" : "(All Intents)"}
-                  </div>
-                </div>
-              ) : (
-                /* BACK SIDE: Consumer KYC Profile */
-                <div className="flex flex-col justify-between h-full">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                        <span>Consumer KYC Profile</span>
-                        <span className="text-[9px] text-violet-300 font-mono font-semibold bg-violet-500/10 px-1.5 py-0.5 rounded border border-violet-500/20">UNIQUE INTENTS</span>
-                      </span>
-                      <button
-                        onClick={() => setIsCardFundingFlipped(false)}
-                        className="text-[10px] text-primary hover:underline flex items-center gap-1 font-semibold transition-colors"
-                        title="Flip to Card Funding Profile"
-                      >
-                        <span>Card Funding</span>
-                        <RefreshCw className="w-3 h-3 text-primary" />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 mt-2.5">
-                      <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-2 text-center">
-                        <div className="text-[10px] text-violet-300 font-medium">Pre-verified</div>
-                        <div className="text-base font-bold text-violet-200 mt-0.5">{kycProfile.preverified}</div>
-                        <div className="text-[9px] font-mono text-violet-300 font-medium mt-0.5">{kycPct(kycProfile.preverified)}% of intents</div>
-                      </div>
-                      <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-2 text-center">
-                        <div className="text-[10px] text-emerald-400 font-medium">Upgraded Here</div>
-                        <div className="text-base font-bold text-emerald-300 mt-0.5">{kycProfile.upgraded}</div>
-                        <div className="text-[9px] font-mono text-emerald-400 font-medium mt-0.5">{kycPct(kycProfile.upgraded)}% of intents</div>
-                      </div>
-                      <div className="bg-emerald-500/[0.06] border border-emerald-500/15 rounded-xl p-2 text-center">
-                        <div className="text-[10px] text-emerald-300 font-medium">Final L1</div>
-                        <div className="text-base font-bold text-emerald-200 mt-0.5">{kycProfile.l1}</div>
-                        <div className="text-[9px] font-mono text-emerald-300 font-medium mt-0.5">{kycPct(kycProfile.l1)}% of intents</div>
-                      </div>
-                      <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-2 text-center">
-                        <div className="text-[10px] text-cyan-400 font-medium">Final L2</div>
-                        <div className="text-base font-bold text-cyan-300 mt-0.5">{kycProfile.l2}</div>
-                        <div className="text-[9px] font-mono text-cyan-400 font-medium mt-0.5">{kycPct(kycProfile.l2)}% of intents</div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-2 text-[10px] text-muted-foreground text-center">
-                    {kycProfile.l0} unverified/L0 · {kycProfile.untracked} legacy untracked · {kycProfile.total} unique intents
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-
-        </div>
-      )}
-
-      {/* Success Rate / Amount Earned Over Time - Line Chart Card */}
-      <div className={`w-full glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur-xl shadow-xl transition-all duration-300 ${
-        isMainChartMinimized ? "px-5 py-3" : "p-5 sm:p-6"
-      }`}>
-        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 ${isMainChartMinimized ? "" : "mb-5"}`}>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={toggleMainChartMinimized}
-              className="p-2 hover:bg-white/[0.08] rounded-xl transition-all text-muted-foreground hover:text-white border border-white/10 bg-white/[0.04] shadow-sm"
-              title={isMainChartMinimized ? "Expand Chart" : "Minimize Chart"}
-            >
-              {isMainChartMinimized ? (
-                <Maximize2 className="w-4 h-4" />
-              ) : (
-                <Minimize2 className="w-4 h-4" />
-              )}
-            </button>
-            <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Activity className="w-4 h-4 text-primary" />
-                <span>{chartMetric === "successRate" ? "Success Rate Over Time" : "Amount Earned Over Time"}</span>
-              </h3>
-              {!isMainChartMinimized && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {chartMetric === "successRate"
-                    ? "Daily transaction success rates (%) plotted chronologically."
-                    : "Daily aggregate volume ($) earned plotted chronologically."}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {isMainChartMinimized && (
-            <span className="text-xs text-muted-foreground bg-white/[0.06] px-3 py-1 rounded-full font-medium border border-white/5">Collapsed</span>
-          )}
-
-          {!isMainChartMinimized && (
-            <>
-              {/* Mobile Compact Controls Toolbar (sm:hidden) */}
-              <div className="flex flex-col gap-2.5 w-full sm:hidden">
-                <div className="grid grid-cols-2 gap-2 w-full">
-                  {/* Combined Metric & Scale Selector */}
-                  <select
-                    value={`${chartMetric}_${scaleType}`}
-                    onChange={e => {
-                      const [m, s] = e.target.value.split("_");
-                      setChartMetric(m as any);
-                      setScaleType(s as any);
-                    }}
-                    className="h-9 px-2.5 rounded-xl bg-white/[0.06] border border-white/10 text-xs font-bold text-white focus:outline-none focus:border-primary truncate"
-                  >
-                    <option value="successRate_linear" className="bg-zinc-900">Success Rate (Lin)</option>
-                    <option value="successRate_log" className="bg-zinc-900">Success Rate (Log)</option>
-                    <option value="amountEarned_linear" className="bg-zinc-900">Earned $ (Lin)</option>
-                    <option value="amountEarned_log" className="bg-zinc-900">Earned $ (Log)</option>
-                  </select>
-
-                  {/* Time Range Selector & Ride the Data Button */}
-                  <div className="flex items-center gap-1.5">
-                    <select
-                      value={timeRange}
-                      onChange={e => setTimeRange(e.target.value)}
-                      className="flex-1 h-9 px-2.5 rounded-xl bg-white/[0.06] border border-white/10 text-xs font-bold text-white focus:outline-none focus:border-primary truncate"
-                    >
-                      <option value="today" className="bg-zinc-900">Today</option>
-                      <option value="yesterday" className="bg-zinc-900">Yesterday</option>
-                      <option value="weekly" className="bg-zinc-900">Weekly</option>
-                      <option value="monthly" className="bg-zinc-900">Monthly</option>
-                      <option value="all" className="bg-zinc-900">All Time</option>
-                      <option value="custom" className="bg-zinc-900">Custom Range</option>
-                    </select>
-                    <button
-                      onClick={() => setShowCoaster(true)}
-                      className="h-9 w-9 rounded-xl bg-primary/20 border border-primary/30 text-primary flex items-center justify-center shrink-0 active:scale-95 shadow-sm"
-                      title="Ride the Data"
-                    >
-                      <Route className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Mobile Custom Date Pickers */}
-                {timeRange === "custom" && (
-                  <div className="grid grid-cols-2 gap-2 p-2 rounded-xl bg-white/[0.04] border border-white/10 w-full font-mono">
-                    <div className="flex items-center gap-1.5 bg-white/[0.05] px-2 py-1 rounded-lg border border-white/10">
-                      <span className="text-[9px] text-white/40 font-bold uppercase">From:</span>
-                      <input
-                        type="date"
-                        value={customStartDate}
-                        onChange={e => setCustomStartDate(e.target.value)}
-                        className="bg-transparent border-0 text-[11px] font-bold text-white focus:outline-none w-full [color-scheme:dark]"
-                      />
-                    </div>
-                    <div className="flex items-center gap-1.5 bg-white/[0.05] px-2 py-1 rounded-lg border border-white/10">
-                      <span className="text-[9px] text-white/40 font-bold uppercase">To:</span>
-                      <input
-                        type="date"
-                        value={customEndDate}
-                        onChange={e => setCustomEndDate(e.target.value)}
-                        className="bg-transparent border-0 text-[11px] font-bold text-white focus:outline-none w-full [color-scheme:dark]"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Mobile Weekly/Monthly Pagination */}
-                {(timeRange === "weekly" || timeRange === "monthly") && (
-                  <div className="flex items-center justify-between bg-white/[0.04] border border-white/10 px-3 py-1.5 rounded-xl text-xs font-mono">
-                    <button
-                      onClick={() => {
-                        if (timeRange === "weekly") {
-                          setSelectedWeekOffset(prev => prev - 1);
-                        } else {
-                          setSelectedMonthOffset(prev => prev - 1);
-                        }
-                      }}
-                      className="text-muted-foreground hover:text-white font-bold px-2 py-0.5 rounded bg-white/5"
-                    >
-                      &lt; Prev
-                    </button>
-                    <span className="text-white font-semibold">
-                      {timeRange === "weekly" ? (
-                        (() => {
-                          const { start, end } = getWeekRange(selectedWeekOffset);
-                          return `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
-                        })()
-                      ) : (
-                        (() => {
-                          const { start } = getMonthRange(selectedMonthOffset);
-                          return start.toLocaleDateString(undefined, { month: "long", year: "numeric" });
-                        })()
-                      )}
-                    </span>
-                    <button
-                      onClick={() => {
-                        if (timeRange === "weekly") {
-                          setSelectedWeekOffset(prev => Math.min(0, prev + 1));
-                        } else {
-                          setSelectedMonthOffset(prev => Math.min(0, prev + 1));
-                        }
-                      }}
-                      disabled={timeRange === "weekly" ? selectedWeekOffset >= 0 : selectedMonthOffset >= 0}
-                      className="text-muted-foreground hover:text-white disabled:opacity-30 font-bold px-2 py-0.5 rounded bg-white/5"
-                    >
-                      Next &gt;
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Desktop Full Controls Bar (hidden sm:flex) */}
-              <div className="hidden sm:flex flex-wrap items-center gap-2.5 max-w-full">
-                {/* Metric Toggle */}
-                <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl shrink-0">
-                  {[
-                    { label: "Success Rate", value: "successRate" },
-                    { label: "Amount Earned", value: "amountEarned" }
-                  ].map(opt => (
-                    <button
-                      key={opt.value}
-                      onClick={() => setChartMetric(opt.value as any)}
-                      className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all shrink-0 ${chartMetric === opt.value
-                        ? "bg-primary text-white shadow-sm"
-                        : "text-muted-foreground hover:text-white"
-                        }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Scale Toggle */}
-                <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl shrink-0">
-                  {[
-                    { label: "Linear", value: "linear" },
-                    { label: "Log", value: "log" }
-                  ].map(opt => (
-                    <button
-                      key={opt.value}
-                      onClick={() => setScaleType(opt.value as any)}
-                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all shrink-0 ${scaleType === opt.value
-                        ? "bg-primary text-white shadow-sm"
-                        : "text-muted-foreground hover:text-white"
-                        }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Time Range Selector */}
-                <div className="flex items-center gap-1.5 flex-wrap max-w-full">
-                  <div className="flex items-center p-1 bg-white/[0.04] border border-white/10 rounded-xl max-w-full overflow-x-auto no-scrollbar">
-                    {[
-                      { label: "Today", value: "today" },
-                      { label: "Yesterday", value: "yesterday" },
-                      { label: "Weekly", value: "weekly" },
-                      { label: "Monthly", value: "monthly" },
-                      { label: "All", value: "all" },
-                      { label: "Custom", value: "custom" }
-                    ].map(opt => (
-                      <button
-                        key={opt.value}
-                        onClick={() => setTimeRange(opt.value)}
-                        className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all shrink-0 ${timeRange === opt.value
-                          ? "bg-primary text-white shadow-sm"
-                          : "text-muted-foreground hover:text-white"
-                          }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Custom Date Pickers */}
-                  {timeRange === "custom" && (
-                    <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/10 w-full sm:w-auto font-mono">
-                      <div className="flex items-center gap-1.5 bg-white/[0.05] px-2.5 py-1 rounded-lg border border-white/10 flex-1 sm:flex-initial">
-                        <span className="text-[10px] text-white/40 font-bold uppercase">From:</span>
-                        <input
-                          type="date"
-                          value={customStartDate}
-                          onChange={e => setCustomStartDate(e.target.value)}
-                          className="bg-transparent border-0 text-xs font-bold text-white focus:outline-none w-full sm:w-28 [color-scheme:dark]"
-                        />
-                      </div>
-                      <div className="flex items-center gap-1.5 bg-white/[0.05] px-2.5 py-1 rounded-lg border border-white/10 flex-1 sm:flex-initial">
-                        <span className="text-[10px] text-white/40 font-bold uppercase">To:</span>
-                        <input
-                          type="date"
-                          value={customEndDate}
-                          onChange={e => setCustomEndDate(e.target.value)}
-                          className="bg-transparent border-0 text-xs font-bold text-white focus:outline-none w-full sm:w-28 [color-scheme:dark]"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Weekly/Monthly Pagination */}
-                  {(timeRange === "weekly" || timeRange === "monthly") && (
-                    <div className="flex items-center gap-2 bg-white/[0.04] border border-white/10 px-3 py-1 rounded-xl h-9">
-                      <button
-                        onClick={() => {
-                          if (timeRange === "weekly") {
-                            setSelectedWeekOffset(prev => prev - 1);
-                          } else {
-                            setSelectedMonthOffset(prev => prev - 1);
-                          }
-                        }}
-                        className="text-muted-foreground hover:text-white text-xs font-bold px-1 transition-colors"
-                        title="Previous"
-                      >
-                        &lt;
-                      </button>
-                      <span className="text-xs text-white font-medium select-none">
-                        {timeRange === "weekly" ? (
-                          (() => {
-                            const { start, end } = getWeekRange(selectedWeekOffset);
-                            return `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
-                          })()
-                        ) : (
-                          (() => {
-                            const { start } = getMonthRange(selectedMonthOffset);
-                            return start.toLocaleDateString(undefined, { month: "long", year: "numeric" });
-                          })()
-                        )}
-                      </span>
-                      <button
-                        onClick={() => {
-                          if (timeRange === "weekly") {
-                            setSelectedWeekOffset(prev => Math.min(0, prev + 1));
-                          } else {
-                            setSelectedMonthOffset(prev => Math.min(0, prev + 1));
-                          }
-                        }}
-                        disabled={timeRange === "weekly" ? selectedWeekOffset >= 0 : selectedMonthOffset >= 0}
-                        className="text-muted-foreground hover:text-white disabled:opacity-30 disabled:pointer-events-none text-xs font-bold px-1 transition-colors"
-                        title="Next"
-                      >
-                        &gt;
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Rollercoaster Ride Button */}
-                <button
-                  onClick={() => setShowCoaster(true)}
-                  className="px-3 h-9 text-xs font-bold rounded-xl transition-all duration-200 bg-primary/20 border border-primary/30 hover:border-primary/50 hover:bg-primary/30 text-primary hover:text-white flex items-center gap-1.5 shadow-sm active:scale-95"
-                >
-                  <Route className="w-4 h-4" />
-                  <span>Ride the Data</span>
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Custom Interactive Line Chart */}
-        {!isMainChartMinimized && (
-          <div className="flex-1 flex flex-col min-h-[290px] sm:min-h-[320px] mt-3 animate-in fade-in zoom-in-95 duration-200">
-            {chartTimeSeries.length === 1 || timeRange === "today" || timeRange === "yesterday" ? (
-              <CustomInteractiveBarChart
-                data={chartTimeSeries}
-                brandKeys={selectedBrand !== "all" ? [selectedBrand] : allBrandKeys}
-                hoveredKey={hoveredLineKey}
-                setHoveredKey={setHoveredLineKey}
-                metricType={chartMetric}
-                scaleType={scaleType}
-              />
-            ) : (
-              <CustomInteractiveLineChart
-                data={chartTimeSeries}
-                brandKeys={selectedBrand !== "all" ? [selectedBrand] : allBrandKeys}
-                hoveredKey={hoveredLineKey}
-                setHoveredKey={setHoveredLineKey}
-                metricType={chartMetric}
-                scaleType={scaleType}
-                gitCommits={gitCommits}
-                showGitCommitsOverlay={showGitCommitsOverlay}
-                setShowGitCommitsOverlay={(val) => {
-                  setShowGitCommitsOverlay(val);
-                  if (typeof window !== "undefined") {
-                    const nextVal = typeof val === "function" ? val(showGitCommitsOverlay) : val;
-                    localStorage.setItem("pp_admin_analytics_git_commits_overlay", String(nextVal));
-                  }
-                }}
-              />
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 3-Column Section Header */}
-      <div className={`flex items-center justify-between glass-pane border border-white/10 bg-zinc-950/80 px-5 py-3 rounded-2xl transition-all duration-300 ${
-        isThreeColumnMinimized ? "mb-6" : "mb-4"
-      }`}>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={toggleThreeColumnMinimized}
-            className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-all text-muted-foreground hover:text-white border border-white/10 bg-white/[0.04]"
-            title={isThreeColumnMinimized ? "Expand Metrics" : "Minimize Metrics"}
-          >
-            {isThreeColumnMinimized ? (
-              <Maximize2 className="w-3.5 h-3.5" />
-            ) : (
-              <Minimize2 className="w-3.5 h-3.5" />
-            )}
-          </button>
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-primary" />
-            <h4 className="text-sm font-bold text-white">Performance & Metrics Distribution</h4>
-          </div>
-        </div>
-        {isThreeColumnMinimized && (
-          <span className="text-xs text-muted-foreground bg-white/[0.06] px-3 py-1 rounded-full font-medium border border-white/5">Collapsed</span>
-        )}
-      </div>
-
-      {/* 3-Column Row: Status Distribution, Brand Performance, and Technical Failure Reasons */}
-      {!isThreeColumnMinimized && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6 animate-in fade-in zoom-in-95 duration-200">
-
-        {/* Transaction Status Distribution - Pie Chart */}
-        <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between min-h-[360px] sm:min-h-[380px] w-full shadow-xl">
-          <div className="flex flex-col h-full justify-between">
-            <div className="flex-shrink-0">
-              <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-primary" />
-                <span>Status Distribution</span>
-              </h3>
-              <p className="text-xs text-muted-foreground">
-                Breakdown of all {stats?.totalCreated ?? baseFilteredReceipts.length} checkouts matching the active query.
-              </p>
-            </div>
-
-            <div className="flex-1 flex items-center justify-center min-h-0 py-4">
-              <CustomLargeDonutChart data={statusPieData} />
-            </div>
-          </div>
-        </div>
-
-        {/* Brand Performance - Flippable Card */}
-        <div className="relative [perspective:1000px] min-h-[360px] sm:min-h-[380px] w-full">
-          <div
-            className="relative w-full h-full duration-500 transition-transform"
-            style={{
-              transformStyle: "preserve-3d",
-              transform: bpFlipped ? "rotateY(180deg)" : "none",
-            }}
-          >
-            {/* Front Face: Bar Chart */}
-            <div
-              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between shadow-xl"
-              style={{ backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden" }}
-            >
-              <div className="flex flex-col h-full justify-between">
-                <div className="flex items-center justify-between flex-shrink-0 gap-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-bold text-white flex items-center gap-2">
-                      <BarChart2 className="w-4 h-4 text-primary" />
-                      <span>Brand Performance</span>
-                    </h3>
-                    
-                    {/* Toggle Metric Switch */}
-                    <div className="flex items-center p-0.5 bg-white/[0.04] border border-white/10 rounded-lg">
-                      <button
-                        onClick={() => setBrandMetric("successRate")}
-                        className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${brandMetric === "successRate"
-                          ? "bg-primary text-white"
-                          : "text-muted-foreground hover:text-white"
-                          }`}
-                      >
-                        SR%
-                      </button>
-                      <button
-                        onClick={() => setBrandMetric("amountEarned")}
-                        className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${brandMetric === "amountEarned"
-                          ? "bg-primary text-white"
-                          : "text-muted-foreground hover:text-white"
-                          }`}
-                      >
-                        Earned$
-                      </button>
-                    </div>
-
-                    {/* Toggle Scale Switch */}
-                    <div className="flex items-center p-0.5 bg-white/[0.04] border border-white/10 rounded-lg">
-                      <button
-                        onClick={() => setBrandScale("linear")}
-                        className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${brandScale === "linear"
-                          ? "bg-primary text-white"
-                          : "text-muted-foreground hover:text-white"
-                          }`}
-                      >
-                        Lin
-                      </button>
-                      <button
-                        onClick={() => setBrandScale("log")}
-                        className={`px-2 py-0.5 text-[9px] font-bold rounded transition-all ${brandScale === "log"
-                          ? "bg-primary text-white"
-                          : "text-muted-foreground hover:text-white"
-                          }`}
-                      >
-                        Log
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => setBpFlipped(true)}
-                    className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl flex items-center gap-1.5"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>Table</span>
-                  </button>
-                </div>
-
-                <div className="flex flex-col justify-around py-2 flex-1 min-h-0 mt-4 mb-2">
-                  {displayedBrandStats.map((b) => {
-                    const brandIdx = allBrandKeys.indexOf(b.brandKey);
-                    const color = getBrandColor(b.brandKey, brandIdx);
-                    
-                    let widthPct = 0;
-                    if (brandMetric === "successRate") {
-                      if (brandScale === "linear") {
-                        widthPct = b.successRate;
-                      } else {
-                        widthPct = (Math.log10(b.successRate + 1) / Math.log10(101)) * 100;
-                      }
-                    } else {
-                      if (brandScale === "linear") {
-                        widthPct = (b.gmv / maxBrandGmv) * 100;
-                      } else {
-                        widthPct = (Math.log10(b.gmv + 1) / Math.log10(maxBrandGmv + 1)) * 100;
-                      }
-                    }
-
-                    return (
-                      <div key={b.brandKey} className="space-y-2">
-                        <div className="flex justify-between items-center text-xs sm:text-sm">
-                          <span className="font-bold text-white/95">{b.brandKey}</span>
-                          <span className="text-muted-foreground text-xs font-medium">
-                            {brandMetric === "successRate" ? (
-                              <>
-                                {b.successRate}% SR <span className="text-white/20 mx-1">|</span> ${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                              </>
-                            ) : (
-                              <>
-                                ${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span className="text-white/20 mx-1">|</span> {b.successRate}% SR
-                              </>
-                            )}
-                          </span>
-                        </div>
-                        <div className="w-full bg-white/[0.03] border border-white/5 rounded-full relative overflow-hidden" style={{ height: "18px" }}>
-                          <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{
-                              width: `${widthPct}%`,
-                              backgroundColor: color,
-                              boxShadow: `0 0 10px ${color}50`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {brandStats.length === 0 && (
-                    <div className="text-xs text-muted-foreground text-center py-4">No brand performance data.</div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Back Face: Table List */}
-            <div
-              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between shadow-xl"
-              style={{
-                backfaceVisibility: "hidden",
-                WebkitBackfaceVisibility: "hidden",
-                transform: "rotateY(180deg)",
-              }}
-            >
-              <div className="flex flex-col h-full justify-between">
-                <div className="flex items-center justify-between flex-shrink-0">
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-primary" />
-                    <span>Brand Details</span>
-                  </h3>
-                  <button
-                    onClick={() => setBpFlipped(false)}
-                    className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl flex items-center gap-1.5"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>Chart</span>
-                  </button>
-                </div>
-
-                <div className="space-y-3 overflow-y-auto pr-1 flex-1 min-h-0 mt-3">
-                  {displayedBrandStats.map(b => (
-                    <div key={b.brandKey} className="border-b border-white/5 pb-2.5 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
-                      <div>
-                        <div className="font-bold text-white">{b.brandKey}</div>
-                        <div className="text-muted-foreground text-[10px] mt-0.5">
-                          {b.sessionsText}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-bold text-white">${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-                        <div className={`text-[10px] font-bold mt-0.5 ${b.successRate >= 80 ? "text-emerald-400" :
-                          b.successRate >= 60 ? "text-amber-400" :
-                            "text-rose-400"
-                          }`}>
-                          {b.successRate}% SR
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {brandStats.length === 0 && (
-                    <div className="text-xs text-muted-foreground text-center py-4">No brand keys registered yet.</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Technical Failure Reasons - Flippable Card */}
-        <div className="relative [perspective:1000px] min-h-[360px] sm:min-h-[380px] w-full">
-          <div
-            className="relative w-full h-full duration-500 transition-transform"
-            style={{
-              transformStyle: "preserve-3d",
-              transform: tfrFlipped ? "rotateY(180deg)" : "none",
-            }}
-          >
-            {/* Front Face: Heatmap */}
-            <div
-              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between shadow-xl"
-              style={{ backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden" }}
-            >
-              <div className="flex flex-col h-full relative justify-between">
-                <div className="flex items-center justify-between flex-shrink-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-white flex items-center gap-2">
-                      <Activity className="w-4 h-4 text-rose-400" />
-                      <span>Failure Heatmap</span>
-                    </h3>
-                    {selectedErrorCombo && (
-                      <span className="text-[9px] text-rose-400 bg-rose-500/15 px-2 py-0.5 rounded-full border border-rose-500/30 animate-pulse font-bold">
-                        Filtered
-                      </span>
-                    )}
-                    <span className="text-[9px] text-white/40 font-mono">
-                      {failureCombinations.affectedReceiptCount} affected checkouts
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setTfrFlipped(true)}
-                    className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl flex items-center gap-1.5"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>List</span>
-                  </button>
-                </div>
-
-                {failureCombinations.topReasons.length > 0 ? (
-                  <div className="flex flex-col items-center justify-center flex-1 py-1 min-h-0 relative mt-2">
-                    <svg viewBox="0 0 300 280" className="w-full h-[90%] overflow-visible select-none">
-                      {failureCombinations.topReasons.map((_, idx) => (
-                        <text
-                          key={idx}
-                          x={34 + idx * 52 + 22}
-                          y="15"
-                          className="fill-white/40 text-[10px] font-bold font-sans"
-                          textAnchor="middle"
-                        >
-                          E{idx + 1}
-                        </text>
-                      ))}
-
-                      {failureCombinations.topReasons.map((reasonA, idxA) => {
-                        const y = 25 + idxA * 50;
-                        return (
-                          <g key={idxA}>
-                            <text
-                              x="16"
-                              y={y + 26}
-                              className="fill-white/40 text-[10px] font-bold font-sans"
-                              textAnchor="middle"
-                            >
-                              E{idxA + 1}
-                            </text>
-
-                            {failureCombinations.topReasons.map((reasonB, idxB) => {
-                              const x = 34 + idxB * 52;
-                              const val = failureCombinations.matrix[idxA][idxB];
-                              const maxVal = Math.max(...failureCombinations.matrix.map(row => Math.max(...row)), 1);
-                              const opacity = val > 0 ? 0.15 + (val / maxVal) * 0.85 : 0.02;
-                              const isDiagonal = idxA === idxB;
-
-                              const isSelected = selectedErrorCombo && (
-                                (selectedErrorCombo[0] === reasonA && selectedErrorCombo[1] === reasonB) ||
-                                (selectedErrorCombo[0] === reasonB && selectedErrorCombo[1] === reasonA)
-                              );
-
-                              return (
-                                <g key={idxB}>
-                                  <rect
-                                    x={x}
-                                    y={y}
-                                    width="44"
-                                    height="44"
-                                    rx="8"
-                                    className={`cursor-pointer transition-all duration-200 ${isSelected ? "stroke-2 stroke-primary" : "hover:stroke-1 hover:stroke-white/40"}`}
-                                    fill={val > 0 ? (isDiagonal ? "#fb7185" : "#f43f5e") : "#27272a"}
-                                    fillOpacity={opacity}
-                                    onClick={() => {
-                                      if (isSelected) {
-                                        setSelectedErrorCombo(null);
-                                      } else {
-                                        setSelectedErrorCombo([reasonA, reasonB]);
-                                      }
-                                    }}
-                                    onMouseEnter={() => setHoveredHeatmapCell({ x, y, reasonA, reasonB, val })}
-                                    onMouseLeave={() => setHoveredHeatmapCell(null)}
-                                  />
-                                  <text
-                                    x={x + 22}
-                                    y={y + 26}
-                                    className={`text-[10px] font-bold font-mono pointer-events-none ${val > 0 ? "fill-white" : "fill-white/20"}`}
-                                    textAnchor="middle"
-                                  >
-                                    {val}
-                                  </text>
-                                </g>
-                              );
-                            })}
-                          </g>
-                        );
-                      })}
-                    </svg>
-
-                    {/* Interactive Glassmorphic Hover Tooltip for Heatmap Cells */}
-                    {hoveredHeatmapCell && (
-                      <div
-                        className="absolute z-50 bg-zinc-950/95 border border-rose-500/30 rounded-xl p-3 shadow-2xl backdrop-blur-xl text-xs pointer-events-none -translate-x-1/2 -translate-y-full mb-3 animate-in fade-in zoom-in-95 duration-150 max-w-xs w-64"
-                        style={{
-                          left: `calc(11% + ${(hoveredHeatmapCell.x / 300) * 100}%)`,
-                          top: `calc(8% + ${(hoveredHeatmapCell.y / 280) * 100}%)`,
-                        }}
-                      >
-                        <div className="flex items-center justify-between border-b border-white/10 pb-1.5 mb-1.5">
-                          <span className="font-mono text-[10px] font-bold text-rose-400 uppercase tracking-wider flex items-center gap-1">
-                            <Activity className="w-3 h-3 text-rose-400" />
-                            <span>Failure Cell</span>
-                          </span>
-                          <span className="text-[10px] font-mono font-bold text-white bg-rose-500/20 px-1.5 py-0.5 rounded border border-rose-500/30">
-                            {hoveredHeatmapCell.val} {hoveredHeatmapCell.val === 1 ? "occurrence" : "occurrences"}
-                          </span>
-                        </div>
-
-                        <div className="space-y-1">
-                          <div className="text-[11px] font-bold text-white leading-tight">
-                            {hoveredHeatmapCell.reasonA}
-                          </div>
-                          {hoveredHeatmapCell.reasonA !== hoveredHeatmapCell.reasonB && (
-                            <div className="text-[10px] text-muted-foreground border-t border-white/5 pt-1 mt-1">
-                              <span className="text-white/40">Co-occurring: </span>
-                              <span className="text-white/80 font-semibold">{hoveredHeatmapCell.reasonB}</span>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="text-[9px] text-emerald-400 font-mono font-medium mt-2 pt-1 border-t border-white/5 flex items-center gap-1">
-                          <span>💡 Click cell to filter diagnostics feed</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center flex-1 text-xs text-muted-foreground">
-                    No failure combinations recorded.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Back Face: Error List */}
-            <div
-              className="absolute inset-0 w-full h-full [backface-visibility:hidden] glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between shadow-xl"
-              style={{
-                backfaceVisibility: "hidden",
-                WebkitBackfaceVisibility: "hidden",
-                transform: "rotateY(180deg)",
-              }}
-            >
-              <div className="flex flex-col h-full justify-between">
-                <div className="flex items-center justify-between flex-shrink-0">
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-rose-400" />
-                    <span>Top Failure Reasons</span>
-                  </h3>
-                  <button
-                    onClick={() => setTfrFlipped(false)}
-                    className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl flex items-center gap-1.5"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    <span>Heatmap</span>
-                  </button>
-                </div>
-
-                <div className="space-y-3 overflow-y-auto pr-1 flex-1 min-h-0 mt-3">
-                  {failureReasons.map((fr, idx) => (
-                    <div key={idx} className="border-b border-white/5 pb-2.5 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
-                      <div className="font-semibold text-white/90 truncate max-w-[200px]" title={fr.reason}>
-                        {fr.reason}
-                      </div>
-                      <span className="font-bold text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full text-[10px] border border-rose-500/20">
-                        {fr.count} occurrences
-                      </span>
-                    </div>
-                  ))}
-                  {failureReasons.length === 0 && (
-                    <div className="text-xs text-muted-foreground text-center py-4">No logged errors found.</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        </div>
-      )}
-
-      {/* Gnosis Safe Reserves Value Over Time Chart Card */}
-      <div className={`w-full glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur-xl shadow-xl transition-all duration-300 ${
-        isSafeChartMinimized ? "px-5 py-3 mb-6" : "p-5 sm:p-6 mb-6"
-      }`}>
-        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 ${isSafeChartMinimized ? "" : "mb-5"}`}>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={toggleSafeChartMinimized}
-              className="p-2 hover:bg-white/[0.08] rounded-xl transition-all text-muted-foreground hover:text-white border border-white/10 bg-white/[0.04] shadow-sm"
-              title={isSafeChartMinimized ? "Expand Chart" : "Minimize Chart"}
-            >
-              {isSafeChartMinimized ? (
-                <Maximize2 className="w-4 h-4" />
-              ) : (
-                <Minimize2 className="w-4 h-4" />
-              )}
-            </button>
-            <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-emerald-400" />
-                <span>Gnosis Safe Reserves & Treasury Growth</span>
-              </h3>
-              {!isSafeChartMinimized && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Real-time on-chain treasury balances, token allocations, and exponential trajectory forecast models.
-                </p>
-              )}
-            </div>
-          </div>
-
-          {isSafeChartMinimized && (
-            <span className="text-xs text-muted-foreground bg-white/[0.06] px-3 py-1 rounded-full font-medium border border-white/5">Collapsed</span>
-          )}
-
-          {!isSafeChartMinimized && (
-            <div className="flex items-center gap-2.5">
-              <button
-                onClick={fetchSafeBalances}
-                disabled={safeLoading}
-                className="h-9 px-4 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-xs font-semibold text-white/90 transition-all flex items-center gap-2 shadow-sm active:scale-95 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${safeLoading ? "animate-spin" : ""}`} />
-                <span>Sync Safe Balances</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {!isSafeChartMinimized && (
-          <div className="flex-1 flex flex-col min-h-[360px] sm:min-h-[420px] mt-4 animate-in fade-in zoom-in-95 duration-200">
-            {safeLoading ? (
-              <div className="flex flex-col items-center justify-center min-h-[220px] gap-2">
-                <RefreshCw className="w-6 h-6 text-emerald-400 animate-spin opacity-80" />
-                <span className="text-xs text-muted-foreground font-medium">Syncing Gnosis Safe treasury balances...</span>
-              </div>
-            ) : safeError ? (
-              <div className="flex flex-col items-center justify-center min-h-[200px] p-4 text-center border border-rose-500/20 bg-rose-500/5 rounded-2xl">
-                <AlertCircle className="w-8 h-8 text-rose-400 mb-2" />
-                <span className="text-xs text-rose-400 font-semibold">{safeError}</span>
-                <button
-                  onClick={fetchSafeBalances}
-                  className="mt-3 px-3.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold transition-all"
-                >
-                  Retry Sync
-                </button>
-              </div>
-            ) : (
-              <SafeInteractiveLineChart data={safeBalanceHistory} tokenPrices={safeTokenPrices} />
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Full-width Searchable and Detailed Diagnostics Investigation Feed */}
-      <div className="space-y-4">
-
-        <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-4 sm:p-5 space-y-4 shadow-xl backdrop-blur-xl">
-
+      </header>
+      {receiptLinkMessage && <p role="status" className="rounded-lg border border-amber-500/20 p-3 text-sm text-amber-200">{receiptLinkMessage}</p>}
+      {(isRefetching || error) && queryMetadata?.query && <p className="rounded-lg border border-white/10 p-3 text-xs text-zinc-400">Displayed results: partner {queryMetadata.query.brandKey}, status {queryMetadata.query.status}, KYC {queryMetadata.query.kyc}, search {queryMetadata.query.search || "none"}. The controls below describe the requested query.</p>}
+      {error && stats && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200"><span>Showing previous results. {error}</span><button type="button" onClick={fetchAnalytics} className="underline">Retry</button></div>}
+      <nav className="analytics-workspaces" aria-label="Analytics workspaces">
+        {([['overview','Overview',Activity],['conversion','Conversion & Brands',BarChart2],['failures','Failures',AlertCircle],['transactions','Transactions',FileText],['treasury','Treasury',Database],['audit','Audit & Reconcile',CheckCircle2]] as const).map(([key,label,Icon]) => <button type="button" key={key} aria-current={workspace === key ? "page" : undefined} onClick={() => setWorkspace(key)}><Icon size={15}/>{label}</button>)}
+      </nav>
+      <section hidden={workspace === "audit"} aria-label="Analytics query and reports" className="rounded-xl border border-white/10 bg-zinc-950 p-4 space-y-4">
           {/* Filter Toolbar */}
           <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3 sm:gap-4">
 
@@ -3760,7 +1606,7 @@ export default function PlatformAnalyticsPanel() {
                     type="button"
                     onClick={() => setSearchMode(value)}
                     aria-pressed={searchMode === value}
-                    className={`h-8 px-2.5 rounded-lg text-[10px] sm:text-[11px] font-bold whitespace-nowrap flex items-center gap-1.5 border transition-all ${
+                    className={`h-8 px-2.5 rounded-lg text-xs sm:text-xs font-bold whitespace-nowrap flex items-center gap-1.5 border transition-all ${
                       searchMode === value
                         ? "bg-primary/20 border-primary/45 text-primary shadow-[0_0_18px_rgba(59,130,246,0.14)]"
                         : "border-transparent text-white/50 hover:text-white hover:bg-white/[0.06]"
@@ -3805,7 +1651,7 @@ export default function PlatformAnalyticsPanel() {
                   <button
                     onClick={() => setAppliedSearch(searchQuery.trim())}
                     disabled={isRefetching || isBatchLoading}
-                    className="px-2.5 py-1 rounded-lg bg-primary/20 hover:bg-primary/30 border border-primary/40 text-[11px] font-bold text-primary flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-lg bg-primary/20 hover:bg-primary/30 border border-primary/40 text-xs font-bold text-primary flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
                     title="Query platform database"
                   >
                     {isRefetching ? (
@@ -3822,22 +1668,24 @@ export default function PlatformAnalyticsPanel() {
             {/* Filters Dropdown */}
             <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
               <select
+                aria-label="Partner filter"
                 value={selectedBrand}
                 onChange={e => setSelectedBrand(e.target.value)}
                 className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
               >
                 <option value="all" className="bg-neutral-900">All Brands</option>
-                {allBrandKeys.map(bk => (
+                {brandFilterKeys.map(bk => (
                   <option key={bk} value={bk} className="bg-neutral-900">{bk}</option>
                 ))}
               </select>
 
               <select
+                aria-label="Receipt status filter"
                 value={statusFilter}
                 onChange={e => setStatusFilter(e.target.value)}
                 className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
               >
-                <option value="all" className="bg-neutral-900">All Statuses ({recentReceipts.length})</option>
+                <option value="all" className="bg-neutral-900">All Statuses</option>
                 {detectedStatuses.map(({ status, count }) => {
                   const formattedLabel = status
                     .replace(/_/g, " ")
@@ -3846,13 +1694,14 @@ export default function PlatformAnalyticsPanel() {
 
                   return (
                     <option key={status} value={status} className="bg-neutral-900">
-                      {formattedLabel} ({count})
+                      {formattedLabel}
                     </option>
                   );
                 })}
               </select>
 
               <select
+                aria-label="Verified KYC tier"
                 value={kycFilter}
                 onChange={e => setKycFilter(e.target.value)}
                 className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
@@ -3865,6 +1714,7 @@ export default function PlatformAnalyticsPanel() {
               </select>
 
               <select
+                aria-label="Date range"
                 value={timeRange}
                 onChange={e => setTimeRange(e.target.value)}
                 className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
@@ -3885,7 +1735,7 @@ export default function PlatformAnalyticsPanel() {
                     onChange={e => setCustomStartDate(e.target.value)}
                     className="bg-transparent border-0 text-xs text-white/90 focus:outline-none w-28 [color-scheme:dark]"
                   />
-                  <span className="text-[10px] text-muted-foreground uppercase">to</span>
+                  <span className="text-xs text-muted-foreground uppercase">to</span>
                   <input
                     type="date"
                     value={customEndDate}
@@ -3900,9 +1750,9 @@ export default function PlatformAnalyticsPanel() {
                   <button
                     onClick={() => {
                       if (timeRange === "weekly") {
-                        setSelectedWeekOffset(prev => prev - 1);
+                        setSelectedWeekOffset(prev => Math.max(-520, prev - 1));
                       } else {
-                        setSelectedMonthOffset(prev => prev - 1);
+                        setSelectedMonthOffset(prev => Math.max(-120, prev - 1));
                       }
                     }}
                     className="text-muted-foreground hover:text-white text-sm font-bold px-1 transition-colors"
@@ -3914,12 +1764,12 @@ export default function PlatformAnalyticsPanel() {
                     {timeRange === "weekly" ? (
                       (() => {
                         const { start, end } = getWeekRange(selectedWeekOffset);
-                        return `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+                        return `${start.toLocaleDateString(undefined, { timeZone: effectiveTimezone, month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { timeZone: effectiveTimezone, month: "short", day: "numeric" })}`;
                       })()
                     ) : (
                       (() => {
                         const { start } = getMonthRange(selectedMonthOffset);
-                        return start.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+                        return start.toLocaleDateString(undefined, { timeZone: effectiveTimezone, month: "long", year: "numeric" });
                       })()
                     )}
                   </span>
@@ -3941,6 +1791,7 @@ export default function PlatformAnalyticsPanel() {
               )}
 
               <select
+                aria-label="Receipt loading limit"
                 value={fetchLimit}
                 onChange={e => {
                   const val = e.target.value;
@@ -3958,7 +1809,9 @@ export default function PlatformAnalyticsPanel() {
               {/* Complete PDF and Excel report export menu */}
               <div className="relative">
                 <button
-                  onClick={() => setIsExportMenuOpen(prev => !prev)}
+                  aria-haspopup="dialog"
+                  aria-expanded={isExportMenuOpen}
+                  onClick={() => { rememberDialogFocus(); setIsExportMenuOpen(prev => !prev); }}
                   disabled={isExportingReport}
                   className="h-10 px-3.5 rounded-xl bg-gradient-to-r from-primary/20 via-purple-500/20 to-emerald-500/20 hover:from-primary/30 hover:to-emerald-500/30 border border-primary/40 text-xs font-bold text-white transition-all flex items-center gap-2 shadow-lg shadow-primary/10 active:scale-95 disabled:opacity-50"
                   title="Export complete analytics reports"
@@ -3972,23 +1825,10 @@ export default function PlatformAnalyticsPanel() {
                   <ChevronDown className={`w-3.5 h-3.5 text-white/60 transition-transform ${isExportMenuOpen ? "rotate-180" : ""}`} />
                 </button>
 
-                {isExportMenuOpen && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-40"
-                      onClick={() => setIsExportMenuOpen(false)}
-                    />
-                    <div className="absolute right-0 top-12 z-50 w-[min(92vw,25rem)] rounded-2xl bg-zinc-950/95 border border-white/15 p-2 shadow-2xl backdrop-blur-2xl space-y-1 animate-in fade-in zoom-in-95 duration-150 text-left">
-                      <div className="px-3 py-2 border-b border-white/10">
-                        <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-primary flex items-center gap-1.5">
-                          <FileText className="w-3.5 h-3.5 text-primary" />
-                          <span>Analytics Report Center</span>
-                        </div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5">
-                          Each format uses the same complete, filtered, snapshot-pinned data set.
-                        </div>
-                      </div>
-
+                <Dialog open={isExportMenuOpen} onOpenChange={setIsExportMenuOpen}>
+                  <DialogContent onCloseAutoFocus={restoreDialogFocus} className="platform-analytics max-w-xl bg-zinc-950 text-white">
+                    <DialogTitle>Analytics Report Center</DialogTitle>
+                    <DialogDescription>Each format includes the complete filtered result. Records may be updated during collection. Reports include the query boundaries and data definitions.</DialogDescription>
                       {([
                         {
                           type: "executive" as AnalyticsReportType,
@@ -4026,12 +1866,12 @@ export default function PlatformAnalyticsPanel() {
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="text-xs font-bold text-white">{title}</div>
-                              <div className="text-[10px] text-muted-foreground leading-snug mt-0.5">{description}</div>
+                              <div className="text-xs text-muted-foreground leading-snug mt-0.5">{description}</div>
                               <div className="flex items-center gap-2 mt-2">
                                 <button
                                   type="button"
                                   onClick={() => handleExportReport(type, "pdf")}
-                                  className="h-7 px-2.5 rounded-lg border border-primary/30 bg-primary/10 text-[10px] font-extrabold text-primary hover:bg-primary/20 transition-colors flex items-center gap-1.5"
+                                  className="h-7 px-2.5 rounded-lg border border-primary/30 bg-primary/10 text-xs font-extrabold text-primary hover:bg-primary/20 transition-colors flex items-center gap-1.5"
                                 >
                                   <FileText className="w-3 h-3" />
                                   PDF
@@ -4039,7 +1879,7 @@ export default function PlatformAnalyticsPanel() {
                                 <button
                                   type="button"
                                   onClick={() => handleExportReport(type, "xlsx")}
-                                  className="h-7 px-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-[10px] font-extrabold text-emerald-300 hover:bg-emerald-500/20 transition-colors flex items-center gap-1.5"
+                                  className="h-7 px-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs font-extrabold text-emerald-300 hover:bg-emerald-500/20 transition-colors flex items-center gap-1.5"
                                 >
                                   <FileSpreadsheet className="w-3 h-3" />
                                   Excel
@@ -4049,9 +1889,8 @@ export default function PlatformAnalyticsPanel() {
                           </div>
                         </div>
                       ))}
-                    </div>
-                  </>
-                )}
+                  </DialogContent>
+                </Dialog>
               </div>
             </div>
 
@@ -4063,7 +1902,7 @@ export default function PlatformAnalyticsPanel() {
               <div className="flex items-center gap-2.5">
                 <span className="w-2 h-2 rounded-full bg-primary animate-ping" />
                 <span className="font-mono text-white/90">
-                  <span className="font-bold text-primary">DATABASE QUERY ACTIVE:</span>{" "}
+                  <span className="font-bold text-primary">Search:</span>{" "}
                   Filtering by <span className="text-white font-bold">{searchModeLabel}</span> for{" "}
                   <span className="text-white font-mono bg-white/10 px-2 py-0.5 rounded border border-white/20">&quot;{appliedSearch}&quot;</span>
                 </span>
@@ -4094,13 +1933,13 @@ export default function PlatformAnalyticsPanel() {
                   </div>
                   <div>
                     <div className="text-xs font-bold text-white flex items-center gap-2">
-                      <span>STREAMING DATABASE RECORDS IN BATCHES</span>
-                      <span className="text-[10px] font-mono text-primary bg-primary/10 border border-primary/30 px-2 py-0.2 rounded-full">
+                      <span>Loading matching receipt evidence</span>
+                      <span className="text-xs font-mono text-primary bg-primary/10 border border-primary/30 px-2 py-0.2 rounded-full">
                         BATCH {batchCurrent} OF {batchTotal || 1}
                       </span>
                     </div>
-                    <div className="text-[10px] text-muted-foreground font-mono mt-0.5">
-                      Progressively loading records ({batchLoadedCount.toLocaleString()} / {batchTargetCount.toLocaleString()} intents synced)
+                    <div className="text-xs text-muted-foreground font-mono mt-0.5">
+                      Progressively loading records ({batchLoadedCount.toLocaleString()} / {batchTargetCount.toLocaleString()} receipts loaded)
                     </div>
                   </div>
                 </div>
@@ -4132,13 +1971,518 @@ export default function PlatformAnalyticsPanel() {
             </div>
           )}
 
+        <div className="analytics-scope">
+          <span>{totalServerMatches.toLocaleString()} matching receipts · {recentReceipts.length.toLocaleString()} loaded</span>
+          {queryMetadata?.query && <span>{queryMetadata.query.start ? new Date(queryMetadata.query.start).toLocaleString(undefined, { timeZone: effectiveTimezone }) : "All history"} → {new Date(queryMetadata.query.end).toLocaleString(undefined, { timeZone: effectiveTimezone })}</span>}
+          {selectedBrand !== "all" && <button type="button" onClick={() => setSelectedBrand("all")}>Brand: {selectedBrand} ×</button>}
+          {statusFilter !== "all" && <button type="button" onClick={() => setStatusFilter("all")}>Status: {statusFilter} ×</button>}
+          {kycFilter !== "all" && <button type="button" onClick={() => setKycFilter("all")}>KYC: {kycFilter} ×</button>}
+          {selectedErrorCombo && <button type="button" className="max-w-full break-words text-left" onClick={() => setSelectedErrorCombo(null)}>Errors: {Array.from(new Set(selectedErrorCombo)).map(reason => failureCombinations.reasonCounts.find(item => item.id === reason)?.reason || reason).join(" + ")} ×</button>}
+          {hasActiveFilters && <button type="button" onClick={resetAnalyticsQuery}>Clear filters</button>}
+        </div>
+        {queryMetadata && workspace !== "treasury" && <details className="text-xs text-zinc-400"><summary className="cursor-pointer py-1">Data definitions and completeness</summary><div className="mt-2 space-y-2">
+          <p>Definition {queryMetadata.definitionVersion}. {queryMetadata.consistencyDescription}</p>
+          <p>{queryMetadata.intentCohort}. Daily unique intents are assigned to their first observed day within this query; raw receipt volume is assigned by receipt creation.</p>
+          <p>Receipt evidence: {recentReceipts.length.toLocaleString()} loaded of {totalServerMatches.toLocaleString()} matches. {queryMetadata.completeness?.detailUnavailableCount || 0} details unavailable in the initial page. Site configuration {queryMetadata.configuration?.available ? "available" : "unavailable"}; configuration and aggregate projections may be cached for up to 60 seconds.</p>
+        </div></details>}
+        {workspace === "treasury" && <p className="text-xs text-zinc-400">Treasury has an independent on-chain history and valuation scope. Receipt filters above apply to analytics reports.</p>}
+        {isExportingReport && <div role="status" aria-live="polite" className="flex items-center gap-3 text-sm"><progress max={100} value={exportProgress} aria-label="Report export progress" /><span>Preparing {activeExportFormat?.toUpperCase()} report · {exportProgress}%</span><button type="button" className="underline" onClick={() => exportAbortRef.current?.abort()}>Cancel export</button></div>}
+      </section>
+
+      {workspace !== "treasury" && workspace !== "audit" && <section aria-label="Metric definition" className="flex flex-col gap-3 rounded-xl border border-white/10 p-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap gap-2">
+          {([['true_integration','Checkout completion · unique',trueIntegrationRate],['integration','Receipt completion · raw',integrationRate],['process','Resolved outcomes · unique',processRate]] as const).map(([key,label,value]) => <button type="button" key={key} aria-pressed={successRateMode === key} onClick={() => setSuccessRateMode(key)} className={`rounded-lg border px-3 py-2 text-xs ${successRateMode === key ? "border-indigo-400/50 bg-indigo-500/20 text-white" : "border-white/10 text-zinc-400"}`}>{label} <span className="ml-2 font-mono">{analyticsMetricValue(displayStats || {}, key)?.toFixed(1) ?? "—"}%</span></button>)}
+          <button type="button" onClick={() => { rememberDialogFocus(); setIsAlgorithmModalOpen(true); }} className="rounded-lg border border-white/10 px-3 py-2 text-xs">Definitions</button>
+        </div>
+        <p className="max-w-md text-xs text-zinc-400">{successRateMode === "true_integration" ? "Paid unique intents / all unique intents, including open and failed." : successRateMode === "integration" ? "Paid receipt records / all raw records, including revisions." : "Paid unique intents / paid + failed unique intents. Unresolved intents are excluded."}</p>
+      </section>}
+      <section className="analytics-workspace-stack" hidden={workspace !== "overview" && workspace !== "conversion"}>
+      {serverComparison?.available && <p className="mb-4 text-xs text-zinc-400">Compared with {new Date(serverComparison.start).toLocaleString(undefined, { timeZone: effectiveTimezone })} to {new Date(serverComparison.end).toLocaleString(undefined, { timeZone: effectiveTimezone })}, using the same filters and equal elapsed time.</p>}
+      {displayStats && workspace === "overview" && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+          <div className="glass-pane rounded-xl border p-5">
+            <h3 className="text-sm text-zinc-400">{successRateMode === "true_integration" ? "Checkout completion" : successRateMode === "process" ? "Resolved outcome rate" : "Receipt completion"}</h3>
+            <p className="mt-3 text-3xl font-semibold tabular-nums">{currentRate === null ? "—" : currentRate.toFixed(1) + "%"}</p>
+            <p className="mt-3 text-xs text-zinc-400">{rateChange === null ? "No comparable previous period" : (rateChange >= 0 ? "+" : "") + rateChange.toFixed(1) + " percentage points vs previous period"}</p>
+            <p className="mt-2 text-xs text-zinc-400">{successRateMode === "integration" ? displayStats.totalPaid : displayStats.dedupedTotalPaid} paid / {successRateMode === "integration" ? displayStats.totalCreated : successRateMode === "process" ? (displayStats.dedupedTotalPaid ?? 0) + (displayStats.dedupedTotalFailed ?? 0) : displayStats.dedupedTotalCreated} {successRateMode === "integration" ? "receipts" : successRateMode === "process" ? "resolved unique intents" : "unique intents"}</p>
+            <p className="mt-2 text-xs text-zinc-500">{displayStats.totalCreated.toLocaleString()} raw receipts · {(displayStats.totalCreated - (displayStats.dedupedTotalCreated ?? displayStats.totalCreated)).toLocaleString()} revisions</p>
+          </div>
+          <div className="glass-pane rounded-xl border p-5">
+            <h3 className="text-sm text-zinc-400">Gross volume (GMV)</h3><p className="mt-3 text-3xl font-semibold tabular-nums">{money(displayStats.totalGmv)}</p>
+            <p className="mt-3 text-xs text-zinc-400">{financialChange("totalGmv")}</p><p className="mt-2 text-xs text-zinc-400">Average paid receipt: {displayStats.totalPaid ? money(displayStats.aov) : "—"}</p>
+          </div>
+          <div className="glass-pane rounded-xl border p-5">
+            <h3 className="text-sm text-zinc-400">Platform fees · recorded + modeled</h3><p className="mt-3 text-3xl font-semibold tabular-nums">{money(displayStats.totalFees)}</p>
+            <p className="mt-3 text-xs text-zinc-400">{financialChange("totalFees")}</p><p className="mt-2 text-xs text-zinc-400">Recorded {money(displayStats.feeRecordedTotal ?? 0)} · Modeled {money(displayStats.feeModeledTotal ?? 0)}</p>
+            <p className="mt-2 text-xs text-zinc-500">{displayStats.feeKnownCount ?? 0}/{displayStats.totalPaid} paid receipts have fee evidence. Missing evidence uses the 50 bps contractual minimum.</p>
+          </div>
+
+          {/* Card Funding & Consumer KYC Profile Flippable Card */}
+          <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 backdrop-blur-xl shadow-xl hover:border-white/20 transition-all duration-200 flex flex-col justify-between group">
+            {(() => {
+              const receiptsForProfiles = baseFilteredReceipts;
+              const cardTypes = (successRateMode === "process" ? displayStats.fundingProfile?.paid : displayStats.fundingProfile?.all) || displayStats.cardTypes;
+              const totalCards = cardTypes.credit + cardTypes.debit + cardTypes.bank + cardTypes.unknown;
+              const creditPct = totalCards > 0 ? ((cardTypes.credit / totalCards) * 100).toFixed(1) : "0.0";
+              const debitPct = totalCards > 0 ? ((cardTypes.debit / totalCards) * 100).toFixed(1) : "0.0";
+              const bankPct = totalCards > 0 ? ((cardTypes.bank / totalCards) * 100).toFixed(1) : "0.0";
+
+              const fallbackKycProfile = summarizeAnalyticsKycProfile(deduplicateReceipts(receiptsForProfiles).clusters);
+              const kycProfile = displayStats.kycProfile || fallbackKycProfile;
+              const kycPct = (value: number) => kycProfile.total > 0 ? ((value / kycProfile.total) * 100).toFixed(1) : "0.0";
+
+              return !isCardFundingFlipped ? (
+                /* FRONT SIDE: Card Funding Profile */
+                <div className="flex flex-col justify-between h-full">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        <span>Card Funding Profile</span>
+                        {successRateMode === "process" && (
+                          <span className="text-xs text-emerald-400 font-mono font-semibold bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">PAID ONLY</span>
+                        )}
+                      </span>
+                      <button
+                        onClick={() => setIsCardFundingFlipped(true)}
+                        className="text-xs text-primary hover:underline flex items-center gap-1 font-semibold transition-colors"
+                        title="Flip to Consumer KYC Profile"
+                      >
+                        <span>KYC Profile</span>
+                        <RefreshCw className="w-3 h-3 text-primary" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 mt-2.5">
+                      <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
+                        <div className="text-xs text-muted-foreground font-medium">Credit</div>
+                        <div className="text-base font-bold text-white mt-0.5">{cardTypes.credit}</div>
+                        <div className="text-xs font-mono text-emerald-400 font-medium mt-0.5">{creditPct}%</div>
+                      </div>
+                      <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
+                        <div className="text-xs text-muted-foreground font-medium">Debit</div>
+                        <div className="text-base font-bold text-white mt-0.5">{cardTypes.debit}</div>
+                        <div className="text-xs font-mono text-emerald-400 font-medium mt-0.5">{debitPct}%</div>
+                      </div>
+                      <div className="bg-white/[0.04] border border-white/5 rounded-xl p-2 text-center">
+                        <div className="text-xs text-muted-foreground font-medium">Bank</div>
+                        <div className="text-base font-bold text-white mt-0.5">{cardTypes.bank}</div>
+                        <div className="text-xs font-mono text-emerald-400 font-medium mt-0.5">{bankPct}%</div>
+                      </div>
+                      <div className="rounded-xl border border-white/5 bg-white/[0.04] p-2 text-center"><div className="text-xs text-zinc-400">Unknown</div><div className="mt-0.5 text-base font-bold">{cardTypes.unknown}</div><div className="mt-0.5 text-xs text-zinc-400">{totalCards ? (cardTypes.unknown / totalCards * 100).toFixed(1) : "0.0"}%</div></div>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-muted-foreground text-center">
+                    Recorded funding metadata · {totalCards.toLocaleString()} {successRateMode === "process" ? "paid receipts" : "receipts"}, including unknown
+                  </div>
+                </div>
+              ) : (
+                /* BACK SIDE: Consumer KYC Profile */
+                <div className="flex flex-col justify-between h-full">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-emerald-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        <span>Consumer KYC Profile</span>
+                        <span className="text-xs text-violet-300 font-mono font-semibold bg-violet-500/10 px-1.5 py-0.5 rounded border border-violet-500/20">UNIQUE INTENTS</span>
+                      </span>
+                      <button
+                        onClick={() => setIsCardFundingFlipped(false)}
+                        className="text-xs text-primary hover:underline flex items-center gap-1 font-semibold transition-colors"
+                        title="Flip to Card Funding Profile"
+                      >
+                        <span>Card Funding</span>
+                        <RefreshCw className="w-3 h-3 text-primary" />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 mt-2.5">
+                      <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-2 text-center">
+                        <div className="text-xs text-violet-300 font-medium">Pre-verified</div>
+                        <div className="text-base font-bold text-violet-200 mt-0.5">{kycProfile.preverified}</div>
+                        <div className="text-xs font-mono text-violet-300 font-medium mt-0.5">{kycPct(kycProfile.preverified)}% of intents</div>
+                      </div>
+                      <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-2 text-center">
+                        <div className="text-xs text-emerald-400 font-medium">Upgraded Here</div>
+                        <div className="text-base font-bold text-emerald-300 mt-0.5">{kycProfile.upgraded}</div>
+                        <div className="text-xs font-mono text-emerald-400 font-medium mt-0.5">{kycPct(kycProfile.upgraded)}% of intents</div>
+                      </div>
+                      <div className="bg-emerald-500/[0.06] border border-emerald-500/15 rounded-xl p-2 text-center">
+                        <div className="text-xs text-emerald-300 font-medium">Final L1</div>
+                        <div className="text-base font-bold text-emerald-200 mt-0.5">{kycProfile.l1}</div>
+                        <div className="text-xs font-mono text-emerald-300 font-medium mt-0.5">{kycPct(kycProfile.l1)}% of intents</div>
+                      </div>
+                      <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-2 text-center">
+                        <div className="text-xs text-cyan-400 font-medium">Final L2</div>
+                        <div className="text-base font-bold text-cyan-300 mt-0.5">{kycProfile.l2}</div>
+                        <div className="text-xs font-mono text-cyan-400 font-medium mt-0.5">{kycPct(kycProfile.l2)}% of intents</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-muted-foreground text-center">
+                    {kycProfile.l0} unverified/L0 · {kycProfile.untracked} legacy untracked · {kycProfile.total} unique intents
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+        </div>
+      )}
+
+      <section className="glass-pane rounded-xl border p-4 sm:p-6" aria-label="Performance over time">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3"><button type="button" aria-expanded={!isMainChartMinimized} aria-label={isMainChartMinimized ? "Expand trend chart" : "Collapse trend chart"} onClick={toggleMainChartMinimized} className="rounded-lg border border-white/15 p-2">{isMainChartMinimized ? <Maximize2 className="h-4 w-4" /> : <Minimize2 className="h-4 w-4" />}</button><div><h3 className="text-base font-semibold">Performance over time</h3><p className="mt-1 text-xs text-zinc-400">Daily observations in {effectiveTimezone}, using the active query and counting basis.</p></div></div>
+          <div className="flex flex-wrap gap-2">
+            <select aria-label="Trend metric" value={chartMetric} onChange={event => setChartMetric(event.target.value as "successRate" | "amountEarned")} className="rounded-lg border border-white/15 bg-zinc-900 px-3 py-2 text-sm"><option value="successRate">Outcome rate</option><option value="amountEarned">Gross volume (GMV)</option></select>
+            <select aria-label="Trend scale" value={scaleType} onChange={event => setScaleType(event.target.value as "linear" | "log")} className="rounded-lg border border-white/15 bg-zinc-900 px-3 py-2 text-sm"><option value="linear">Linear scale</option><option value="log">Logarithmic scale</option></select>
+            <button type="button" onClick={() => setShowCoaster(true)} disabled={!chartTimeSeries.length} className="rounded-lg border border-white/15 px-3 py-2 text-sm disabled:opacity-40">Ride the Data</button>
+          </div>
+        </div>
+        {!isMainChartMinimized && (chartTimeSeries.length === 1 ? <CustomInteractiveBarChart
+          data={chartTimeSeries} brandKeys={allBrandKeys} hoveredKey={hoveredLineKey} setHoveredKey={setHoveredLineKey}
+          metricType={chartMetric} scaleType={scaleType} timezone={effectiveTimezone}
+          metricLabel={chartMetric === "amountEarned" ? "Gross volume (GMV)" : successRateMode === "true_integration" ? "Unique intent completion" : successRateMode === "process" ? "Resolved unique intent outcome" : "Raw receipt completion"}
+        /> : <CustomInteractiveLineChart
+          data={chartTimeSeries} brandKeys={allBrandKeys} hoveredKey={hoveredLineKey} setHoveredKey={setHoveredLineKey}
+          metricType={chartMetric} scaleType={scaleType} timezone={effectiveTimezone}
+          metricLabel={chartMetric === "amountEarned" ? "Gross volume (GMV)" : successRateMode === "true_integration" ? "Unique intent completion" : successRateMode === "process" ? "Resolved unique intent outcome" : "Raw receipt completion"}
+          gitCommits={gitCommits} showGitCommitsOverlay={showGitCommitsOverlay}
+          setShowGitCommitsOverlay={value => { const next = typeof value === "function" ? value(showGitCommitsOverlay) : value; setShowGitCommitsOverlay(next); try { localStorage.setItem("pp_admin_analytics_git_commits_overlay", String(next)); } catch {} }}
+        />)}
+      </section>
+
+      <section className="analytics-workspace-stack" hidden={workspace !== "conversion"}>
+      {/* 3-Column Section Header */}
+      <div className={`flex items-center justify-between glass-pane border border-white/10 bg-zinc-950/80 px-5 py-3 rounded-2xl transition-all duration-300 ${
+        isThreeColumnMinimized ? "mb-6" : "mb-4"
+      }`}>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={toggleThreeColumnMinimized}
+            className="p-1.5 hover:bg-white/[0.08] rounded-lg transition-all text-muted-foreground hover:text-white border border-white/10 bg-white/[0.04]"
+            title={isThreeColumnMinimized ? "Expand Metrics" : "Minimize Metrics"}
+          >
+            {isThreeColumnMinimized ? (
+              <Maximize2 className="w-3.5 h-3.5" />
+            ) : (
+              <Minimize2 className="w-3.5 h-3.5" />
+            )}
+          </button>
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-primary" />
+            <h4 className="text-sm font-bold text-white">Performance & Metrics Distribution</h4>
+          </div>
+        </div>
+        {isThreeColumnMinimized && (
+          <span className="text-xs text-muted-foreground bg-white/[0.06] px-3 py-1 rounded-full font-medium border border-white/5">Collapsed</span>
+        )}
+      </div>
+
+      {/* 3-Column Row: Status Distribution, Brand Performance, and Technical Failure Reasons */}
+      {!isThreeColumnMinimized && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+
+        {/* Transaction Status Distribution - Pie Chart */}
+        <div className="glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between min-h-[360px] sm:min-h-[380px] w-full shadow-xl">
+          <div className="flex flex-col h-full justify-between">
+            <div className="flex-shrink-0">
+              <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-primary" />
+                <span>Status Distribution</span>
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Breakdown of all {stats?.totalCreated ?? baseFilteredReceipts.length} checkouts matching the active query.
+              </p>
+            </div>
+
+            <div className="flex-1 flex items-center justify-center min-h-0 py-4">
+              <CustomLargeDonutChart data={statusPieData} />
+            </div>
+          </div>
+        </div>
+
+        {/* Brand Performance - Flippable Card */}
+        <div className="relative [perspective:1000px] min-h-[360px] sm:min-h-[380px] w-full">
+          <div
+            className="relative w-full h-full duration-500 transition-transform"
+            style={{
+              transformStyle: "preserve-3d",
+              transform: "none",
+            }}
+          >
+            {/* Brand chart view */}
+            <div hidden={bpFlipped}
+              className="w-full min-h-[360px] glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between shadow-xl"
+              style={{ backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden" }}
+            >
+              <div className="flex flex-col h-full justify-between">
+                <div className="flex items-center justify-between flex-shrink-0 gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <BarChart2 className="w-4 h-4 text-primary" />
+                      <span>Brand Performance</span>
+                    </h3>
+                    
+                    {/* Toggle Metric Switch */}
+                    <div className="flex items-center p-0.5 bg-white/[0.04] border border-white/10 rounded-lg">
+                      <button
+                        onClick={() => setBrandMetric("successRate")}
+                        className={`px-2 py-0.5 text-xs font-bold rounded transition-all ${brandMetric === "successRate"
+                          ? "bg-primary text-white"
+                          : "text-muted-foreground hover:text-white"
+                          }`}
+                      >
+                        SR%
+                      </button>
+                      <button
+                        onClick={() => setBrandMetric("amountEarned")}
+                        className={`px-2 py-0.5 text-xs font-bold rounded transition-all ${brandMetric === "amountEarned"
+                          ? "bg-primary text-white"
+                          : "text-muted-foreground hover:text-white"
+                          }`}
+                      >
+                        GMV $
+                      </button>
+                    </div>
+
+                    {/* Toggle Scale Switch */}
+                    <div className="flex items-center p-0.5 bg-white/[0.04] border border-white/10 rounded-lg">
+                      <button
+                        onClick={() => setBrandScale("linear")}
+                        className={`px-2 py-0.5 text-xs font-bold rounded transition-all ${brandScale === "linear"
+                          ? "bg-primary text-white"
+                          : "text-muted-foreground hover:text-white"
+                          }`}
+                      >
+                        Lin
+                      </button>
+                      <button
+                        onClick={() => setBrandScale("log")}
+                        className={`px-2 py-0.5 text-xs font-bold rounded transition-all ${brandScale === "log"
+                          ? "bg-primary text-white"
+                          : "text-muted-foreground hover:text-white"
+                          }`}
+                      >
+                        Log
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setBpFlipped(true)}
+                    className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Table</span>
+                  </button>
+                </div>
+
+                <div className="analytics-brand-bars flex flex-col justify-around py-2 flex-1 min-h-0 mt-4 mb-2">
+                  {displayedBrandStats.map((b) => {
+                    const brandIdx = allBrandKeys.indexOf(b.brandKey);
+                    const color = getBrandColor(b.brandKey, brandIdx);
+                    
+                    let widthPct = 0;
+                    if (brandMetric === "successRate") {
+                      if (brandScale === "linear") {
+                        widthPct = b.successRate;
+                      } else {
+                        widthPct = (Math.log10(b.successRate + 1) / Math.log10(101)) * 100;
+                      }
+                    } else {
+                      if (brandScale === "linear") {
+                        widthPct = (b.gmv / maxBrandGmv) * 100;
+                      } else {
+                        widthPct = (Math.log10(b.gmv + 1) / Math.log10(maxBrandGmv + 1)) * 100;
+                      }
+                    }
+
+                    return (
+                      <div key={b.brandKey} className="space-y-2">
+                        <div className="flex justify-between items-center text-xs sm:text-sm">
+                          <span className="font-bold text-white/95">{b.brandKey}</span>
+                          <span className="text-muted-foreground text-xs font-medium">
+                            {brandMetric === "successRate" ? (
+                              <>
+                                {b.successRate.toFixed(1)}% SR <span className="text-white/20 mx-1">|</span> ${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                              </>
+                            ) : (
+                              <>
+                                ${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span className="text-white/20 mx-1">|</span> {b.successRate}% SR
+                              </>
+                            )}
+                          </span>
+                        </div>
+                        <div className="w-full bg-white/[0.03] border border-white/5 rounded-full relative overflow-hidden" style={{ height: "18px" }}>
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{
+                              width: `${widthPct}%`,
+                              backgroundColor: color,
+                              boxShadow: `0 0 10px ${color}50`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {brandStats.length === 0 && (
+                    <div className="text-xs text-muted-foreground text-center py-4">No brand performance data.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Brand table view */}
+            <div hidden={!bpFlipped}
+              className="w-full min-h-[360px] glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 p-5 sm:p-6 flex flex-col justify-between shadow-xl"
+              style={{
+                backfaceVisibility: "hidden",
+                WebkitBackfaceVisibility: "hidden",
+                transform: "none",
+              }}
+            >
+              <div className="flex flex-col h-full justify-between">
+                <div className="flex items-center justify-between flex-shrink-0">
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-primary" />
+                    <span>Brand Details</span>
+                  </h3>
+                  <button
+                    onClick={() => setBpFlipped(false)}
+                    className="text-xs font-semibold text-muted-foreground hover:text-white transition-colors bg-white/[0.04] border border-white/10 px-2.5 py-1 rounded-xl flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Chart</span>
+                  </button>
+                </div>
+
+                <div className="space-y-3 overflow-y-auto pr-1 flex-1 min-h-0 mt-3">
+                  {displayedBrandStats.map(b => (
+                    <div key={b.brandKey} className="border-b border-white/5 pb-2.5 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
+                      <div>
+                        <div className="font-bold text-white">{b.brandKey}</div>
+                        <div className="text-muted-foreground text-xs mt-0.5">
+                          {b.sessionsText}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold text-white">${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                        <div className={`text-xs font-bold mt-0.5 ${b.successRate >= 80 ? "text-emerald-400" :
+                          b.successRate >= 60 ? "text-amber-400" :
+                            "text-rose-400"
+                          }`}>
+                          {b.successRate}% SR
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {brandStats.length === 0 && (
+                    <div className="text-xs text-muted-foreground text-center py-4">No brands match the current query.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        </div>
+      )}
+      </section>
+      </section>
+      {workspace === "failures" && <FailureExplorer data={failureCombinations} selected={selectedErrorCombo} onSelect={selection => { setSelectedErrorCombo(selection); setCurrentPage(1); }} />}
+      {workspace === "overview" && <button type="button" className="flex w-full items-center justify-between rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-left" onClick={() => setWorkspace("failures")}><span><span className="block text-sm font-medium text-rose-200">Failure analysis</span><span className="mt-1 block text-xs text-zinc-400">{failureCombinations.affectedReceiptCount} receipts with recorded errors · reason frequency and co-occurrence</span></span><ArrowRight className="h-4 w-4" /></button>}
+      <div hidden={workspace !== "audit"}><StripeAuditExplorer brands={allBrandKeys} onInspect={receiptId => { resetAnalyticsQuery(); setSearchMode("receiptId"); setSearchQuery(receiptId); setAppliedSearch(receiptId); setTimeRange("all"); setWorkspace("transactions"); }} /></div>
+      <section className="analytics-workspace-stack" hidden={workspace !== "treasury"}>
+      <div className="mb-4 space-y-2 rounded-lg border border-white/10 p-4 text-xs text-zinc-400" role="status">
+        <p>Source: {safeMetadata?.source || "Awaiting data"} · Indexed: {safeMetadata?.lastIndexedAt ? new Date(safeMetadata.lastIndexedAt).toLocaleString(undefined, { timeZone: effectiveTimezone }) : "Unavailable"}</p>
+        {safeMetadata?.warning && <p className="text-amber-300">{safeMetadata.warning}</p>}
+        <p>{safeMetadata?.valuationBasis || "Historical token balances are valued using the supplied price snapshot."} {safeMetadata?.nativeEthBasis}</p>
+        {safeMetadata?.priceSources && <details><summary className="cursor-pointer py-1">Quote sources and coverage</summary><p>{safeMetadata.stablecoinBasis}</p><p>Transfer coverage: {safeMetadata.transferCoverage}</p><ul className="mt-2 space-y-1">{Object.entries(safeMetadata.priceSources).map(([token, source]) => <li key={token}>{token}: {String(source)} · {safeMetadata.priceAsOf?.[token] ? new Date(safeMetadata.priceAsOf[token]).toLocaleString(undefined, { timeZone: effectiveTimezone }) : "Timestamp unavailable"}</li>)}</ul></details>}
+      </div>
+      {/* Gnosis Safe Reserves Value Over Time Chart Card */}
+      <div className={`w-full glass-pane rounded-2xl border border-white/10 bg-zinc-950/80 backdrop-blur-xl shadow-xl transition-all duration-300 ${
+        isSafeChartMinimized ? "px-5 py-3 mb-6" : "p-5 sm:p-6 mb-6"
+      }`}>
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0 ${isSafeChartMinimized ? "" : "mb-5"}`}>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleSafeChartMinimized}
+              className="p-2 hover:bg-white/[0.08] rounded-xl transition-all text-muted-foreground hover:text-white border border-white/10 bg-white/[0.04] shadow-sm"
+              title={isSafeChartMinimized ? "Expand Chart" : "Minimize Chart"}
+            >
+              {isSafeChartMinimized ? (
+                <Maximize2 className="w-4 h-4" />
+              ) : (
+                <Minimize2 className="w-4 h-4" />
+              )}
+            </button>
+            <div>
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-emerald-400" />
+                <span>Gnosis Safe Reserves & Treasury Growth</span>
+              </h3>
+              {!isSafeChartMinimized && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  On-chain balance history, token allocations and assumption-based scenarios.
+                </p>
+              )}
+            </div>
+          </div>
+
+          {isSafeChartMinimized && (
+            <span className="text-xs text-muted-foreground bg-white/[0.06] px-3 py-1 rounded-full font-medium border border-white/5">Collapsed</span>
+          )}
+
+          {!isSafeChartMinimized && (
+            <div className="flex items-center gap-2.5">
+              <button
+                onClick={() => void fetchSafeBalances(true)}
+                disabled={safeLoading}
+                className="h-9 px-4 rounded-xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-xs font-semibold text-white/90 transition-all flex items-center gap-2 shadow-sm active:scale-95 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${safeLoading ? "animate-spin" : ""}`} />
+                <span>Sync Safe Balances</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {!isSafeChartMinimized && (
+          <div className="flex-1 flex flex-col min-h-[360px] sm:min-h-[420px] mt-4 animate-in fade-in zoom-in-95 duration-200">
+            {safeLoading ? (
+              <div className="flex flex-col items-center justify-center min-h-[220px] gap-2">
+                <RefreshCw className="w-6 h-6 text-emerald-400 animate-spin opacity-80" />
+                <span className="text-xs text-muted-foreground font-medium">Syncing Gnosis Safe treasury balances...</span>
+              </div>
+            ) : safeError ? (
+              <div className="flex flex-col items-center justify-center min-h-[200px] p-4 text-center border border-rose-500/20 bg-rose-500/5 rounded-2xl">
+                <AlertCircle className="w-8 h-8 text-rose-400 mb-2" />
+                <span className="text-xs text-rose-400 font-semibold">{safeError}</span>
+                <button
+                  onClick={() => void fetchSafeBalances(true)}
+                  className="mt-3 px-3.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs font-bold transition-all"
+                >
+                  Retry Sync
+                </button>
+              </div>
+            ) : (
+              <SafeInteractiveLineChart data={safeBalanceHistory} tokenPrices={safeTokenPrices} />
+            )}
+          </div>
+        )}
+      </div>
+
+      </section>
+      {/* Full-width Searchable and Detailed Diagnostics Investigation Feed */}
+      <div hidden={workspace !== "transactions" && workspace !== "failures"} className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-semibold">Receipt investigation</h3><label className="text-sm text-zinc-400">Density <select aria-label="Ledger density" value={density} onChange={e => setDensity(e.target.value as "comfortable" | "compact")} className="ml-2 rounded border border-white/20 bg-zinc-900 px-2 py-1"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label></div>
+        <div className="space-y-4">
+
           {/* Receipts Table */}
           <div className="border border-white/10 rounded-2xl overflow-hidden bg-zinc-950/80 shadow-2xl">
             {!isBatchLoading && totalServerMatches > recentReceipts.length && (
               <div className="flex flex-col sm:flex-row items-center justify-between bg-amber-500/10 border-b border-white/10 px-4 py-3 gap-2 text-xs text-amber-400 font-semibold">
                 <span className="flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                  <span>Showing {recentReceipts.length.toLocaleString()} records of {totalServerMatches.toLocaleString()} matching intents.</span>
+                  <span>Showing {recentReceipts.length.toLocaleString()} records of {totalServerMatches.toLocaleString()} matching receipts.</span>
                 </span>
                 <div className="flex items-center gap-2.5">
                   {fetchLimit !== "all" && (
@@ -4163,519 +2507,53 @@ export default function PlatformAnalyticsPanel() {
                 </div>
               </div>
             )}
-            {/* Mobile 3D Flip-Card Grid (Visible on md:hidden) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 md:hidden p-3.5 border-b border-white/10">
-              {paginatedReceipts.map(r => {
-                const isFlipped = flippedReceiptIds.has(r.receiptId);
-                const isExpanded = expandedReceiptIds.has(r.receiptId);
-                const isSettled = isAnalyticsPaidReceipt(r);
-
-                return (
-                  <div
-                    key={`mobile-card-${r.receiptId}`}
-                    className="w-full min-h-[385px] h-[385px] select-none"
-                    style={{ perspective: "1000px" }}
-                  >
-                    <div
-                      className="relative w-full h-full transition-transform duration-500"
-                      style={{
-                        transformStyle: "preserve-3d",
-                        transform: isFlipped ? "rotateY(180deg)" : "rotateY(0deg)",
-                      }}
-                    >
-                      {/* FRONT OF CARD (Receipt Summary) */}
-                      <div
-                        className="absolute inset-0 w-full h-full rounded-2xl bg-zinc-900/90 border border-white/10 p-4 flex flex-col justify-between shadow-xl backdrop-blur-xl"
-                        style={{ backfaceVisibility: "hidden" }}
-                      >
-                        <div>
-                          {/* Card Header Row */}
-                          <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-white/10">
-                            <div className="flex items-center gap-1.5 truncate">
-                              <span className="font-mono font-black text-sm text-white tracking-tight">{r.receiptId}</span>
-                              {receiptClusterSizeMap.get(r.receiptId) && (receiptClusterSizeMap.get(r.receiptId)! > 1) && (
-                                <span
-                                  className="px-1.5 py-0.5 rounded text-[8px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"
-                                  title={`Part of multi-attempt checkout session (${receiptClusterSizeMap.get(r.receiptId)} revisions)`}
-                                >
-                                  x{receiptClusterSizeMap.get(r.receiptId)}
-                                </span>
-                              )}
-                            </div>
-                            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold border inline-flex items-center gap-1 shrink-0 ${
-                              isSettled
-                                ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-                                : r.status === "failed"
-                                ? "bg-rose-500/15 text-rose-400 border-rose-500/30"
-                                : "bg-amber-500/15 text-amber-400 border-amber-500/30"
-                            }`}>
-                              {isSettled && <CheckCircle2 className="w-2.5 h-2.5" />}
-                              {r.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
-                              <span className="truncate max-w-[120px]">{r.status}</span>
-                            </span>
-                          </div>
-
-                          {/* Card Main Body */}
-                          <div className="my-2.5 space-y-2">
-                            <div className="flex items-baseline justify-between">
-                              <span className="text-2xl font-black font-mono text-white tracking-tight">${r.totalUsd.toFixed(2)}</span>
-                              <span className="text-[10px] font-mono text-white/50">
-                                {r.createdAt ? new Date(r.createdAt).toLocaleString("en-US", {
-                                  timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE,
-                                  month: "short",
-                                  day: "numeric",
-                                  hour: "2-digit",
-                                  minute: "2-digit"
-                                }) : "N/A"}
-                              </span>
-                            </div>
-
-                            {/* Dedicated Merchant & Brand Fields */}
-                            {r.merchantName && (
-                              <div className="text-xs font-mono truncate bg-emerald-500/10 px-2.5 py-1.5 rounded-xl border border-emerald-500/20 flex items-center justify-between">
-                                <span className="text-emerald-400/80 font-bold uppercase text-[9px]">Merchant:</span>
-                                <span className="text-emerald-300 font-bold truncate max-w-[180px]">{r.merchantName}</span>
-                              </div>
-                            )}
-
-                            {(() => {
-                              const bColor = getBrandColor(r.brandKey, allBrandKeys.indexOf(r.brandKey));
-                              return (
-                                <div className="text-xs font-mono truncate bg-white/[0.03] px-2.5 py-1.5 rounded-xl border border-white/5 flex items-center justify-between">
-                                  <span className="text-white/40 uppercase text-[9px] font-bold">Brand Container:</span>
-                                  <span
-                                    className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border inline-flex items-center gap-1.5 shrink-0"
-                                    style={{
-                                      backgroundColor: `${bColor}20`,
-                                      borderColor: `${bColor}45`,
-                                      color: bColor
-                                    }}
-                                  >
-                                    <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: bColor, boxShadow: `0 0 6px ${bColor}` }} />
-                                    <span className="truncate max-w-[150px]">{r.brandKey}</span>
-                                  </span>
-                                </div>
-                              );
-                            })()}
-
-                            <div className="text-xs font-mono text-white/70 truncate bg-white/[0.03] px-2.5 py-1.5 rounded-xl border border-white/5 flex items-center justify-between">
-                              <span className="text-white/40 uppercase text-[9px] font-bold">Buyer Email:</span>
-                              <span className="text-white/90 font-medium truncate max-w-[180px]">{r.email || "N/A"}</span>
-                            </div>
-
-                            {r.transactionHash && (
-                              <div className="text-xs font-mono truncate bg-emerald-500/10 px-2.5 py-1.5 rounded-xl border border-emerald-500/20 flex items-center justify-between">
-                                <span className="text-emerald-400/80 uppercase text-[9px] font-bold">On-Chain Tx:</span>
-                                <a
-                                  href={r.transactionHash.startsWith("0x") ? `https://basescan.org/tx/${r.transactionHash}` : `https://solscan.io/tx/${r.transactionHash}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-emerald-300 font-bold hover:underline inline-flex items-center gap-1 truncate max-w-[180px]"
-                                  title={`On-Chain Tx: ${r.transactionHash}`}
-                                >
-                                  <span className="truncate">{r.transactionHash.slice(0, 8)}...{r.transactionHash.slice(-6)}</span>
-                                  <ExternalLink className="w-3 h-3 text-emerald-300 shrink-0" />
-                                </a>
-                              </div>
-                            )}
-
-                            <div className="flex items-center justify-between text-[11px] font-mono pt-0.5">
-                              <span className="text-white/40">KYC Verification:</span>
-                              <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] border ${
-                                getKycLevel(r) === "L2" ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
-                                getKycLevel(r) === "L1" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
-                                "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
-                              }`}>
-                                {getKycLevel(r)}{r.kycCompletedLevel ? " (upgraded here)" : r.kycInitialVerifiedLevel && r.kycInitialVerifiedLevel !== "UNVERIFIED" ? " (preverified)" : ""}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Card Action Buttons */}
-                        <div className="flex items-center gap-2 pt-2 border-t border-white/10">
-                          <button
-                            onClick={() => toggleFlipCard(r.receiptId)}
-                            className="flex-1 py-2 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 font-mono text-xs font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
-                          >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                            <span>Flip to Investigate</span>
-                          </button>
-                          <button
-                            onClick={() => setMobileDrawerReceipt(r)}
-                            className="px-3.5 py-2 rounded-xl text-xs font-bold font-mono border border-primary/40 bg-primary text-white shadow-md shadow-primary/20 transition-all"
-                          >
-                            Full Drawer
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* BACK OF CARD (Interactive Investigation Menu & Tab Views) */}
-                      <div
-                        className="absolute inset-0 w-full h-full rounded-2xl bg-zinc-950 border border-purple-500/40 p-3.5 flex flex-col justify-between shadow-2xl backdrop-blur-xl overflow-y-auto"
-                        style={{
-                          backfaceVisibility: "hidden",
-                          transform: "rotateY(180deg)",
-                        }}
-                      >
-                        {(() => {
-                          const activeSubTab = mobileCardActiveTab[r.receiptId] || null;
-                          const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined"].includes(String(r.status || "").toLowerCase());
-                          const statusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
-                          const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
-                          const currentStatus = String(r.status || "").toLowerCase();
-
-                          const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
-                          const customerIdentified = statusList.includes("buyer_logged_in") || statusList.includes("checkout_session_created") || !!r.email;
-                          const paymentMethodSelected = !!r.cardFunding || statusList.includes("payment_method_detected");
-                          const kycTriggered = statusList.some((s: string) => s.includes("kyc"));
-                          const kycCompleted = (kycTriggered && isSettled);
-                          const kycFailed = kycTriggered && currentStatus === "failed";
-
-                          const steps = [
-                            { id: "opened", label: "Opened", status: linkOpened ? "completed" : "upcoming" },
-                            { id: "identified", label: "Identified", status: customerIdentified ? "completed" : (linkOpened ? "active" : "upcoming") },
-                            { id: "payment", label: "Payment", status: paymentMethodSelected ? "completed" : (customerIdentified ? "active" : "upcoming") },
-                            { id: "kyc", label: "KYC", status: kycFailed ? "failed" : (kycCompleted ? "completed" : (kycTriggered ? "active" : "skipped")) },
-                            { id: "settlement", label: "Settlement", status: isSettled ? "completed" : (currentStatus === "failed" ? "failed" : "active") }
-                          ];
-
-                          if (activeSubTab === null) {
-                            // ── MENU VIEW (Initial Back Face) ──────────────────────
-                            return (
-                              <div className="flex flex-col justify-between h-full space-y-2">
-                                <div>
-                                  <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                                    <div className="flex items-center gap-1.5 text-purple-400 text-xs font-mono font-bold">
-                                      <Activity className="w-3.5 h-3.5 animate-pulse" />
-                                      <span>INVESTIGATION MENU</span>
-                                    </div>
-                                    <button
-                                      onClick={() => toggleFlipCard(r.receiptId)}
-                                      className="p-1 rounded-lg bg-white/10 text-white/70 hover:text-white"
-                                      title="Flip back"
-                                    >
-                                      <RotateCcw className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-
-                                  {/* Badass Stepper Mini Preview Bar */}
-                                  <div className="my-2.5 p-2 rounded-xl bg-black/40 border border-white/10 relative overflow-hidden">
-                                    <div className="text-[8px] font-mono font-bold text-white/40 uppercase mb-1.5 flex items-center justify-between">
-                                      <span>FUNNEL TRAJECTORY STEPPER</span>
-                                      <span className="text-emerald-400 font-bold">{isSettled ? "100% COMPLETE" : "IN PROGRESS"}</span>
-                                    </div>
-                                    <div className="relative flex items-center justify-between px-1">
-                                      <div className="absolute left-3 right-3 top-[10px] h-0.5 bg-white/10 -z-0">
-                                        <div className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-300 shadow-[0_0_8px_#10b981]" style={{ width: isSettled ? "100%" : "60%" }} />
-                                      </div>
-                                      {steps.map((st, idx) => (
-                                        <div key={st.id} className="relative z-10 flex flex-col items-center">
-                                          <div className={`w-5 h-5 rounded-full flex items-center justify-center border text-[8px] font-bold ${
-                                            st.status === "completed" ? "bg-emerald-500/20 border-emerald-400 text-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.5)]" :
-                                            st.status === "failed" ? "bg-rose-500/20 border-rose-400 text-rose-400" :
-                                            st.status === "active" ? "bg-primary/20 border-primary text-primary animate-pulse shadow-[0_0_6px_rgba(59,130,246,0.5)]" :
-                                            "bg-zinc-900 border-white/20 text-white/30"
-                                          }`}>
-                                            {st.status === "completed" ? <CheckCircle2 className="w-3 h-3" /> : st.status === "failed" ? <XCircle className="w-3 h-3" /> : idx + 1}
-                                          </div>
-                                          <span className="text-[7px] font-mono text-white/60 mt-0.5">{st.label}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-
-                                  {/* Menu Item Options */}
-                                  <div className="space-y-1.5 text-[11px] font-mono">
-                                    {(() => {
-                                      const isReceiptCrypto = r.isCrypto || r.cardFunding === "crypto" || !!r.thirdwebMetadata || !!r.paymentId || (Array.isArray(r.transactions) && r.transactions.length > 0);
-                                      const mobileMenuItems = [
-                                        { id: "overview", label: "Overview & Funnel Trajectory", icon: Sliders, color: "text-emerald-400" },
-                                        ...(isReceiptCrypto ? [{ id: "crypto", label: "Crypto Details", icon: Coins, color: "text-purple-400" }] : []),
-                                        { id: "items", label: "Items Ordered", icon: FileText, color: "text-blue-400" },
-                                        { id: "origin", label: "Initialization & Origin", icon: Chrome, color: "text-purple-400" },
-                                        { id: "logs", label: "Client Diagnostic Logs", icon: Activity, color: "text-amber-400" },
-                                        { id: "customers", label: "Customer Metadata", icon: Users, color: "text-teal-400" },
-                                        { id: "fees", label: "Fee & Split Breakdown", icon: Percent, color: "text-amber-400" },
-                                      ];
-
-                                      return mobileMenuItems.map(tab => {
-                                        const Icon = tab.icon;
-                                        return (
-                                          <button
-                                            key={tab.id}
-                                            onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: tab.id }))}
-                                            className="w-full p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 flex items-center justify-between text-white/90 text-left transition-all active:scale-[0.98]"
-                                          >
-                                            <div className="flex items-center gap-2">
-                                              <Icon className={`w-3.5 h-3.5 ${tab.color}`} />
-                                              <span className="font-semibold text-[11px]">{tab.label}</span>
-                                            </div>
-                                            <span className="text-white/40 text-xs font-bold">›</span>
-                                          </button>
-                                        );
-                                      });
-                                    })()}
-                                    {/* Tab 7: Reconcile & Single-Receipt Targeted Actions */}
-                                    <button
-                                      onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: "reconcile" }))}
-                                      className="w-full p-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 flex items-center justify-between text-purple-300 text-left transition-all active:scale-[0.98]"
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <Wrench className="w-3.5 h-3.5" />
-                                        <span className="font-semibold text-[11px]">Reconcile & Actions</span>
-                                      </div>
-                                      <span className="text-purple-300/50 text-xs font-bold">›</span>
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {/* Menu Footer Controls */}
-                                <div className="flex items-center gap-2 pt-2 border-t border-white/10">
-                                  <button
-                                    onClick={() => toggleFlipCard(r.receiptId)}
-                                    className="flex-1 py-1.5 rounded-xl bg-white/10 text-white text-xs font-mono font-bold flex items-center justify-center gap-1.5"
-                                  >
-                                    <RotateCcw className="w-3.5 h-3.5" />
-                                    <span>Flip Back</span>
-                                  </button>
-                                  <button
-                                    onClick={() => setMobileDrawerReceipt(r)}
-                                    className="flex-1 py-1.5 rounded-xl bg-primary text-white text-xs font-mono font-bold shadow-md shadow-primary/20"
-                                  >
-                                    Full Drawer 🚀
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          }
-
-                          // ── SUB-TAB DETAIL VIEW ──────────────────────────────────
-                          return (
-                            <div className="flex flex-col justify-between h-full space-y-2">
-                              <div>
-                                <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                                  <button
-                                    onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: null }))}
-                                    className="text-xs font-mono font-bold text-primary flex items-center gap-1 hover:underline"
-                                  >
-                                    <span>‹ Back to Menu</span>
-                                  </button>
-                                  <span className="text-[10px] font-mono text-white/50 uppercase font-bold">{activeSubTab}</span>
-                                </div>
-
-                                {/* Sub-Tab Details */}
-                                {activeSubTab === "overview" && (
-                                  <div className="my-2 space-y-2 text-[10px] font-mono">
-                                    <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
-                                      <div className="text-[8px] text-white/40 font-bold uppercase">Stripe Session ID</div>
-                                      <div className="text-white truncate">{r.stripeSessionId || "N/A"}</div>
-                                    </div>
-                                    <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
-                                      <div className="text-[8px] text-white/40 font-bold uppercase">On-Chain Tx Hash</div>
-                                      <div className="text-emerald-400 truncate">{r.transactionHash || "N/A"}</div>
-                                    </div>
-                                    {r.failureReason && (
-                                      <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300">
-                                        <span className="font-bold">Failure Reason:</span> {r.failureReason}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-
-                                {activeSubTab === "crypto" && (() => {
-                                  const meta = r.thirdwebMetadata || {};
-                                  const paymentId = r.paymentId || meta.paymentId || "N/A";
-                                  const originToken = r.originToken || meta.originToken || {};
-                                  const destinationToken = r.destinationToken || meta.destinationToken || {};
-                                  const originAmount = r.originAmount || meta.originAmount;
-                                  const destinationAmount = r.destinationAmount || meta.destinationAmount || r.totalUsd;
-                                  const originChainId = r.originChainId || meta.originChainId;
-                                  const destinationChainId = r.destinationChainId || meta.destinationChainId || 8453;
-                                  const quoteSummary = r.quoteSummary || meta.quoteSummary || meta.quote || {};
-                                  const isCrossChain = originChainId && destinationChainId && Number(originChainId) !== Number(destinationChainId);
-
-                                  return (
-                                    <div className="my-2 space-y-2 text-[10px] font-mono">
-                                      <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 space-y-1">
-                                        <div className="text-[8px] text-purple-300 font-bold uppercase flex items-center justify-between">
-                                          <span>Thirdweb Universal Pay</span>
-                                          <span className="text-emerald-400 font-bold">{isCrossChain ? "Cross-Chain" : "Direct On-Chain"}</span>
-                                        </div>
-                                        <div className="text-white font-bold truncate">Payment ID: {paymentId}</div>
-                                      </div>
-
-                                      <div className="grid grid-cols-2 gap-1.5">
-                                        <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-0.5">
-                                          <div className="text-[8px] text-white/40 font-bold uppercase">Paid (Origin)</div>
-                                          <div className="text-white font-bold">{originAmount ? `${originAmount} ` : ""}{originToken.symbol || "Crypto"}</div>
-                                          <div className="text-[8px] text-purple-300">{getChainDisplayName(originChainId)}</div>
-                                        </div>
-                                        <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-0.5">
-                                          <div className="text-[8px] text-emerald-300 font-bold uppercase">Settled (Base)</div>
-                                          <div className="text-emerald-400 font-extrabold">{destinationAmount ? `${destinationAmount} ` : `$${r.totalUsd.toFixed(2)} `}{destinationToken.symbol || "USDC"}</div>
-                                          <div className="text-[8px] text-emerald-200/70">{getChainDisplayName(destinationChainId)}</div>
-                                        </div>
-                                      </div>
-
-                                      {r.transactionHash && (
-                                        <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
-                                          <div className="text-[8px] text-white/40 font-bold uppercase">Base Transaction Hash</div>
-                                          <div className="flex items-center justify-between gap-1">
-                                            <span className="text-emerald-400 truncate max-w-[140px] font-bold">{r.transactionHash}</span>
-                                            <a
-                                              href={getBlockExplorerTxUrl(destinationChainId, r.transactionHash)}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="text-[9px] text-emerald-300 bg-emerald-500/20 px-1.5 py-0.5 rounded border border-emerald-500/30 flex items-center gap-0.5"
-                                            >
-                                              <span>Explorer</span>
-                                              <ExternalLink className="w-2.5 h-2.5" />
-                                            </a>
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {quoteSummary.provider && (
-                                        <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 text-[9px] text-white/70">
-                                          Routing Provider: <span className="text-white font-bold">{quoteSummary.provider}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-
-                                {activeSubTab === "items" && (
-                                  <div className="my-2 space-y-1.5 text-[10px] font-mono">
-                                    {Array.isArray(r.items) && r.items.length > 0 ? (
-                                      r.items.map((it: any, idx: number) => {
-                                        const qty = it.quantity || it.qty || 1;
-                                        const rawPrice = it.priceUsd || 0;
-                                        const isLineSubtotal = qty > 1 && (rawPrice * qty > (r.totalUsd || rawPrice) * 1.2);
-                                        const lineTotal = isLineSubtotal ? rawPrice : rawPrice * qty;
-                                        return (
-                                          <div key={idx} className="p-2 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between">
-                                            <span className="font-bold text-white truncate max-w-[140px]">{it.label || "Item"}</span>
-                                            <span className="text-emerald-400 font-extrabold">${lineTotal.toFixed(2)}</span>
-                                          </div>
-                                        );
-                                      })
-                                    ) : (
-                                      <div className="text-white/40 text-center py-4">No line items recorded</div>
-                                    )}
-                                  </div>
-                                )}
-
-                                {activeSubTab === "origin" && (
-                                  <div className="my-2 space-y-2 text-[10px] font-mono">
-                                    <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
-                                      <div className="text-[8px] text-white/40 font-bold uppercase">Parent URL / Origin</div>
-                                      <div className="text-primary truncate">{r.parentUrl || "Direct Link"}</div>
-                                    </div>
-                                    <div className="p-2 rounded-xl bg-white/[0.03] border border-white/10 space-y-1">
-                                      <div className="text-[8px] text-white/40 font-bold uppercase">Integration Mode</div>
-                                      <div className="text-white font-bold">{r.parentUrl ? "Embedded Checkout (Iframe)" : "Direct Hosted Link"}</div>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {(activeSubTab === "logs" || activeSubTab === "customers") && (
-                                  <div className="my-2 p-2.5 rounded-xl bg-white/[0.03] border border-white/10 text-[10px] font-mono text-white/70 space-y-1">
-                                    <div className="text-white font-bold">Email: {r.email || "N/A"}</div>
-                                    <div className="text-white/50">Initial KYC: {r.kycInitialVerifiedLevel || r.kycInitialLevel || "Unknown"} ({r.kycInitialStatus || "untracked"})</div>
-                                    <div className="text-white/50">Required / completed here: {r.kycRequiredLevel || "None"} / {r.kycCompletedLevel || "None"}</div>
-                                    <div className="text-white/50">Final provider KYC: {r.kycVerifiedLevel || r.kycFinalLevel || getKycLevel(r)} ({r.kycFinalStatus || "untracked"})</div>
-                                    {r.kycRegion === "eu" && (
-                                      <div className="text-white/50">EU checks: identifiers {r.kycIdentifiersSatisfied ? "yes" : "no"}, attestation {r.kycAttestationAccepted ? "yes" : "no"}</div>
-                                    )}
-                                    {Boolean(r.kycVerificationErrors?.length) && (
-                                      <div className="text-rose-300">Provider KYC errors: {r.kycVerificationErrors!.map((error) => `${error.tier}:${error.code}`).join(", ")}</div>
-                                    )}
-                                    <div className="text-primary font-bold mt-1">Tap Full Drawer to view live logs & detailed telemetry payload.</div>
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Sub-Tab Footer */}
-                              <div className="flex items-center gap-2 pt-2 border-t border-white/10">
-                                <button
-                                  onClick={() => setMobileCardActiveTab(prev => ({ ...prev, [r.receiptId]: null }))}
-                                  className="flex-1 py-1.5 rounded-xl bg-white/10 text-white text-xs font-mono font-bold flex items-center justify-center gap-1.5"
-                                >
-                                  <span>‹ Back Menu</span>
-                                </button>
-                                <button
-                                  onClick={() => setMobileDrawerReceipt(r)}
-                                  className="flex-1 py-1.5 rounded-xl bg-primary text-white text-xs font-mono font-bold shadow-md shadow-primary/20"
-                                >
-                                  Full Drawer 🚀
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="grid grid-cols-1 gap-3 p-3 md:hidden">
+              {paginatedReceipts.map(r => <article key={r.storageId || r.receiptId} className="rounded-xl border border-white/10 bg-zinc-900/50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0"><p className="break-all font-mono text-sm text-white">{r.receiptId}</p><p className="mt-1 text-xs text-zinc-400">{r.merchantName || r.brandName || r.brandKey}</p></div>
+                  <span className={`rounded-md px-2 py-1 text-xs ${isAnalyticsPaidReceipt(r) ? "bg-emerald-500/15 text-emerald-300" : isFailedStatus(r.status) ? "bg-rose-500/15 text-rose-300" : "bg-white/10 text-zinc-300"}`}>{r.status}</span>
+                </div>
+                <div className="mt-4 flex justify-between gap-3 text-sm"><span>${Number(r.totalUsd || 0).toFixed(2)}</span><time dateTime={r.createdAt} className="text-xs text-zinc-400">{new Date(r.createdAt).toLocaleString(undefined, { timeZone: effectiveTimezone })}</time></div>
+                <div className="mt-2 flex flex-wrap gap-3 text-xs text-zinc-400"><span>KYC {getKycLevel(r)}</span><span>{r.cardFunding || "Funding unknown"}</span>{(receiptClusterSizeMap.get(r.receiptId) || 0) > 1 && <span>{receiptClusterSizeMap.get(r.receiptId)} revisions</span>}</div>
+                <button type="button" className="mt-4 w-full rounded-lg border border-white/20 px-3 py-2 text-sm hover:bg-white/10" onClick={() => { rememberDialogFocus(); setMobileDrawerReceipt(r); }}>Investigate receipt</button>
+              </article>)}
+              {tableReceipts.length === 0 && <p className="p-6 text-center text-sm text-zinc-400">No receipts match this query.</p>}
             </div>
-
             {/* Desktop Receipts Table (Hidden on Mobile) */}
             <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left text-xs text-white/90 min-w-[850px]">
-                <thead className="bg-white/[0.04] text-muted-foreground font-bold uppercase tracking-wider text-[10px] border-b border-white/10 select-none">
+              <table className="analytics-ledger w-full text-left text-xs text-white/90 min-w-[850px]">
+                <caption className="p-3 text-left text-xs text-zinc-400">Sorting applies to the {tableReceipts.length.toLocaleString()} loaded receipts. Stream all matching receipts to sort the complete result.</caption>
+                <thead className="bg-white/[0.04] text-muted-foreground font-bold uppercase tracking-wider text-xs border-b border-white/10 select-none">
                   <tr>
-                    <th
-                      onClick={() => handleSort("receiptId")}
-                      className="py-3.5 px-4 cursor-pointer hover:text-white transition-colors"
-                    >
+                    <th aria-sort={sortKey === "receiptId" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"} className="py-3.5 px-4 cursor-pointer hover:text-white transition-colors"><button type="button" onClick={() => handleSort("receiptId")}>
                       Receipt ID {sortKey === "receiptId" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                    </th>
-                    <th
-                      onClick={() => handleSort("createdAt")}
-                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
-                    >
+                    </button></th>
+                    <th aria-sort={sortKey === "createdAt" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"} className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"><button type="button" onClick={() => handleSort("createdAt")}>
                       Date {sortKey === "createdAt" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                    </th>
-                    <th
-                      onClick={() => handleSort("merchantName")}
-                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
-                    >
+                    </button></th>
+                    <th aria-sort={sortKey === "merchantName" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"} className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"><button type="button" onClick={() => handleSort("merchantName")}>
                       Merchant / Brand {sortKey === "merchantName" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                    </th>
-                    <th
-                      onClick={() => handleSort("totalUsd")}
-                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
-                    >
+                    </button></th>
+                    <th aria-sort={sortKey === "totalUsd" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"} className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"><button type="button" onClick={() => handleSort("totalUsd")}>
                       Amount {sortKey === "totalUsd" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                    </th>
+                    </button></th>
                     <th className="py-3.5 px-3">Buyer Email</th>
-                    <th
-                      onClick={() => handleSort("stripeSessionId")}
-                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
-                    >
+                    <th aria-sort={sortKey === "stripeSessionId" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"} className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"><button type="button" onClick={() => handleSort("stripeSessionId")}>
                       Session / Tx Hash {sortKey === "stripeSessionId" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                    </th>
-                    <th
-                      onClick={() => handleSort("status")}
-                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
-                    >
+                    </button></th>
+                    <th aria-sort={sortKey === "status" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"} className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"><button type="button" onClick={() => handleSort("status")}>
                       Status {sortKey === "status" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                    </th>
-                    <th
-                      onClick={() => handleSort("kycLevel")}
-                      className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"
-                    >
+                    </button></th>
+                    <th aria-sort={sortKey === "kycLevel" ? (sortDirection === "asc" ? "ascending" : "descending") : "none"} className="py-3.5 px-3 cursor-pointer hover:text-white transition-colors"><button type="button" onClick={() => handleSort("kycLevel")}>
                       KYC {sortKey === "kycLevel" && (sortDirection === "asc" ? " ▲" : " ▼")}
-                    </th>
+                    </button></th>
                     <th className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <span>Investigation</span>
                         {expandedReceiptIds.size > 0 ? (
                           <button
                             onClick={handleCollapseAll}
-                            className="text-[9px] font-mono font-bold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 px-2 py-0.5 rounded border border-rose-500/20 transition-all uppercase tracking-wider"
+                            className="text-xs font-mono font-bold text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 px-2 py-0.5 rounded border border-rose-500/20 transition-all uppercase tracking-wider"
                             title="Collapse all open investigation rows"
                           >
                             Collapse All ({expandedReceiptIds.size})
@@ -4683,7 +2561,7 @@ export default function PlatformAnalyticsPanel() {
                         ) : (
                           <button
                             onClick={() => handleExpandAll(paginatedReceipts.map(r => r.receiptId))}
-                            className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/20 transition-all uppercase tracking-wider"
+                            className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/20 transition-all uppercase tracking-wider"
                             title="Expand all rows on current page"
                           >
                             Expand Page
@@ -4705,7 +2583,7 @@ export default function PlatformAnalyticsPanel() {
                               <span>{r.receiptId}</span>
                               {receiptClusterSizeMap.get(r.receiptId) && (receiptClusterSizeMap.get(r.receiptId)! > 1) && (
                                 <span
-                                  className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/30"
+                                  className="px-1.5 py-0.5 rounded text-xs font-mono font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/30"
                                   title={`Part of multi-attempt checkout session (${receiptClusterSizeMap.get(r.receiptId)} revisions)`}
                                 >
                                   x{receiptClusterSizeMap.get(r.receiptId)}
@@ -4727,13 +2605,13 @@ export default function PlatformAnalyticsPanel() {
                               {r.merchantName || r.brandName || r.brandKey}
                             </div>
                             {r.merchantName && r.merchantName !== r.brandKey && (
-                              <div className="text-[10px] text-white/40 font-semibold truncate max-w-[170px] flex items-center gap-1 mt-0.5">
+                              <div className="text-xs text-white/40 font-semibold truncate max-w-[170px] flex items-center gap-1 mt-0.5">
                                 <span>Container:</span>
                                 {(() => {
                                   const bColor = getBrandColor(r.brandKey, allBrandKeys.indexOf(r.brandKey));
                                   return (
                                     <span
-                                      className="font-bold text-[9px] inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border shrink-0"
+                                      className="font-bold text-xs inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border shrink-0"
                                       style={{
                                         backgroundColor: `${bColor}20`,
                                         borderColor: `${bColor}45`,
@@ -4750,7 +2628,7 @@ export default function PlatformAnalyticsPanel() {
                           </td>
                           <td className="py-3.5 px-3 font-extrabold text-white">${r.totalUsd.toFixed(2)}</td>
                           <td className="py-3.5 px-3 max-w-[140px] truncate font-medium" title={r.email}>{r.email}</td>
-                          <td className="py-3.5 px-3 font-mono text-[10px] text-muted-foreground max-w-[140px] truncate">
+                          <td className="py-3.5 px-3 font-mono text-xs text-muted-foreground max-w-[140px] truncate">
                             <div className="flex flex-col gap-1">
                               {r.stripeSessionId && (
                                 <a
@@ -4766,11 +2644,12 @@ export default function PlatformAnalyticsPanel() {
                               )}
                               {r.transactionHash && (
                                 <a
-                                  href={r.transactionHash.startsWith("0x") ? `https://basescan.org/tx/${r.transactionHash}` : `https://solscan.io/tx/${r.transactionHash}`}
+                                  href={getTransactionExplorerUrl(r.destinationChainId ?? r.chainId, r.transactionHash)}
+                                  aria-disabled={!getTransactionExplorerUrl(r.destinationChainId ?? r.chainId, r.transactionHash)}
+                                  title={getTransactionExplorerUrl(r.destinationChainId ?? r.chainId, r.transactionHash) ? "Open recorded transaction network" : "Explorer unavailable: chain was not recorded"}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="hover:text-emerald-300 hover:underline inline-flex items-center gap-1 text-emerald-400 font-bold truncate"
-                                  title={`On-Chain Tx: ${r.transactionHash}`}
                                 >
                                   <span className="truncate">{r.transactionHash.slice(0, 8)}...{r.transactionHash.slice(-6)}</span>
                                   <ExternalLink className="w-2.5 h-2.5 flex-shrink-0 text-emerald-400" />
@@ -4782,7 +2661,7 @@ export default function PlatformAnalyticsPanel() {
                             </div>
                           </td>
                           <td className="py-3.5 px-3">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${isAnalyticsPaidReceipt(r) ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
+                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border inline-flex items-center gap-1 ${isAnalyticsPaidReceipt(r) ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" :
                               r.status === "failed" ? "bg-rose-500/15 text-rose-400 border-rose-500/30" :
                                 "bg-amber-500/15 text-amber-400 border-amber-500/30"
                               }`}>
@@ -4807,7 +2686,7 @@ export default function PlatformAnalyticsPanel() {
                                 ? (r.kycFinalStatus === "rejected" ? "Rejected" : "In progress")
                                 : getKycLevel(r);
                               return (
-                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border inline-flex items-center gap-1 ${
+                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-extrabold border inline-flex items-center gap-1 ${
                                   displayTag.startsWith("L2") ? "bg-purple-500/15 text-purple-400 border-purple-500/30" :
                                   displayTag.startsWith("L1") ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
                                   "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
@@ -4819,6 +2698,7 @@ export default function PlatformAnalyticsPanel() {
                           </td>
                           <td className="py-3.5 px-4 text-right">
                             <button
+                              aria-expanded={isExpanded}
                               onClick={() => handleExpandReceipt(r.receiptId)}
                               className={`px-3 py-1 rounded-xl border text-xs font-semibold transition-all duration-200 shadow-sm ${
                                 isExpanded
@@ -4831,1881 +2711,9 @@ export default function PlatformAnalyticsPanel() {
                           </td>
                         </tr>
 
-                        {/* Expanded Technical Investigation Detail panel */}
-                        {isExpanded && (() => {
-                          loadSiteConfigForReceipt(r.receiptId, r.wallet || r.merchantWallet, r.brandKey);
-                          const siteCfg = fetchedSiteConfigs[r.receiptId] || r.merchantConfig || r.brandConfig || {};
-                          const isSettled = isAnalyticsPaidReceipt(r);
-                          const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase().trim();
-                          const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
-                          const isCrypto = rawFunding === "crypto" || rawFunding === "usdc" || rawFunding === "web3" || rawFunding === "direct_crypto" || (!!r.transactionHash && (!r.stripeSessionId || r.stripeSessionId === "N/A"));
-                          const isDirectCrypto = isCoinbase || isCrypto;
-
-                          const isDebit = !isDirectCrypto && rawFunding === "debit";
-                          const actualSplitAddress = isDebit
-                            ? (
-                                siteCfg.splitAddressCredit ||
-                                r.splitAddressCredit ||
-                                siteCfg.splitConfigCredit?.contractAddress ||
-                                siteCfg.splitConfigCredit?.address ||
-                                r.splitConfigCredit?.contractAddress ||
-                                r.splitConfigCredit?.address ||
-                                r.merchantConfig?.splitAddressCredit ||
-                                r.merchantConfig?.splitConfigCredit?.contractAddress ||
-                                r.brandConfig?.splitAddressCredit ||
-                                siteCfg.splitAddress ||
-                                r.splitAddress ||
-                                siteCfg.splitConfig?.contractAddress ||
-                                siteCfg.splitConfig?.address ||
-                                r.splitConfig?.contractAddress ||
-                                r.splitConfig?.address ||
-                                r.merchantConfig?.splitAddress ||
-                                r.brandConfig?.splitAddress
-                              )
-                            : (
-                                siteCfg.splitAddress ||
-                                r.splitAddress ||
-                                siteCfg.splitConfig?.contractAddress ||
-                                siteCfg.splitConfig?.address ||
-                                r.splitConfig?.contractAddress ||
-                                r.splitConfig?.address ||
-                                r.merchantConfig?.splitAddress ||
-                                r.merchantConfig?.splitConfig?.contractAddress ||
-                                r.brandConfig?.splitAddress ||
-                                siteCfg.splitAddressCredit ||
-                                r.splitAddressCredit ||
-                                siteCfg.splitConfigCredit?.contractAddress ||
-                                siteCfg.splitConfigCredit?.address ||
-                                r.splitConfigCredit?.contractAddress ||
-                                r.splitConfigCredit?.address ||
-                                r.merchantConfig?.splitAddressCredit ||
-                                r.brandConfig?.splitAddressCredit
-                              );
-                          const splitBadgeLabel = isDebit ? "Debit Split" : "Credit/Crypto/ACH Split";
-
-                          const isReceiptCrypto = r.isCrypto || r.cardFunding === "crypto" || !!r.thirdwebMetadata || !!r.paymentId || (Array.isArray(r.transactions) && r.transactions.length > 0);
-                          const desktopTabs = [
-                            { id: "overview", label: "Overview", icon: Sliders },
-                            ...(isReceiptCrypto ? [{ id: "crypto", label: "Crypto Details", icon: Coins, isCryptoTab: true }] : []),
-                            { id: "items", label: "Items Ordered", icon: FileText },
-                            { id: "origin", label: "Initialization & Origin", icon: Chrome },
-                            { id: "logs", label: "Client Logs", icon: Activity },
-                            { id: "customers", label: "Customer Metadata", icon: Users },
-                            { id: "fees", label: "Fee & Split Breakdown", icon: Percent },
-                            { id: "reconcile", label: "Reconcile & Actions", icon: Wrench }
-                          ];
-
-                          return (
-                            <tr>
-                              <td colSpan={9} className="bg-zinc-950 p-4 sm:p-5 border-t border-b border-white/10">
-                                <div className="space-y-5">
-
-                                  {/* Horizontal Scrollable Tabs Navigation */}
-                                  <div className="flex items-center gap-1.5 border-b border-white/10 pb-3 overflow-x-auto scrollbar-none">
-                                    {desktopTabs.map(tab => {
-                                      const Icon = tab.icon;
-                                      const isActive = rowActiveTab === tab.id;
-                                      const isCryptoTab = (tab as any).isCryptoTab;
-                                      return (
-                                        <button
-                                          key={tab.id}
-                                          onClick={() => setActiveTabMap(prev => ({ ...prev, [r.receiptId]: tab.id }))}
-                                          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap ${isActive
-                                            ? isCryptoTab
-                                              ? "bg-purple-600 text-white shadow-md shadow-purple-600/30 border border-purple-400/40 font-bold"
-                                              : "bg-primary text-white shadow-md shadow-primary/20"
-                                            : isCryptoTab
-                                            ? "text-purple-300 bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 hover:text-white"
-                                            : "text-muted-foreground hover:text-white hover:bg-white/[0.05]"
-                                            }`}
-                                        >
-                                          <Icon className={`w-3.5 h-3.5 ${isCryptoTab && !isActive ? "text-purple-400" : ""}`} />
-                                          <span>{tab.label}</span>
-                                          {isCryptoTab && (
-                                            <span className="ml-1 px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-purple-400/20 text-purple-200 border border-purple-400/30">
-                                              Thirdweb
-                                            </span>
-                                          )}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-
-                                  {/* Tab: Crypto / Thirdweb Details */}
-                                  {rowActiveTab === "crypto" && (() => {
-                                    const meta = r.thirdwebMetadata || {};
-                                    const paymentId = r.paymentId || meta.paymentId || "N/A";
-                                    const txList: any[] = (Array.isArray(r.transactions) && r.transactions.length > 0)
-                                      ? r.transactions
-                                      : (Array.isArray(meta.transactions) && meta.transactions.length > 0)
-                                      ? meta.transactions
-                                      : (r.transactionHash ? [{
-                                          transactionHash: r.transactionHash,
-                                          chainId: r.destinationChainId || 8453,
-                                          sender: r.buyerWallet || r.wallet,
-                                          receiver: actualSplitAddress || r.wallet,
-                                          destinationAmount: r.destinationAmount || r.totalUsd,
-                                          destinationToken: r.destinationToken || { symbol: "USDC", name: "USD Coin" }
-                                        }] : []);
-
-                                    const originToken = r.originToken || meta.originToken || {};
-                                    const destinationToken = r.destinationToken || meta.destinationToken || {};
-                                    const originAmount = r.originAmount || meta.originAmount;
-                                    const destinationAmount = r.destinationAmount || meta.destinationAmount || r.totalUsd;
-                                    const originChainId = r.originChainId || meta.originChainId;
-                                    const destinationChainId = r.destinationChainId || meta.destinationChainId || 8453;
-                                    const quoteSummary = r.quoteSummary || meta.quoteSummary || meta.quote || {};
-
-                                    const isCrossChain = originChainId && destinationChainId && Number(originChainId) !== Number(destinationChainId);
-                                    const payerWallet = r.buyerWallet || meta.sender || txList[0]?.sender || r.wallet || "N/A";
-                                    const receiverWallet = actualSplitAddress || meta.receiver || txList[0]?.receiver || r.wallet || "N/A";
-
-                                    const rawJson = JSON.stringify(
-                                      {
-                                        paymentId: paymentId !== "N/A" ? paymentId : undefined,
-                                        receiptId: r.receiptId,
-                                        status: r.status,
-                                        isCrypto: true,
-                                        originChainId,
-                                        destinationChainId,
-                                        originToken: Object.keys(originToken).length ? originToken : undefined,
-                                        destinationToken: Object.keys(destinationToken).length ? destinationToken : undefined,
-                                        originAmount,
-                                        destinationAmount,
-                                        quoteSummary: Object.keys(quoteSummary).length ? quoteSummary : undefined,
-                                        transactions: txList,
-                                        thirdwebMetadata: Object.keys(meta).length ? meta : undefined
-                                      },
-                                      null,
-                                      2
-                                    );
-
-                                    return (
-                                      <div className="space-y-4 animate-in fade-in duration-200 mt-1 font-mono text-xs">
-                                        {/* 1. Header Badges & Payment ID */}
-                                        <div className="bg-gradient-to-r from-purple-950/40 via-zinc-950/90 to-purple-950/30 p-4 sm:p-5 rounded-2xl border border-purple-500/20 shadow-xl space-y-3">
-                                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-3">
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                              <div className="w-7 h-7 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
-                                                <Coins className="w-4 h-4" />
-                                              </div>
-                                              <div>
-                                                <div className="text-white font-black text-sm flex items-center gap-2">
-                                                  <span>Thirdweb Universal Bridge & Pay</span>
-                                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                                                    {isCrossChain ? "Cross-Chain Swap" : "Direct On-Chain"}
-                                                  </span>
-                                                </div>
-                                                <div className="text-muted-foreground text-[10px]">
-                                                  Decentralized on-chain settlement verified via Thirdweb SDK v5
-                                                </div>
-                                              </div>
-                                            </div>
-
-                                            <div className="flex items-center gap-2 self-start sm:self-auto">
-                                              <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border inline-flex items-center gap-1 ${
-                                                isAnalyticsPaidReceipt(r)
-                                                  ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-                                                  : r.status === "failed"
-                                                  ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
-                                                  : "bg-amber-500/15 text-amber-300 border-amber-500/30"
-                                              }`}>
-                                                {isAnalyticsPaidReceipt(r) ? "✓ Paid / Accepted" : r.status}
-                                              </span>
-                                            </div>
-                                          </div>
-
-                                          {/* Payment ID Row */}
-                                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                                            <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 space-y-1">
-                                              <div className="text-white/40 text-[9px] uppercase font-bold tracking-wider">Thirdweb Payment ID</div>
-                                              <div className="flex items-center justify-between gap-2">
-                                                <span className="font-mono text-white text-xs truncate max-w-[280px]" title={paymentId}>
-                                                  {paymentId}
-                                                </span>
-                                                {paymentId !== "N/A" && (
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => handleCopy(paymentId, `tw-pid-${r.receiptId}`)}
-                                                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors flex items-center gap-1 shrink-0"
-                                                  >
-                                                    <Copy className="w-3 h-3" />
-                                                    <span>{copySuccess[`tw-pid-${r.receiptId}`] ? "Copied!" : "Copy"}</span>
-                                                  </button>
-                                                )}
-                                              </div>
-                                            </div>
-
-                                            <div className="bg-white/[0.03] border border-white/10 rounded-xl p-3 space-y-1">
-                                              <div className="text-white/40 text-[9px] uppercase font-bold tracking-wider">Primary Tx Hash</div>
-                                              <div className="flex items-center justify-between gap-2">
-                                                <span className="font-mono text-emerald-400 text-xs truncate max-w-[240px]">
-                                                  {r.transactionHash ? `${r.transactionHash.slice(0, 10)}...${r.transactionHash.slice(-8)}` : "Pending on-chain"}
-                                                </span>
-                                                {r.transactionHash && (
-                                                  <div className="flex items-center gap-1 shrink-0">
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => handleCopy(r.transactionHash!, `tw-tx-${r.receiptId}`)}
-                                                      className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors flex items-center gap-1"
-                                                    >
-                                                      <Copy className="w-3 h-3" />
-                                                      <span>{copySuccess[`tw-tx-${r.receiptId}`] ? "Copied!" : "Copy"}</span>
-                                                    </button>
-                                                    <a
-                                                      href={getBlockExplorerTxUrl(destinationChainId, r.transactionHash)}
-                                                      target="_blank"
-                                                      rel="noopener noreferrer"
-                                                      className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold transition-colors flex items-center gap-1"
-                                                    >
-                                                      <span>Explorer</span>
-                                                      <ExternalLink className="w-3 h-3" />
-                                                    </a>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            </div>
-                                          </div>
-                                        </div>
-
-                                        {/* 2. Token Flow Route & Conversion Card */}
-                                        <div className="bg-black/40 p-4 sm:p-5 rounded-2xl border border-white/10 space-y-4">
-                                          <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
-                                            <div className="text-xs font-bold text-white flex items-center gap-2">
-                                              <ArrowRightLeft className="w-4 h-4 text-purple-400" />
-                                              <span>Token Flow & Cross-Chain Settlement Route</span>
-                                            </div>
-                                            <span className="text-[10px] text-white/50 font-mono">
-                                              {isCrossChain ? `Bridged: ${getChainDisplayName(originChainId)} → ${getChainDisplayName(destinationChainId)}` : `Direct: ${getChainDisplayName(destinationChainId)}`}
-                                            </span>
-                                          </div>
-
-                                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center">
-                                            {/* Origin Token Box */}
-                                            <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 space-y-2">
-                                              <div className="flex items-center justify-between">
-                                                <span className="text-[9px] uppercase font-bold text-purple-300 tracking-wider">Origin Token (Paid)</span>
-                                                <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                                                  {getChainDisplayName(originChainId)}
-                                                </span>
-                                              </div>
-                                              <div className="text-lg font-black text-white">
-                                                {originAmount ? `${originAmount} ` : ""}{originToken.symbol || "Crypto"}
-                                              </div>
-                                              <div className="text-[10px] text-muted-foreground truncate" title={originToken.name || originToken.symbol}>
-                                                {originToken.name || "Payer Selected Asset"}
-                                              </div>
-                                              {originToken.address && (
-                                                <div className="text-[9px] text-white/40 truncate font-mono pt-1 border-t border-white/5">
-                                                  Contract: {originToken.address}
-                                                </div>
-                                              )}
-                                            </div>
-
-                                            {/* Bridge / Routing Center Box */}
-                                            <div className="bg-purple-950/20 border border-purple-500/20 rounded-2xl p-3.5 flex flex-col items-center justify-center text-center space-y-2">
-                                              <div className="w-8 h-8 rounded-full bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
-                                                <Zap className="w-4 h-4 animate-pulse text-purple-400" />
-                                              </div>
-                                              <div>
-                                                <div className="text-xs font-bold text-white">
-                                                  {quoteSummary.provider || "Thirdweb Universal Bridge"}
-                                                </div>
-                                                <div className="text-[10px] text-purple-300/80 mt-0.5">
-                                                  {isCrossChain ? "Automated Bridge & Swap Routing" : "Same-Chain Native Transfer"}
-                                                </div>
-                                              </div>
-                                              {quoteSummary.estimatedDurationSeconds && (
-                                                <span className="px-2 py-0.5 rounded text-[9px] font-mono text-white/60 bg-white/5 border border-white/10">
-                                                  ~{quoteSummary.estimatedDurationSeconds}s settlement time
-                                                </span>
-                                              )}
-                                            </div>
-
-                                            {/* Destination Token Box */}
-                                            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 space-y-2">
-                                              <div className="flex items-center justify-between">
-                                                <span className="text-[9px] uppercase font-bold text-emerald-300 tracking-wider">Destination (Settled)</span>
-                                                <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                                  {getChainDisplayName(destinationChainId)}
-                                                </span>
-                                              </div>
-                                              <div className="text-lg font-black text-emerald-400">
-                                                {destinationAmount ? `${destinationAmount} ` : `$${r.totalUsd.toFixed(2)} `}{destinationToken.symbol || "USDC"}
-                                              </div>
-                                              <div className="text-[10px] text-emerald-200/70 truncate" title={destinationToken.name || "USD Coin"}>
-                                                {destinationToken.name || "Merchant Split Settlement"}
-                                              </div>
-                                              {destinationToken.address && (
-                                                <div className="text-[9px] text-emerald-300/50 truncate font-mono pt-1 border-t border-emerald-500/10">
-                                                  Contract: {destinationToken.address}
-                                                </div>
-                                              )}
-                                            </div>
-                                          </div>
-                                        </div>
-
-                                        {/* 3. On-Chain Transactions List */}
-                                        <div className="bg-black/40 p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3">
-                                          <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
-                                            <div className="text-xs font-bold text-white flex items-center gap-2">
-                                              <Layers className="w-4 h-4 text-emerald-400" />
-                                              <span>On-Chain Transaction Receipts & Hops ({txList.length})</span>
-                                            </div>
-                                            <span className="text-[10px] text-muted-foreground font-mono">
-                                              Cryptographic Hashes
-                                            </span>
-                                          </div>
-
-                                          {txList.length > 0 ? (
-                                            <div className="divide-y divide-white/5 bg-white/[0.02] border border-white/10 rounded-2xl overflow-hidden">
-                                              {txList.map((tx: any, idx: number) => {
-                                                const txHash = tx.transactionHash || tx.hash || (typeof tx === "string" ? tx : "");
-                                                const txChain = tx.chainId || destinationChainId || 8453;
-                                                const explorerUrl = getBlockExplorerTxUrl(txChain, txHash);
-
-                                                return (
-                                                  <div key={idx} className="p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-white/[0.03] transition-colors">
-                                                    <div className="space-y-1 min-w-0 flex-1">
-                                                      <div className="flex items-center gap-2 flex-wrap">
-                                                        <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-white/10 text-white border border-white/10">
-                                                          Hop #{idx + 1}
-                                                        </span>
-                                                        <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                                                          {getChainDisplayName(txChain)}
-                                                        </span>
-                                                        {tx.type && (
-                                                          <span className="text-[10px] text-white/50 uppercase font-semibold">
-                                                            ({tx.type})
-                                                          </span>
-                                                        )}
-                                                      </div>
-                                                      <div className="font-mono text-emerald-300 text-xs truncate select-all pt-0.5" title={txHash}>
-                                                        {txHash || "Pending Confirmation"}
-                                                      </div>
-                                                    </div>
-
-                                                    <div className="flex items-center gap-2 shrink-0">
-                                                      {txHash && (
-                                                        <button
-                                                          type="button"
-                                                          onClick={() => handleCopy(txHash, `tw-hop-${idx}-${r.receiptId}`)}
-                                                          className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all flex items-center gap-1.5"
-                                                        >
-                                                          <Copy className="w-3.5 h-3.5" />
-                                                          <span>{copySuccess[`tw-hop-${idx}-${r.receiptId}`] ? "Copied!" : "Copy Hash"}</span>
-                                                        </button>
-                                                      )}
-                                                      {explorerUrl && (
-                                                        <a
-                                                          href={explorerUrl}
-                                                          target="_blank"
-                                                          rel="noopener noreferrer"
-                                                          className="px-2.5 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all flex items-center gap-1.5"
-                                                        >
-                                                          <span>View on Explorer</span>
-                                                          <ExternalLink className="w-3.5 h-3.5" />
-                                                        </a>
-                                                      )}
-                                                    </div>
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          ) : (
-                                            <div className="p-4 border border-white/10 border-dashed rounded-2xl text-center text-muted-foreground text-xs">
-                                              No on-chain transaction hashes recorded yet for this session.
-                                            </div>
-                                          )}
-                                        </div>
-
-                                        {/* 4. Participant Wallets */}
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                          <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 space-y-1.5">
-                                            <div className="text-white/40 text-[9px] uppercase font-bold tracking-wider flex items-center gap-1.5">
-                                              <Wallet className="w-3 h-3 text-purple-400" />
-                                              <span>Buyer / Sender Wallet</span>
-                                            </div>
-                                            <div className="flex items-center justify-between gap-2">
-                                              <span className="font-mono text-white text-xs truncate max-w-[280px]" title={payerWallet}>
-                                                {payerWallet}
-                                              </span>
-                                              {payerWallet !== "N/A" && (
-                                                <button
-                                                  type="button"
-                                                  onClick={() => handleCopy(payerWallet, `tw-sender-${r.receiptId}`)}
-                                                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors shrink-0"
-                                                >
-                                                  {copySuccess[`tw-sender-${r.receiptId}`] ? "Copied!" : "Copy"}
-                                                </button>
-                                              )}
-                                            </div>
-                                          </div>
-
-                                          <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 space-y-1.5">
-                                            <div className="text-white/40 text-[9px] uppercase font-bold tracking-wider flex items-center gap-1.5">
-                                              <Building2 className="w-3 h-3 text-emerald-400" />
-                                              <span>Merchant / Split Receiver Wallet</span>
-                                            </div>
-                                            <div className="flex items-center justify-between gap-2">
-                                              <span className="font-mono text-emerald-400 text-xs truncate max-w-[280px]" title={receiverWallet}>
-                                                {receiverWallet}
-                                              </span>
-                                              {receiverWallet !== "N/A" && (
-                                                <button
-                                                  type="button"
-                                                  onClick={() => handleCopy(receiverWallet, `tw-recv-${r.receiptId}`)}
-                                                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors shrink-0"
-                                                >
-                                                  {copySuccess[`tw-recv-${r.receiptId}`] ? "Copied!" : "Copy"}
-                                                </button>
-                                              )}
-                                            </div>
-                                          </div>
-                                        </div>
-
-                                        {/* 5. Raw Thirdweb Telemetry JSON Inspector */}
-                                        <div className="bg-black/50 border border-white/10 rounded-2xl p-4 space-y-2">
-                                          <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                                            <div className="flex items-center gap-2 text-xs font-bold text-white">
-                                              <Terminal className="w-3.5 h-3.5 text-purple-400" />
-                                              <span>Raw Thirdweb Payload Inspector</span>
-                                            </div>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleCopy(rawJson, `tw-json-${r.receiptId}`)}
-                                              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors flex items-center gap-1"
-                                            >
-                                              <Copy className="w-3.5 h-3.5" />
-                                              <span>{copySuccess[`tw-json-${r.receiptId}`] ? "JSON Copied!" : "Copy JSON"}</span>
-                                            </button>
-                                          </div>
-                                          <pre className="text-emerald-300 text-[11px] font-mono overflow-x-auto max-h-[300px] overflow-y-auto whitespace-pre-wrap p-2 rounded-xl bg-black/60 border border-white/5 leading-relaxed">
-                                            {rawJson}
-                                          </pre>
-                                        </div>
-                                      </div>
-                                    );
-                                  })()}
-
-                                  {/* Tab 1: Overview & Meta */}
-                                  {rowActiveTab === "overview" && (() => {
-                                    const statusHistory = Array.isArray(r.statusHistory) ? r.statusHistory : [];
-                                    const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
-                                    const currentStatus = String(r.status || "").toLowerCase();
-                                    const accordionStepHistory = Array.isArray(r.accordionStepHistory)
-                                      ? [...r.accordionStepHistory].sort((a, b) => Number(a?.ts || 0) - Number(b?.ts || 0))
-                                      : [];
-                                    const hasRecordedAccordionFlow = accordionStepHistory.length > 0;
-                                    const accordionJourneyPath = buildAccordionJourneyPath(accordionStepHistory);
-                                    const mappedHeadlessSteps = statusHistory
-                                      .map((entry: any) => accordionStepForOnrampState(entry?.status))
-                                      .filter((step): step is 1 | 2 | 3 | 4 => step !== null);
-                                    const visitedAccordionSteps = new Set<number>(
-                                      hasRecordedAccordionFlow
-                                        ? accordionStepHistory.flatMap((entry) => [entry.fromStep, entry.toStep]).filter((step) => step >= 1 && step <= 4)
-                                        : mappedHeadlessSteps
-                                    );
-                                    const currentAccordionStep = hasRecordedAccordionFlow
-                                      ? Number(accordionStepHistory[accordionStepHistory.length - 1]?.toStep || r.accordionCurrentStep || 1)
-                                      : Number(mappedHeadlessSteps[mappedHeadlessSteps.length - 1] || r.accordionCurrentStep || 1);
-                                    const recordedBacktracks = accordionStepHistory.filter((entry) => entry.direction === "backward");
-
-                                    const hasSessionId = !!r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.stripeSessionId));
-                                    const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
-
-                                    const customerIdentified = statusList.includes("buyer_logged_in") ||
-                                      statusList.includes("checkout_session_created") ||
-                                      !!r.customerEmail ||
-                                      !!r.stripeEmail ||
-                                      (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.email));
-
-                                    const paymentMethodSelected = !!r.cardFunding ||
-                                      statusList.includes("payment_method_detected") ||
-                                      statusList.includes("onramp_confirming_fees") ||
-                                      statusList.includes("onramp_checking_out") ||
-                                      (Array.isArray(r.customerSessions) && r.customerSessions.some((s: any) => !!s.paymentMethodDetails));
-
-                                    const kycTriggered = r.kycOccurred === true || Boolean(r.kycRequiredLevel) || statusList.some(s => s.includes("kyc") || s.includes("verifying")) ||
-                                      String(r.failureReason || "").toLowerCase().includes("verification") ||
-                                      String(r.failureReason || "").toLowerCase().includes("kyc");
-
-                                    const kycCompleted = r.kycCompletedDuringTransaction === true || Boolean(r.kycCompletedLevel);
-
-                                    const kycFailed = r.kycFinalStatus === "rejected" || (kycTriggered &&
-                                      currentStatus === "failed" &&
-                                      (String(r.failureReason || "").toLowerCase().includes("verification") ||
-                                        String(r.failureReason || "").toLowerCase().includes("kyc") ||
-                                        statusList.includes("onramp_verifying_identity")));
-
-                                    const settlementSuccess = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined"].includes(currentStatus);
-                                    const settlementAwaiting = ["paid - ach pending", "ach_pending", "awaiting_funds", "onramp_awaiting_funds"].includes(currentStatus);
-                                    const settlementFailed = currentStatus === "failed";
-
-                                    let intentLevel: "Low" | "Medium" | "High" = "Low";
-                                    if (paymentMethodSelected || kycTriggered || currentStatus === "failed" || settlementSuccess || settlementAwaiting) {
-                                      intentLevel = "High";
-                                    } else if (customerIdentified || hasSessionId) {
-                                      intentLevel = "Medium";
-                                    }
-
-                                    let pmText = "Selecting payment";
-                                    if (String(r.cardFunding || "").toLowerCase() === "us_bank_account") {
-                                      pmText = "Bank Transfer (ACH)";
-                                    } else if (r.cardFunding) {
-                                      pmText = `${r.cardFunding} Card`;
-                                    } else if (Array.isArray(r.customerSessions)) {
-                                      const matched = r.customerSessions.find((s: any) => s.paymentMethodDetails);
-                                      if (matched) {
-                                        const details = matched.paymentMethodDetails;
-                                        if (details.type === "us_bank_account") {
-                                          pmText = "Bank Account (ACH)";
-                                        } else if (details.card) {
-                                          pmText = `${details.card.funding || "card"} (${details.card.brand || "unknown"})`;
-                                        }
-                                      }
-                                    }
-
-                                     // Dynamic KYC tier resolution from receipt and sessions (No hardcoded limits)
-                                     const receiptAmountUsd = Number(r.totalUsd || 0);
-                                     const sessionList: any[] = Array.isArray(r.customerSessions) ? r.customerSessions : [];
-
-                                     // Check if any session registered an explicit KYC requirement or tier escalation
-                                     const hasL2SessionReq = sessionList.some((s: any) => String(s?.kycTierRequired || s?.kycTargetTier || "").toLowerCase() === "l2");
-                                     const hasL1SessionReq = sessionList.some((s: any) => String(s?.kycTierRequired || s?.kycTargetTier || "").toLowerCase() === "l1");
-
-                                     // Determine active level string safely as upper-case string ("L0" | "L1" | "L2")
-                                     const userKycLevel: string = String(r.kycVerifiedLevel || r.kycFinalLevel || getKycLevel(r)).toUpperCase();
-
-                                     // Check if L2 or L1 step up is needed
-                                     const isL2Required = String(r.kycRequiredLevel || r.kycTierRequired || "").toLowerCase() === "l2" || hasL2SessionReq;
-                                     const isL1Required = String(r.kycRequiredLevel || r.kycTierRequired || "").toLowerCase() === "l1" || hasL1SessionReq;
-
-                                     const initialKyc = String(r.kycInitialVerifiedLevel || r.kycInitialLevel || "UNVERIFIED").toUpperCase();
-                                     let kycStepDesc = `${initialKyc} at checkout start`;
-                                     if (kycFailed) {
-                                       kycStepDesc = "KYC Rejected";
-                                     } else if (r.kycCompletedLevel) {
-                                       kycStepDesc = `${initialKyc} initially â†’ ${r.kycCompletedLevel} completed during payment`;
-                                     } else if (userKycLevel === "L2") {
-                                       kycStepDesc = initialKyc === "L2" ? "L2 preverified before payment" : "L2 verified";
-                                     } else if (isL2Required && userKycLevel !== "L2") {
-                                       kycStepDesc = r.kycRegion === "eu" ? "EU L2 + MiCA + attestation required" : "L2 Photo ID Scan Required";
-                                     } else if (userKycLevel === "L1") {
-                                       kycStepDesc = "L1 DOB/SSN Verified";
-                                     } else if (isL1Required && userKycLevel === "L0") {
-                                       kycStepDesc = "L1 DOB + SSN Required";
-                                     } else if (kycCompleted) {
-                                       kycStepDesc = "Identity Verified";
-                                     } else if (kycTriggered) {
-                                       kycStepDesc = "Reviewing KYC...";
-                                     }
-
-                                     const inferredSteps = [
-                                       {
-                                         id: "step1",
-                                         label: "1. Contact & Auth",
-                                         status: "completed",
-                                         description: customerIdentified ? (r.customerEmail || r.stripeEmail || "User identified") : "Link Opened"
-                                       },
-                                       {
-                                         id: "step2",
-                                         label: "2. Identity & KYC",
-                                         status: kycFailed
-                                           ? "failed"
-                                           : (userKycLevel === "L2" || (userKycLevel === "L1" && !isL2Required) || kycCompleted)
-                                           ? "completed"
-                                           : (isL1Required || isL2Required || kycTriggered)
-                                           ? "active"
-                                           : "completed",
-                                         description: kycStepDesc
-                                       },
-                                       {
-                                         id: "step3",
-                                         label: "3. Payment Method",
-                                         status: paymentMethodSelected
-                                           ? "completed"
-                                           : (customerIdentified && !kycFailed)
-                                           ? "active"
-                                           : "upcoming",
-                                         description: paymentMethodSelected ? pmText : "Selecting method"
-                                       },
-                                       {
-                                         id: "step4",
-                                         label: "4. Fulfillment",
-                                         status: settlementSuccess
-                                           ? "completed"
-                                           : (settlementAwaiting)
-                                           ? "active"
-                                           : (settlementFailed && !kycFailed)
-                                           ? "failed"
-                                           : "upcoming",
-                                         description: settlementSuccess
-                                           ? "Confirmed & Settled"
-                                           : settlementAwaiting
-                                           ? "Settling On-Chain"
-                                           : settlementFailed
-                                           ? "Declined ➔ Returned to Step 3"
-                                           : "Awaiting checkout"
-                                       }
-                                     ];
-
-                                     const steps = inferredSteps.map((step, index) => {
-                                       if (!hasRecordedAccordionFlow) return step;
-                                       const stepNumber = index + 1;
-                                       const wasVisited = visitedAccordionSteps.has(stepNumber);
-                                       const wasSkipped = accordionStepHistory.some(
-                                         (entry) => entry.direction === "forward" && entry.fromStep < stepNumber && entry.toStep > stepNumber
-                                       );
-                                       let trackedStatus = step.status;
-                                       if (stepNumber === currentAccordionStep && !settlementSuccess) {
-                                         trackedStatus = step.status === "failed" ? "failed" : "active";
-                                       } else if (settlementSuccess && (wasVisited || stepNumber === 4)) {
-                                         trackedStatus = "completed";
-                                       } else if (wasSkipped) {
-                                         trackedStatus = "skipped";
-                                       } else if (wasVisited && stepNumber < currentAccordionStep) {
-                                         trackedStatus = "completed";
-                                       } else if (wasVisited && stepNumber > currentAccordionStep) {
-                                         trackedStatus = "returned";
-                                       } else if (!wasVisited) {
-                                         trackedStatus = "upcoming";
-                                       }
-
-                                       const trackedDescription = trackedStatus === "skipped"
-                                         ? "Skipped by verified-customer path"
-                                         : trackedStatus === "returned"
-                                         ? `Visited; customer returned to Step ${currentAccordionStep}`
-                                         : step.description;
-                                       return { ...step, status: trackedStatus, description: trackedDescription };
-                                     });
-
-                                     const hasStep3To2Return = hasRecordedAccordionFlow
-                                       ? hasAccordionTransition(accordionStepHistory, 3, 2)
-                                       : (isL1Required || isL2Required || kycTriggered);
-                                     const hasStep4To3Return = hasRecordedAccordionFlow
-                                       ? hasAccordionTransition(accordionStepHistory, 4, 3)
-                                       : settlementFailed;
-
-                                     return (
-                                       <div className="space-y-5 animate-in fade-in duration-200">
-                                         {/* Funnel Progress Stepper Panel */}
-                                         <div className="relative overflow-hidden bg-gradient-to-r from-zinc-950/90 via-zinc-900/80 to-zinc-950/90 border border-white/10 rounded-2xl p-5 sm:p-6 shadow-2xl backdrop-blur-xl">
-                                           {/* Ambient Glow Background */}
-                                           <div className={`absolute inset-0 bg-gradient-to-r ${
-                                             settlementSuccess ? "from-emerald-500/10 via-teal-500/5 to-emerald-500/10" :
-                                             settlementFailed ? "from-rose-500/10 via-rose-500/5 to-rose-500/10" :
-                                             "from-amber-500/10 via-primary/5 to-purple-500/10"
-                                           } pointer-events-none transition-all duration-500`} />
-
-                                           <div className="relative z-10 flex items-center justify-between mb-6">
-                                             <div className="flex items-center gap-3">
-                                               <div className="w-8 h-8 rounded-xl bg-white/[0.05] border border-white/10 flex items-center justify-center text-white/80">
-                                                 <Route className="w-4 h-4 text-primary" />
-                                               </div>
-                                               <div>
-                                                 <span className="text-white/90 text-xs uppercase font-extrabold tracking-wider">Modular Accordion Trajectory</span>
-                                                 <div className="text-[10px] text-muted-foreground">Live 4-Step Checkout & Dynamic Step-Up Diagnostic</div>
-                                               </div>
-                                             </div>
-
-                                             <div className="flex items-center gap-2">
-                                               {(isL1Required || isL2Required) && (
-                                                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                                                   Dynamic Limit Step-Up (${receiptAmountUsd.toLocaleString()})
-                                                 </span>
-                                               )}
-                                              <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border shadow-md ${
-                                                intentLevel === "High" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 shadow-emerald-500/10" :
-                                                intentLevel === "Medium" ? "bg-amber-500/15 text-amber-400 border-amber-500/30 shadow-amber-500/10" :
-                                                "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
-                                              }`}>
-                                                {intentLevel} Intent Level
-                                              </span>
-                                             </div>
-                                           </div>
-
-                                           <div className="relative z-10 mb-1 rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 font-mono">
-                                             <div className="flex flex-wrap items-center justify-between gap-2">
-                                               <span className="text-[9px] font-bold uppercase tracking-wider text-white/45">
-                                                 {hasRecordedAccordionFlow ? "Recorded customer path" : "Legacy inferred path"}
-                                               </span>
-                                               {hasRecordedAccordionFlow && (
-                                                 <span className="text-[9px] text-white/45">
-                                                   {accordionStepHistory.length} transitions · {recordedBacktracks.length} backtracks
-                                                 </span>
-                                               )}
-                                             </div>
-                                             <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px] font-bold text-white/80">
-                                               {(hasRecordedAccordionFlow ? accordionJourneyPath : Array.from(visitedAccordionSteps)).map((stepNumber, index, path) => (
-                                                 <React.Fragment key={`${stepNumber}-${index}`}>
-                                                   <span className={`rounded-md border px-2 py-0.5 ${
-                                                     stepNumber === currentAccordionStep
-                                                       ? "border-amber-500/40 bg-amber-500/15 text-amber-300"
-                                                       : "border-white/10 bg-white/[0.04] text-white/70"
-                                                   }`}>
-                                                     Step {stepNumber}
-                                                   </span>
-                                                   {index < path.length - 1 && (
-                                                     path[index + 1] < stepNumber
-                                                       ? <ArrowLeft className="h-3 w-3 text-rose-400" />
-                                                       : <ArrowRight className="h-3 w-3 text-emerald-400" />
-                                                   )}
-                                                 </React.Fragment>
-                                               ))}
-                                             </div>
-                                             {hasRecordedAccordionFlow && accordionStepHistory.length > 1 && (
-                                               <div className="mt-2 space-y-1 border-t border-white/5 pt-2">
-                                                 {accordionStepHistory.slice(-6).map((entry) => (
-                                                   <div key={entry.eventId} className="flex items-start justify-between gap-3 text-[9px] text-white/50">
-                                                     <span className={entry.direction === "backward" ? "text-rose-300" : entry.direction === "forward" ? "text-emerald-300" : "text-blue-300"}>
-                                                       {entry.fromStep === 0 ? "Entry" : `${entry.fromStep} → ${entry.toStep}`} · {entry.trigger}
-                                                     </span>
-                                                     <span className="min-w-0 flex-1 truncate text-right" title={entry.reason}>{entry.reason}</span>
-                                                   </div>
-                                                 ))}
-                                               </div>
-                                             )}
-                                           </div>
-
-                                           {/* Stepper progress track with Responsive Forward Connectors & Orthogonal Return Loops */}
-                                          <div className="relative z-10 overflow-x-auto scrollbar-none py-6">
-                                            <div className="flex items-center justify-between min-w-[760px] w-full relative px-10">
-                                              {steps.map((step, idx) => {
-                                                let nodeStyle = "bg-zinc-900 text-zinc-500 border-white/10 shadow-inner";
-                                                let badgeStyle = "bg-white/[0.04] text-white/50 border-white/5";
-                                                let icon = <span className="text-xs font-extrabold">{idx + 1}</span>;
-
-                                                if (step.status === "completed") {
-                                                  nodeStyle = "bg-gradient-to-br from-emerald-500 to-teal-600 text-white border-emerald-400/80 shadow-[0_0_15px_rgba(16,185,129,0.5)] scale-105";
-                                                  badgeStyle = "bg-emerald-500/15 text-emerald-300 border-emerald-500/30 font-bold";
-                                                  icon = <CheckCircle2 className="w-4 h-4 text-white" />;
-                                                } else if (step.status === "active") {
-                                                  nodeStyle = "bg-gradient-to-br from-amber-400 to-amber-600 text-white border-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.6)] animate-pulse scale-110";
-                                                  badgeStyle = "bg-amber-500/15 text-amber-300 border-amber-500/30 font-bold";
-                                                  icon = <RefreshCw className="w-4 h-4 animate-spin text-white" />;
-                                                 } else if (step.status === "failed") {
-                                                   nodeStyle = "bg-gradient-to-br from-rose-500 to-rose-700 text-white border-rose-400 shadow-[0_0_18px_rgba(244,63,94,0.6)] scale-105";
-                                                   badgeStyle = "bg-rose-500/15 text-rose-300 border-rose-500/30 font-bold";
-                                                   icon = <XCircle className="w-4 h-4 text-white" />;
-                                                 } else if (step.status === "returned") {
-                                                   nodeStyle = "bg-purple-500/15 text-purple-300 border-purple-500/50 shadow-[0_0_12px_rgba(168,85,247,0.25)]";
-                                                   badgeStyle = "bg-purple-500/15 text-purple-300 border-purple-500/30 font-bold";
-                                                   icon = <RotateCcw className="w-4 h-4 text-purple-300" />;
-                                                 } else if (step.status === "skipped") {
-                                                   nodeStyle = "bg-blue-500/10 text-blue-300 border-blue-500/40 border-dashed";
-                                                   badgeStyle = "bg-blue-500/10 text-blue-300 border-blue-500/30 font-bold";
-                                                   icon = <ArrowRight className="w-4 h-4 text-blue-300" />;
-                                                 }
-
-                                                return (
-                                                  <React.Fragment key={step.id}>
-                                                    {/* Step Node */}
-                                                    <div className="flex flex-col items-center relative z-10 w-36 group shrink-0">
-                                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 ${nodeStyle} bg-zinc-950`}>
-                                                        {icon}
-                                                      </div>
-                                                      <span className="mt-2.5 text-xs font-extrabold text-white tracking-wide whitespace-nowrap group-hover:text-primary transition-colors">{step.label}</span>
-                                                      <span className={`mt-1 px-2 py-0.5 rounded-full text-[10px] border whitespace-nowrap overflow-hidden text-ellipsis max-w-[130px] text-center ${badgeStyle}`} title={step.description}>
-                                                        {step.description}
-                                                      </span>
-                                                    </div>
-
-                                                    {/* Inter-Node Forward Connector (Non-stretching Crisp Arrow) */}
-                                                    {idx < steps.length - 1 && (() => {
-                                                       const isForwardCompleted =
-                                                         hasRecordedAccordionFlow
-                                                           ? hasAccordionTransition(accordionStepHistory, idx + 1, idx + 2)
-                                                           : idx === 0
-                                                             ? true
-                                                             : idx === 1
-                                                               ? paymentMethodSelected
-                                                               : settlementSuccess;
-
-                                                      return (
-                                                        <div className="flex-1 flex items-center justify-center px-2 relative z-10 -mt-6 min-w-[90px]">
-                                                          <div
-                                                            className={`w-full flex items-center justify-center gap-1.5 py-1 px-3 rounded-full border transition-all ${
-                                                              isForwardCompleted
-                                                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.2)]"
-                                                                : "bg-zinc-900 border-white/10 text-zinc-600"
-                                                            }`}
-                                                            title={`Forward Path: Step ${idx + 1} ➔ Step ${idx + 2}`}
-                                                          >
-                                                            <div className={`h-[2px] flex-1 rounded-full ${isForwardCompleted ? "bg-emerald-400" : "bg-zinc-700 border-t border-dashed"}`} />
-                                                            <ArrowRight className="w-4 h-4 shrink-0 text-current" />
-                                                            <div className={`h-[2px] flex-1 rounded-full ${isForwardCompleted ? "bg-emerald-400" : "bg-zinc-700 border-t border-dashed"}`} />
-                                                          </div>
-                                                        </div>
-                                                      );
-                                                    })()}
-                                                  </React.Fragment>
-                                                );
-                                              })}
-
-                                              {/* Orthogonal Return Loop Pathways (Shoot Down -> Over -> Up) */}
-                                              {hasStep3To2Return && (
-                                                <div
-                                                  className="absolute left-[31%] right-[42%] top-[20px] h-[55px] pointer-events-auto z-0 group/stepup cursor-help"
-                                                  title={hasRecordedAccordionFlow
-                                                    ? `Recorded Step 3 → Step 2 return (${accordionStepHistory.filter((entry) => entry.fromStep === 3 && entry.toStep === 2).length} time(s)).`
-                                                    : `Inferred Step 3 → Step 2 step-up: order amount ($${receiptAmountUsd.toLocaleString()}) or Stripe API required ${isL2Required ? "L2 Photo ID Scan" : "L1 DOB + SSN"}.`}
-                                                >
-                                                  <svg className="w-full h-full overflow-visible">
-                                                    <defs>
-                                                      <marker
-                                                        id="ortho-arrow-up-amber"
-                                                        viewBox="0 0 10 10"
-                                                        refX="5"
-                                                        refY="3"
-                                                        markerWidth="6"
-                                                        markerHeight="6"
-                                                        orient="auto"
-                                                      >
-                                                        <path d="M 0 8 L 5 0 L 10 8 Z" fill="#f59e0b" />
-                                                      </marker>
-                                                    </defs>
-                                                    <path
-                                                      d="M 96% 12 L 96% 46 L 4% 46 L 4% 18"
-                                                      fill="none"
-                                                      stroke="#f59e0b"
-                                                      strokeWidth="2"
-                                                      strokeDasharray="4 3"
-                                                      className="animate-pulse"
-                                                      markerEnd="url(#ortho-arrow-up-amber)"
-                                                    />
-                                                  </svg>
-                                                  <div className="absolute left-1/2 -translate-x-1/2 bottom-[-6px] bg-zinc-950/90 border border-amber-500/50 text-amber-300 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full shadow-[0_0_12px_rgba(251,191,36,0.3)] whitespace-nowrap">
-                                                    Step 3 → 2 {hasRecordedAccordionFlow ? "Recorded" : "Inferred"} Loop
-                                                  </div>
-                                                </div>
-                                              )}
-
-                                              {hasStep4To3Return && (
-                                                <div
-                                                  className="absolute left-[64%] right-[9%] top-[20px] h-[55px] pointer-events-auto z-0 group/decline cursor-help"
-                                                  title={hasRecordedAccordionFlow
-                                                    ? `Recorded Step 4 → Step 3 return (${accordionStepHistory.filter((entry) => entry.fromStep === 4 && entry.toStep === 3).length} time(s)).`
-                                                    : "Inferred Step 4 → Step 3 decline loop from legacy settlement failure data."}
-                                                >
-                                                  <svg className="w-full h-full overflow-visible">
-                                                    <defs>
-                                                      <marker
-                                                        id="ortho-arrow-up-rose"
-                                                        viewBox="0 0 10 10"
-                                                        refX="5"
-                                                        refY="3"
-                                                        markerWidth="6"
-                                                        markerHeight="6"
-                                                        orient="auto"
-                                                      >
-                                                        <path d="M 0 8 L 5 0 L 10 8 Z" fill="#f43f5e" />
-                                                      </marker>
-                                                    </defs>
-                                                    <path
-                                                      d="M 96% 12 L 96% 46 L 4% 46 L 4% 18"
-                                                      fill="none"
-                                                      stroke="#f43f5e"
-                                                      strokeWidth="2"
-                                                      strokeDasharray="4 3"
-                                                      className="animate-pulse"
-                                                      markerEnd="url(#ortho-arrow-up-rose)"
-                                                    />
-                                                  </svg>
-                                                  <div className="absolute left-1/2 -translate-x-1/2 bottom-[-6px] bg-zinc-950/90 border border-rose-500/50 text-rose-300 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full shadow-[0_0_12px_rgba(244,63,94,0.3)] whitespace-nowrap">
-                                                    Step 4 → 3 {hasRecordedAccordionFlow ? "Recorded" : "Inferred"} Loop
-                                                  </div>
-                                                </div>
-                                              )}
-                                            </div>
-                                          </div>
-                                        </div>
-
-                                        {/* Metadata Grid */}
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 text-xs mt-1">
-                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Stripe Session ID</div>
-                                            <div className="flex items-center gap-1.5 pt-0.5">
-                                              <span className="font-mono text-white/90 truncate max-w-[160px]">
-                                                {r.stripeSessionId || "N/A"}
-                                              </span>
-                                              {r.stripeSessionId && (
-                                                <>
-                                                  <button
-                                                    onClick={() => handleCopy(r.stripeSessionId!, `stripe-${r.receiptId}`)}
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <Copy className="w-3.5 h-3.5" />
-                                                  </button>
-                                                  <a
-                                                    href={`https://dashboard.stripe.com/crypto/onramp_sessions/${r.stripeSessionId}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <ExternalLink className="w-3.5 h-3.5" />
-                                                  </a>
-                                                </>
-                                              )}
-                                              {copySuccess[`stripe-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
-                                            </div>
-                                          </div>
-
-                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Leg 1 (Onramp Tx)</div>
-                                            <div className="flex items-center gap-1.5 pt-0.5">
-                                              <span className="font-mono text-white/90 truncate max-w-[160px]">
-                                                {(r as any).onrampTxHash || (r as any).leg1TxHash || "N/A"}
-                                              </span>
-                                              {((r as any).onrampTxHash || (r as any).leg1TxHash) && (
-                                                <>
-                                                  <button
-                                                    onClick={() => handleCopy(((r as any).onrampTxHash || (r as any).leg1TxHash)!, `leg1-${r.receiptId}`)}
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <Copy className="w-3.5 h-3.5" />
-                                                  </button>
-                                                  <a
-                                                    href={`https://basescan.org/tx/${(r as any).onrampTxHash || (r as any).leg1TxHash}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <ExternalLink className="w-3.5 h-3.5" />
-                                                  </a>
-                                                </>
-                                              )}
-                                              {copySuccess[`leg1-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
-                                            </div>
-                                          </div>
-
-                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Leg 2 (Settlement Tx)</div>
-                                            <div className="flex items-center gap-1.5 pt-0.5">
-                                              <span className="font-mono text-white/90 truncate max-w-[160px]">
-                                                {r.transactionHash || (r as any).leg2TxHash || "N/A"}
-                                              </span>
-                                              {(r.transactionHash || (r as any).leg2TxHash) && (
-                                                <>
-                                                  <button
-                                                    onClick={() => handleCopy((r.transactionHash || (r as any).leg2TxHash)!, `tx-${r.receiptId}`)}
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <Copy className="w-3.5 h-3.5" />
-                                                  </button>
-                                                  <a
-                                                    href={`https://basescan.org/tx/${r.transactionHash || (r as any).leg2TxHash}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <ExternalLink className="w-3.5 h-3.5" />
-                                                  </a>
-                                                </>
-                                              )}
-                                              {copySuccess[`tx-${r.receiptId}`] && <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>}
-                                            </div>
-                                          </div>
-
-                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Created At</div>
-                                            <div className="text-white/90 font-medium pt-0.5">
-                                              {new Date(r.createdAt).toLocaleString("en-US", {
-                                                timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
-                                              })}
-                                            </div>
-                                          </div>
-
-                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Card Funding</div>
-                                            <div className="text-white/90 font-medium capitalize pt-0.5">
-                                              {String(r.cardFunding || "").toLowerCase() === "us_bank_account" ? "Bank Transfer (ACH)" : (r.cardFunding || "unknown / N/A")}
-                                            </div>
-                                          </div>
-
-                                          <div className="space-y-1 bg-white/[0.02] border border-white/5 rounded-xl p-3">
-                                            <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Client IP</div>
-                                            <div className="text-white/90 font-mono pt-0.5">
-                                              {r.ipAddress || "N/A"}
-                                            </div>
-                                          </div>
-                                        </div>
-
-                                        {String(r.cardFunding || "").toLowerCase() === "us_bank_account" && (
-                                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 mt-2 bg-white/[0.02] border border-white/10 rounded-2xl p-4">
-                                            <div className="space-y-1">
-                                              <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Last ACH Poll</div>
-                                              <div className="text-white/90 text-xs font-medium">
-                                                {r.lastPolledAt ? new Date(r.lastPolledAt).toLocaleString() : "Never"}
-                                              </div>
-                                            </div>
-                                            <div className="space-y-1">
-                                              <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">ACH Status</div>
-                                              <div className="flex items-center gap-2 mt-0.5">
-                                                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                                                <span className="text-amber-400 font-bold uppercase tracking-wider text-xs">
-                                                  {r.stripeSessionStatus || "Pending"}
-                                                </span>
-                                              </div>
-                                            </div>
-                                          </div>
-                                        )}
-
-                                        {/* Intended / Actual Split Address */}
-                                        <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4">
-                                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2">
-                                            {isSettled ? "Settled Split Address" : "Intended Split Addresses"}
-                                          </div>
-                                          {isSettled ? (
-                                            <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
-                                              <span className={`font-bold border px-2 py-0.5 rounded-full text-[10px] uppercase ${
-                                                isDebit
-                                                  ? "text-purple-400 bg-purple-500/15 border-purple-500/30"
-                                                  : "text-emerald-400 bg-emerald-500/15 border-emerald-500/30"
-                                              }`}>
-                                                {splitBadgeLabel}
-                                              </span>
-                                              <span className="truncate max-w-full">{actualSplitAddress || "N/A"}</span>
-                                              {actualSplitAddress && (
-                                                <button
-                                                  onClick={() => handleCopy(actualSplitAddress, `split-${r.receiptId}`)}
-                                                  className="text-muted-foreground hover:text-white transition-colors"
-                                                >
-                                                  <Copy className="w-3.5 h-3.5" />
-                                                </button>
-                                              )}
-                                              {copySuccess[`split-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
-                                            </div>
-                                          ) : (
-                                            <div className="space-y-2">
-                                              <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
-                                                <span className="text-muted-foreground w-28 font-medium">Standard Split:</span>
-                                                <span className="truncate max-w-full">{r.splitAddress || "N/A"}</span>
-                                                {r.splitAddress && (
-                                                  <button
-                                                    onClick={() => handleCopy(r.splitAddress!, `split-std-${r.receiptId}`)}
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <Copy className="w-3.5 h-3.5" />
-                                                  </button>
-                                                )}
-                                                {copySuccess[`split-std-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
-                                              </div>
-                                              {r.splitAddressCredit && r.splitAddressCredit !== r.splitAddress && (
-                                                <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
-                                                  <span className="text-muted-foreground w-28 font-medium">Credit Split:</span>
-                                                  <span className="truncate max-w-full">{r.splitAddressCredit}</span>
-                                                  <button
-                                                    onClick={() => handleCopy(r.splitAddressCredit!, `split-cred-${r.receiptId}`)}
-                                                    className="text-muted-foreground hover:text-white transition-colors"
-                                                  >
-                                                    <Copy className="w-3.5 h-3.5" />
-                                                  </button>
-                                                  {copySuccess[`split-cred-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
-                                                </div>
-                                              )}
-                                            </div>
-                                          )}
-                                        </div>
-
-                                        {r.status === "failed" && (
-                                          <div className="flex items-start gap-3 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-xs text-rose-400">
-                                            <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
-                                            <div>
-                                              <div className="font-bold">Decline / Failure Diagnosis</div>
-                                              <div className="mt-1 leading-relaxed">{r.failureReason || "Abandoned Checkout Session"}</div>
-                                            </div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })()}
-
-                                  {/* Tab 4: Client Logs */}
-                                  {rowActiveTab === "logs" && (
-                                    <div className="space-y-2 animate-in fade-in duration-200 mt-1">
-                                      {loadingLogs[r.receiptId] ? (
-                                        <div className="text-xs text-muted-foreground p-6 text-center flex items-center justify-center gap-2">
-                                          <RefreshCw className="w-4 h-4 animate-spin text-primary" />
-                                          <span>Fetching logs from database...</span>
-                                        </div>
-                                      ) : (expandedLogs[r.receiptId] && expandedLogs[r.receiptId].length > 0) ? (
-                                        <div className="bg-black/40 border border-white/10 rounded-2xl divide-y divide-white/5 max-h-[260px] overflow-y-auto font-mono text-xs leading-relaxed">
-                                          {expandedLogs[r.receiptId].map((log, idx) => (
-                                            <div key={idx} className="p-3 space-y-1 hover:bg-white/[0.02]">
-                                              <div className="flex items-center justify-between text-muted-foreground text-[10px]">
-                                                <span>{new Date(log.createdAt).toLocaleTimeString("en-US", {
-                                                   timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
-                                                 })}</span>
-                                                <span className={`px-2 py-0.5 rounded-full text-[9px] uppercase font-bold ${log.level === "error" ? "bg-rose-500/20 text-rose-400 border border-rose-500/30" :
-                                                  log.level === "warn" ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" :
-                                                    "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                                                  }`}>
-                                                  {log.level}
-                                                </span>
-                                              </div>
-                                              <div className="text-white/90 whitespace-pre-wrap">{log.message}</div>
-                                              {log.userAgent && (
-                                                <div className="text-[10px] text-muted-foreground flex items-center gap-1.5 mt-1">
-                                                  <Smartphone className="w-3 h-3" />
-                                                  <span>UA: {parseUserAgent(log.userAgent)}</span>
-                                                </div>
-                                              )}
-                                            </div>
-                                          ))}
-                                        </div>
-                                      ) : (
-                                        <div className="text-xs text-muted-foreground p-5 border border-white/10 border-dashed rounded-2xl text-center">
-                                          No Client logs matched for this transaction. (Indicates they either completed seamlessly without errors or left early).
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-
-                                  {/* Tab 5: Customer Metadata */}
-                                  {rowActiveTab === "customers" && (
-                                    <div className="space-y-4 animate-in fade-in duration-200 mt-1">
-                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1">
-                                        <div className="text-xs font-bold text-white/90 flex flex-wrap items-center gap-2">
-                                          <span>Customer Sessions & Limits Metadata</span>
-                                          {refreshLimitsStatus[r.receiptId] && (
-                                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${refreshLimitsStatus[r.receiptId].startsWith("Error") ? "bg-rose-500/15 text-rose-400 border-rose-500/30" : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"} animate-in fade-in`}>
-                                              {refreshLimitsStatus[r.receiptId]}
-                                            </span>
-                                          )}
-                                        </div>
-                                        <button
-                                          type="button"
-                                          onClick={() => enrichCustomerLimits(r.receiptId)}
-                                          disabled={refreshingLimits[r.receiptId]}
-                                          className="text-xs font-semibold text-white/90 bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 disabled:opacity-50 self-start sm:self-auto shadow-sm"
-                                        >
-                                          <RefreshCw className={`w-3.5 h-3.5 ${refreshingLimits[r.receiptId] ? "animate-spin text-primary" : ""}`} />
-                                          <span>{refreshingLimits[r.receiptId] ? "Enriching Limits..." : "Enrich & Sync Limits"}</span>
-                                        </button>
-                                      </div>
-
-                                      {(() => {
-                                        const sessions = r.customerSessions || [];
-                                        const sessionsByStripeId: Record<string, any> = {};
-                                        const sessionsByEmail: Record<string, any> = {};
-                                        const residualSessions: any[] = [];
-
-                                        for (const s of sessions) {
-                                          if (s.stripeSessionId) {
-                                            if (!sessionsByStripeId[s.stripeSessionId]) {
-                                              sessionsByStripeId[s.stripeSessionId] = { ...s };
-                                            } else {
-                                              sessionsByStripeId[s.stripeSessionId] = {
-                                                ...sessionsByStripeId[s.stripeSessionId],
-                                                email: s.email || sessionsByStripeId[s.stripeSessionId].email,
-                                                walletAddress: s.walletAddress || sessionsByStripeId[s.stripeSessionId].walletAddress,
-                                                paymentMethodDetails: s.paymentMethodDetails || sessionsByStripeId[s.stripeSessionId].paymentMethodDetails,
-                                                limits: (s.limits && s.limits.length) ? s.limits : sessionsByStripeId[s.stripeSessionId].limits,
-                                                createdAt: Math.min(new Date(s.createdAt || 0).getTime(), new Date(sessionsByStripeId[s.stripeSessionId].createdAt || 0).getTime())
-                                              };
-                                            }
-                                          } else if (s.email) {
-                                            const emailKey = s.email.toLowerCase();
-                                            if (!sessionsByEmail[emailKey]) {
-                                              sessionsByEmail[emailKey] = { ...s };
-                                            } else {
-                                              sessionsByEmail[emailKey] = {
-                                                ...sessionsByEmail[emailKey],
-                                                walletAddress: s.walletAddress || sessionsByEmail[emailKey].walletAddress,
-                                                paymentMethodDetails: s.paymentMethodDetails || sessionsByEmail[emailKey].paymentMethodDetails,
-                                                limits: (s.limits && s.limits.length) ? s.limits : sessionsByEmail[emailKey].limits,
-                                                createdAt: Math.min(new Date(s.createdAt || 0).getTime(), new Date(sessionsByEmail[emailKey].createdAt || 0).getTime())
-                                              };
-                                            }
-                                          } else {
-                                            residualSessions.push(s);
-                                          }
-                                        }
-
-                                        const mergedSessions: any[] = [];
-                                        const processedEmails = new Set<string>();
-
-                                        for (const sid in sessionsByStripeId) {
-                                          const s = sessionsByStripeId[sid];
-                                          if (s.email) {
-                                            const emailKey = s.email.toLowerCase();
-                                            const emailOnlySession = sessionsByEmail[emailKey];
-                                            if (emailOnlySession) {
-                                              s.walletAddress = s.walletAddress || emailOnlySession.walletAddress;
-                                              s.paymentMethodDetails = s.paymentMethodDetails || emailOnlySession.paymentMethodDetails;
-                                              s.limits = (s.limits && s.limits.length) ? s.limits : emailOnlySession.limits;
-                                              s.createdAt = Math.min(new Date(s.createdAt || 0).getTime(), new Date(emailOnlySession.createdAt || 0).getTime());
-                                              processedEmails.add(emailKey);
-                                            }
-                                          }
-                                          mergedSessions.push(s);
-                                        }
-
-                                        for (const emailKey in sessionsByEmail) {
-                                          if (!processedEmails.has(emailKey)) {
-                                            mergedSessions.push(sessionsByEmail[emailKey]);
-                                          }
-                                        }
-                                        mergedSessions.push(...residualSessions);
-
-                                        const uniqueSessions = mergedSessions.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
-
-                                        if (uniqueSessions.length > 0) {
-                                          return (
-                                            <div className="bg-black/30 border border-white/10 rounded-2xl overflow-hidden shadow-inner">
-                                              <div className="overflow-x-auto">
-                                                <table className="w-full text-left border-collapse text-xs min-w-[750px]">
-                                                  <thead>
-                                                    <tr className="bg-white/[0.04] border-b border-white/10 font-bold text-muted-foreground uppercase text-[10px] tracking-wider">
-                                                      <th className="py-3 px-4">Date/Time</th>
-                                                      <th className="py-3 px-4">Customer Email</th>
-                                                      <th className="py-3 px-4">Wallet Address</th>
-                                                      <th className="py-3 px-4">Stripe Session ID</th>
-                                                      <th className="py-3 px-4">Payment Method</th>
-                                                      <th className="py-3 px-4 text-right">Limits Metadata</th>
-                                                    </tr>
-                                                  </thead>
-                                                  <tbody className="divide-y divide-white/5">
-                                                    {uniqueSessions.map((session: any, idx: number) => (
-                                                      <tr key={idx} className="hover:bg-white/[0.02]">
-                                                        <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
-                                                          {session.createdAt ? new Date(session.createdAt).toLocaleString("en-US", {
-                                                             timeZone: timezoneMode === "system" ? SYSTEM_TIMEZONE : DYNAMIC_TIMEZONE
-                                                           }) : "N/A"}
-                                                        </td>
-                                                        <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
-                                                        <td className="py-3 px-4 font-mono text-xs text-white/80 select-all" title={session.walletAddress}>
-                                                          {session.walletAddress ? (
-                                                            <span className="flex items-center gap-1">
-                                                              <span>{session.walletAddress.slice(0, 8)}...{session.walletAddress.slice(-6)}</span>
-                                                            </span>
-                                                          ) : (
-                                                            "N/A"
-                                                          )}
-                                                        </td>
-                                                        <td className="py-3 px-4 font-mono text-xs text-muted-foreground select-all" title={session.stripeSessionId}>
-                                                          {session.stripeSessionId ? (
-                                                            <a
-                                                              href={`https://dashboard.stripe.com/crypto/onramp_sessions/${session.stripeSessionId}`}
-                                                              target="_blank"
-                                                              rel="noopener noreferrer"
-                                                              className="hover:text-primary hover:underline inline-flex items-center gap-1 font-semibold"
-                                                            >
-                                                              <span>{session.stripeSessionId.slice(0, 12)}...</span>
-                                                              <ExternalLink className="w-3 h-3" />
-                                                            </a>
-                                                          ) : (
-                                                            "N/A"
-                                                          )}
-                                                        </td>
-                                                        <td className="py-3 px-4 text-white/95 text-xs font-medium">
-                                                          {(() => {
-                                                            const pm = session.paymentMethodDetails;
-                                                            if (!pm) return <span className="text-muted-foreground/50">N/A</span>;
-                                                            if (pm.type === "card") {
-                                                              const card = pm.card || pm.payment_details?.card || pm.paymentDetails?.card;
-                                                              if (!card) return <span>Card</span>;
-                                                              const walletType = card.wallet && (typeof card.wallet === "object" ? card.wallet.type : card.wallet);
-                                                              const formattedWallet = walletType
-                                                                ? String(walletType)
-                                                                  .replace(/_/g, " ")
-                                                                  .replace(/\b\w/g, (c) => c.toUpperCase())
-                                                                : "";
-                                                              return (
-                                                                <span className="capitalize">
-                                                                  {card.brand} •••• {card.last4} ({card.funding})
-                                                                  {formattedWallet && ` via ${formattedWallet}`}
-                                                                </span>
-                                                              );
-                                                            } else if (pm.type === "us_bank_account") {
-                                                              const bank = pm.us_bank_account || pm.payment_details?.us_bank_account || pm.paymentDetails?.us_bank_account;
-                                                              if (!bank) return <span>ACH</span>;
-                                                              return (
-                                                                <span>
-                                                                  Bank ({bank.bank_name || "ACH"}) •••• {bank.last4 || "bank"}
-                                                                </span>
-                                                              );
-                                                            }
-                                                            return <span className="capitalize">{pm.type || "Unknown"}</span>;
-                                                          })()}
-                                                        </td>
-                                                        <td className="py-3 px-4 text-right">
-                                                          {Array.isArray(session.limits) && session.limits.length > 0 ? (
-                                                            <div className="inline-flex flex-col gap-1 text-[11px] text-emerald-400 font-mono text-right">
-                                                              {session.limits.map((l: any, limitIdx: number) => (
-                                                                <div key={limitIdx} className="bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
-                                                                  {(() => {
-                                                                    const rawAmount = Number(l.amount || 0);
-                                                                    const corrected = rawAmount > 1000000 ? rawAmount / 100 : rawAmount;
-                                                                    return `$${(corrected / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-                                                                  })()} {l.currency?.toUpperCase()} via {l.payment_method_type || "card"} ({l.speed || "instant"})
-                                                                </div>
-                                                              ))}
-                                                            </div>
-                                                          ) : (
-                                                            <span className="text-muted-foreground italic text-xs">No limits tracked</span>
-                                                          )}
-                                                        </td>
-                                                      </tr>
-                                                    ))}
-                                                  </tbody>
-                                                </table>
-                                              </div>
-                                            </div>
-                                          );
-                                        }
-
-                                        return (
-                                          <div className="text-xs text-muted-foreground p-5 border border-white/10 border-dashed rounded-2xl space-y-2">
-                                            <p>No customer sessions or transaction limits tracked for this receipt yet.</p>
-                                            {r.stripeSessionId && (
-                                              <div className="pt-2 border-t border-white/5 text-xs">
-                                                <strong>Primary Session:</strong> {r.email || "anonymous"} • <span className="font-mono text-muted-foreground">{r.stripeSessionId}</span>
-                                              </div>
-                                            )}
-                                          </div>
-                                        );
-                                      })()}
-                                    </div>
-                                  )}
-
-                                  {/* Tab 2: Items Ordered */}
-                                  {rowActiveTab === "items" && (
-                                    <div className="space-y-2 animate-in fade-in duration-200 mt-1">
-                                      <div className="bg-black/30 border border-white/10 rounded-2xl overflow-hidden shadow-inner">
-                                        <table className="w-full text-left text-xs">
-                                          <thead className="bg-white/[0.04] text-muted-foreground text-[10px] uppercase font-bold border-b border-white/10">
-                                            <tr>
-                                              <th className="py-2.5 px-4">Item Description</th>
-                                              <th className="py-2.5 px-4 text-right">Price</th>
-                                              <th className="py-2.5 px-4 text-center">Qty</th>
-                                              <th className="py-2.5 px-4 text-right">Total</th>
-                                            </tr>
-                                          </thead>
-                                          <tbody className="divide-y divide-white/5 text-white/90 font-medium">
-                                            {r.lineItems && r.lineItems.length > 0 ? (
-                                              r.lineItems.map((item, idx) => {
-                                                const qty = item.qty || 1;
-                                                const rawPrice = item.priceUsd || 0;
-                                                const isLineSubtotal = qty > 1 && (rawPrice * qty > (r.totalUsd || rawPrice) * 1.2);
-                                                const unitPrice = isLineSubtotal ? rawPrice / qty : rawPrice;
-                                                const lineTotal = isLineSubtotal ? rawPrice : rawPrice * qty;
-
-                                                return (
-                                                  <tr key={idx} className="hover:bg-white/[0.02]">
-                                                    <td className="py-3 px-4 font-bold">{item.label}</td>
-                                                    <td className="py-3 px-4 text-right">${unitPrice.toFixed(2)}</td>
-                                                    <td className="py-3 px-4 text-center">{qty}</td>
-                                                    <td className="py-3 px-4 text-right font-extrabold text-white">${lineTotal.toFixed(2)}</td>
-                                                  </tr>
-                                                );
-                                              })
-                                            ) : (
-                                              <tr>
-                                                <td colSpan={4} className="py-8 text-center text-muted-foreground">
-                                                  No line items recorded for this receipt.
-                                                </td>
-                                              </tr>
-                                            )}
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    </div>
-                                   )}
-
-                                   {/* Tab 6: Fee & Split Breakdown */}
-                                   {rowActiveTab === "fees" && (() => {
-                                     loadSiteConfigForReceipt(r.receiptId, r.wallet || r.merchantWallet, r.brandKey);
-                                     const siteCfg = fetchedSiteConfigs[r.receiptId] || r.merchantConfig || r.brandConfig || {};
-                                     const firstSession = Array.isArray(r.customerSessions) ? r.customerSessions[0] : null;
-                                     const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || firstSession?.cardFunding || firstSession?.funding || firstSession?.detectedCardFunding || "").toLowerCase().trim();
-
-                                      const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
-                                      const isCrypto = rawFunding === "crypto" || rawFunding === "usdc" || rawFunding === "web3" || rawFunding === "direct_crypto" || (!!r.transactionHash && (!r.stripeSessionId || r.stripeSessionId === "N/A"));
-                                      const isDirectCrypto = isCoinbase || isCrypto;
-
-                                      const isCredit = !isDirectCrypto && (rawFunding === "credit" || r.isCreditCard === true || (rawFunding !== "debit" && rawFunding !== "us_bank_account" && rawFunding !== "ach"));
-                                      const fundingType = isCoinbase ? "COINBASE ONRAMP" : (isCrypto ? "CRYPTO ONRAMP" : (rawFunding || (isCredit ? "credit" : "debit")).toUpperCase());
-                                     
-                                     const isFeeMinus = siteCfg.feeMinusEnabled !== undefined
-                                       ? !!siteCfg.feeMinusEnabled
-                                       : (r.feeMinusEnabled !== undefined ? !!r.feeMinusEnabled : (r.merchantConfig?.feeMinusEnabled !== undefined ? !!r.merchantConfig.feeMinusEnabled : true));
-                                     
-                                     const rawPresentedBps = isCredit
-                                       ? (siteCfg.creditPresentedFeeBps ?? r.creditPresentedFeeBps ?? r.merchantConfig?.creditPresentedFeeBps ?? siteCfg.presentedFeeBps ?? r.presentedFeeBps ?? r.merchantConfig?.presentedFeeBps)
-                                       : (siteCfg.presentedFeeBps ?? r.presentedFeeBps ?? r.merchantConfig?.presentedFeeBps);
-
-                                     const hasPresentedBps = rawPresentedBps !== undefined && rawPresentedBps !== null;
-
-                                     // Normalize presented fee BPS: if stored as base share (e.g. 9550 BPS = 95.5%), convert to fee BPS (10000 - 9550 = 450 BPS = 4.5%)
-                                     const effectivePresentedFeeBps = hasPresentedBps
-                                       ? (Number(rawPresentedBps) > 1000 ? (10000 - Number(rawPresentedBps)) : Number(rawPresentedBps))
-                                       : null;
-
-                                     const basePresentedBps = effectivePresentedFeeBps !== null ? effectivePresentedFeeBps : (hasPresentedBps ? rawPresentedBps : null);
-
-                                     const splitCfg = isCredit
-                                       ? (siteCfg.splitConfig || r.splitConfig || r.merchantConfig?.splitConfig || siteCfg.splitConfigCredit || r.splitConfigCredit || r.merchantConfig?.splitConfigCredit)
-                                       : (siteCfg.splitConfigCredit || r.splitConfigCredit || r.merchantConfig?.splitConfigCredit || siteCfg.splitConfig || r.splitConfig || r.merchantConfig?.splitConfig);
-
-                                     const partnerBps = isCredit
-                                       ? (splitCfg?.partnerBps ?? siteCfg.creditPartnerFeeBps ?? siteCfg.partnerFeeBps ?? r.creditPartnerFeeBps ?? r.partnerFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? r.merchantConfig?.partnerFeeBps ?? 0)
-                                       : (splitCfg?.partnerBps ?? siteCfg.partnerFeeBps ?? siteCfg.creditPartnerFeeBps ?? r.partnerFeeBps ?? r.creditPartnerFeeBps ?? r.merchantConfig?.partnerFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? 0);
-
-                                     const platformBps = isCredit
-                                       ? (splitCfg?.platformBps ?? siteCfg.creditPlatformFeeBps ?? siteCfg.platformFeeBps ?? r.creditPlatformFeeBps ?? r.platformFeeBps ?? r.merchantConfig?.creditPlatformFeeBps ?? r.merchantConfig?.platformFeeBps ?? 50)
-                                       : (splitCfg?.platformBps ?? siteCfg.platformFeeBps ?? siteCfg.creditPlatformFeeBps ?? r.platformFeeBps ?? r.creditPartnerFeeBps ?? r.merchantConfig?.platformFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? 75);
-
-                                     const agentBps = isCredit
-                                       ? (splitCfg && Array.isArray(splitCfg.agents) && splitCfg.agents.length > 0
-                                           ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-                                           : (siteCfg.creditAgentFeeBps ?? siteCfg.agentFeeBps ?? r.creditAgentFeeBps ?? r.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? 50))
-                                       : (splitCfg && Array.isArray(splitCfg.agents) && splitCfg.agents.length > 0
-                                           ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-                                           : (siteCfg.agentFeeBps ?? siteCfg.creditAgentFeeBps ?? r.agentFeeBps ?? r.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? 150));
-
-                                     const stripeCardRatePct = isCredit ? 3.5 : 2.25;
-                                      
-                                     const displayPresentedRatePct = effectivePresentedFeeBps !== null
-                                       ? (effectivePresentedFeeBps + partnerBps) / 100
-                                       : stripeCardRatePct;
-
-                                     let calculatedFeePct = displayPresentedRatePct;
-
-                                     const totalUsd = Number(r.totalUsd || 0);
-                                     const stripeSessionCents = firstSession?.amountTotal ?? firstSession?.amount_total;
-                                     const stripeProcessedUsd = typeof stripeSessionCents === "number" && stripeSessionCents > 0
-                                       ? (stripeSessionCents / 100)
-                                       : (r.stripeChargeAmountUsd ?? r.stripeAmountUsd ?? r.processedAmountUsd ?? totalUsd);
-
-                                     // Itemized line item components
-                                     const rawLineItems = Array.isArray(r.lineItems) ? r.lineItems : [];
-                                     const taxItem = rawLineItems.find((i: any) => i.label === "Tax");
-                                     const tipItem = rawLineItems.find((i: any) => i.label === "Gratuity" || i.label === "Tip");
-                                     const shippingItem = rawLineItems.find((i: any) => i.label === "Shipping" || i.label === "Delivery");
-                                     const feeItem = rawLineItems.find((i: any) => i.label === "Processing Fee");
-
-                                     const taxUsd = Number(r.taxAmount || taxItem?.priceUsd || 0);
-                                     const tipUsd = Number(r.tipAmount || r.gratuity || tipItem?.priceUsd || 0);
-                                     const shippingUsd = Number(r.shippingCostUsd || r.shippingAmount || shippingItem?.priceUsd || 0);
-                                     const processingFeeUsd = Number(feeItem?.priceUsd || 0);
-
-                                     const catalogItemsSubtotal = rawLineItems
-                                       .filter((i: any) => i.label !== "Tax" && i.label !== "Processing Fee" && i.label !== "Gratuity" && i.label !== "Tip" && i.label !== "Shipping")
-                                       .reduce((acc: number, i: any) => acc + (Number(i.priceUsd) || 0), 0) || (totalUsd - taxUsd - tipUsd - shippingUsd - processingFeeUsd);
-                                     // On-chain settlement & Stripe fee resolution
-                                     const recordedOnChain = Number(
-                                       r.onChainTransferredUsd || r.onChainAmountUsd || r.actualTransferredUsd || r.destinationAmount || r.destination_amount ||
-                                       firstSession?.destinationAmount || firstSession?.destination_amount || firstSession?.destinationTokenAmount || firstSession?.destination_token_amount ||
-                                       firstSession?.transactionDetails?.destinationAmount || firstSession?.transactionDetails?.destination_amount ||
-                                       firstSession?.netOnChainUsd || firstSession?.amountDelivered || firstSession?.cryptoAmount || 0
-                                     );
-                                     
-                                     const onChainSettlementUsd = recordedOnChain > 0
-                                       ? recordedOnChain
-                                       : Math.round((stripeProcessedUsd / (1 + stripeCardRatePct / 100)) * 100) / 100;
-
-                                     const stripeFeeDeductionUsd = Math.max(0, Math.round((stripeProcessedUsd - onChainSettlementUsd) * 100) / 100);
-
-                                     // Dollar amounts for each BPS split component of the customer total charge
-                                     const partnerUsd = Math.round((stripeProcessedUsd * (partnerBps / 10000)) * 100) / 100;
-                                     const platformUsd = Math.round((stripeProcessedUsd * (platformBps / 10000)) * 100) / 100;
-                                     const agentUsd = Math.round((stripeProcessedUsd * (agentBps / 10000)) * 100) / 100;
-
-                                     // Merchant Base Component is the scaled-down catalog base so all components sum to customer charge
-                                     const merchantBaseComponentUsd = Math.max(0, Math.round((stripeProcessedUsd - partnerUsd - platformUsd - agentUsd - stripeFeeDeductionUsd) * 100) / 100);
-
-                                     const feeUsd = isFeeMinus 
-                                       ? Math.round((onChainSettlementUsd * (calculatedFeePct / 100)) * 100) / 100
-                                       : Math.round((catalogItemsSubtotal * (calculatedFeePct / 100)) * 100) / 100;
-
-                                     const netPayoutUsd = Math.round((onChainSettlementUsd - feeUsd) * 100) / 100;
-                                     
-                                     const activeSplitAddress = isCredit
-                                        ? (
-                                            siteCfg.splitAddress ||
-                                            r.splitAddress ||
-                                            siteCfg.splitConfig?.contractAddress ||
-                                            siteCfg.splitConfig?.address ||
-                                            r.splitConfig?.contractAddress ||
-                                            r.splitConfig?.address ||
-                                            r.merchantConfig?.splitAddress ||
-                                            r.merchantConfig?.splitConfig?.contractAddress ||
-                                            r.brandConfig?.splitAddress ||
-                                            siteCfg.splitAddressCredit ||
-                                            r.splitAddressCredit ||
-                                            siteCfg.splitConfigCredit?.contractAddress ||
-                                            siteCfg.splitConfigCredit?.address ||
-                                            r.splitConfigCredit?.contractAddress ||
-                                            r.splitConfigCredit?.address ||
-                                            r.merchantConfig?.splitAddressCredit ||
-                                            r.brandConfig?.splitAddressCredit
-                                          )
-                                        : (
-                                            siteCfg.splitAddressCredit ||
-                                            r.splitAddressCredit ||
-                                            siteCfg.splitConfigCredit?.contractAddress ||
-                                            siteCfg.splitConfigCredit?.address ||
-                                            r.splitConfigCredit?.contractAddress ||
-                                            r.splitConfigCredit?.address ||
-                                            r.merchantConfig?.splitAddressCredit ||
-                                            r.merchantConfig?.splitConfigCredit?.contractAddress ||
-                                            r.brandConfig?.splitAddressCredit ||
-                                            siteCfg.splitAddress ||
-                                            r.splitAddress ||
-                                            siteCfg.splitConfig?.contractAddress ||
-                                            siteCfg.splitConfig?.address ||
-                                            r.splitConfig?.contractAddress ||
-                                            r.splitConfig?.address ||
-                                            r.merchantConfig?.splitAddress ||
-                                            r.brandConfig?.splitAddress
-                                          );
-                                     
-                                     const stripeSessionId = r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions[0]?.stripeSessionId) || "N/A";
-
-                                     const hasDualFeeConfig = r.creditPresentedFeeBps !== undefined || r.splitConfigCredit !== undefined;
-                                     const hasDualSplitContracts = !!(r.splitAddressCredit && r.splitAddressCredit !== r.splitAddress);
-
-                                     return (
-                                       <div className="space-y-4 animate-in fade-in duration-200 mt-1 font-mono text-xs">
-                                         
-                                         {/* Merchant Configuration Badges Header */}
-                                         <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-2">
-                                           <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider flex items-center justify-between">
-                                             <span>Merchant Account Configuration Profile</span>
-                                             <span className="text-[10px] text-emerald-400 font-semibold">Active Database Profile</span>
-                                           </div>
-                                           <div className="flex flex-wrap items-center gap-2">
-                                             <span className={`px-3 py-1 rounded-xl text-xs font-bold border ${isFeeMinus ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" : "bg-blue-500/15 text-blue-300 border-blue-500/30"}`}>
-                                               Fee Mode: {isFeeMinus ? "Fee- (Fee Minus)" : "Fee+ (Fee Plus)"}
-                                             </span>
-                                             <span className={`px-3 py-1 rounded-xl text-xs font-bold border ${hasDualFeeConfig ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "bg-purple-500/15 text-purple-300 border-purple-500/30"}`}>
-                                               Rate Structure: {hasDualFeeConfig ? "Dual Fee (Debit vs Credit Separate)" : "Single Unified Fee"}
-                                             </span>
-                                             <span className={`px-3 py-1 rounded-xl text-xs font-bold border ${hasDualSplitContracts ? "bg-purple-500/15 text-purple-300 border-purple-500/30" : "bg-teal-500/15 text-teal-300 border-teal-500/30"}`}>
-                                               Split Mode: {hasDualSplitContracts ? "Dual Split Contracts" : "Single Split Contract"}
-                                             </span>
-                                           </div>
-                                         </div>
-
-                                         {/* Stage 1: Presented Amount & Charge Components */}
-                                         <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
-                                           <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                                             <div className="text-xs font-bold text-white flex items-center gap-2">
-                                               <Percent className="w-4 h-4 text-amber-400" />
-                                               <span>1. Presented Amount & Split Charge Components Breakdown</span>
-                                             </div>
-                                             <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                                               Presented Rate: {calculatedFeePct.toFixed(2)}%
-                                             </span>
-                                           </div>
-
-                                           {/* All Split Components Grid */}
-                                           <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5">
-                                             <div className="bg-emerald-500/10 p-2.5 rounded-xl border border-emerald-500/20 space-y-0.5">
-                                               <div className="text-[9.5px] text-emerald-300 uppercase font-bold">Merchant Base</div>
-                                               <div className="text-sm font-extrabold text-emerald-400">${merchantBaseComponentUsd.toFixed(2)}</div>
-                                               <div className="text-[9px] text-emerald-200/70 truncate">Scaled catalog item base</div>
-                                             </div>
-
-                                             <div className="bg-white/[0.02] p-2.5 rounded-xl border border-white/5 space-y-0.5">
-                                               <div className="text-[9.5px] text-muted-foreground uppercase font-bold">Partner Share</div>
-                                               <div className="text-sm font-bold text-blue-400">${partnerUsd.toFixed(2)}</div>
-                                               <div className="text-[9px] text-muted-foreground truncate">{partnerBps} BPS ({(partnerBps/100).toFixed(2)}%)</div>
-                                             </div>
-
-                                             <div className="bg-white/[0.02] p-2.5 rounded-xl border border-white/5 space-y-0.5">
-                                               <div className="text-[9.5px] text-muted-foreground uppercase font-bold">Platform Share</div>
-                                               <div className="text-sm font-bold text-amber-400">${platformUsd.toFixed(2)}</div>
-                                               <div className="text-[9px] text-muted-foreground truncate">{platformBps} BPS ({(platformBps/100).toFixed(2)}%)</div>
-                                             </div>
-
-                                             <div className="bg-white/[0.02] p-2.5 rounded-xl border border-white/5 space-y-0.5">
-                                               <div className="text-[9.5px] text-muted-foreground uppercase font-bold">Agent Share</div>
-                                               <div className="text-sm font-bold text-purple-400">${agentUsd.toFixed(2)}</div>
-                                               <div className="text-[9px] text-muted-foreground truncate">{agentBps} BPS ({(agentBps/100).toFixed(2)}%)</div>
-                                             </div>
-
-                                             <div className="bg-amber-500/10 p-2.5 rounded-xl border border-amber-500/20 space-y-0.5 col-span-2 md:col-span-1">
-                                               <div className="text-[9.5px] text-amber-300 uppercase font-bold">Total Charge</div>
-                                               <div className="text-sm font-extrabold text-amber-400">${stripeProcessedUsd.toFixed(2)}</div>
-                                               <div className="text-[9px] text-amber-200/60 truncate">Customer paid total</div>
-                                             </div>
-                                           </div>
-
-                                           {/* Formula Component Addition Trace */}
-                                           <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1.5 pt-2.5">
-                                             <div className="text-[10px] text-muted-foreground uppercase font-bold flex items-center justify-between">
-                                               <span>Component Mathematical Addition Trace</span>
-                                               <span className="text-emerald-400 font-mono text-[10px]">
-                                                 ${merchantBaseComponentUsd.toFixed(2)} + ${partnerUsd.toFixed(2)} + ${platformUsd.toFixed(2)} + ${agentUsd.toFixed(2)} + ${stripeFeeDeductionUsd.toFixed(2)} = ${stripeProcessedUsd.toFixed(2)}
-                                               </span>
-                                             </div>
-                                             <div className="text-xs text-white/90 font-mono">
-                                               <span className="text-emerald-400 font-bold">Merchant Base</span> (${merchantBaseComponentUsd.toFixed(2)}) + <span className="text-blue-400 font-bold">Partner</span> (${partnerUsd.toFixed(2)}) + <span className="text-amber-400 font-bold">Platform</span> (${platformUsd.toFixed(2)}) + <span className="text-purple-400 font-bold">Agent</span> (${agentUsd.toFixed(2)}) + <span className="text-rose-400 font-bold">Stripe Fee</span> (${stripeFeeDeductionUsd.toFixed(2)}) = <span className="text-amber-300 font-bold">${stripeProcessedUsd.toFixed(2)} Total</span>
-                                             </div>
-                                           </div>
-
-                                           {/* Fee Breakdown & Resolution Trace */}
-                                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Presented BPS Breakdown</div>
-                                               <div className="text-xs text-white/90 space-y-0.5">
-                                                 <div className="flex justify-between">
-                                                   <span>Presented Base:</span>
-                                                   <span className="font-bold text-amber-400">{hasPresentedBps ? `${basePresentedBps} BPS (${(Number(basePresentedBps)/100).toFixed(2)}%)` : "N/A"}</span>
-                                                 </div>
-                                                 <div className="flex justify-between">
-                                                   <span>Partner Share:</span>
-                                                   <span className="font-bold text-blue-400">{partnerBps} BPS ({(partnerBps/100).toFixed(2)}%)</span>
-                                                 </div>
-                                                 <div className="flex justify-between">
-                                                   <span>Platform + Agents:</span>
-                                                   <span>{platformBps + agentBps} BPS ({((platformBps + agentBps)/100).toFixed(2)}%)</span>
-                                                 </div>
-                                               </div>
-                                             </div>
-
-                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Fee Resolution Mode</div>
-                                               <div className="text-sm font-bold text-amber-300">
-                                                 {hasPresentedBps ? "(PresentedBps + Partner) / 100" : "Split Components Fallback"}
-                                               </div>
-                                               <div className="text-[10px] text-muted-foreground">
-                                                 Mode: <span className="font-bold text-white">{isFeeMinus ? "Fee- (Subtracted)" : "Fee+ (Added On Top)"}</span>
-                                               </div>
-                                             </div>
-                                           </div>
-                                         </div>
-
-                                         {/* Stage 2: Processed Amount Sent to Stripe & On-Chain Settlement */}
-                                         <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
-                                           <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                                             <div className="text-xs font-bold text-white flex items-center gap-2">
-                                               <CreditCard className="w-4 h-4 text-blue-400" />
-                                               <span>2. Processed Amount Sent to Stripe & On-Chain Settlement</span>
-                                             </div>
-                                             <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/30">
-                                               Funding: {fundingType}
-                                             </span>
-                                           </div>
-
-                                           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Transmitted to Stripe</div>
-                                               <div className="text-base font-extrabold text-blue-400">${stripeProcessedUsd.toFixed(2)} USD</div>
-                                               <div className="text-[10px] text-muted-foreground">Exact charge amount sent to API</div>
-                                             </div>
-
-                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Card/Onramp Fee</div>
-                                               <div className="text-base font-bold text-rose-400">-${stripeFeeDeductionUsd.toFixed(2)} USD</div>
-                                               <div className="text-[10px] text-muted-foreground">{stripeCardRatePct.toFixed(2)}% Processing Fee</div>
-                                             </div>
-
-                                             <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20 space-y-1">
-                                               <div className="text-[10px] text-emerald-300 uppercase font-bold">On-Chain Transferred</div>
-                                               <div className="text-base font-extrabold text-emerald-400">{onChainSettlementUsd.toFixed(2)} USDC</div>
-                                               <div className="text-[10px] text-emerald-200/70">Delivered into split contract</div>
-                                             </div>
-
-                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Session & Card Config</div>
-                                               <div className="text-xs text-white/90 truncate font-mono">{stripeSessionId}</div>
-                                               <div className="text-[10px] text-muted-foreground">Card: {isCredit ? "Credit SplitConfig" : "Debit SplitConfig"}</div>
-                                             </div>
-                                           </div>
-                                         </div>
-
-                                         {/* Stage 3: Final Totals & Net Payout Summary (Including Stripe & On-Chain) */}
-                                         <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-3">
-                                           <div className="flex items-center justify-between border-b border-white/10 pb-2">
-                                             <div className="text-xs font-bold text-white flex items-center gap-2">
-                                               <Calculator className="w-4 h-4 text-emerald-400" />
-                                               <span>3. Final Totals & Net Payout Summary (Including Stripe & On-Chain)</span>
-                                             </div>
-                                             <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                                               Net Settlement: ${netPayoutUsd.toFixed(2)}
-                                             </span>
-                                           </div>
-
-                                           <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5 text-center">
-                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Customer Paid</div>
-                                               <div className="text-lg font-extrabold text-white">${totalUsd.toFixed(2)}</div>
-                                             </div>
-                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Fee</div>
-                                               <div className="text-lg font-extrabold text-rose-400">-${stripeFeeDeductionUsd.toFixed(2)}</div>
-                                             </div>
-                                             <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20 space-y-1">
-                                               <div className="text-[10px] text-emerald-300 uppercase font-bold">On-Chain Received</div>
-                                               <div className="text-lg font-extrabold text-emerald-400">${onChainSettlementUsd.toFixed(2)}</div>
-                                             </div>
-                                             <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-                                               <div className="text-[10px] text-muted-foreground uppercase font-bold">Platform Fee ({calculatedFeePct.toFixed(2)}%)</div>
-                                               <div className="text-lg font-extrabold text-amber-400">-${feeUsd.toFixed(2)}</div>
-                                             </div>
-                                             <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/30 space-y-1">
-                                               <div className="text-[10px] text-emerald-300 uppercase font-bold">Merchant Net Payout</div>
-                                               <div className="text-lg font-extrabold text-emerald-300">${netPayoutUsd.toFixed(2)}</div>
-                                             </div>
-                                           </div>
-
-                                           {/* Smart Contract Split Target */}
-                                           {activeSplitAddress && (
-                                             <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px]">
-                                               <span className="text-muted-foreground">Smart Contract Split Address:</span>
-                                               <span className="font-bold text-purple-300 font-mono flex items-center gap-1.5">
-                                                 {activeSplitAddress}
-                                                 {r.transactionHash && (
-                                                   <a
-                                                     href={`https://basescan.org/tx/${r.transactionHash}`}
-                                                     target="_blank"
-                                                     rel="noopener noreferrer"
-                                                     className="text-[10px] text-blue-400 hover:underline flex items-center gap-0.5 ml-2"
-                                                   >
-                                                     <span>View on BaseScan</span>
-                                             <span>↗</span>
-                                                   </a>
-                                                 )}
-                                               </span>
-                                             </div>
-                                           )}
-                                         </div>
-
-                                       </div>
-                                     );
-                                   })()}
-
-                                   {/* Tab 7: Reconcile & Single-Receipt Targeted Actions */}
-                                   {rowActiveTab === "reconcile" && (
-                                     <div className="space-y-4 animate-in fade-in duration-200 mt-1">
-                                       <div className="bg-black/40 border border-white/10 rounded-2xl p-5 space-y-4 shadow-xl">
-                                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
-                                           <div>
-                                             <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                                               <Wrench className="w-4 h-4 text-primary" />
-                                               <span>Targeted Receipt Controls & On-Chain Settlement</span>
-                                             </h4>
-                                             <p className="text-xs text-muted-foreground mt-0.5">
-                                               Execute instant EIP-7702 gasless sweep, recover Base RPC transfer logs, or check live Stripe session status for Receipt #{r.receiptId}
-                                             </p>
-                                           </div>
-                                           <span className="text-[10px] font-mono px-3 py-1 rounded-full bg-white/5 border border-white/10 text-white/80 font-bold self-start sm:self-auto">
-                                             Receipt: #{r.receiptId}
-                                           </span>
-                                         </div>
-
-                                         {/* Action Cards Grid */}
-                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                           {/* Action 1: Targeted Single-Receipt Sweep */}
-                                           <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4 space-y-3.5 flex flex-col justify-between hover:border-emerald-500/30 transition-all">
-                                             <div>
-                                               <div className="flex items-center gap-2 text-xs font-bold text-white mb-1.5">
-                                                 <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-                                                   <Zap className="w-3.5 h-3.5 text-emerald-400" />
-                                                 </div>
-                                                 <span>Single-Receipt Force Reconcile</span>
-                                               </div>
-                                               <p className="text-[11.5px] text-muted-foreground leading-relaxed">
-                                                 Executes single-receipt targeted EIP-7702 USDC sweep, verifies Base RPC logs (`eth_getLogs`), and force-attaches the on-chain Tx Hash to this receipt.
-                                               </p>
-                                             </div>
-                                             <button
-                                               type="button"
-                                               onClick={() => handleTargetedReconcile(r.receiptId)}
-                                               disabled={actionLoading[r.receiptId]}
-                                               className="w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 shadow-md"
-                                             >
-                                               <RefreshCw className={`w-3.5 h-3.5 ${actionLoading[r.receiptId] ? "animate-spin text-emerald-400" : ""}`} />
-                                               <span>{actionLoading[r.receiptId] ? "Executing Targeted Sweep..." : "Run Targeted Reconcile"}</span>
-                                             </button>
-                                           </div>
-
-                                           {/* Action 2: Stripe Session Live Telemetry Check */}
-                                           <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4 space-y-3.5 flex flex-col justify-between hover:border-blue-500/30 transition-all">
-                                             <div>
-                                               <div className="flex items-center gap-2 text-xs font-bold text-white mb-1.5">
-                                                 <div className="w-6 h-6 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-                                                   <Activity className="w-3.5 h-3.5 text-blue-400" />
-                                                 </div>
-                                                 <span>Stripe Onramp Session Telemetry</span>
-                                               </div>
-                                               <p className="text-[11.5px] text-muted-foreground leading-relaxed">
-                                                 Queries Stripe's live API to verify onramp session state, customer identity verifications, payment method details, and raw Stripe errors.
-                                               </p>
-                                             </div>
-                                             <button
-                                               type="button"
-                                               onClick={() => handleStripeTelemetryCheck(r.receiptId, r.stripeSessionId)}
-                                               disabled={actionLoading[`stripe-${r.receiptId}`]}
-                                               className="w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 shadow-md"
-                                             >
-                                               <RefreshCw className={`w-3.5 h-3.5 ${actionLoading[`stripe-${r.receiptId}`] ? "animate-spin text-blue-400" : ""}`} />
-                                               <span>{actionLoading[`stripe-${r.receiptId}`] ? "Querying Stripe API..." : "Check Live Stripe Telemetry"}</span>
-                                             </button>
-                                           </div>
-                                         </div>
-
-                                         {/* Action Telemetry Output Console */}
-                                         {actionFeedback[r.receiptId] && (
-                                           <div className="mt-3 bg-black/70 border border-white/10 rounded-2xl p-4 font-mono text-xs space-y-2 animate-in fade-in duration-200 shadow-inner">
-                                             <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider flex items-center justify-between border-b border-white/10 pb-2">
-                                               <span className="flex items-center gap-1.5 text-white/80">
-                                                 <Terminal className="w-3.5 h-3.5 text-primary" />
-                                                 <span>Action Output Telemetry</span>
-                                               </span>
-                                               <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Live Response</span>
-                                             </div>
-                                             <pre className="text-emerald-300 text-[11px] overflow-x-auto whitespace-pre-wrap leading-relaxed pt-1">
-                                               {actionFeedback[r.receiptId]}
-                                             </pre>
-                                           </div>
-                                         )}
-                                       </div>
-                                     </div>
-                                   )}
-
-                                   {/* Tab 3: Initialization & Origin */}
-                                   {rowActiveTab === "origin" && (
-                                     <div className="space-y-4 animate-in fade-in duration-200 mt-1">
-                                      <div className="space-y-2">
-                                        <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Site Initialized On</div>
-                                        <div className="flex items-center gap-2 bg-black/30 p-3 rounded-2xl border border-white/10">
-                                          <Chrome className="w-4 h-4 text-primary flex-shrink-0" />
-                                          {r.parentUrl ? (
-                                            <a
-                                              href={r.parentUrl}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="font-mono text-white hover:underline hover:text-primary truncate max-w-[280px]"
-                                            >
-                                              {r.parentUrl}
-                                            </a>
-                                          ) : (
-                                            <span className="text-muted-foreground">Direct Access / Parent URL unavailable</span>
-                                          )}
-                                        </div>
-                                      </div>
-
-                                      <div className="space-y-2">
-                                        <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Integration Mode</div>
-                                        <div className="flex items-center gap-2 bg-black/30 p-3 rounded-2xl border border-white/10">
-                                          <Activity className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                                          <span className="font-bold text-white/95">
-                                            {r.parentUrl ? "Embedded Checkout (Iframe)" : "Direct Checkout Link"}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })()}
+                        {isExpanded && <tr><td colSpan={9} className="border-y border-white/10 bg-zinc-950 p-4 sm:p-5">
+                          {renderReceiptInvestigation(r)}
+                        </td></tr>}
                       </React.Fragment>
                     );
                   })}
@@ -6725,7 +2733,8 @@ export default function PlatformAnalyticsPanel() {
               <div className="flex items-center gap-2">
                 <span>Show</span>
                 <select
-                  value={pageSize}
+                  aria-label="Receipts per page"
+                value={pageSize}
                   onChange={e => {
                     const val = Number(e.target.value);
                     setPageSize(val);
@@ -6806,401 +2815,45 @@ export default function PlatformAnalyticsPanel() {
 
       </div>
 
-      {/* Report export errors are mounted above the analytics HUD so they remain visible on long ledgers. */}
-      {exportError && typeof document !== "undefined" && createPortal(
-        <div
-          className="fixed inset-0 z-[100000] flex items-center justify-center p-4 sm:p-6"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="report-export-error-title"
-          aria-describedby="report-export-error-description"
-        >
-          <button
-            type="button"
-            aria-label="Close report error"
-            className="absolute inset-0 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
-            onClick={() => setExportError(null)}
-          />
-
-          <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-3xl border border-rose-500/30 bg-zinc-950 shadow-[0_30px_100px_rgba(0,0,0,0.7)] animate-in fade-in zoom-in-95 duration-200">
-            <div className="h-1 w-full bg-gradient-to-r from-rose-500 via-purple-500 to-primary" />
-            <div className="p-5 sm:p-6">
-              <div className="flex items-start gap-4">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-rose-500/30 bg-rose-500/15 shadow-[0_0_24px_rgba(244,63,94,0.14)]">
-                  <AlertCircle className="h-5 w-5 text-rose-400" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-rose-500/25 bg-rose-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-rose-300">
-                      Export interrupted
-                    </span>
-                    <span className="text-[10px] font-mono text-white/35">
-                      {new Date(exportError.occurredAt).toLocaleTimeString()}
-                    </span>
-                  </div>
-                  <h3 id="report-export-error-title" className="text-base font-extrabold tracking-tight text-white sm:text-lg">
-                    {exportError.reportName} {exportError.format === "pdf" ? "PDF" : "workbook"} was not downloaded
-                  </h3>
-                  <p id="report-export-error-description" className="mt-2 text-sm leading-relaxed text-white/65">
-                    {exportError.guidance}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setExportError(null)}
-                  className="shrink-0 rounded-xl border border-white/10 bg-white/[0.04] p-2 text-white/45 transition-colors hover:bg-white/[0.08] hover:text-white"
-                  title="Close"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="mt-5 rounded-2xl border border-white/10 bg-black/35 p-3.5">
-                <div className="mb-1.5 flex items-center justify-between gap-3">
-                  <span className="text-[9px] font-bold uppercase tracking-[0.16em] text-white/35">Technical detail</span>
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(
-                      `${exportError.reportName} (${exportError.format.toUpperCase()})\n${exportError.message}\n${exportError.occurredAt}`,
-                      "report-export-error"
-                    )}
-                    className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[10px] font-bold text-white/50 transition-colors hover:bg-white/[0.06] hover:text-white"
-                  >
-                    {copySuccess["report-export-error"] ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
-                    <span>{copySuccess["report-export-error"] ? "Copied" : "Copy"}</span>
-                  </button>
-                </div>
-                <p className="break-words font-mono text-[11px] leading-relaxed text-rose-200/80">
-                  {exportError.message}
-                </p>
-              </div>
-
-              <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={() => setExportError(null)}
-                  className="h-10 rounded-xl border border-white/10 bg-white/[0.04] px-4 text-xs font-bold text-white/65 transition-colors hover:bg-white/[0.08] hover:text-white"
-                >
-                  Dismiss
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const reportType = exportError.reportType;
-                    const format = exportError.format;
-                    setExportError(null);
-                    void handleExportReport(reportType, format);
-                  }}
-                  className="flex h-10 items-center justify-center gap-2 rounded-xl border border-primary/40 bg-gradient-to-r from-primary/25 via-purple-500/20 to-emerald-500/20 px-4 text-xs font-extrabold text-white shadow-lg shadow-primary/10 transition-all hover:border-primary/60 hover:from-primary/35 active:scale-[0.98]"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  Retry report
-                </button>
-              </div>
+      <Dialog open={!!exportError} onOpenChange={open => { if (!open) setExportError(null); }}>
+        <DialogContent onCloseAutoFocus={restoreDialogFocus} className="platform-analytics max-w-xl border-zinc-700 bg-zinc-950 text-zinc-100">
+          <DialogTitle>Report could not be exported</DialogTitle>
+          <DialogDescription>{exportError?.reportName} · {exportError?.format.toUpperCase()}</DialogDescription>
+          {exportError && <div className="space-y-4 text-sm">
+            <p role="alert" className="break-words text-rose-300">{exportError.message}</p>
+            <p className="text-zinc-400">{exportError.guidance}</p>
+            <p className="text-xs text-zinc-500">{new Date(exportError.occurredAt).toLocaleString()}</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="rounded-lg border border-white/20 px-3 py-2" onClick={() => handleCopy(`${exportError.reportName}: ${exportError.message}\n${exportError.occurredAt}`, "report-error")}>{copySuccess["report-error"] ? "Copied" : "Copy details"}</button>
+              <button type="button" className="rounded-lg bg-primary px-3 py-2 text-white" onClick={() => { const failed = exportError; setExportError(null); void handleExportReport(failed.reportType, failed.format); }}>Retry export</button>
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </div>}
+        </DialogContent>
+      </Dialog>
 
-      {/* Mobile Full-Screen Slide-Over Investigation Drawer Modal mounted via React Portal onto document.body */}
-      {mobileDrawerReceipt && typeof document !== "undefined" && createPortal(
-        (() => {
-          const mr = mobileDrawerReceipt;
-          const isSettled = ["paid", "checkout_success", "confirmed", "reconciled", "tx_mined"].includes(String(mr.status || "").toLowerCase());
-          const statusHistory = Array.isArray(mr.statusHistory) ? mr.statusHistory : [];
-          const statusList = statusHistory.map((h: any) => String(h.status || "").toLowerCase());
-          const currentStatus = String(mr.status || "").toLowerCase();
-          const mobileAccordionHistory = Array.isArray(mr.accordionStepHistory)
-            ? [...mr.accordionStepHistory].sort((a, b) => Number(a?.ts || 0) - Number(b?.ts || 0))
-            : [];
-          const mobileAccordionPath = buildAccordionJourneyPath(mobileAccordionHistory);
-          const mobileCurrentStep = Number(
-            mobileAccordionHistory[mobileAccordionHistory.length - 1]?.toStep || mr.accordionCurrentStep || 1
-          );
+      <Dialog open={!!mobileDrawerReceipt} onOpenChange={open => { if (!open) setMobileDrawerReceipt(null); }}>
+        <DialogContent onCloseAutoFocus={restoreDialogFocus} className="analytics-investigation-dialog platform-analytics max-w-[min(96vw,80rem)] border-zinc-700 bg-zinc-950 text-zinc-100">
+          <DialogTitle className="break-all pr-8">Receipt {mobileDrawerReceipt?.receiptId}</DialogTitle>
+          <DialogDescription>Complete payment, customer, fee and operational evidence.</DialogDescription>
+          {mobileDrawerReceipt && renderReceiptInvestigation(recentReceipts.find(r => r.receiptId === mobileDrawerReceipt.receiptId) || mobileDrawerReceipt)}
+        </DialogContent>
+      </Dialog>
 
-          const linkOpened = statusList.includes("link_opened") || statusHistory.length > 0;
-          const customerIdentified = statusList.includes("buyer_logged_in") || statusList.includes("checkout_session_created") || !!mr.email;
-          const paymentMethodSelected = !!mr.cardFunding || statusList.includes("payment_method_detected");
-          const kycTriggered = statusList.some((s: string) => s.includes("kyc"));
-          const kycCompleted = (kycTriggered && isSettled);
-          const kycFailed = kycTriggered && currentStatus === "failed";
-
-          const legacySteps = [
-            { id: "opened", label: "Link Opened", status: linkOpened ? "completed" : "upcoming", desc: "Checkout opened" },
-            { id: "identified", label: "Identified", status: customerIdentified ? "completed" : (linkOpened ? "active" : "upcoming"), desc: mr.email || "Guest" },
-            { id: "payment", label: "Payment Method", status: paymentMethodSelected ? "completed" : (customerIdentified ? "active" : "upcoming"), desc: mr.cardFunding || "Card/Bank" },
-            {
-              id: "kyc",
-              label: "KYC Verification",
-              status: kycFailed ? "failed" : (
-                (mr.kycLevel === "L1" || mr.kycLevel === "L2" || kycCompleted) ? "completed" : (
-                  kycTriggered ? "active" : "completed"
-                )
-              ),
-              desc: kycFailed ? "KYC Rejected" : (
-                mr.kycLevel === "L2" ? "L2 Verified" : (
-                  mr.kycLevel === "L1" ? "L1 Verified" : (
-                    kycCompleted ? "Verified" : (
-                      kycTriggered ? "Reviewing..." : "L0 (Not Required)"
-                    )
-                  )
-                )
-              )
-            },
-            { id: "settlement", label: "Settlement", status: isSettled ? "completed" : (currentStatus === "failed" ? "failed" : "active"), desc: isSettled ? "Funds Delivered" : "In Progress" }
-          ];
-          const mobileVisitedSteps = new Set(
-            mobileAccordionHistory.flatMap((entry) => [entry.fromStep, entry.toStep]).filter((step) => step >= 1 && step <= 4)
-          );
-          const steps = mobileAccordionHistory.length > 0
-            ? ["Contact", "Identity", "Payment", "Fulfillment"].map((label, index) => {
-                const stepNumber = index + 1;
-                const wasVisited = mobileVisitedSteps.has(stepNumber);
-                const wasSkipped = mobileAccordionHistory.some(
-                  (entry) => entry.direction === "forward" && entry.fromStep < stepNumber && entry.toStep > stepNumber
-                );
-                const status = isSettled && (wasVisited || stepNumber === 4)
-                  ? "completed"
-                  : stepNumber === mobileCurrentStep
-                    ? "active"
-                    : wasSkipped
-                      ? "skipped"
-                      : wasVisited && stepNumber < mobileCurrentStep
-                        ? "completed"
-                        : wasVisited && stepNumber > mobileCurrentStep
-                          ? "returned"
-                          : "upcoming";
-                return { id: `accordion-step-${stepNumber}`, label, status, desc: `Step ${stepNumber}` };
-              })
-            : legacySteps;
-
-          return (
-            <div className="fixed inset-0 z-[99999] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 text-left font-sans animate-in fade-in duration-200">
-              <div className="relative w-full max-w-xl max-h-[85vh] rounded-3xl bg-zinc-950 border border-purple-500/30 p-5 sm:p-6 flex flex-col justify-between shadow-2xl overflow-y-auto animate-in zoom-in-95 duration-200 space-y-4">
-                <div className="space-y-4">
-                  {/* Header */}
-                  <div className="flex items-center justify-between pb-3 border-b border-white/10">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono font-black text-base text-white">{mr.receiptId}</span>
-                      {mr.merchantName && (
-                        <span className="px-2.5 py-0.5 rounded-md text-[11px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                          {mr.merchantName}
-                        </span>
-                      )}
-                      {(() => {
-                        const bColor = getBrandColor(mr.brandKey, allBrandKeys.indexOf(mr.brandKey));
-                        return (
-                          <span
-                            className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold border inline-flex items-center gap-1.5"
-                            style={{
-                              backgroundColor: `${bColor}20`,
-                              borderColor: `${bColor}45`,
-                              color: bColor
-                            }}
-                          >
-                            <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: bColor, boxShadow: `0 0 6px ${bColor}` }} />
-                            <span>Container: {mr.brandKey}</span>
-                          </span>
-                        );
-                      })()}
-                      <span className="px-2 py-0.5 rounded-full text-xs font-mono font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                        ${mr.totalUsd.toFixed(2)}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setMobileDrawerReceipt(null)}
-                      className="px-3 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white font-mono text-xs font-bold border border-white/10"
-                    >
-                      Close ✕
-                    </button>
-                  </div>
-
-                  {/* Badass Mobile Stepper Progress Bar Panel */}
-                  <div className="relative overflow-hidden bg-gradient-to-r from-zinc-950/90 via-zinc-900/80 to-zinc-950/90 border border-white/10 rounded-2xl p-4 shadow-2xl backdrop-blur-xl">
-                    <div className="relative z-10 flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
-                        <span className="text-xs font-bold font-mono text-white tracking-tight uppercase">
-                          {mobileAccordionHistory.length > 0 ? "Recorded Accordion Trajectory" : "User Funnel Trajectory"}
-                        </span>
-                      </div>
-                      <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-                        {isSettled ? "100% COMPLETE" : "ACTIVE DIAGNOSTIC"}
-                      </span>
-                    </div>
-
-                    <div className="relative flex items-center justify-between px-1 pt-1">
-                      <div className="absolute left-5 right-5 top-[20px] h-0.5 bg-white/10 -z-0">
-                        <div className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-300 shadow-[0_0_12px_#10b981]" style={{ width: isSettled ? "100%" : "65%" }} />
-                      </div>
-                      {steps.map((st, idx) => (
-                        <div key={st.id} className="relative z-10 flex flex-col items-center text-center">
-                          <div className={`w-7 h-7 rounded-full flex items-center justify-center border text-[10px] font-bold ${
-                            st.status === "completed" ? "bg-emerald-500/20 border-emerald-400 text-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
-                            st.status === "failed" ? "bg-rose-500/20 border-rose-400 text-rose-400" :
-                            st.status === "active" ? "bg-primary/20 border-primary text-primary animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.5)]" :
-                            "bg-zinc-900 border-white/20 text-white/30"
-                          }`}>
-                            {st.status === "completed" ? <CheckCircle2 className="w-3.5 h-3.5" /> : st.status === "failed" ? <XCircle className="w-3.5 h-3.5" /> : idx + 1}
-                          </div>
-                          <span className="text-[8px] font-mono font-bold text-white mt-1 max-w-[45px] truncate">{st.label}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {mobileAccordionHistory.length > 0 && (
-                      <div className="mt-3 flex flex-wrap items-center gap-1 border-t border-white/5 pt-2 font-mono text-[9px] text-white/60">
-                        {mobileAccordionPath.map((stepNumber, index, path) => (
-                          <React.Fragment key={`${stepNumber}-${index}`}>
-                            <span className={stepNumber === mobileCurrentStep ? "text-amber-300" : "text-white/60"}>S{stepNumber}</span>
-                            {index < path.length - 1 && (
-                              path[index + 1] < stepNumber
-                                ? <ArrowLeft className="h-2.5 w-2.5 text-rose-400" />
-                                : <ArrowRight className="h-2.5 w-2.5 text-emerald-400" />
-                            )}
-                          </React.Fragment>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Technical Breakdown Cards */}
-                  <div className="space-y-2.5 font-mono text-xs">
-                    <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-0.5">
-                      <span className="text-[9px] text-white/40 font-bold uppercase">Buyer Identity</span>
-                      <div className="text-white font-bold text-xs">{mr.email || "N/A"}</div>
-                    </div>
-
-                    {(mr.isCrypto || mr.thirdwebMetadata || mr.paymentId) && (
-                      <div className="p-3 rounded-2xl bg-purple-500/10 border border-purple-500/20 space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[9px] text-purple-300 font-bold uppercase">Thirdweb Payment ID</span>
-                          <span className="text-[9px] text-emerald-400 font-bold">Crypto Verified</span>
-                        </div>
-                        <div className="text-white font-bold text-xs truncate select-all">{mr.paymentId || mr.thirdwebMetadata?.paymentId || "N/A"}</div>
-                        
-                        {/* Token Conversion summary if available */}
-                        {(mr.originToken || mr.destinationToken) && (
-                          <div className="pt-1.5 border-t border-purple-500/20 grid grid-cols-2 gap-2 text-[10px]">
-                            <div>
-                              <div className="text-white/40 text-[8px] uppercase">Paid (Origin)</div>
-                              <div className="text-white font-bold">{mr.originAmount ? `${mr.originAmount} ` : ""}{mr.originToken?.symbol || "Crypto"}</div>
-                              <div className="text-purple-300 text-[8px]">{getChainDisplayName(mr.originChainId)}</div>
-                            </div>
-                            <div>
-                              <div className="text-emerald-300 text-[8px] uppercase">Settled (Base)</div>
-                              <div className="text-emerald-400 font-bold">{mr.destinationAmount ? `${mr.destinationAmount} ` : `$${mr.totalUsd.toFixed(2)} `}{mr.destinationToken?.symbol || "USDC"}</div>
-                              <div className="text-emerald-200/70 text-[8px]">{getChainDisplayName(mr.destinationChainId)}</div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {mr.stripeSessionId && (
-                      <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-0.5">
-                        <span className="text-[9px] text-white/40 font-bold uppercase">Stripe Session ID</span>
-                        <div className="text-primary font-bold text-xs truncate">{mr.stripeSessionId}</div>
-                      </div>
-                    )}
-
-                    <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-1">
-                      <span className="text-[9px] text-white/40 font-bold uppercase">On-Chain Tx Hash</span>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-emerald-400 font-bold text-xs truncate">{mr.transactionHash || "N/A"}</span>
-                        {mr.transactionHash && (
-                          <a
-                            href={getBlockExplorerTxUrl(mr.destinationChainId, mr.transactionHash)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold flex items-center gap-1 shrink-0"
-                          >
-                            <span>Explorer</span>
-                            <ExternalLink className="w-2.5 h-2.5" />
-                          </a>
-                        )}
-                      </div>
-                    </div>
-
-                    {mr.failureReason && (
-                      <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs">
-                        <span className="font-bold">Failure Reason:</span> {mr.failureReason}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Modal Footer Close Button */}
-                <div className="pt-3 border-t border-white/10">
-                  <button
-                    onClick={() => setMobileDrawerReceipt(null)}
-                    className="w-full py-2.5 rounded-2xl bg-primary text-white font-mono text-xs font-bold shadow-lg shadow-primary/30 active:scale-[0.98] transition-all"
-                  >
-                    Close Investigation Drawer
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })(),
-        document.body
-      )}
-
-      {/* Unique checkout completion algorithm modal */}
-      {isAlgorithmModalOpen && typeof document !== "undefined" && createPortal(
-        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-6 select-text">
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 bg-black/80 backdrop-blur-md transition-opacity animate-in fade-in duration-200"
-            onClick={() => setIsAlgorithmModalOpen(false)}
-          />
-
-          {/* Modal Container */}
-          <div
-            className="relative w-full max-w-2xl max-h-[90vh] bg-zinc-950 border border-white/15 rounded-3xl p-5 sm:p-7 shadow-2xl backdrop-blur-2xl flex flex-col z-10 animate-in fade-in zoom-in-95 duration-200 overflow-hidden"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-start justify-between gap-4 pb-4 border-b border-white/10 shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0 shadow-inner">
-                  <Sparkles className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight flex items-center gap-2">
-                    <span>Unique Checkout Completion Methodology</span>
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase tracking-wider bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                      Modeled Metric
-                    </span>
-                  </h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    How BasaltSurge models checkout intents from receipt records while preserving the raw totals for comparison.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setIsAlgorithmModalOpen(false)}
-                className="p-2 rounded-xl text-muted-foreground hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 transition-all shrink-0"
-                title="Close"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Scrollable Modal Content */}
-            <div className="flex-1 overflow-y-auto space-y-4 py-4 pr-1 text-xs leading-relaxed text-zinc-300">
-              
+      <Dialog open={isAlgorithmModalOpen} onOpenChange={setIsAlgorithmModalOpen}>
+        <DialogContent onCloseAutoFocus={restoreDialogFocus} className="platform-analytics max-w-2xl border-zinc-700 bg-zinc-950 text-zinc-100">
+          <DialogTitle>How completion is calculated</DialogTitle>
+          <DialogDescription>Receipt identity, outcome precedence and metric definitions.</DialogDescription>
+          <div className="space-y-4">
               {/* Section 1: The Problem */}
               <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2">
                 <div className="flex items-center gap-2 font-bold text-white text-xs">
                   <span className="h-2 w-2 rounded-full bg-rose-400" />
                   <span>The Problem: Multiple Records for One Checkout Journey</span>
                 </div>
-                <p className="text-muted-foreground text-[11.5px]">
-                  Cart changes, retries, payment-method changes, and navigation during checkout can generate more than one <code className="text-purple-300 font-mono text-[11px] bg-purple-500/10 px-1 py-0.5 rounded">receiptId</code> for what may be the same buyer journey.
+                <p className="text-muted-foreground text-xs">
+                  Cart changes, retries, payment-method changes, and navigation during checkout can generate more than one <code className="text-purple-300 font-mono text-xs bg-purple-500/10 px-1 py-0.5 rounded">receiptId</code> for what may be the same buyer journey.
                 </p>
-                <p className="text-muted-foreground text-[11.5px]">
+                <p className="text-muted-foreground text-xs">
                   Raw receipt completion counts every record separately. When consistent identifiers link three drafts and one paid receipt, modeled completion treats them as one paid intent; without sufficient linking evidence, the records deliberately remain separate.
                 </p>
               </div>
@@ -7214,32 +2867,32 @@ export default function PlatformAnalyticsPanel() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
-                    <div className="font-bold text-[11px] text-purple-300 flex items-center gap-1.5">
+                    <div className="font-bold text-xs text-purple-300 flex items-center gap-1.5">
                       <Clock className="w-3 h-3" />
                       <span>Temporal Sliding Window</span>
                     </div>
-                    <p className="text-[10.5px] text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
                       Email or buyer-wallet evidence may link a new record to a not-yet-paid cluster within <span className="text-white font-semibold">30 minutes</span> of activity, up to a <span className="text-white font-semibold">2-hour maximum journey span</span>. Exact identifiers are not limited by this time window.
                     </p>
                   </div>
 
                   <div className="p-3 rounded-xl bg-black/40 border border-white/5 space-y-1">
-                    <div className="font-bold text-[11px] text-purple-300 flex items-center gap-1.5">
+                    <div className="font-bold text-xs text-purple-300 flex items-center gap-1.5">
                       <Layers className="w-3 h-3" />
                       <span>Brand & Merchant Scoping</span>
                     </div>
-                    <p className="text-[10.5px] text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
                       Stripe-session, payment, transaction, email, and wallet matching is restricted to the same <span className="text-white font-semibold">brandKey</span> and <span className="text-white font-semibold">merchant container</span>. An exact receipt identity remains canonical.
                     </p>
                   </div>
                 </div>
 
                 <div className="space-y-1.5 pt-1">
-                  <div className="font-semibold text-white text-[11px]">Evidence-based identity linkage:</div>
-                  <ul className="space-y-1 text-[11px] text-muted-foreground list-disc pl-4">
+                  <div className="font-semibold text-white text-xs">Evidence-based identity linkage:</div>
+                  <ul className="space-y-1 text-xs text-muted-foreground list-disc pl-4">
                     <li><strong className="text-zinc-200">Exact identifiers:</strong> Matching receipt, Stripe-session, payment, or on-chain transaction identifiers take precedence over fallback evidence.</li>
-                    <li><strong className="text-zinc-200">Customer email:</strong> Uses the first populated value in this order: <code className="font-mono text-[10px] text-purple-300">customerEmail</code>, <code className="font-mono text-[10px] text-purple-300">stripeEmail</code>, then legacy <code className="font-mono text-[10px] text-purple-300">email</code>. The selected value must contain <code className="font-mono text-[10px] text-purple-300">@</code> and cannot be <code className="font-mono text-[10px] text-purple-300">anonymous</code>.</li>
-                    <li><strong className="text-zinc-200">Buyer wallet:</strong> Uses the normalized connected Web3 address recorded in <code className="font-mono text-[10px] text-purple-300">buyerWallet</code>.</li>
+                    <li><strong className="text-zinc-200">Customer email:</strong> Uses the first populated value in this order: <code className="font-mono text-xs text-purple-300">customerEmail</code>, <code className="font-mono text-xs text-purple-300">stripeEmail</code>, then legacy <code className="font-mono text-xs text-purple-300">email</code>. The selected value must contain <code className="font-mono text-xs text-purple-300">@</code> and cannot be <code className="font-mono text-xs text-purple-300">anonymous</code>.</li>
+                    <li><strong className="text-zinc-200">Buyer wallet:</strong> Uses the normalized connected Web3 address recorded in <code className="font-mono text-xs text-purple-300">buyerWallet</code>.</li>
                     <li><strong className="text-zinc-200">Fallback conflict guard:</strong> Email or wallet matching is rejected when it conflicts with known customer, session, payment, or transaction evidence.</li>
                     <li><strong className="text-zinc-200">Anonymous handling:</strong> IP addresses and timing alone never merge receipt records.</li>
                   </ul>
@@ -7252,7 +2905,7 @@ export default function PlatformAnalyticsPanel() {
                   <span className="h-2 w-2 rounded-full bg-emerald-400" />
                   <span>Outcome Resolution</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10.5px]">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                   <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-0.5">
                     <div className="font-bold text-emerald-400">1. Recognized Paid</div>
                     <p className="text-muted-foreground">If <strong className="text-white">any</strong> record has a recognized payment-accepted or completion status, the cluster counts as <span className="text-emerald-400 font-semibold">1 Paid Intent</span>. This category can include ACH pending and is not limited to final fund settlement.</p>
@@ -7272,32 +2925,20 @@ export default function PlatformAnalyticsPanel() {
               <div className="p-4 rounded-2xl bg-purple-500/10 border border-purple-500/20 space-y-2">
                 <div className="font-bold text-purple-300 text-xs flex items-center justify-between">
                   <span>Mathematical Formula</span>
-                  <span className="font-mono text-[10px] text-purple-400">UNIQUE_CHECKOUT_COMPLETION</span>
+                  <span className="font-mono text-xs text-purple-400">UNIQUE_CHECKOUT_COMPLETION</span>
                 </div>
                 <div className="p-3 rounded-xl bg-black/60 border border-purple-500/30 font-mono text-center text-xs text-white">
                   Checkout Completion = ( Unique Paid Intents / All Unique Intents ) × 100
                 </div>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[10.5px] text-muted-foreground pt-1 gap-1">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-muted-foreground pt-1 gap-1">
                   <span>Raw Receipt Completion: <span className="font-mono text-white">(Paid Records / All Raw Records) × 100</span></span>
                   <span>Resolved Outcome Rate: <span className="font-mono text-white">(Paid Intents / (Paid + Failed Intents)) × 100</span></span>
                 </div>
               </div>
 
-            </div>
-
-            {/* Footer */}
-            <div className="pt-3 border-t border-white/10 flex items-center justify-end shrink-0">
-              <button
-                onClick={() => setIsAlgorithmModalOpen(false)}
-                className="px-5 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-semibold text-xs transition-all shadow-md shadow-primary/25"
-              >
-                Got It
-              </button>
-            </div>
           </div>
-        </div>,
-        document.body
-      )}
+        </DialogContent>
+      </Dialog>
 
       {showCoaster && (
         <RollercoasterOverlay
@@ -7314,1002 +2955,6 @@ export default function PlatformAnalyticsPanel() {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-export interface GitCommitEvent {
-  hash: string;
-  shortHash: string;
-  message: string;
-  author: string;
-  timestamp: string;
-  dateLabel: string;
-  tag?: string;
-  impactHighlight?: string;
-}
-
-const DEFAULT_GIT_COMMITS: GitCommitEvent[] = [
-  {
-    hash: "a9f8c12b",
-    shortHash: "a9f8c12",
-    message: "feat(checkout): 3-part SSN input group & live form completeness engine",
-    author: "DeepMind AI Assistant",
-    timestamp: "2026-07-30T18:30:00Z",
-    dateLabel: "Jul 30",
-    tag: "feat",
-    impactHighlight: "+14.2% Checkout Completion",
-  },
-  {
-    hash: "c4e10b77",
-    shortHash: "c4e10b7",
-    message: "fix(stripe): strict metadata.receiptId matching & unset 23 misassociated sessions",
-    author: "BasaltSurge Core Engine",
-    timestamp: "2026-07-30T16:00:00Z",
-    dateLabel: "Jul 30",
-    tag: "fix",
-    impactHighlight: "Session Collisions Prevented",
-  },
-  {
-    hash: "e72b9a41",
-    shortHash: "e72b9a4",
-    message: "fix(onramp): ACH pending status separation for delayed bank settlements",
-    author: "Payment Engineering Team",
-    timestamp: "2026-07-30T12:00:00Z",
-    dateLabel: "Jul 30",
-    tag: "fix",
-    impactHighlight: "Ach Pending Reconciliation",
-  },
-  {
-    hash: "b319f401",
-    shortHash: "b319f40",
-    message: "feat(auth): 3-tiered restricted auth & global identifier slug enforcement",
-    author: "Portal Security Team",
-    timestamp: "2026-07-29T19:00:00Z",
-    dateLabel: "Jul 29",
-    tag: "security",
-    impactHighlight: "Unauthenticated Drops Reduced",
-  },
-  {
-    hash: "d981240c",
-    shortHash: "d981240",
-    message: "perf(db): triple-sync parallel upsert & Cosmos adapter query optimization",
-    author: "Database Ops",
-    timestamp: "2026-07-28T14:00:00Z",
-    dateLabel: "Jul 28",
-    tag: "perf",
-    impactHighlight: "-120ms Latency Reduction",
-  },
-  {
-    hash: "f549018e",
-    shortHash: "f549018",
-    message: "feat(fees): basis-point calculation engine & merchant split deployment",
-    author: "BasaltSurge Protocol",
-    timestamp: "2026-07-26T11:00:00Z",
-    dateLabel: "Jul 26",
-    tag: "feat",
-    impactHighlight: "+$42.5k Revenue Processing",
-  },
-  {
-    hash: "8c129e44",
-    shortHash: "8c129e4",
-    message: "refactor(terminal): zero-dollar diagnostic polling & receipt source of truth",
-    author: "Terminal Engineering",
-    timestamp: "2026-07-24T09:30:00Z",
-    dateLabel: "Jul 24",
-    tag: "refactor",
-    impactHighlight: "+8.1% Success Rate",
-  },
-];
-
-interface CustomLineChartProps {
-  data: Record<string, any>[];
-  brandKeys: string[];
-  hoveredKey: string | null;
-  setHoveredKey: (key: string | null) => void;
-  metricType?: "successRate" | "amountEarned";
-  scaleType?: "linear" | "log";
-  gitCommits?: GitCommitEvent[];
-  showGitCommitsOverlay?: boolean;
-  setShowGitCommitsOverlay?: (val: boolean | ((prev: boolean) => boolean)) => void;
-}
-
-function CustomInteractiveLineChart({
-  data,
-  brandKeys,
-  hoveredKey,
-  setHoveredKey,
-  metricType = "successRate",
-  scaleType = "linear",
-  gitCommits,
-  showGitCommitsOverlay = true,
-  setShowGitCommitsOverlay
-}: CustomLineChartProps) {
-  const N = data.length;
-  const activeGitCommits = gitCommits && gitCommits.length > 0 ? gitCommits : DEFAULT_GIT_COMMITS;
-
-  // Coordinate space for SVG drawing
-  const totalWidth = 1000;
-  const totalHeight = 240;
-
-  // Hover state for Git Commit overlay markers
-  const [hoveredCommit, setHoveredCommit] = useState<{
-    commit: GitCommitEvent;
-    x: number;
-    y: number;
-    dataPoint?: any;
-  } | null>(null);
-
-  const handleMouseEnterCommit = (
-    e: React.MouseEvent<SVGGElement>,
-    commit: GitCommitEvent,
-    dataPoint?: any
-  ) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const parentEl = e.currentTarget.closest(".chart-container-card");
-    if (!parentEl) return;
-    const parentRect = parentEl.getBoundingClientRect();
-
-    const x = rect.left - parentRect.left + rect.width / 2;
-    const y = rect.top - parentRect.top;
-
-    setHoveredCommit({
-      commit,
-      x,
-      y,
-      dataPoint
-    });
-  };
-
-  // Find max value in series for dynamic amount earned scaling
-  const maxValInSeries = useMemo(() => {
-    if (metricType === "successRate") return 100;
-    return Math.max(
-      ...data.map(d => {
-        const values = [d.aggregate || 0];
-        brandKeys.forEach(bk => {
-          if (typeof d[bk] === "number") values.push(d[bk]);
-        });
-        return Math.max(...values);
-      }),
-      10
-    );
-  }, [data, brandKeys, metricType]);
-
-  // Round maxVal to a clean upper bound for axis
-  const maxAxisVal = useMemo(() => {
-    if (metricType === "successRate") return 100;
-    const val = maxValInSeries;
-    if (val <= 10) return 10;
-    const order = Math.pow(10, Math.floor(Math.log10(val)));
-    const normalized = val / order;
-    let rounded = 10;
-    if (normalized <= 1.2) rounded = 1.2;
-    else if (normalized <= 1.5) rounded = 1.5;
-    else if (normalized <= 2) rounded = 2;
-    else if (normalized <= 2.5) rounded = 2.5;
-    else if (normalized <= 3) rounded = 3;
-    else if (normalized <= 4) rounded = 4;
-    else if (normalized <= 5) rounded = 5;
-    else if (normalized <= 7.5) rounded = 7.5;
-    return rounded * order;
-  }, [maxValInSeries, metricType]);
-
-  // Dynamic grid levels based on linear or log scale
-  const gridLevels = useMemo(() => {
-    if (scaleType === "linear") {
-      return [0, 0.25, 0.5, 0.75, 1].map(pct => maxAxisVal * pct);
-    } else {
-      const levels = [0];
-      let current = 1;
-      while (current <= maxAxisVal) {
-        levels.push(current);
-        current *= 10;
-      }
-      if (levels[levels.length - 1] < maxAxisVal) {
-        levels.push(maxAxisVal);
-      }
-      return levels;
-    }
-  }, [scaleType, maxAxisVal]);
-
-  const getCoords = (val: number, idx: number) => {
-    const x = N > 1 ? (idx / (N - 1)) * totalWidth : totalWidth / 2;
-    let y = 220;
-    if (scaleType === "linear") {
-      y = 220 - (val / maxAxisVal) * 195;
-    } else {
-      const logVal = Math.log10(val + 1);
-      const logMax = Math.log10(maxAxisVal + 1);
-      y = 220 - (logVal / logMax) * 195;
-    }
-    return { x, y };
-  };
-
-  // Helper to compute smooth horizontal cubic bezier curve
-  const getBezierPath = (points: { x: number; y: number }[]) => {
-    if (points.length === 0) return "";
-    if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-    if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
-
-    let path = `M ${points[0].x} ${points[0].y}`;
-    for (let i = 0; i < points.length - 1; i++) {
-      const p0 = points[i];
-      const p1 = points[i + 1];
-
-      const cp1x = p0.x + (p1.x - p0.x) / 3;
-      const cp1y = p0.y;
-      const cp2x = p1.x - (p1.x - p0.x) / 3;
-      const cp2y = p1.y;
-
-      path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p1.x} ${p1.y}`;
-    }
-    return path;
-  };
-
-  const getBrandColor = (key: string, idx?: number) => {
-    return getDistinctBrandColor(key, idx);
-  };
-
-  // Tooltip state
-  const [hoveredNode, setHoveredNode] = useState<{
-    bk: string;
-    date: string;
-    val: number;
-    paid: number;
-    total: number;
-    x: number;
-    y: number;
-  } | null>(null);
-
-  const handleMouseEnterNode = (
-    e: React.MouseEvent<SVGCircleElement>,
-    bk: string,
-    date: string,
-    val: number,
-    details: { paid: number; total: number }
-  ) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const parentEl = e.currentTarget.closest(".chart-container-card");
-    if (!parentEl) return;
-    const parentRect = parentEl.getBoundingClientRect();
-
-    const x = rect.left - parentRect.left + rect.width / 2;
-    const y = rect.top - parentRect.top;
-
-    setHoveredNode({
-      bk,
-      date,
-      val,
-      paid: details.paid,
-      total: details.total,
-      x,
-      y
-    });
-  };
-
-  const formatYLabel = (val: number) => {
-    if (metricType === "successRate") return `${val.toFixed(0)}%`;
-    if (val >= 1000) return `$${(val / 1000).toFixed(1).replace(".0", "")}k`;
-    return `$${val.toFixed(0)}`;
-  };
-
-  return (
-    <div className="relative w-full space-y-4 chart-container-card">
-      {/* Legend with interactive Hover highlighting and Git Commits Toggle */}
-      <div className="flex items-center justify-between gap-2 max-w-full overflow-x-auto no-scrollbar select-none py-0.5">
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Aggregate legend */}
-          <div
-            onMouseEnter={() => setHoveredKey("aggregate")}
-            onMouseLeave={() => setHoveredKey(null)}
-            className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2.5 rounded-lg shrink-0 ${hoveredKey === "aggregate" ? "bg-white/10 scale-[1.03] text-white" :
-              hoveredKey !== null ? "opacity-30" : "text-white/80 hover:text-white"
-              }`}
-          >
-            <div className="h-2.5 w-2.5 rounded-full bg-[#c084fc] shadow-[0_0_8px_rgba(192,132,252,0.6)]" />
-            <span className="font-semibold font-sans">Platform Aggregate</span>
-          </div>
-
-          {/* Brand keys legend */}
-          {brandKeys.map((bk, i) => {
-            const color = getBrandColor(bk, i);
-            const isHovered = hoveredKey === bk;
-            const isDimmed = hoveredKey !== null && !isHovered;
-
-            return (
-              <div
-                key={bk}
-                onMouseEnter={() => setHoveredKey(bk)}
-                onMouseLeave={() => setHoveredKey(null)}
-                className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2.5 rounded-lg shrink-0 ${isHovered ? "bg-white/10 scale-[1.03] text-white" :
-                  isDimmed ? "opacity-30" : "text-white/80 hover:text-white"
-                  }`}
-              >
-                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }} />
-                <span className="font-sans">{bk}</span>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Git Commits Overlay Toggle Button */}
-        {setShowGitCommitsOverlay && (
-          <button
-            onClick={() => setShowGitCommitsOverlay(prev => !prev)}
-            className={`flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-lg transition-all border shrink-0 ${
-              showGitCommitsOverlay
-                ? "bg-purple-500/20 border-purple-500/40 text-purple-200 shadow-sm shadow-purple-500/10"
-                : "bg-white/[0.04] border-white/10 text-white/50 hover:text-white"
-            }`}
-            title="Overlay Git Commit markers on line chart"
-          >
-            <GitCommit className="w-3.5 h-3.5 text-purple-400" />
-            <span>Git Commits</span>
-            {showGitCommitsOverlay && (
-              <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
-            )}
-          </button>
-        )}
-      </div>
-
-      {/* SVG Plot Card Container with Sticky Y-Axis & Side-Scrollable Canvas */}
-      <div className="relative flex-1 w-full min-h-[350px] bg-black/40 border border-white/10 rounded-2xl p-3 sm:p-4 flex flex-col gap-2 overflow-hidden shadow-inner">
-        {/* Main Canvas Area */}
-        <div className="relative flex-1 w-full flex overflow-hidden">
-          
-          {/* Sticky Left Y-Axis Labels */}
-          <div className="sticky left-0 top-0 z-20 bg-zinc-950/95 border-r border-white/10 pr-2.5 pl-1.5 text-[10px] text-white/60 font-mono font-bold pointer-events-none select-none h-[260px] w-12 shrink-0 relative">
-            {gridLevels.slice().reverse().map(lvl => {
-              let ratio = 0;
-              if (scaleType === "linear") {
-                ratio = lvl / maxAxisVal;
-              } else {
-                const logVal = Math.log10(lvl + 1);
-                const logMax = Math.log10(maxAxisVal + 1);
-                ratio = logVal / logMax;
-              }
-              const yPx = 25 + (1 - ratio) * 195;
-              return (
-                <span
-                  key={lvl}
-                  className="absolute left-1.5 -translate-y-1/2 font-mono"
-                  style={{ top: `${yPx}px` }}
-                >
-                  {formatYLabel(lvl)}
-                </span>
-              );
-            })}
-          </div>
-
-          {/* Horizontally Scrollable Graph Canvas */}
-          <div className="flex-1 overflow-x-auto overflow-y-hidden no-scrollbar touch-pan-x pl-2">
-            <div className="min-w-[750px] sm:min-w-[950px] lg:w-full h-full relative flex flex-col">
-              <svg viewBox={`0 0 ${totalWidth} 260`} className="w-full h-[260px] overflow-visible" preserveAspectRatio="none">
-                {/* Horizontal Grid lines */}
-                {gridLevels.map(lvl => {
-                  let y = 220;
-                  if (scaleType === "linear") {
-                    y = 220 - (lvl / maxAxisVal) * 195;
-                  } else {
-                    const logVal = Math.log10(lvl + 1);
-                    const logMax = Math.log10(maxAxisVal + 1);
-                    y = 220 - (logVal / logMax) * 195;
-                  }
-                  return (
-                    <line
-                      key={lvl}
-                      x1="0"
-                      y1={y}
-                      x2={totalWidth}
-                      y2={y}
-                      stroke="rgba(255,255,255,0.06)"
-                      strokeWidth="1"
-                    />
-                  );
-                })}
-
-            {/* 1. Draw Platform Aggregate Line (Rendered in background) */}
-            {(() => {
-              const pts = data.map((d, i) => ({
-                val: d.aggregate,
-                idx: i,
-                date: d.label,
-                details: d.aggregateDetails || { paid: 0, total: 0 }
-              }));
-              const coords = pts.map(item => getCoords(item.val, item.idx));
-              const pathData = getBezierPath(coords);
-              const isHovered = hoveredKey === "aggregate";
-              const isDimmed = hoveredKey !== null && !isHovered;
-
-              return (
-                <g>
-                  {/* Glow shadow */}
-                  <path
-                    d={pathData}
-                    fill="none"
-                    stroke="#c084fc"
-                    strokeWidth={isHovered ? "5" : "2.2"}
-                    strokeOpacity={isHovered ? "0.25" : isDimmed ? "0.01" : "0.08"}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="transition-all duration-200"
-                  />
-                  {/* Active Line */}
-                  <path
-                    d={pathData}
-                    fill="none"
-                    stroke="#c084fc"
-                    strokeWidth={isHovered ? "2.8" : isDimmed ? "0.8" : "1.6"}
-                    strokeOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.85"}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="transition-all duration-200"
-                  />
-                  {/* Active Nodes */}
-                  {coords.map((p, idx) => {
-                    const item = pts[idx];
-                    return (
-                      <circle
-                        key={idx}
-                        cx={p.x}
-                        cy={p.y}
-                        r={isHovered ? "4" : isDimmed ? "0.8" : "2.2"}
-                        fill="#c084fc"
-                        stroke="#0a0a0a"
-                        strokeWidth={isHovered ? "1.2" : "0.6"}
-                        fillOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.9"}
-                        onMouseEnter={(e) => handleMouseEnterNode(e, "aggregate", item.date, item.val, item.details)}
-                        onMouseLeave={() => setHoveredNode(null)}
-                        className="transition-all duration-200 cursor-pointer"
-                      />
-                    );
-                  })}
-                </g>
-              );
-            })()}
-
-            {/* 2. Draw individual Brand Lines (Rendered on top) */}
-            {brandKeys.map((bk, bIdx) => {
-              const color = getBrandColor(bk, bIdx);
-
-              const pts = data
-                .map((d, i) => ({
-                  val: d[bk],
-                  idx: i,
-                  date: d.label,
-                  details: d[`${bk}Details`] || { paid: 0, total: 0 }
-                }))
-                .filter(item => item.val !== null && item.val !== undefined);
-
-              if (pts.length === 0) return null;
-
-              const coords = pts.map(item => getCoords(item.val, item.idx));
-              const pathData = getBezierPath(coords);
-              const isHovered = hoveredKey === bk;
-              const isDimmed = hoveredKey !== null && !isHovered;
-
-              return (
-                <g key={bk}>
-                  {/* Glow shadow */}
-                  <path
-                    d={pathData}
-                    fill="none"
-                    stroke={color}
-                    strokeWidth={isHovered ? "4" : "1.8"}
-                    strokeOpacity={isHovered ? "0.2" : isDimmed ? "0.01" : "0.05"}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="transition-all duration-200"
-                  />
-                  {/* Active Line */}
-                  <path
-                    d={pathData}
-                    fill="none"
-                    stroke={color}
-                    strokeWidth={isHovered ? "2.2" : isDimmed ? "0.6" : "1.1"}
-                    strokeOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.55"}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="transition-all duration-200"
-                  />
-                  {/* Active Nodes */}
-                  {coords.map((p, idx) => {
-                    const item = pts[idx];
-                    return (
-                      <circle
-                        key={idx}
-                        cx={p.x}
-                        cy={p.y}
-                        r={isHovered ? "3.5" : isDimmed ? "0.6" : "1.8"}
-                        fill={color}
-                        stroke="#0a0a0a"
-                        strokeWidth={isHovered ? "1" : "0.5"}
-                        fillOpacity={isHovered ? "1" : isDimmed ? "0.1" : "0.8"}
-                        onMouseEnter={(e) => handleMouseEnterNode(e, bk, item.date, item.val, item.details)}
-                        onMouseLeave={() => setHoveredNode(null)}
-                        className="transition-all duration-200 cursor-pointer"
-                      />
-                    );
-                  })}
-                </g>
-              );
-            })}
-
-            {/* 3. Draw Git Commits Overlay (Vertical dashed indicator lines & pin markers) */}
-            {showGitCommitsOverlay && (
-              <g className="git-commits-overlay">
-                {activeGitCommits.map((commit, cIdx) => {
-                  const matchedIdx = data.findIndex(d => {
-                    const lbl = String(d.label || d.date || "").toLowerCase();
-                    const cDate = String(commit.dateLabel || "").toLowerCase();
-                    const cTime = String(commit.timestamp || "").toLowerCase();
-                    return lbl.includes(cDate) || cTime.includes(lbl);
-                  });
-
-                  const idx = matchedIdx > -1 ? matchedIdx : Math.floor((cIdx / activeGitCommits.length) * Math.max(1, N));
-                  const { x } = getCoords(0, idx);
-                  const aggVal = data[idx]?.aggregate || 0;
-                  const aggY = getCoords(aggVal, idx).y;
-                  const isHovered = hoveredCommit?.commit.hash === commit.hash;
-
-                  return (
-                    <g key={commit.hash} className="group">
-                      {/* Vertical indicator line */}
-                      <line
-                        x1={x}
-                        y1={15}
-                        x2={x}
-                        y2={235}
-                        stroke={isHovered ? "#c084fc" : "#a855f7"}
-                        strokeDasharray="3 3"
-                        strokeWidth={isHovered ? "2" : "1.2"}
-                        strokeOpacity={isHovered ? "0.9" : "0.45"}
-                        className="transition-all duration-150 pointer-events-none"
-                      />
-
-                      {/* Top Commit Pin Badge */}
-                      <g
-                        transform={`translate(${x}, 22)`}
-                        onMouseEnter={(e) => handleMouseEnterCommit(e, commit, data[idx])}
-                        onMouseLeave={() => setHoveredCommit(null)}
-                        className="cursor-pointer"
-                      >
-                        <circle
-                          r={isHovered ? "9" : "7"}
-                          fill={isHovered ? "#9333ea" : "#581c87"}
-                          stroke={isHovered ? "#e9d5ff" : "#c084fc"}
-                          strokeWidth="1.5"
-                          className="transition-all duration-200"
-                        />
-                        <circle r="2" fill="#ffffff" />
-                      </g>
-
-                      {/* Curve Node Highlight Diamond */}
-                      <polygon
-                        points={`${x},${aggY - 4} ${x + 4},${aggY} ${x},${aggY + 4} ${x - 4},${aggY}`}
-                        fill="#a855f7"
-                        stroke="#ffffff"
-                        strokeWidth="1"
-                        className="transition-all duration-200"
-                      />
-                    </g>
-                  );
-                })}
-              </g>
-            )}
-          </svg>
-
-          {/* Bottom X-axis Date Labels */}
-          <div className="w-full h-8 border-t border-white/10 pt-1.5 flex justify-between text-[10px] text-white/70 font-mono font-semibold select-none z-10">
-            {data.map((d, i) => {
-              const labelInterval = Math.max(1, Math.ceil(data.length / 10));
-              const shouldShowLabel = i === 0 || i === data.length - 1 || i % labelInterval === 0;
-              return (
-                <span key={i} className="text-center truncate px-0.5" style={{ width: `${100 / data.length}%` }}>
-                  {shouldShowLabel ? d.label : ""}
-                </span>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-      {/* Floating Node Readout Tooltip (HTML overlay) */}
-      {hoveredNode && (
-        <div
-          className="absolute z-50 bg-neutral-950 border border-white/10 rounded-lg p-2.5 shadow-2xl text-xs pointer-events-none -translate-x-1/2 -translate-y-full mb-3 transition-all duration-150 animate-in fade-in zoom-in-95 duration-100"
-          style={{ left: hoveredNode.x, top: hoveredNode.y }}
-        >
-          <div className="font-semibold text-white">{hoveredNode.date}</div>
-          <div className="text-[10px] text-muted-foreground mt-0.5 capitalize flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full" style={{
-              backgroundColor: hoveredNode.bk === "aggregate" ? "#c084fc" : getBrandColor(hoveredNode.bk, brandKeys.indexOf(hoveredNode.bk))
-            }} />
-            <span>{hoveredNode.bk === "aggregate" ? "Platform Aggregate" : hoveredNode.bk}</span>
-          </div>
-          <div className="text-[11px] font-bold text-primary mt-1.5 border-t border-white/5 pt-1 flex flex-col gap-0.5">
-            {metricType === "successRate" ? (
-              <>
-                <div>Success Rate: {hoveredNode.val}%</div>
-                <div className="text-[10px] text-white/50 font-normal">
-                  Volume: {hoveredNode.paid} paid / {hoveredNode.total} total
-                </div>
-              </>
-            ) : (
-              <>
-                <div>Volume Earned: ${hoveredNode.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div className="text-[10px] text-white/50 font-normal">
-                  Details: {hoveredNode.paid} paid transactions
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface CustomInteractiveBarChartProps {
-  data: any[];
-  brandKeys: string[];
-  hoveredKey: string | null;
-  setHoveredKey: (key: string | null) => void;
-  metricType: "successRate" | "amountEarned";
-  scaleType: "linear" | "log";
-}
-
-function CustomInteractiveBarChart({
-  data,
-  brandKeys,
-  hoveredKey,
-  setHoveredKey,
-  metricType,
-  scaleType
-}: CustomInteractiveBarChartProps) {
-  const totalWidth = 1000;
-  const totalHeight = 180;
-
-  const maxValInSeries = useMemo(() => {
-    if (metricType === "successRate") return 100;
-    const dayData = data[0];
-    if (!dayData) return 10;
-    const values = [dayData.aggregate || 0];
-    brandKeys.forEach(bk => {
-      if (typeof dayData[bk] === "number") values.push(dayData[bk]);
-    });
-    return Math.max(...values, 10);
-  }, [data, brandKeys, metricType]);
-
-  const maxAxisVal = useMemo(() => {
-    if (metricType === "successRate") return 100;
-    const val = maxValInSeries;
-    if (val <= 10) return 10;
-    const order = Math.pow(10, Math.floor(Math.log10(val)));
-    const normalized = val / order;
-    let rounded = 10;
-    if (normalized <= 1.2) rounded = 1.2;
-    else if (normalized <= 1.5) rounded = 1.5;
-    else if (normalized <= 2) rounded = 2;
-    else if (normalized <= 2.5) rounded = 2.5;
-    else if (normalized <= 3) rounded = 3;
-    else if (normalized <= 4) rounded = 4;
-    else if (normalized <= 5) rounded = 5;
-    else if (normalized <= 7.5) rounded = 7.5;
-    return rounded * order;
-  }, [maxValInSeries, metricType]);
-
-  const gridLevels = useMemo(() => {
-    if (scaleType === "linear") {
-      return [0, 0.25, 0.5, 0.75, 1].map(pct => maxAxisVal * pct);
-    } else {
-      const levels = [0];
-      let current = 1;
-      while (current <= maxAxisVal) {
-        levels.push(current);
-        current *= 10;
-      }
-      if (levels[levels.length - 1] < maxAxisVal) {
-        levels.push(maxAxisVal);
-      }
-      return levels;
-    }
-  }, [scaleType, maxAxisVal]);
-
-  const getBrandColor = (key: string, idx?: number) => {
-    return getDistinctBrandColor(key, idx);
-  };
-
-  const [hoveredNode, setHoveredNode] = useState<{
-    bk: string;
-    date: string;
-    val: number;
-    paid: number;
-    total: number;
-    x: number;
-    y: number;
-  } | null>(null);
-
-  const handleMouseEnterNode = (
-    e: React.MouseEvent<SVGRectElement>,
-    bk: string,
-    date: string,
-    val: number,
-    details: { paid: number; total: number }
-  ) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const parentEl = e.currentTarget.closest(".chart-container-card");
-    if (!parentEl) return;
-    const parentRect = parentEl.getBoundingClientRect();
-
-    const x = rect.left - parentRect.left + rect.width / 2;
-    const y = rect.top - parentRect.top;
-
-    setHoveredNode({
-      bk,
-      date,
-      val,
-      paid: details.paid,
-      total: details.total,
-      x,
-      y
-    });
-  };
-
-  const formatYLabel = (val: number) => {
-    if (metricType === "successRate") return `${val.toFixed(0)}%`;
-    if (val >= 1000) return `$${(val / 1000).toFixed(1).replace(".0", "")}k`;
-    return `$${val.toFixed(0)}`;
-  };
-
-  const dayData = data[0];
-  const bars = useMemo(() => {
-    if (!dayData || dayData.label === "No Data") return [];
-    
-    const list = [
-      {
-        key: "aggregate",
-        label: "Platform Aggregate",
-        val: dayData.aggregate || 0,
-        color: "#c084fc",
-        details: dayData.aggregateDetails || { paid: 0, total: 0 }
-      }
-    ];
-
-    brandKeys.forEach((bk, idx) => {
-      if (dayData[bk] !== undefined && dayData[bk] !== null) {
-        list.push({
-          key: bk,
-          label: bk,
-          val: dayData[bk],
-          color: getBrandColor(bk, idx),
-          details: dayData[`${bk}Details`] || { paid: 0, total: 0 }
-        });
-      }
-    });
-    return list;
-  }, [dayData, brandKeys]);
-
-  const barCount = bars.length;
-  const paddingLeft = 40;
-  const paddingRight = 40;
-  const chartWidth = totalWidth - paddingLeft - paddingRight;
-  const barWidth = Math.min(80, chartWidth / (barCount * 1.6));
-  const spacing = (chartWidth - barWidth * barCount) / (barCount + 1);
-
-  const getCoords = (val: number) => {
-    let y = 220;
-    if (scaleType === "linear") {
-      y = 220 - (val / maxAxisVal) * 195;
-    } else {
-      const logVal = Math.log10(val + 1);
-      const logMax = Math.log10(maxAxisVal + 1);
-      y = 220 - (logVal / logMax) * 195;
-    }
-    return y;
-  };
-
-  return (
-    <div className="relative w-full space-y-4 chart-container-card">
-      <div className="flex items-center gap-2 max-w-full overflow-x-auto no-scrollbar select-none py-0.5">
-        <div
-          onMouseEnter={() => setHoveredKey("aggregate")}
-          onMouseLeave={() => setHoveredKey(null)}
-          className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2.5 rounded-lg shrink-0 ${
-            hoveredKey === "aggregate" ? "bg-white/10 scale-[1.03] text-white" :
-            hoveredKey !== null ? "opacity-30" : "text-white/80 hover:text-white"
-          }`}
-        >
-          <div className="h-2.5 w-2.5 rounded-full bg-[#c084fc] shadow-[0_0_8px_rgba(192,132,252,0.6)]" />
-          <span className="font-semibold font-sans">Platform Aggregate</span>
-        </div>
-
-        {brandKeys.map((bk, i) => {
-          const color = getBrandColor(bk, i);
-          const isHovered = hoveredKey === bk;
-          const isDimmed = hoveredKey !== null && !isHovered;
-
-          return (
-            <div
-              key={bk}
-              onMouseEnter={() => setHoveredKey(bk)}
-              onMouseLeave={() => setHoveredKey(null)}
-              className={`flex items-center gap-1.5 text-[11px] cursor-pointer transition-all duration-200 py-1 px-2.5 rounded-lg shrink-0 ${
-                isHovered ? "bg-white/10 scale-[1.03] text-white" :
-                isDimmed ? "opacity-30" : "text-white/80 hover:text-white"
-              }`}
-            >
-              <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}` }} />
-              <span className="font-sans">{bk}</span>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* SVG Plot Card Container with Sticky Y-Axis & Side-Scrollable Canvas */}
-      <div className="relative flex-1 w-full min-h-[350px] bg-black/40 border border-white/10 rounded-2xl p-3 sm:p-4 flex flex-col gap-2 overflow-hidden shadow-inner">
-        {/* Main Canvas Area */}
-        <div className="relative flex-1 w-full flex overflow-hidden">
-          
-          {/* Sticky Left Y-Axis Labels */}
-          <div className="sticky left-0 top-0 z-20 bg-zinc-950/95 border-r border-white/10 pr-2.5 pl-1.5 text-[10px] text-white/60 font-mono font-bold pointer-events-none select-none h-[260px] w-12 shrink-0 relative">
-            {gridLevels.slice().reverse().map(lvl => {
-              let ratio = 0;
-              if (scaleType === "linear") {
-                ratio = lvl / maxAxisVal;
-              } else {
-                const logVal = Math.log10(lvl + 1);
-                const logMax = Math.log10(maxAxisVal + 1);
-                ratio = logVal / logMax;
-              }
-              const yPx = 25 + (1 - ratio) * 195;
-              return (
-                <span
-                  key={lvl}
-                  className="absolute left-1.5 -translate-y-1/2 font-mono"
-                  style={{ top: `${yPx}px` }}
-                >
-                  {formatYLabel(lvl)}
-                </span>
-              );
-            })}
-          </div>
-
-          {/* Horizontally Scrollable Graph Canvas */}
-          <div className="flex-1 overflow-x-auto overflow-y-hidden no-scrollbar touch-pan-x pl-2">
-            <div className="min-w-[750px] sm:min-w-[950px] lg:w-full h-full relative flex flex-col">
-              <svg viewBox={`0 0 ${totalWidth} 260`} className="w-full h-[260px] overflow-visible" preserveAspectRatio="none">
-                <defs>
-                  {bars.map(bar => (
-                    <linearGradient key={`grad-${bar.key}`} id={`grad-${bar.key}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={bar.color} stopOpacity={0.4} />
-                      <stop offset="100%" stopColor={bar.color} stopOpacity={0.05} />
-                    </linearGradient>
-                  ))}
-                </defs>
-
-                {/* Grid lines */}
-                {gridLevels.map(lvl => {
-                  const y = getCoords(lvl);
-                  return (
-                    <line
-                      key={lvl}
-                      x1="0"
-                      y1={y}
-                      x2={totalWidth}
-                      y2={y}
-                      stroke="rgba(255,255,255,0.06)"
-                      strokeWidth="1"
-                    />
-                  );
-                })}
-
-                {/* Draw Bars */}
-                {bars.map((bar, i) => {
-                  const yCoords = getCoords(bar.val);
-                  const barHeight = Math.max(2, 220 - yCoords);
-                  const x = paddingLeft + spacing + i * (barWidth + spacing);
-                  const isHovered = hoveredKey === bar.key;
-                  const isDimmed = hoveredKey !== null && !isHovered;
-
-                  return (
-                    <g key={bar.key}>
-                      <rect
-                        x={x}
-                        y={yCoords}
-                        width={barWidth}
-                        height={barHeight}
-                        fill={`url(#grad-${bar.key})`}
-                        stroke={bar.color}
-                        strokeWidth={isHovered ? "2" : "1.2"}
-                        strokeOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.75"}
-                        fillOpacity={isHovered ? "1" : isDimmed ? "0.15" : "0.85"}
-                        rx="6"
-                        className="transition-all duration-200 cursor-pointer"
-                        onMouseEnter={(e) => {
-                          setHoveredKey(bar.key);
-                          handleMouseEnterNode(e, bar.key, dayData.label, bar.val, bar.details);
-                        }}
-                        onMouseLeave={() => {
-                          setHoveredKey(null);
-                          setHoveredNode(null);
-                        }}
-                      />
-                      
-                      {/* Subtle top cap for glow */}
-                      {bar.val > 0 && (
-                        <line
-                          x1={x}
-                          y1={yCoords}
-                          x2={x + barWidth}
-                          y2={yCoords}
-                          stroke={bar.color}
-                          strokeWidth={isHovered ? "3" : "1.8"}
-                          strokeOpacity={isHovered ? "1" : isDimmed ? "0.2" : "0.9"}
-                          className="transition-all duration-200"
-                        />
-                      )}
-                    </g>
-                  );
-                })}
-              </svg>
-
-              {/* X-axis Labels */}
-              <div className="relative w-full h-9 border-t border-white/10 pt-2 text-[11px] text-white/80 font-mono font-bold select-none z-10">
-                {bars.map((bar, i) => {
-                  const x = paddingLeft + spacing + i * (barWidth + spacing);
-                  const labelXCenter = x + barWidth / 2;
-                  const pct = (labelXCenter / totalWidth) * 100;
-                  return (
-                    <span
-                      key={bar.key}
-                      className="absolute -translate-x-1/2 text-center truncate text-[11px] text-white/90 font-bold"
-                      style={{ left: `${pct}%` }}
-                    >
-                      {bar.label === "Platform Aggregate" ? "Platform Avg" : bar.label}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {hoveredNode && (
-        <div
-          className="absolute z-50 bg-neutral-950 border border-white/10 rounded-lg p-2.5 shadow-2xl text-xs pointer-events-none -translate-x-1/2 -translate-y-full mb-3 transition-all duration-150 animate-in fade-in zoom-in-95 duration-100"
-          style={{ left: hoveredNode.x, top: hoveredNode.y }}
-        >
-          <div className="font-semibold text-white">{hoveredNode.date}</div>
-          <div className="text-[10px] text-muted-foreground mt-0.5 capitalize flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full" style={{
-              backgroundColor: hoveredNode.bk === "aggregate" ? "#c084fc" : getBrandColor(hoveredNode.bk, brandKeys.indexOf(hoveredNode.bk))
-            }} />
-            <span>{hoveredNode.bk === "aggregate" ? "Platform Aggregate" : hoveredNode.bk}</span>
-          </div>
-          <div className="text-[11px] font-bold text-primary mt-1.5 border-t border-white/5 pt-1 flex flex-col gap-0.5">
-            {metricType === "successRate" ? (
-              <>
-                <div>Success Rate: {hoveredNode.val}%</div>
-                <div className="text-[10px] text-white/50 font-normal">
-                  Volume: {hoveredNode.paid} paid / {hoveredNode.total} total
-                </div>
-              </>
-            ) : (
-              <>
-                <div>Volume Earned: ${hoveredNode.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div className="text-[10px] text-white/50 font-normal">
-                  Details: {hoveredNode.paid} paid transactions
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 interface CustomDonutChartProps {
   data: { label: string; value: number }[];
 }
@@ -8325,7 +2970,7 @@ function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
   const colorMap: Record<string, string> = {
     "Successful": "#10b981",
     "Failed": "#ef4444",
-    "Pending/Init": "#f59e0b"
+    "Other / unresolved": "#f59e0b"
   };
 
   let cumPercent = 0;
@@ -8343,8 +2988,8 @@ function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
   return (
     <div className="flex flex-col items-center justify-between h-full w-full py-1">
       {/* Large Centered Donut Circle */}
-      <div className="relative w-[88%] aspect-square flex-shrink-0 mt-2">
-        <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+      <div className="analytics-status-donut relative aspect-square flex-shrink-0 mt-2">
+        <svg aria-hidden="true" viewBox="0 0 36 36" className="w-full h-full -rotate-90">
           {segments.map((seg, i) => {
             if (seg.value === 0) return null;
             // Subtract gap size to create clean, non-overlapping gaps
@@ -8362,23 +3007,23 @@ function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
                 strokeWidth="3.6"
                 strokeDasharray={`${drawPct} ${100 - drawPct}`}
                 strokeDashoffset={`${-drawOffset}`}
-                className="transition-all duration-300 hover:stroke-[4.4] cursor-pointer"
+                className="transition-all duration-300"
               />
             );
           })}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center select-none pointer-events-none">
-          <span className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider">Total</span>
+          <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Total</span>
           <span className="text-4xl font-extrabold text-white tracking-tight leading-none my-1">{total}</span>
-          <span className="text-[11px] text-muted-foreground">sessions</span>
+          <span className="text-xs text-muted-foreground">receipts</span>
         </div>
       </div>
 
       {/* Slim HUD Legend along the bottom edge */}
-      <div className="flex items-center justify-around w-full border-t border-white/5 pt-3 mt-3 flex-shrink-0">
+      <div className="analytics-donut-legend flex items-center justify-around w-full border-t border-white/5 pt-3 mt-3 flex-shrink-0">
         {segments.map((seg, i) => (
-          <div key={i} className="flex items-center gap-1 text-[10px] text-white/70">
-            <div className="h-1.5 w-1.5 rounded-full flex-shrink-0 animate-pulse" style={{ backgroundColor: seg.color }} />
+          <div key={i} className="flex items-center gap-1 text-xs text-white/70">
+            <div className="h-1.5 w-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: seg.color }} />
             <span>
               {seg.label}: <strong className="text-white font-mono">{seg.value}</strong>{" "}
               <span className="text-white/40">({seg.pct.toFixed(0)}%)</span>
@@ -8393,781 +3038,3 @@ function CustomLargeDonutChart({ data }: CustomDonutChartProps) {
 // ────────────────────────────────────────────────────────────────────────────
 // PLATFORM GNOSIS SAFE VALUE OVER TIME CHART
 // ────────────────────────────────────────────────────────────────────────────
-
-interface SafeInteractiveLineChartProps {
-  data: any[];
-  tokenPrices: Record<string, number>;
-}
-
-function SafeInteractiveLineChart({ data, tokenPrices }: SafeInteractiveLineChartProps) {
-  const [hoveredToken, setHoveredToken] = useState<string | null>(null);
-  const [selectedToken, setSelectedToken] = useState<string | null>(null);
-
-  const cleanData = useMemo(() => {
-    if (!data || data.length === 0) return [];
-    // Always ignore the current day's incomplete data (omit today's flat data point)
-    const todayStr = new Date().toISOString().split("T")[0];
-    const filtered = data.filter(d => d.date !== todayStr);
-
-    // Find active growth takeoff point to trim static flat leading balances (eliminating tape worm flatline)
-    let growthStartIdx = 0;
-    const n = filtered.length;
-    for (let i = 0; i < n - 1; i++) {
-      const curr = filtered[i].totalUsd || 0;
-      const next = filtered[i + 1].totalUsd || 0;
-      // Detect growth step: balance increases significantly (> $5.00 step) or crosses $25
-      if (next - curr > 5.0 || (curr < 25 && next >= 25)) {
-        growthStartIdx = Math.max(0, i - 2);
-        break;
-      }
-    }
-
-    if (growthStartIdx > 0) {
-      return filtered.slice(growthStartIdx);
-    }
-
-    return filtered;
-  }, [data]);
-
-  const N = cleanData.length;
-  const totalWidth = 1000;
-  const totalHeight = 260;
-
-  const [activeTrend, setActiveTrend] = useState<"none" | "standard" | "conservative" | "aggressive" | "all">("none");
-
-  // Tooltip state
-  const [hoveredNode, setHoveredNode] = useState<{
-    x: number;
-    y: number;
-    date: string;
-    token: string;
-    amount: number;
-    valUsd: number;
-    isForecast?: boolean;
-  } | null>(null);
-
-  if (cleanData.length === 0) {
-    return (
-      <div className="h-full w-full flex items-center justify-center text-xs text-muted-foreground select-none">
-        No safe balance data found.
-      </div>
-    );
-  }
-
-  // 1. Exponential Trend Calculations & Forecast
-  const predictions = useMemo(() => {
-    if (cleanData.length < 2) return null;
-
-    const n = cleanData.length;
-    const currentVal = cleanData[n - 1].totalUsd || 0.1;
-    
-    // Find active progression start day (when Gnosis Safe balance exceeds $1.00)
-    let firstActiveIdx = -1;
-    for (let i = 0; i < n; i++) {
-      if ((cleanData[i].totalUsd || 0) > 1.0) {
-        firstActiveIdx = i;
-        break;
-      }
-    }
-
-    let cdgr = 0.05;
-    if (firstActiveIdx !== -1 && firstActiveIdx < n - 1) {
-      const activeDays = (n - 1) - firstActiveIdx;
-      const startValActive = cleanData[firstActiveIdx].totalUsd || 1.0;
-      cdgr = Math.log(currentVal / startValActive) / activeDays;
-    }
-
-    // Clamp standard growth rate to match the steep rocket trajectory (min 8.0% daily, max 14.0% daily)
-    const bStd = Math.min(Math.max(cdgr, 0.08), 0.14);
-
-    // Three trajectories anchored to meet at the current apex:
-    const bCons = bStd * 0.7; // Conservative is 70% of standard
-    const bAggr = bStd * 1.3; // Aggressive is 130% of standard
-
-    // Calculate start values for each curve to ensure they all converge exactly at currentVal on day n-1
-    const curveStartVal = currentVal / Math.exp(bStd * (n - 1));
-    const curveStartValCons = currentVal / Math.exp(bCons * (n - 1));
-    const curveStartValAggr = currentVal / Math.exp(bAggr * (n - 1));
-
-    // Fit Confidence (R-squared) calculation
-    let rSquared = 0.88;
-    let sumX = 0;
-    let sumY = 0;
-    let sumXY = 0;
-    let sumXX = 0;
-    for (let i = 0; i < n; i++) {
-      const x = i;
-      const y = Math.max(0.1, cleanData[i].totalUsd || 0.1);
-      const lnY = Math.log(y);
-      sumX += x;
-      sumY += lnY;
-      sumXY += x * lnY;
-      sumXX += x * x;
-    }
-    const meanX = sumX / n;
-    const meanY = sumY / n;
-    let num = 0;
-    let den = 0;
-    for (let i = 0; i < n; i++) {
-      const x = i;
-      const y = Math.max(0.1, cleanData[i].totalUsd || 0.1);
-      const lnY = Math.log(y);
-      num += (x - meanX) * (lnY - meanY);
-      den += (x - meanX) * (x - meanX);
-    }
-    const slope = den === 0 ? 0 : num / den;
-    const intercept = meanY - slope * meanX;
-    let ssTot = 0;
-    let ssRes = 0;
-    for (let i = 0; i < n; i++) {
-      const x = i;
-      const y = Math.max(0.1, cleanData[i].totalUsd || 0.1);
-      const lnY = Math.log(y);
-      const predLnY = intercept + slope * x;
-      ssTot += (lnY - meanY) * (lnY - meanY);
-      ssRes += (lnY - predLnY) * (lnY - predLnY);
-    }
-    rSquared = ssTot === 0 ? 0.95 : Math.max(0.4, 1 - ssRes / ssTot);
-
-    const dailyGrowthRate = (Math.exp(bStd) - 1) * 100;
-
-    // Generate 30-day forecast (approx 1 month, steep pure exponential growth)
-    const forecastDays = 30;
-    const forecastPoints: any[] = [];
-    const lastDate = new Date(cleanData[n - 1].date);
-
-    for (let i = 1; i <= forecastDays; i++) {
-      const x = n - 1 + i;
-      const fDate = new Date(lastDate);
-      fDate.setDate(fDate.getDate() + i);
-      const dateStr = fDate.toISOString().split("T")[0];
-
-      // Projections calculated forward from currentVal with pure exponential growth
-      const standardVal = currentVal * Math.exp(bStd * i);
-      const conservativeVal = currentVal * Math.exp(bCons * i);
-      const aggressiveVal = currentVal * Math.exp(bAggr * i);
-
-      // Flag final date
-      const isFinal = i === forecastDays;
-
-      forecastPoints.push({
-        date: dateStr,
-        standard: Math.max(0.1, standardVal),
-        conservative: Math.max(0.1, conservativeVal),
-        aggressive: Math.max(0.1, aggressiveVal),
-        xIndex: x,
-        isQuarterNode: isFinal,
-        label: "30D Target",
-      });
-    }
-
-    return {
-      rSquared,
-      dailyGrowthRate,
-      forecastPoints,
-      bStd,
-      bCons,
-      bAggr,
-      curveStartVal,
-      curveStartValCons,
-      curveStartValAggr,
-    };
-  }, [cleanData]);
-
-  const showForecast = activeTrend !== "none" && predictions;
-  const displayLength = showForecast && predictions ? N + predictions.forecastPoints.length : N;
-
-  const displayDates = useMemo(() => {
-    const dates = cleanData.map(d => d.date);
-    if (showForecast && predictions) {
-      predictions.forecastPoints.forEach(p => {
-        dates.push(p.date);
-      });
-    }
-    return dates;
-  }, [cleanData, showForecast, predictions]);
-
-  // Find max value in series for dynamic Y axis (CONSTANT: chart scale & view never changes when selecting tokens!)
-  const maxValInSeries = useMemo(() => {
-    if (cleanData.length === 0) return 100;
-    let max = Math.max(...cleanData.map(d => d.totalUsd || 10), 10);
-    if (showForecast && predictions) {
-      const predMaxes = predictions.forecastPoints.map(p => {
-        if (activeTrend === "standard") return p.standard;
-        if (activeTrend === "conservative") return p.conservative;
-        if (activeTrend === "aggressive") return p.aggressive;
-        return Math.max(p.standard, p.conservative, p.aggressive);
-      });
-      max = Math.max(max, ...predMaxes);
-    }
-    return max;
-  }, [cleanData, activeTrend, showForecast, predictions]);
-
-  // Round maxVal to a clean upper bound
-  const maxAxisVal = useMemo(() => {
-    const val = maxValInSeries;
-    if (val <= 1) return 1;
-    if (val <= 5) return 5;
-    if (val <= 10) return 10;
-    const order = Math.pow(10, Math.floor(Math.log10(val)));
-    const normalized = val / order;
-    let rounded = 10;
-    if (normalized <= 1.2) rounded = 1.2;
-    else if (normalized <= 1.5) rounded = 1.5;
-    else if (normalized <= 2) rounded = 2;
-    else if (normalized <= 2.5) rounded = 2.5;
-    else if (normalized <= 3) rounded = 3;
-    else if (normalized <= 4) rounded = 4;
-    else if (normalized <= 5) rounded = 5;
-    else if (normalized <= 7.5) rounded = 7.5;
-    return rounded * order;
-  }, [maxValInSeries]);
-
-  const gridLevels = useMemo(() => {
-    return [0, 0.25, 0.5, 0.75, 1].map(pct => maxAxisVal * pct);
-  }, [maxAxisVal]);
-
-  const getCoords = (val: number, idx: number) => {
-    const x = displayLength > 1 ? 50 + (idx / (displayLength - 1)) * 920 : 500;
-    const y = 252 - (val / maxAxisVal) * 244;
-    return { x, y };
-  };
-
-  const getBezierPath = (points: { x: number; y: number }[]) => {
-    if (points.length === 0) return "";
-    if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-    if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
-
-    let path = `M ${points[0].x} ${points[0].y}`;
-    for (let i = 0; i < points.length - 1; i++) {
-      const p0 = points[i];
-      const p1 = points[i + 1];
-      const cp1x = p0.x + (p1.x - p0.x) / 3;
-      const cp1y = p0.y;
-      const cp2x = p1.x - (p1.x - p0.x) / 3;
-      const cp2y = p1.y;
-      path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p1.x} ${p1.y}`;
-    }
-    return path;
-  };
-
-  const getLinearPath = (points: { x: number; y: number }[]) => {
-    if (points.length === 0) return "";
-    let path = `M ${points[0].x} ${points[0].y}`;
-    for (let i = 1; i < points.length; i++) {
-      path += ` L ${points[i].x} ${points[i].y}`;
-    }
-    return path;
-  };
-
-  const tokenColors: Record<string, string> = {
-    totalUsd: "#ffffff",
-    USDC: "#2775ca",
-    USDT: "#26a17b",
-    cbBTC: "#f7931a",
-    cbXRP: "#4e5a64",
-    SOL: "#9945ff",
-    ETH: "#627eea",
-  };
-
-  const tokensList = ["totalUsd", "USDC", "USDT", "cbBTC", "cbXRP", "SOL", "ETH"];
-  const isTrendVisible = showForecast && (hoveredToken === null || hoveredToken === "totalUsd");
-
-  // Compile points for standard, conservative, aggressive forecasts spanning history + forecast
-  const forecastPaths = useMemo(() => {
-    if (!predictions || !isTrendVisible) return null;
-
-    const standardPoints: any[] = [];
-    const conservativePoints: any[] = [];
-    const aggressivePoints: any[] = [];
-
-    const { bStd, bCons, bAggr, curveStartVal, curveStartValCons, curveStartValAggr } = predictions;
-
-    // 1. Generate historical fitted points from day 0 to N-1
-    for (let idx = 0; idx < N; idx++) {
-      const standardVal = curveStartVal * Math.exp(bStd * idx);
-      const conservativeVal = curveStartValCons * Math.exp(bCons * idx);
-      const aggressiveVal = curveStartValAggr * Math.exp(bAggr * idx);
-
-      standardPoints.push(getCoords(standardVal, idx));
-      conservativePoints.push(getCoords(conservativeVal, idx));
-      aggressivePoints.push(getCoords(aggressiveVal, idx));
-    }
-
-    // 2. Generate forecast points from day N onwards
-    predictions.forecastPoints.forEach(p => {
-      standardPoints.push(getCoords(p.standard, p.xIndex));
-      conservativePoints.push(getCoords(p.conservative, p.xIndex));
-      aggressivePoints.push(getCoords(p.aggressive, p.xIndex));
-    });
-
-    return {
-      standardPoints,
-      conservativePoints,
-      aggressivePoints,
-    };
-  }, [predictions, isTrendVisible, data, N, maxAxisVal, displayLength]);
-
-  // Confidence area coordinates for SVG polygon
-  const confidenceAreaPoints = useMemo(() => {
-    if (!forecastPaths) return "";
-    const { conservativePoints, aggressivePoints } = forecastPaths;
-    const pointsList = [...aggressivePoints];
-    // Reverse conservative points to create a continuous closed loop polygon path
-    for (let i = conservativePoints.length - 1; i >= 0; i--) {
-      pointsList.push(conservativePoints[i]);
-    }
-    return pointsList.map(p => `${p.x},${p.y}`).join(" ");
-  }, [forecastPaths]);
-
-  return (
-    <div className="flex-1 flex flex-col relative w-full h-full justify-between pr-2">
-      {/* AI Predictive Analytics HUD */}
-      {activeTrend !== "none" && predictions && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-3 bg-purple-950/20 border border-purple-500/10 rounded-xl mb-4 text-[10px] text-white/80 animate-in fade-in slide-in-from-top-1 duration-300 font-mono shadow-[inset_0_0_12px_rgba(168,85,247,0.05)]">
-          <div>
-            <div className="text-white/40 uppercase tracking-widest text-[8px] font-bold">Trend Fit Confidence</div>
-            <div className="text-xs font-bold text-purple-300 mt-1 flex items-center gap-1.5">
-              <span>{(predictions.rSquared * 100).toFixed(1)}% (R²)</span>
-              <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-pulse" />
-            </div>
-            <div className="text-white/45 text-[8px] mt-0.5">Model: Log-Linearized Regression</div>
-          </div>
-          <div>
-            <div className="text-white/40 uppercase tracking-widest text-[8px] font-bold">Compound Daily Growth</div>
-            <div className={`text-xs font-bold mt-1 ${predictions.dailyGrowthRate >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
-              {predictions.dailyGrowthRate >= 0 ? "+" : ""}{predictions.dailyGrowthRate.toFixed(2)}%
-            </div>
-            <div className="text-white/45 text-[8px] mt-0.5">Calculated over token history</div>
-          </div>
-          <div>
-            <div className="text-white/40 uppercase tracking-widest text-[8px] font-bold">30D Target Projections</div>
-            <div className="text-[10px] font-bold text-white mt-0.5">
-              <div>Base: ${Math.round(predictions.forecastPoints[predictions.forecastPoints.length - 1].standard).toLocaleString()}</div>
-              <div className="text-[8px] text-white/50">
-                Range: ${Math.round(predictions.forecastPoints[predictions.forecastPoints.length - 1].conservative).toLocaleString()} - ${Math.round(predictions.forecastPoints[predictions.forecastPoints.length - 1].aggressive).toLocaleString()}
-              </div>
-            </div>
-          </div>
-          <div>
-            <div className="text-white/40 uppercase tracking-widest text-[8px] font-bold">System Sentiment</div>
-            <div className="mt-1">
-              {predictions.dailyGrowthRate > 0.05 ? (
-                <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[8px] font-bold animate-pulse inline-block">
-                  PULSING ACCELERATION (BULLISH)
-                </span>
-              ) : predictions.dailyGrowthRate < -0.05 ? (
-                <span className="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 text-[8px] font-bold inline-block">
-                  CORRECTION ACTIVE (BEARISH)
-                </span>
-              ) : (
-                <span className="px-1.5 py-0.5 rounded bg-white/5 text-white/60 border border-white/10 text-[8px] font-bold inline-block">
-                  STABLE DRIFT (NEUTRAL)
-                </span>
-              )}
-            </div>
-            <div className="text-white/45 text-[8px] mt-0.5">Automatic hourly recalculation</div>
-          </div>
-        </div>
-      )}
-
-      {/* Legend and Trend Selectors */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2 shrink-0">
-        <div className="flex items-center gap-4 flex-wrap">
-          {/* Big Badass Current Balance Display */}
-          <div className="flex flex-col pr-4 border-r border-white/10">
-            <span className="text-[8px] uppercase tracking-wider text-white/40 font-bold font-mono">Current Balance</span>
-            <span className="text-lg font-extrabold text-white tracking-tight mt-0.5">
-              ${(cleanData[N - 1]?.totalUsd || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {tokensList.map(t => {
-              const isSelected = selectedToken === t || hoveredToken === t;
-              const isAnySelected = selectedToken !== null || hoveredToken !== null;
-              return (
-                <button
-                  key={t}
-                  onClick={() => setSelectedToken(prev => prev === t ? null : t)}
-                  onMouseEnter={() => setHoveredToken(t)}
-                  onMouseLeave={() => setHoveredToken(null)}
-                  className={`flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full border transition-all ${
-                    isSelected
-                      ? "bg-white/10 text-white border-white/30 shadow-sm"
-                      : isAnySelected
-                      ? "text-muted-foreground border-transparent opacity-40 hover:opacity-75"
-                      : "text-white/70 border-transparent hover:bg-white/5"
-                  }`}
-                >
-                  <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: tokenColors[t] }} />
-                  <span className="truncate">{t === "totalUsd" ? "Total Portfolio ($)" : t}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Predictive Settings HUD Tabs (Mobile Scrollable & Wrapped) */}
-        <div className="flex items-center gap-1 bg-white/5 border border-white/5 p-0.5 rounded-lg select-none overflow-x-auto max-w-full no-scrollbar shrink-0">
-          <span className="text-[9px] uppercase tracking-wider text-white/40 px-2 font-bold font-mono shrink-0">Predictive HUD</span>
-          {[
-            { label: "OFF", value: "none" },
-            { label: "Standard", value: "standard" },
-            { label: "Conservative", value: "conservative" },
-            { label: "Aggressive", value: "aggressive" },
-            { label: "Tri-Variant", value: "all" },
-          ].map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => setActiveTrend(opt.value as any)}
-              className={`px-2 h-5 text-[9px] font-bold rounded transition-all uppercase font-mono shrink-0 whitespace-nowrap ${
-                activeTrend === opt.value
-                  ? "bg-purple-500/20 text-purple-300 border border-purple-500/30 shadow-[0_0_8px_rgba(168,85,247,0.4)]"
-                  : "text-muted-foreground hover:text-white border border-transparent"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* SVG Canvas */}
-      <div className="relative flex-1 min-h-0 w-full select-none" onMouseLeave={() => setHoveredNode(null)}>
-        {/* Left Y-axis Grid Labels */}
-        <div className="absolute left-2 top-0 h-[252px] flex flex-col justify-between text-[9px] text-white/30 font-mono font-medium pointer-events-none select-none z-10 pt-1.5">
-          {gridLevels.slice().reverse().map((lvl, idx) => (
-            <span key={idx}>
-              ${lvl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-            </span>
-          ))}
-        </div>
-
-        {/* SVG Drawing */}
-        <div className="w-full h-[320px] relative overflow-hidden">
-          <svg viewBox={`0 0 ${totalWidth} ${totalHeight}`} className="w-full h-full overflow-hidden" preserveAspectRatio="none">
-            {/* Horizontal Grid lines */}
-            {gridLevels.map((lvl, idx) => {
-              const { y } = getCoords(lvl, 0);
-              return (
-                <line
-                  key={idx}
-                  x1="50"
-                  y1={y}
-                  x2="970"
-                  y2={y}
-                  stroke="rgba(255,255,255,0.04)"
-                  strokeWidth="1"
-                  strokeDasharray="4 4"
-                />
-              );
-            })}
-
-            {/* Confidence Corridor Polygon */}
-            {isTrendVisible && activeTrend === "all" && confidenceAreaPoints && (
-              <polygon
-                points={confidenceAreaPoints}
-                fill="rgba(168, 85, 247, 0.05)"
-                stroke="none"
-                className="transition-all duration-300 pointer-events-none"
-              />
-            )}
-
-            {/* Historical Paths */}
-            {tokensList.map(t => {
-              const isHighlighted = selectedToken === t || hoveredToken === t;
-              const isAnyActive = selectedToken !== null || hoveredToken !== null;
-              const isTotal = t === "totalUsd";
-
-              // Build points array
-              const points = cleanData.map((d, idx) => {
-                let val = 0;
-                if (isTotal) {
-                  val = d.totalUsd || 0;
-                } else {
-                  const amount = d[t] || 0;
-                  const price = tokenPrices[t] || 1;
-                  val = amount * price;
-                }
-                return getCoords(val, idx);
-              });
-
-              const pathString = getBezierPath(points);
-              const color = tokenColors[t];
-
-              return (
-                <g key={t}>
-                  {/* Invisible broad click/hover hit-target path for easy activation */}
-                  <path
-                    d={pathString}
-                    fill="none"
-                    stroke="transparent"
-                    strokeWidth="14"
-                    className="cursor-pointer"
-                    onClick={() => setSelectedToken(prev => prev === t ? null : t)}
-                    onMouseEnter={() => setHoveredToken(t)}
-                    onMouseLeave={() => setHoveredToken(null)}
-                  />
-
-                  {/* Visual Line */}
-                  <path
-                    d={pathString}
-                    fill="none"
-                    stroke={color}
-                    strokeWidth={isHighlighted ? (isTotal ? 4 : 3) : isTotal ? 2 : 1.2}
-                    className="transition-all duration-200 pointer-events-none"
-                    style={{
-                      opacity: isHighlighted ? 1 : isAnyActive ? 0.12 : isTotal ? 0.85 : 0.45,
-                      filter: isHighlighted ? `drop-shadow(0 0 6px ${color})` : "none",
-                    }}
-                  />
-
-                  {/* Render interactive nodes */}
-                  {cleanData.map((d, idx) => {
-                    let val = 0;
-                    if (isTotal) {
-                      val = d.totalUsd || 0;
-                    } else {
-                      const amount = d[t] || 0;
-                      const price = tokenPrices[t] || 1;
-                      val = amount * price;
-                    }
-                    const { x, y } = getCoords(val, idx);
-                    const isNodeActive = isHighlighted && hoveredNode?.x === x && !hoveredNode?.isForecast;
-
-                    return (
-                      <circle
-                        key={idx}
-                        cx={x}
-                        cy={y}
-                        r={isNodeActive ? 1.8 : isHighlighted ? 1.2 : 0.8}
-                        fill={color}
-                        stroke="#000"
-                        strokeWidth={isNodeActive ? 0.8 : 0.4}
-                        style={{
-                          opacity: isHighlighted ? 1 : isAnyActive ? 0.05 : isTotal ? 0.7 : 0.3,
-                        }}
-                        onClick={() => setSelectedToken(prev => prev === t ? null : t)}
-                        onMouseEnter={(e) => {
-                          const containerRect = e.currentTarget.ownerSVGElement?.parentElement?.getBoundingClientRect();
-                          if (!containerRect) return;
-                          const nodeRect = e.currentTarget.getBoundingClientRect();
-                          setHoveredNode({
-                            x: nodeRect.left - containerRect.left,
-                            y: nodeRect.top - containerRect.top - 8,
-                            date: d.date,
-                            token: t === "totalUsd" ? "Total Value" : t,
-                            amount: isTotal ? 0 : d[t] || 0,
-                            valUsd: val,
-                            isForecast: false,
-                          });
-                          setHoveredToken(t);
-                        }}
-                        className="transition-all duration-200 cursor-pointer"
-                      />
-                    );
-                  })}
-                </g>
-              );
-            })}
-
-            {/* Predictive Forecast Paths */}
-            {isTrendVisible && forecastPaths && (
-              <>
-                {/* 1. Standard Trend Line */}
-                {(activeTrend === "standard" || activeTrend === "all") && (
-                  <g>
-                    <path
-                      d={getLinearPath(forecastPaths.standardPoints)}
-                      fill="none"
-                      stroke="#c084fc"
-                      strokeWidth="2"
-                      strokeDasharray="4 4"
-                      className="opacity-90 transition-all duration-300"
-                      style={{ filter: "drop-shadow(0 0 3px rgba(192,132,252,0.4))" }}
-                    />
-                    {predictions.forecastPoints.map((p, idx) => {
-                      if (!p.isQuarterNode) return null;
-                      const coords = getCoords(p.standard, p.xIndex);
-                      const isNodeActive = hoveredNode?.isForecast && hoveredNode?.x === coords.x && hoveredNode?.token === `${p.label} (Standard)`;
-                      return (
-                        <circle
-                          key={`f-std-${idx}`}
-                          cx={coords.x}
-                          cy={coords.y}
-                          r={isNodeActive ? 5 : 3.5}
-                          fill="#c084fc"
-                          stroke="#000"
-                          strokeWidth={isNodeActive ? 1.5 : 0.5}
-                          className="cursor-pointer transition-all duration-200"
-                          onMouseEnter={(e) => {
-                            const containerRect = e.currentTarget.ownerSVGElement?.parentElement?.getBoundingClientRect();
-                            if (!containerRect) return;
-                            const nodeRect = e.currentTarget.getBoundingClientRect();
-                            setHoveredNode({
-                              x: nodeRect.left - containerRect.left,
-                              y: nodeRect.top - containerRect.top - 8,
-                              date: p.date,
-                              token: `${p.label} (Standard)`,
-                              amount: 0,
-                              valUsd: p.standard,
-                              isForecast: true,
-                            });
-                          }}
-                        />
-                      );
-                    })}
-                  </g>
-                )}
-
-                {/* 2. Conservative Trend Line */}
-                {(activeTrend === "conservative" || activeTrend === "all") && (
-                  <g>
-                    <path
-                      d={getLinearPath(forecastPaths.conservativePoints)}
-                      fill="none"
-                      stroke="#fbbf24"
-                      strokeWidth="1.5"
-                      strokeDasharray="3 3"
-                      className="opacity-75 transition-all duration-300"
-                    />
-                    {predictions.forecastPoints.map((p, idx) => {
-                      if (!p.isQuarterNode) return null;
-                      const coords = getCoords(p.conservative, p.xIndex);
-                      const isNodeActive = hoveredNode?.isForecast && hoveredNode?.x === coords.x && hoveredNode?.token === `${p.label} (Conservative)`;
-                      return (
-                        <circle
-                          key={`f-cons-${idx}`}
-                          cx={coords.x}
-                          cy={coords.y}
-                          r={isNodeActive ? 4.5 : 3}
-                          fill="#fbbf24"
-                          stroke="#000"
-                          strokeWidth={isNodeActive ? 1.5 : 0.5}
-                          className="cursor-pointer transition-all duration-200"
-                          onMouseEnter={(e) => {
-                            const containerRect = e.currentTarget.ownerSVGElement?.parentElement?.getBoundingClientRect();
-                            if (!containerRect) return;
-                            const nodeRect = e.currentTarget.getBoundingClientRect();
-                            setHoveredNode({
-                              x: nodeRect.left - containerRect.left,
-                              y: nodeRect.top - containerRect.top - 8,
-                              date: p.date,
-                              token: `${p.label} (Conservative)`,
-                              amount: 0,
-                              valUsd: p.conservative,
-                              isForecast: true,
-                            });
-                          }}
-                        />
-                      );
-                    })}
-                  </g>
-                )}
-
-                {/* 3. Aggressive Trend Line */}
-                {(activeTrend === "aggressive" || activeTrend === "all") && (
-                  <g>
-                    <path
-                      d={getLinearPath(forecastPaths.aggressivePoints)}
-                      fill="none"
-                      stroke="#34d399"
-                      strokeWidth="1.5"
-                      strokeDasharray="3 3"
-                      className="opacity-75 transition-all duration-300"
-                    />
-                    {predictions.forecastPoints.map((p, idx) => {
-                      if (!p.isQuarterNode) return null;
-                      const coords = getCoords(p.aggressive, p.xIndex);
-                      const isNodeActive = hoveredNode?.isForecast && hoveredNode?.x === coords.x && hoveredNode?.token === `${p.label} (Aggressive)`;
-                      return (
-                        <circle
-                          key={`f-aggr-${idx}`}
-                          cx={coords.x}
-                          cy={coords.y}
-                          r={isNodeActive ? 4.5 : 3}
-                          fill="#34d399"
-                          stroke="#000"
-                          strokeWidth={isNodeActive ? 1.5 : 0.5}
-                          className="cursor-pointer transition-all duration-200"
-                          onMouseEnter={(e) => {
-                            const containerRect = e.currentTarget.ownerSVGElement?.parentElement?.getBoundingClientRect();
-                            if (!containerRect) return;
-                            const nodeRect = e.currentTarget.getBoundingClientRect();
-                            setHoveredNode({
-                              x: nodeRect.left - containerRect.left,
-                              y: nodeRect.top - containerRect.top - 8,
-                              date: p.date,
-                              token: `${p.label} (Aggressive)`,
-                              amount: 0,
-                              valUsd: p.aggressive,
-                              isForecast: true,
-                            });
-                          }}
-                        />
-                      );
-                    })}
-                  </g>
-                )}
-              </>
-            )}
-          </svg>
-
-          {/* Hover Node Tooltip (Rendered inside the relative parent container of the SVG) */}
-          {hoveredNode && (
-            <div
-              className="absolute z-50 bg-neutral-950 border border-white/10 rounded-lg p-2.5 shadow-2xl text-xs pointer-events-none -translate-x-1/2 -translate-y-full mb-3 transition-all duration-150 animate-in fade-in zoom-in-95 duration-100"
-              style={{ left: hoveredNode.x, top: hoveredNode.y }}
-            >
-              <div className="font-semibold text-white">
-                {hoveredNode.date}
-                {hoveredNode.isForecast && (
-                  <span className="text-[9px] bg-purple-500/10 text-purple-300 border border-purple-500/20 px-1 py-0.5 rounded ml-2 font-mono uppercase">
-                    Forecasted
-                  </span>
-                )}
-              </div>
-              <div className="text-[10px] text-muted-foreground mt-0.5 capitalize flex items-center gap-1.5">
-                <div className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: hoveredNode.isForecast ? (hoveredNode.token.includes("Standard") ? "#c084fc" : hoveredNode.token.includes("Conservative") ? "#fbbf24" : "#34d399") : tokenColors[hoveredNode.token === "Total Value" ? "totalUsd" : hoveredNode.token] || "#fff" }} />
-                <span>{hoveredNode.token}</span>
-              </div>
-              <div className="text-[11px] font-bold text-primary mt-1.5 border-t border-white/5 pt-1">
-                <div>Value: ${hoveredNode.valUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                {!hoveredNode.isForecast && hoveredNode.token !== "Total Value" && (
-                  <div className="text-[10px] text-white/50 font-normal">
-                    Balance: {hoveredNode.amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {hoveredNode.token}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Bottom Responsive X-axis Labels */}
-        <div className="w-full relative h-4 text-[9px] text-white/40 font-mono font-medium select-none z-10 mt-1">
-          {displayDates.map((date, i) => {
-            const labelInterval = Math.max(1, Math.ceil(displayDates.length / 5));
-            const shouldShowLabel = i === 0 || i === displayDates.length - 1 || i % labelInterval === 0;
-            if (!shouldShowLabel) return null;
-            
-            // Format short date (MM-DD) for mobile viewports
-            const shortDate = date.length >= 10 ? date.substring(5) : date;
-
-            // Calculate percentage position aligning with SVG plot coordinates
-            const pct = (i / (displayDates.length - 1)) * 100;
-            return (
-              <span 
-                key={i} 
-                className="absolute -translate-x-1/2 whitespace-nowrap"
-                style={{ left: `calc(5% + ${pct * 0.92}%)` }}
-              >
-                <span className="hidden sm:inline">{date}</span>
-                <span className="sm:hidden">{shortDate}</span>
-              </span>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-}

@@ -11,9 +11,27 @@ const {
   isStripeOnrampTerminalFailure,
   isStripePaymentAcceptedStatus,
   normalizeStripeOnrampCheckoutMode,
+  resolvePortalCheckoutMode,
   resolveStripeAcceptedReceiptStatus,
   shouldRestoreStripeAchPendingStatus,
 } = stripeStatusPolicy;
+
+test("portal ecommerce is the default and unrelated receipt parameters cannot disable it", () => {
+  for (const search of ["", "?e=1", "?receiptId=foo&funding=credit", "?email=frank%40example.com&fee=2",
+    "?status=failed", "?ref=friend", "?returnUrl=%2Fcheckout%3Ff%3D1", "?f=0", "?f=false", "?f=unknown"]) {
+    assert.equal(resolvePortalCheckoutMode(search), "ecommerce", search);
+  }
+  assert.equal(normalizeStripeOnrampCheckoutMode(undefined), "ecommerce");
+  for (const search of ["?f", "?f=1", "?f=true", "?receiptId=abc&f=1", "?=f", "?f=0&f=1"]) {
+    assert.equal(resolvePortalCheckoutMode(search), "full", search);
+  }
+});
+
+test("accepted provider status takes precedence over an old last_error", () => {
+  for (const status of ["fulfillment_processing", "fulfillment_complete", "onramp_completed"]) {
+    assert.equal(isStripeOnrampTerminalFailure({ status, transaction_details: { last_error: { code: "transaction_failed" } } }), false);
+  }
+});
 
 test("eCommerce payment is accepted at Stripe fulfillment processing/complete and the legacy complete alias", () => {
   assert.equal(isStripePaymentAcceptedStatus("awaiting_funds"), false);

@@ -22,6 +22,8 @@ export interface AnalyticsReceiptLike {
   createdAt?: unknown;
   status?: unknown;
   kycInitialVerifiedLevel?: unknown;
+  kycInitialLevel?: unknown;
+  kycFinalSnapshot?: Record<string, unknown> | null;
   kycCompletedLevel?: unknown;
   kycCompletedDuringTransaction?: unknown;
   kycVerifiedLevel?: unknown;
@@ -161,7 +163,7 @@ function hasConflictingStrongId(values: string[], existing: Set<string>): boolea
 }
 
 function scopeKey(receipt: AnalyticsReceiptLike): { brandKey: string; merchantKey: string; key: string } {
-  const brandKey = normalized(receipt.brandKey) || "basaltsurge";
+  const brandKey = normalized(receipt.brandKey) || "unknown";
   const merchantKey = normalized(receipt.wallet || receipt.merchantWallet || receipt.shopSlug) || "unknown";
   return { brandKey, merchantKey, key: `${brandKey}\u0000${merchantKey}` };
 }
@@ -215,7 +217,8 @@ export function deduplicateAnalyticsReceipts<T extends AnalyticsReceiptLike>(
   }
 
   const sorted = [...receiptList].sort((a, b) => validTimestamp(a.createdAt) - validTimestamp(b.createdAt));
-  const clusters: Array<AnalyticsReceiptCluster<T>> = [];
+  let clusters: Array<AnalyticsReceiptCluster<T>> = [];
+  const mergedClusters = new Set<AnalyticsReceiptCluster<T>>();
   const receiptIndex = new Map<string, AnalyticsReceiptCluster<T>>();
   const stripeIndex = new Map<string, AnalyticsReceiptCluster<T>>();
   const paymentIndex = new Map<string, AnalyticsReceiptCluster<T>>();
@@ -234,10 +237,43 @@ export function deduplicateAnalyticsReceipts<T extends AnalyticsReceiptLike>(
     const paymentIds = normalizedPaymentIds(receipt);
     const transactionHashes = normalizedTransactionHashes(receipt);
 
-    let matchedCluster = receiptKeys.map(key => receiptIndex.get(key)).find(Boolean);
-    matchedCluster ||= stripeSessions.map(key => stripeIndex.get(`${scope.key}\u0000${key}`)).find(Boolean);
-    matchedCluster ||= paymentIds.map(key => paymentIndex.get(`${scope.key}\u0000${key}`)).find(Boolean);
-    matchedCluster ||= transactionHashes.map(key => transactionIndex.get(`${scope.key}\u0000${key}`)).find(Boolean);
+    const strongMatches = Array.from(new Set([
+      ...receiptKeys.map(key => receiptIndex.get(`${scope.key}\u0000${key}`)),
+      ...stripeSessions.map(key => stripeIndex.get(`${scope.key}\u0000${key}`)),
+      ...paymentIds.map(key => paymentIndex.get(`${scope.key}\u0000${key}`)),
+      ...transactionHashes.map(key => transactionIndex.get(`${scope.key}\u0000${key}`)),
+    ].filter((cluster): cluster is AnalyticsReceiptCluster<T> => Boolean(cluster))));
+    let matchedCluster: AnalyticsReceiptCluster<T> | undefined = strongMatches[0];
+
+    // A later revision can bridge two previously separate immutable identities.
+    // Union all proven clusters and repoint every index; otherwise counts depend
+    // on which immutable ID happened to be checked first.
+    for (const other of strongMatches.slice(1)) {
+      const target = strongMatches[0];
+      target.receipts.push(...other.receipts);
+      for (const field of ["receiptKeys", "emails", "wallets", "ips", "stripeSessions", "paymentIds", "transactionHashes"] as const) {
+        other[field].forEach(value => target[field].add(value));
+      }
+      target.startTime = Math.min(target.startTime || Infinity, other.startTime || Infinity);
+      if (other.endTime > target.endTime) target.latestReceipt = other.latestReceipt;
+      target.endTime = Math.max(target.endTime, other.endTime);
+      if (other.paidReceipt && (!target.paidReceipt || validTimestamp(other.paidReceipt.createdAt) > validTimestamp(target.paidReceipt.createdAt))) {
+        target.paidReceipt = other.paidReceipt;
+      }
+      target.isPaid ||= other.isPaid;
+      target.isFailed = !target.isPaid && (target.isFailed || other.isFailed);
+      mergedClusters.add(other);
+      for (const [index, keys] of [
+        [receiptIndex, other.receiptKeys], [stripeIndex, other.stripeSessions],
+        [paymentIndex, other.paymentIds], [transactionIndex, other.transactionHashes],
+        [emailIndex, other.emails], [walletIndex, other.wallets],
+      ] as const) {
+        for (const key of keys) {
+          const scopedKey = `${scope.key}\u0000${key}`;
+          if (index.get(scopedKey) === other) index.set(scopedKey, target);
+        }
+      }
+    }
 
     if (!matchedCluster && timestamp > 0) {
       const candidates = new Set<AnalyticsReceiptCluster<T>>();
@@ -315,7 +351,7 @@ export function deduplicateAnalyticsReceipts<T extends AnalyticsReceiptLike>(
       }
     }
 
-    receiptKeys.forEach(key => receiptIndex.set(key, matchedCluster!));
+    receiptKeys.forEach(key => receiptIndex.set(`${scope.key}\u0000${key}`, matchedCluster!));
     addToIndex(stripeIndex, scope.key, stripeSessions, matchedCluster);
     addToIndex(paymentIndex, scope.key, paymentIds, matchedCluster);
     addToIndex(transactionIndex, scope.key, transactionHashes, matchedCluster);
@@ -323,6 +359,7 @@ export function deduplicateAnalyticsReceipts<T extends AnalyticsReceiptLike>(
     if (buyerWallet) walletIndex.set(`${scope.key}\u0000${buyerWallet}`, matchedCluster);
   }
 
+  clusters = clusters.filter(cluster => !mergedClusters.has(cluster));
   const clusterSizeMap = new Map<string, number>();
   clusters.forEach(cluster => {
     cluster.receipts.forEach(receipt => {
@@ -354,7 +391,7 @@ export function deduplicateAnalyticsReceipts<T extends AnalyticsReceiptLike>(
   };
 }
 
-function normalizeKycTier(value: unknown): "L0" | "L1" | "L2" | null {
+export function normalizeAnalyticsKycTier(value: unknown): "L0" | "L1" | "L2" | null {
   const tier = normalized(value).replace(/[\s_-]/g, "");
   if (["l2", "level2"].includes(tier)) return "L2";
   if (["l1", "level1"].includes(tier)) return "L1";
@@ -363,11 +400,29 @@ function normalizeKycTier(value: unknown): "L0" | "L1" | "L2" | null {
 }
 
 function highestTier(values: unknown[]): "L0" | "L1" | "L2" | null {
-  const tiers = values.map(normalizeKycTier).filter((value): value is "L0" | "L1" | "L2" => Boolean(value));
+  const tiers = values.map(normalizeAnalyticsKycTier).filter((value): value is "L0" | "L1" | "L2" => Boolean(value));
   if (tiers.includes("L2")) return "L2";
   if (tiers.includes("L1")) return "L1";
   if (tiers.includes("L0")) return "L0";
   return null;
+}
+
+/** Persisted tiers only; absence is Unknown, and a requested tier is not proof. */
+export function resolveAnalyticsKyc(receipt: AnalyticsReceiptLike) {
+  const sessions = Array.isArray(receipt.customerSessions) ? receipt.customerSessions : [];
+  const initial = highestTier([receipt.kycInitialVerifiedLevel, receipt.kycInitialLevel]);
+  const completed = highestTier([
+    receipt.kycVerifiedLevel, receipt.kycCompletedLevel, receipt.kycFinalLevel,
+    receipt.kycLevel, receipt.kyc,
+    receipt.kycFinalSnapshot?.kycVerifiedLevel, receipt.kycFinalSnapshot?.kycLevel,
+    ...sessions.flatMap(session => [session.kycVerifiedLevel, session.kycCompletedLevel, session.kycLevel, session.kyc_level]),
+  ]);
+  return {
+    initial: initial || "Unknown",
+    highestCompleted: completed || "Unknown",
+    current: highestTier([receipt.kycVerifiedLevel, receipt.kycFinalLevel, receipt.kycFinalSnapshot?.kycLevel]) || completed || "Unknown",
+    upgraded: receipt.kycCompletedDuringTransaction === true || Boolean(normalizeAnalyticsKycTier(receipt.kycCompletedLevel)),
+  };
 }
 
 export function summarizeAnalyticsKycProfile<T extends AnalyticsReceiptLike>(
@@ -385,21 +440,13 @@ export function summarizeAnalyticsKycProfile<T extends AnalyticsReceiptLike>(
 
   clustersOrReceipts.forEach(item => {
     const receipts = "receipts" in item && Array.isArray(item.receipts) ? item.receipts : [item as T];
-    const initialTier = highestTier(receipts.map(receipt => receipt.kycInitialVerifiedLevel));
+    const initialTier = highestTier(receipts.map(receipt => resolveAnalyticsKyc(receipt).initial));
     if (initialTier === "L1" || initialTier === "L2") profile.preverified += 1;
 
-    const upgraded = receipts.some(receipt =>
-      receipt.kycCompletedDuringTransaction === true || Boolean(normalizeKycTier(receipt.kycCompletedLevel))
-    );
+    const upgraded = receipts.some(receipt => resolveAnalyticsKyc(receipt).upgraded);
     if (upgraded) profile.upgraded += 1;
 
-    const finalTier = highestTier(receipts.flatMap(receipt => [
-      receipt.kycVerifiedLevel,
-      receipt.kycCompletedLevel,
-      receipt.kycFinalLevel,
-      receipt.kycLevel,
-      receipt.kyc,
-    ]));
+    const finalTier = highestTier(receipts.map(receipt => resolveAnalyticsKyc(receipt).highestCompleted));
     if (finalTier === "L2") profile.l2 += 1;
     else if (finalTier === "L1") profile.l1 += 1;
     else if (finalTier === "L0") profile.l0 += 1;

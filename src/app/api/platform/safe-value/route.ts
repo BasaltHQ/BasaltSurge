@@ -5,6 +5,7 @@ import { chain, serverClient } from "@/lib/thirdweb/server";
 import { getRpcClient, eth_blockNumber, eth_getBalance } from "thirdweb/rpc";
 import { fetchEthUsd, fetchBtcUsd, fetchXrpUsd, fetchSolUsd } from "@/lib/eth";
 import * as crypto from "node:crypto";
+import { resolveTreasuryPrice, treasurySourceMetadata } from "@/lib/platform-treasury-metadata";
 
 export const dynamic = 'force-dynamic';
 
@@ -61,9 +62,10 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({
         ok: true,
         balanceHistory: cachedDoc.balanceHistory || [],
-        tokenPrices: cachedDoc.tokenPrices || { USDC: 1, USDT: 1, cbBTC: 60000, cbXRP: 1.5, SOL: 180, ETH: 3400 },
+        tokenPrices: cachedDoc.tokenPrices || {},
         lastIndexedAt: cachedDoc.lastIndexedAt,
         source: "cache",
+        metadata: treasurySourceMetadata(cachedDoc, "cache"),
       });
     }
 
@@ -71,19 +73,37 @@ export async function GET(req: NextRequest) {
 
     // 3. Fetch Live Exchange Rates
     const [ethPrice, btcPrice, xrpPrice, solPrice] = await Promise.all([
-      fetchEthUsd().catch(() => 3400),
-      fetchBtcUsd().catch(() => 60000),
-      fetchXrpUsd().catch(() => 1.5),
-      fetchSolUsd().catch(() => 180),
+      fetchEthUsd().catch(() => 0),
+      fetchBtcUsd().catch(() => 0),
+      fetchXrpUsd().catch(() => 0),
+      fetchSolUsd().catch(() => 0),
     ]);
+
+    const pricedAssets = {
+      cbBTC: resolveTreasuryPrice(btcPrice, cachedDoc?.tokenPrices?.cbBTC, 60000),
+      cbXRP: resolveTreasuryPrice(xrpPrice, cachedDoc?.tokenPrices?.cbXRP, 1.5),
+      SOL: resolveTreasuryPrice(solPrice, cachedDoc?.tokenPrices?.SOL, 180),
+      ETH: resolveTreasuryPrice(ethPrice, cachedDoc?.tokenPrices?.ETH, 3400),
+    };
+    const sourceMetadata = {
+      priceRetrievedAt: new Date().toISOString(),
+      priceSources: { USDC: "assumed_peg", USDT: "assumed_peg", ...Object.fromEntries(Object.entries(pricedAssets).map(([symbol, quote]) => [symbol, quote.source])) },
+      priceAsOf: Object.fromEntries(Object.entries(pricedAssets).map(([symbol, quote]) => [symbol, quote.source === "quoted" ? new Date().toISOString() : quote.source === "last_known" ? cachedDoc?.sourceMetadata?.priceAsOf?.[symbol] || cachedDoc?.sourceMetadata?.priceRetrievedAt || null : null])),
+      transferCoverage: "provider-response-unverified",
+      transferRetrievedAt: null as string | null,
+      retrievedTransferCount: 0,
+      balanceFloorAdjustments: 0,
+      nativeEthAvailable: true,
+      nativeEthSource: "rpc_current",
+    };
 
     const tokenPrices: Record<string, number> = {
       USDC: 1.0,
       USDT: 1.0,
-      cbBTC: btcPrice,
-      cbXRP: xrpPrice,
-      SOL: solPrice,
-      ETH: ethPrice,
+      cbBTC: pricedAssets.cbBTC.price,
+      cbXRP: pricedAssets.cbXRP.price,
+      SOL: pricedAssets.SOL.price,
+      ETH: pricedAssets.ETH.price,
     };
 
     // 4. Fetch all ERC-20 transfers from Blockscout
@@ -97,7 +117,8 @@ export async function GET(req: NextRequest) {
 
     try {
       const blockscoutUrl = `${process.env.BLOCKSCOUT_API_URL || "https://base.blockscout.com/api"}?module=account&action=tokentx&address=${SAFE_ADDRESS}&apikey=${process.env.BLOCKSCOUT_API_KEY || "10e3997e-fb11-479d-acb9-a690cdb5f536"}`;
-      const bsRes = await fetch(blockscoutUrl);
+      const bsRes = await fetch(blockscoutUrl, { signal: AbortSignal.timeout(20_000) });
+      if (!bsRes.ok) throw new Error(`Transfer provider returned HTTP ${bsRes.status}`);
       const bsData = await bsRes.json();
       if (bsData.status === "1" && Array.isArray(bsData.result)) {
         for (const item of bsData.result) {
@@ -118,9 +139,21 @@ export async function GET(req: NextRequest) {
             });
           }
         }
+      } else if (!(Array.isArray(bsData.result) && bsData.result.length === 0 && /no transactions found/i.test(String(bsData.message || "")))) {
+        throw new Error("Transfer provider did not return a valid transfer history");
       }
+      sourceMetadata.transferRetrievedAt = new Date().toISOString();
+      sourceMetadata.retrievedTransferCount = mergedTransfers.length;
     } catch (err) {
       console.error("[SAFE VALUE] Failed to fetch transfers from Blockscout:", err);
+      if (cachedDoc?.balanceHistory?.length) {
+        return NextResponse.json({
+          ok: true, balanceHistory: cachedDoc.balanceHistory, tokenPrices: cachedDoc.tokenPrices || {},
+          lastIndexedAt: cachedDoc.lastIndexedAt, source: "cache-stale",
+          metadata: treasurySourceMetadata(cachedDoc, "cache-stale", "Transfer history could not refresh. Showing the last successful treasury snapshot."),
+        });
+      }
+      return NextResponse.json({ ok: false, error: "Treasury transfer history is temporarily unavailable. Please retry.", correlationId }, { status: 503 });
     }
 
     // Sort chronologically
@@ -131,7 +164,15 @@ export async function GET(req: NextRequest) {
     try {
       const balWei = await eth_getBalance(rpcRequest, { address: SAFE_ADDRESS });
       currentEthBalance = Number(balWei) / 1e18;
-    } catch {}
+    } catch {
+      sourceMetadata.nativeEthAvailable = false;
+      const lastBalance = cachedDoc?.balanceHistory?.[cachedDoc.balanceHistory.length - 1]?.ETH;
+      if (lastBalance === null || lastBalance === undefined || !Number.isFinite(Number(lastBalance))) {
+        return NextResponse.json({ ok: false, error: "The treasury ETH balance could not be verified. Please retry.", correlationId }, { status: 503 });
+      }
+      currentEthBalance = Number(lastBalance);
+      sourceMetadata.nativeEthSource = "last_known";
+    }
 
     // 6. Compute running totals and Daily Timeseries
     const dailyBalances: Record<string, Record<string, number>> = {};
@@ -149,7 +190,7 @@ export async function GET(req: NextRequest) {
       const sign = tx.type === "in" ? 1 : -1;
       
       runningBalances[tx.token] = (runningBalances[tx.token] || 0) + (tx.value * sign);
-      if (runningBalances[tx.token] < 0) runningBalances[tx.token] = 0;
+      if (runningBalances[tx.token] < 0) { runningBalances[tx.token] = 0; sourceMetadata.balanceFloorAdjustments++; }
 
       // Store a snapshot for this date
       dailyBalances[date] = {
@@ -205,11 +246,12 @@ export async function GET(req: NextRequest) {
       const endDate = new Date(); // up to today
       
       let nextDate = new Date(startDate);
-      nextDate.setDate(nextDate.getDate() + 1);
+      nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+      const pointsByDate = new Map(balanceHistory.map((point: any) => [point.date, point]));
 
       while (nextDate <= endDate) {
         const dateStr = nextDate.toISOString().split("T")[0];
-        const match = balanceHistory.find((h: any) => h.date === dateStr);
+        const match = pointsByDate.get(dateStr);
         if (match) {
           currentPoint = match;
         } else {
@@ -219,7 +261,7 @@ export async function GET(req: NextRequest) {
           };
         }
         filledHistory.push(currentPoint);
-        nextDate.setDate(nextDate.getDate() + 1);
+        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
       }
     }
 
@@ -232,6 +274,7 @@ export async function GET(req: NextRequest) {
       transfers: mergedTransfers,
       balanceHistory: filledHistory,
       tokenPrices,
+      sourceMetadata,
       lastIndexedAt: Date.now(),
     };
 
@@ -243,6 +286,7 @@ export async function GET(req: NextRequest) {
       tokenPrices,
       lastIndexedAt: updatedDoc.lastIndexedAt,
       source: "live",
+      metadata: treasurySourceMetadata(updatedDoc, "live"),
     });
   } catch (err: any) {
     console.error("[SAFE VALUE] Reindex error:", err);

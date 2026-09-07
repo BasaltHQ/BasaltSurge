@@ -57,6 +57,15 @@ export function buildPortalUrlForTest(recipient?: string): string {
  * Recalculates receipt line items using the same funding-to-split policy as settlement.
  * Returns the modified receipt document.
  */
+export function resolveFeeMinusBaseCents(receipt: any): number {
+  const cents = (value: unknown) => Math.round(Math.max(0, Number(value || 0)) * 100);
+  const lines = Array.isArray(receipt?.lineItems) ? receipt.lineItems : [];
+  const tip = cents(lines.find((item: any) => item.label === "Gratuity")?.priceUsd);
+  const hasFee = lines.some((item: any) => item.label === "Processing Fee");
+  const total = hasFee ? lines.reduce((sum: number, item: any) => sum + cents(item.priceUsd), 0) : cents(receipt?.totalUsd);
+  return Math.max(0, total - tip);
+}
+
 export function recalculateReceiptForCardFunding(
   receipt: any,
   detectedCardFunding: "credit" | "debit" | "us_bank_account",
@@ -102,10 +111,10 @@ export function recalculateReceiptForCardFunding(
   const isStripeHeadless = !!(activeFunding && (activeFunding === "credit" || activeFunding === "debit" || activeFunding === "us_bank_account"));
 
   if (isStripeHeadless) {
-    if (activeFunding === "us_bank_account") {
-      stripeFeePct = 0.6;
-    } else if (isFeeMinus || basePresentedBps !== undefined) {
+    if (isFeeMinus || basePresentedBps !== undefined) {
       stripeFeePct = 0;
+    } else if (activeFunding === "us_bank_account") {
+      stripeFeePct = 0.6;
     } else {
       stripeFeePct = isCredit ? 3.5 : 2.25;
     }
@@ -127,7 +136,9 @@ export function recalculateReceiptForCardFunding(
 
   if (isFeeMinus) {
     // Unscale to recover original unscaled subtotal & tax
-    const originalBaseCents = toCents(receipt.totalUsd); // totalUsd stored was originalBaseWithoutFee
+    // A refreshed receipt can already include gratuity. Replace that tip
+    // instead of adding it again on each funding update or webhook replay.
+    const originalBaseCents = resolveFeeMinusBaseCents(receipt);
     const unscaleFactor = scaledBaseWithoutFeeCents > 0 ? (originalBaseCents / scaledBaseWithoutFeeCents) : 1;
 
     const baseItemsClean = baseItems.map((i: any) => ({
@@ -181,6 +192,7 @@ export function recalculateReceiptForCardFunding(
       ...receipt,
       detectedCardFunding: activeFunding,
       lineItems: finalLineItems,
+      totalUsd: fromCents(customerTotalCents),
       customerTotalUsd: fromCents(customerTotalCents),
     };
   } else {

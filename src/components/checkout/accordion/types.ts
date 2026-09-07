@@ -306,6 +306,7 @@ export interface UseAccordionCheckoutStateReturn {
   handleStepChange: (step: number) => void;
   localError: string | null;
   setLocalError: React.Dispatch<React.SetStateAction<string | null>>;
+  dismissError: () => void;
   activeError: string | null;
   isPaid: boolean;
   isOrderConfirmed: boolean;

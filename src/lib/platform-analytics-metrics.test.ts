@@ -101,3 +101,34 @@ test("summarizes preverified and checkout-upgraded KYC cohorts per unique intent
     untracked: 1,
   });
 });
+
+test("a bridge revision unions previously independent immutable identities", () => {
+  const result = deduplicateAnalyticsReceipts([
+    { ...base, receiptId: "one", stripeSessionId: "session-a", status: "failed", createdAt: "2026-09-01T12:00:00Z" },
+    { ...base, receiptId: "two", paymentId: "payment-b", status: "pending", createdAt: "2026-09-01T13:00:00Z" },
+    { ...base, receiptId: "bridge", stripeSessionId: "session-a", paymentId: "payment-b", status: "paid", createdAt: "2026-09-02T12:00:00Z" },
+    { ...base, receiptId: "later", paymentId: "payment-b", status: "paid", createdAt: "2026-09-03T12:00:00Z" },
+  ]);
+  assert.equal(result.dedupedTotalCreated, 1);
+  assert.equal(result.dedupedTotalPaid, 1);
+  assert.equal(result.dedupedTotalFailed, 0);
+  assert.equal(result.clusters[0].receipts.length, 4);
+  assert.equal(result.clusterSizeMap.get("one"), 4);
+});
+
+test("receipt identity does not cross a merchant or brand scope", () => {
+  const result = deduplicateAnalyticsReceipts([
+    { ...base, receiptId: "same", stripeSessionId: "same", status: "failed" },
+    { ...base, wallet: "0xother", receiptId: "same", stripeSessionId: "same", status: "paid" },
+  ]);
+  assert.equal(result.dedupedTotalCreated, 2);
+});
+
+test("KYC tier filter and profile agree on nested and conflicting completed evidence", () => {
+  const receipt = { kycVerifiedLevel: "L1", kycCompletedLevel: "L2", kycInitialVerifiedLevel: "UNVERIFIED" };
+  assert.equal(analyticsMetrics.resolveAnalyticsKyc(receipt).highestCompleted, "L2");
+  assert.equal(analyticsMetrics.resolveAnalyticsKyc(receipt).initial, "L0");
+  assert.equal(analyticsMetrics.resolveAnalyticsKyc({ customerSessions: [{ kyc_level: "LEVEL 2" }] }).highestCompleted, "L2");
+  assert.equal(analyticsMetrics.resolveAnalyticsKyc({}).highestCompleted, "Unknown");
+  assert.equal(summarizeAnalyticsKycProfile([receipt]).l2, 1);
+});
