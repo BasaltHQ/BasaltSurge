@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const ts = require('typescript');
 const path = require('node:path');
 
-function adapter(findOneAndUpdate, extra = {}) {
+function adapter(findOneAndUpdate, extra = {}, options) {
   const module = { exports: {} };
   const output = ts.transpileModule(fs.readFileSync(path.join(__dirname, 'mongodb-adapter.ts'), 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -14,7 +14,7 @@ function adapter(findOneAndUpdate, extra = {}) {
     module, exports: module.exports, globalThis: {}, Date,
     require: name => name === '@/lib/logger' ? { isDebug: () => false } : name === './sql-parser' ? {} : require(name),
   });
-  return new module.exports.MongoDBContainerAdapter({ collection: () => ({ findOneAndUpdate, ...extra }) }, 'receipts');
+  return new module.exports.MongoDBContainerAdapter({ collection: () => ({ findOneAndUpdate, ...extra }) }, 'receipts', options);
 }
 test('conditional patch includes partition and observed payment fields in one Mongo update', async () => {
   let query;
@@ -25,6 +25,17 @@ test('conditional patch includes partition and observed payment fields in one Mo
 test('conditional patch reports a conflict instead of succeeding when a concurrent write wins', async () => {
   const db = adapter(async () => null);
   await assert.rejects(db.item('receipt:r', 'merchant').patch([{ op: 'set', path: '/stripeSessionId', value: 'cos_paid' }], { matchFields: { status: 'pending' } }), error => error.code === 412);
+});
+
+test('critical point reads use the primary while ordinary reads retain their existing preference', async () => {
+  for (const [profile, expected] of [['critical','primary'],['operational','primaryPreferred']]) {
+    let preference;
+    const db = adapter(async()=>null,{find:(_filter,options)=>{
+      preference=options.readPreference.mode || options.readPreference;
+      return {sort:()=>({limit:()=>({next:async()=>({id:'receipt:r',wallet:'merchant'})})})};
+    }},{profile});
+    await db.item('receipt:r','merchant').read();assert.equal(preference,expected);
+  }
 });
 
 const sameBsonValue = (a, b) => a instanceof Date || b instanceof Date

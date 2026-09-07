@@ -161,9 +161,9 @@ class MongoItemReference {
     async read<T = any>(readOptions?: MongoQueryOptions): Promise<ItemResponse<T>> {
         const filter = this.buildFilter();
         const opts = { ...this._options, ...readOptions };
-        // Point lookups prefer PRIMARY_PREFERRED or active causal session for fresh state,
-        // with automatic transparent fallback to secondaries.
-        const readPref = opts.readPreference || ReadPreference.PRIMARY_PREFERRED;
+        // Payment-critical reads must not fall back to a lagging secondary.
+        // Ordinary point reads retain the existing primary-preferred behavior.
+        const readPref = opts.readPreference || (opts.profile === "critical" ? ReadPreference.PRIMARY : ReadPreference.PRIMARY_PREFERRED);
         
         // Sort by updatedAt descending to prefer the most recently updated document.
         // After Cosmos→MongoDB migration, duplicate documents with the same {id, wallet}
