@@ -409,6 +409,18 @@ test("KYC and authentication recovery do not fabricate a decline or keep a decli
   assert.equal(harness.hasTimer(2200), false);
 });
 
+for (const headlessStep of ['collecting_kyc', 'submitting_kyc', 'collecting_identifiers', 'accepting_terms', 'verifying_identity', 'checking_kyc', 'kyc_pending']) {
+  test(`${headlessStep} returns to identity despite cached approval and a retained payment element`, t => {
+    const h = createHarness({ accordion: true }); t.after(h.unmount);
+    const verified = ['l0', 'l1', 'l2'].map(tier => ({ tier, verification_status: 'verified' }));
+    const processing = h.render({ headlessStep: 'checking_out', kycTiers: verified, kycLevel: 'L2', paymentElement: h.paymentElement });
+    assert.equal(processing.activeStep, 4);
+    assert.equal(h.render({ headlessStep }).activeStep, 2);
+    assert.equal(h.hasTimer(2200), false);
+    assert.equal(h.render({ headlessStep: 'checking_out' }).activeStep, 4);
+  });
+}
+
 test("sandbox cookies cannot replace live accordion checkout or inject fake customer data", t => {
   const harness = createHarness({ accordion: true });
   t.after(harness.unmount);

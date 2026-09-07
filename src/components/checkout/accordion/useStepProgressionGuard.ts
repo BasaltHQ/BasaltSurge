@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { parseOnrampError, ParsedOnrampError } from "./errorTaxonomy";
 import { ResolvedCustomerKyc } from "./kycTierEngine";
+import { isCheckoutIdentityStep, isCheckoutPaymentInFlight } from "./checkoutPhase";
 
 export interface StepProgressionGuardProps {
   activeStep: number;
@@ -76,14 +77,7 @@ export function useStepProgressionGuard({
     }
   };
 
-  const isFulfillmentInFlight =
-    headlessStep === "verifying_wallet_ownership" ||
-    headlessStep === "creating_session" ||
-    headlessStep === "confirming_fees" ||
-    headlessStep === "checking_out" ||
-    headlessStep === "awaiting_funds" ||
-    headlessStep === "transferring" ||
-    headlessStep === "completed";
+  const isFulfillmentInFlight = isCheckoutPaymentInFlight(headlessStep) || headlessStep === "completed";
 
   // ─── Rule 1: Payment & Fulfillment In-Flight / Lockout Guard ───
   useEffect(() => {
@@ -210,17 +204,8 @@ export function useStepProgressionGuard({
       parsed?.recoveryAction === "edit_address" ||
       (parsed?.isAmountLimit && (!kyc.isL1Verified || !kyc.isL2Verified));
 
-    const isPaymentReady =
-      Boolean(propPaymentElement) ||
-      headlessStep === "collecting_payment" ||
-      headlessStep === "confirming_fees";
-
     const needsKycStep =
-      headlessStep === "kyc_pending" || headlessStep === "checking_kyc" ||
-      (!isStep2Satisfied && headlessStep === "collecting_kyc" && !isPaymentReady) ||
-      headlessStep === "collecting_identifiers" ||
-      headlessStep === "accepting_terms" ||
-      (headlessStep === "verifying_identity" && !kyc.isL2Verified) ||
+      isCheckoutIdentityStep(headlessStep) ||
       (showStepUpForm && !kyc.isL1Verified) ||
       (isL2Requirement && !kyc.isL2Verified) ||
       (showVerifyDocs && !kyc.isL2Verified) ||
@@ -255,18 +240,22 @@ export function useStepProgressionGuard({
   useEffect(() => {
     if (isPaid || isOrderConfirmed || isFulfillmentInFlight) return;
 
+    const recovery = parseOnrampError(activeError || effectiveError);
+    if (recovery?.targetStep === 1) return; // Authentication recovery above takes priority.
+    if (isCheckoutIdentityStep(headlessStep)) {
+      if (activeStep !== 2) {
+        logTransition(activeStep, 2, `Identity step required (${headlessStep})`);
+        setActiveStep(2);
+      }
+      return;
+    }
+
     // A completed step reopened by the customer is an intentional edit, not a
     // stalled progression. Keep it open until their next submission. The
     // payment/fulfillment and KYC safety rules above still take precedence.
     if (manualStepOverride === activeStep) return;
 
-    if (headlessStep === "kyc_pending" || headlessStep === "checking_kyc") {
-      if (activeStep !== 2) setActiveStep(2);
-      return;
-    }
-
-    const recovery = parseOnrampError(activeError || effectiveError);
-    if (recovery?.targetStep === 1 || recovery?.targetStep === 2) return;
+    if (recovery?.targetStep === 2) return;
 
     // Case 0: Link OTP or phone authentication active in Step 1
     if (

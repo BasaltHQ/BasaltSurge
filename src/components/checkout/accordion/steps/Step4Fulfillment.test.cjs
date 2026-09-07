@@ -10,20 +10,27 @@ const compiled = ts.transpileModule(fs.readFileSync(file, "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
 }).outputText;
 const componentModule = { exports: {} };
+const phaseModule = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../checkoutPhase.ts'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { module: phaseModule, exports: phaseModule.exports });
+const body = { style: { overflow: 'auto', touchAction: 'pan-y', overscrollBehavior: 'contain' } };
+let runEffect;
 vm.runInNewContext(compiled, {
   module: componentModule, exports: componentModule.exports,
   require(name) {
-    if (name === "react") return { useState: () => [true, () => {}], useEffect() {} };
+    if (name === "react") return { useState: () => [true, () => {}], useEffect: (...args) => runEffect?.(...args) };
     if (name === "react/jsx-runtime") {
       const jsx = (type, props) => ({ type, props });
       return { jsx, jsxs: jsx };
     }
     if (name === "react-dom") return { createPortal: child => ({ type: "portal", props: { children: child } }) };
     if (name === "../utils") return { getContrastingTextColor: () => "#fff" };
+    if (name === "../checkoutPhase") return phaseModule.exports;
     if (["lucide-react", "../AccordionCard", "../AccordionContent"].includes(name)) return new Proxy({}, { get: (_, key) => String(key) });
     throw new Error(`Unexpected module: ${name}`);
   },
-  document: { body: {} },
+  document: { body }, window: {},
 }, { filename: file });
 function flatten(node) {
   if (Array.isArray(node)) return node.flatMap(flatten);
@@ -83,4 +90,39 @@ test("service errors are not labeled as a bank decline", () => {
   const text = textOf(render({ headlessStep: "error", headlessStatus: "Stripe is temporarily unavailable" }));
   assert.match(text, /Checkout Needs Attention/);
   assert.doesNotMatch(text, /Payment Declined|not authorized by your bank/);
+});
+
+for (const headlessStep of ['collecting_kyc', 'submitting_kyc', 'checking_kyc', 'kyc_pending',
+  'verifying_identity', 'collecting_identifiers', 'accepting_terms', 'authenticating',
+  'collecting_phone', 'checking_link', 'registering_link', 'collecting_payment', 'idle', 'completed', undefined]) {
+  test(`payment modal yields immediately to ${headlessStep}, even while Step 4 is still open`, () => {
+    const nodes = render({ headlessStep, headlessStatus: 'Collecting identity info...' });
+    assert.equal(nodes.some(node => node?.type === 'portal'), false);
+  });
+}
+
+test('payment-to-KYC transition removes portal and restores scroll/touch before the accordion catches up', () => {
+  const effects = []; let index = 0;
+  runEffect = (effect, dependencies) => {
+    const slot = index++;
+    const previous = effects[slot];
+    if (previous && dependencies.every((value, i) => Object.is(value, previous.dependencies[i]))) return;
+    previous?.cleanup?.();
+    effects[slot] = { dependencies, cleanup: effect() };
+  };
+  const transition = props => { index = 0; return render(props); };
+  try {
+    assert.ok(transition({ headlessStep: 'checking_out' }).some(node => node?.type === 'portal'));
+    assert.equal(body.style.overflow, 'hidden');
+    assert.equal(body.style.touchAction, 'none');
+    assert.equal(transition({ headlessStep: 'collecting_kyc' }).some(node => node?.type === 'portal'), false);
+    assert.deepEqual(body.style, { overflow: 'auto', touchAction: 'pan-y', overscrollBehavior: 'contain' });
+    assert.ok(transition({ headlessStep: 'checking_out' }).some(node => node?.type === 'portal'));
+    assert.equal(body.style.overflow, 'hidden');
+    assert.equal(transition({ headlessStep: 'completed', isConfirmed: true }).some(node => node?.type === 'portal'), false);
+    assert.equal(body.style.overflow, 'auto');
+  } finally {
+    effects.forEach(effect => effect.cleanup?.());
+    runEffect = undefined;
+  }
 });
