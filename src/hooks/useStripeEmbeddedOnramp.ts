@@ -1764,7 +1764,9 @@ export function useStripeEmbeddedOnramp({
           }
           const errMessage = String(errData.error || "").toLowerCase();
           const errCode = String(errData.code || "").toLowerCase();
-          console.error("[EMBEDDED ONRAMP] Stripe session creation rejected:", {
+          console.error(errMessage === "stripe_session_receipt_attachment_failed"
+            ? "[EMBEDDED ONRAMP] Stripe session created but receipt attachment failed:"
+            : "[EMBEDDED ONRAMP] Stripe session creation rejected:", {
             receiptId,
             status: sessionRes.status,
             code: errData.code || null,

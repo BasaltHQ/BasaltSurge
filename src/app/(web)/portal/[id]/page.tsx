@@ -4853,6 +4853,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const isAchPending = receipt?.status === "paid - ach pending" || receipt?.status === "ach_pending" || ((stripeDetectedFunding === "us_bank_account" || detectedCardFunding === "us_bank_account") && headlessStep === "awaiting_funds");
 
   // ─── STRIPE HEADLESS INLINE UI ───
+  // Do not mount the generic widget (and its token-price query) while the
+  // checkout configuration resolves or the direct Stripe autostart is pending.
+  const deferThirdwebCheckout = !configLoaded || (
+    stripeHeadless && stripeOnrampEnabled && !coinbaseOnrampEnabled
+    && !transakOnrampEnabled && !rampnowOnrampEnabled && !userOptedOutOfStripeBypass
+  );
+  const preparingCheckoutUI = <div role="status" className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">Preparing secure checkout…</div>;
   const stripeHeadlessUI = (isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? (
     <div className="w-full flex flex-col items-stretch justify-start animate-in fade-in duration-300">
       {isV2Active ? (
@@ -7599,7 +7606,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                       </div>
                                       {shippingComplete && (
                                         <div className="px-2 pb-2">
-                                          {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                          {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                             <CheckoutWidget
                                               key={`${token}-${currency}`}
                                               className="w-full"
@@ -7714,7 +7721,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 {/* Non-shipping: render CheckoutWidget directly */}
                                 {!shippingRequired && (
                                   <>
-                                    {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                    {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                       <CheckoutWidget
                                         key={`noshp-${token}-${currency}`}
                                         className="w-full"
@@ -8366,7 +8373,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   </div>
                                   {shippingComplete && (
                                     <div className="px-2 pb-2">
-                                      {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                      {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                         <CheckoutWidget
                                           key={`ship-${token}-${currency}`}
                                           className="w-full"
@@ -8472,7 +8479,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             {/* Non-shipping: render CheckoutWidget directly */}
                             {!shippingRequired && (
                               <>
-                                {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : (
+                                {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                   <CheckoutWidget
                                     key={`noshp-${token}-${currency}`}
                                     className="w-full"
