@@ -98,3 +98,28 @@ test("wallet signature failures keep wallet recovery without suggesting a fabric
     assert.equal(parsed?.recoveryAction, "retry_payment");
   }
 });
+
+test('basic KYC, pending KYC and missing attestation share the hook recovery decisions', () => {
+  for (const [code, message, tier] of [
+    ['crypto_onramp_verification_error', 'Basic KYC information must be submitted before this endpoint can be used.', 'l0'],
+    ['crypto_onramp_verification_error', 'Your verification is processing. Try again shortly.', undefined],
+    ['crypto_onramp_missing_tax_attestation', 'Submit a tax attestation before confirming the declaration.', undefined],
+  ]) {
+    const result = parseOnrampError({ code, message });
+    assert.equal(result?.targetStep, 2);
+    assert.equal(result?.kycTargetTier, tier);
+    assert.equal(result?.canRestart, false);
+    assert.equal(result?.isDecline, false);
+  }
+});
+
+test('amount limits, Link remediation and configuration diagnostics retain provider context', () => {
+  for (const [code, message] of [
+    ['crypto_onramp_amount_above_maximum', 'Your maximum purchase is $1,000.00.'],
+    ['crypto_onramp_limit_exceeded', 'Try again in a few hours.'],
+    ['crypto_onramp_invalid_payment_method', 'Remove a payment method from your Link account before adding another.'],
+    ['crypto_onramp_invalid_parameter', 'The wallet address cannot be changed when locked.'],
+  ]) {
+    assert.equal(formatOnrampErrorMessage({ code, message }), message);
+  }
+});

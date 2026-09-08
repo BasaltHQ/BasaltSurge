@@ -80,6 +80,14 @@ export const MERCHANT_ERROR_REGISTRY: Record<string, MerchantErrorDefinition> = 
     customerMessage: "The payment was blocked due to suspected risk.",
     suggestedAction: "Advise customer to use a verified payment method or complete identity verification.",
   },
+  PORTAL_PAY_AUTHENTICATION_FAILED: {
+    code: "PORTAL_PAY_AUTHENTICATION_FAILED",
+    legacyCode: "payment_method_authentication_failed",
+    category: "card_decline",
+    description: "Stripe could not authenticate the selected payment method.",
+    customerMessage: "Stripe could not authenticate your payment method. Review the secure payment form or chat with us.",
+    suggestedAction: "Inspect the Stripe request and SDK error before identifying a specific authentication failure.",
+  },
   PORTAL_PAY_3DS_FAILED: {
     code: "PORTAL_PAY_3DS_FAILED",
     legacyCode: "3ds_authentication_failed",
@@ -333,7 +341,10 @@ export function resolveMerchantErrorInfo(rawError: any): MerchantErrorDefinition
     return MERCHANT_ERROR_REGISTRY.PORTAL_PAY_FRAUD_BLOCKED;
   }
 
-  if (errorStr.includes("3ds") || errorStr.includes("authentication") || errorStr.includes("otp")) {
+  if (errorStr.includes("payment_method_authentication_failed") || errorStr.includes("unable to authenticate your payment method")) {
+    return MERCHANT_ERROR_REGISTRY.PORTAL_PAY_AUTHENTICATION_FAILED;
+  }
+  if (errorStr.includes("3ds")) {
     return MERCHANT_ERROR_REGISTRY.PORTAL_PAY_3DS_FAILED;
   }
 

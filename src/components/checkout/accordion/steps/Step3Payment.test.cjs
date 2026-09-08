@@ -22,6 +22,7 @@ function load(file) {
         return { jsx, jsxs: jsx };
       }
       if (name === "../errorTaxonomy") return load(path.join(__dirname, "../errorTaxonomy.ts"));
+      if (name === "../../../lib/stripe-onramp-errors.ts") return load(path.resolve(path.dirname(file), name));
       if (children.has(name)) return new Proxy({}, { get: (_target, key) => String(key) });
       throw new Error(`Unexpected module: ${name}`);
     },
@@ -39,7 +40,7 @@ function flatten(node) {
 const render = (props) => flatten(Step3Payment({ isOpen: true, isCompleted: false, isLocked: false, ...props }));
 const textOf = (nodes) => nodes.filter(node => typeof node === "string").join(" ");
 
-test("verified session failures display provider context and an immediate working retry without bank advice", () => {
+test("verified session contradictions retain context and support without repeating KYC or payment", () => {
   let retries = 0;
   const message = "Stripe could not create the payment session after identity verification. Document verification failed; contact support.";
   const nodes = render({ headlessStep: "error", activeError: message, onTimeoutRetry: () => retries++ });
@@ -47,9 +48,8 @@ test("verified session failures display provider context and an immediate workin
   assert.ok(text.includes(message));
   assert.doesNotMatch(text, /Quick Tips|banking app|Try another debit card/);
   const retry = nodes.find(node => node?.type === "button" && node.props.children === "Retry checkout");
-  assert.ok(retry);
-  retry.props.onClick();
-  assert.equal(retries, 1);
+  assert.equal(retry, undefined);
+  assert.equal(retries, 0);
 });
 
 test("service retry cannot restart completed or actively processing checkout", () => {
@@ -64,6 +64,20 @@ test("actual issuer declines retain their payment recovery advice", () => {
   const nodes = render({ headlessStep: "error", activeError: "Your card was declined by your issuing bank." });
   assert.match(textOf(nodes), /Quick Tips/);
   assert.match(textOf(nodes), /banking app/);
+});
+
+for (const code of ['crypto_onramp_transaction_blocked', 'crypto_onramp_identity_verification_failed', 'crypto_onramp_disabled', 'crypto_onramp_invalid_parameter', 'crypto_onramp_limit_exceeded', 'crypto_onramp_unsupported_country']) {
+  test(`Step 3 cannot offer retries or bank advice for ${code}`, () => {
+    const nodes = render({ headlessStep: 'error', activeError: 'Please contact support.', errorDetails: { code, message: 'Please contact support.' }, onTimeoutRetry() { assert.fail('terminal request retried'); } });
+    assert.equal(nodes.some(node => node?.type === 'button' && node.props.children === 'Retry checkout'), false);
+    assert.doesNotMatch(textOf(nodes), /Quick Tips|Higher Limits|banking app/);
+  });
+}
+
+test('an ACH institution restriction never claims the bank blocks instant card checkout', () => {
+  const nodes = render({ headlessStep: 'error', activeError: 'This bank account is not supported.', errorDetails: { code: 'crypto_onramp_bank_institution_block', message: 'This bank account is not supported.' }, onTimeoutRetry() {} });
+  assert.match(textOf(nodes), /not eligible for this bank-account payment/);
+  assert.doesNotMatch(textOf(nodes), /does not allow instant card checkout/);
 });
 
 test("generic payment collection failures immediately offer retry and stop the connection placeholder", () => {
@@ -83,4 +97,13 @@ test("failed empty embed does not claim Stripe is still connecting", () => {
   const text = textOf(flatten(StripeEmbedContainer({ element: null, isFailed: true })));
   assert.match(text, /no longer active/);
   assert.doesNotMatch(text, /Initializing|Taking longer|finalizing|Encrypted/);
+});
+
+test('Stripe host stays open and interactive during SDK checkout even while Step 4 is active', () => {
+  const nodes = render({ isOpen: false, isCompleted: true, headlessStep: 'checking_out' });
+  assert.equal(nodes.find(node => node?.type === 'AccordionContent').props.isOpen, true);
+  assert.equal(nodes.find(node => node?.type === 'AccordionContent').props.interactive, true);
+  assert.equal(nodes.find(node => node?.type === 'AccordionCard').props.overflowVisible, true);
+  assert.equal(nodes.find(node => node?.type === 'StripeEmbedContainer').props.isVisible, true);
+  assert.doesNotMatch(textOf(nodes), /Authorized via Stripe/);
 });

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPublicClientIp } from "@/lib/request-client-ip";
 import { getContainer } from "@/lib/cosmos";
-import { assertStripeReceiptUnpaid, readStripeReceiptForPayment, claimStripeReceiptCheckout, finishStripeReceiptCheckout } from "@/lib/stripe-receipt-session";
+import { assertStripeReceiptUnpaid, assertStripeSessionRecoveryAllowed, readStripeReceiptForPayment, claimStripeReceiptCheckout, finishStripeReceiptCheckout } from "@/lib/stripe-receipt-session";
 import { isStripePaymentAcceptedStatus } from "@/lib/stripe-onramp-status";
 import { randomUUID } from "node:crypto";
 
@@ -23,6 +23,7 @@ export async function POST(
   let reservation: { container: any; receipt: any; requestId: string } | undefined;
   let checkoutResponseReceived = false;
   let definitiveDecline: unknown;
+  let diagnostic: Parameters<typeof finishStripeReceiptCheckout>[4];
   let requestedSessionId: string | undefined;
   try {
     const stripeKey = process.env.STRIPE_API_KEY;
@@ -84,6 +85,7 @@ export async function POST(
       return NextResponse.json({ ok: true, status: session.status, client_secret: null, ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}) });
     }
     const assertPayable = async (reserve = false) => {
+      assertStripeSessionRecoveryAllowed(session);
       if (!session.metadata?.receiptId) return;
       const container = await getContainer(undefined, undefined, { profile: "critical" });
       const receipt = await readStripeReceiptForPayment(container, session.metadata.receiptId, session.metadata.merchantWallet);
@@ -172,6 +174,14 @@ export async function POST(
       }
     }
 
+    // Stripe can return a payment-method failure in a successful HTTP response.
+    // Preserve that server evidence even if a later session GET clears it.
+    definitiveDecline = data.error || data.transaction_details?.last_error;
+    diagnostic = { requestId: response.headers.get("request-id"), httpStatus: response.status,
+      code: data.error?.code || data.transaction_details?.last_error?.code ||
+        (typeof data.transaction_details?.last_error === "string" ? data.transaction_details.last_error : null),
+      declineCode: data.error?.decline_code || data.transaction_details?.last_error?.decline_code || null,
+      sessionId, at: Date.now() };
     // 200 or 202 are both valid responses — check for last_error
     if (response.status === 200 || response.status === 202) {
       const lastError = data.transaction_details?.last_error || null;
@@ -182,6 +192,8 @@ export async function POST(
           ok: true,
           client_secret: data.client_secret,
           lastError,
+          requestId: diagnostic.requestId,
+          decline_code: diagnostic.declineCode,
           status: data.status,
           ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
         });
@@ -194,6 +206,8 @@ export async function POST(
           ok: false,
           client_secret: data.client_secret || null,
           lastError,
+          requestId: diagnostic.requestId,
+          decline_code: diagnostic.declineCode,
           status: data.status,
           transactionDetails: data.transaction_details || null,
           ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
@@ -234,7 +248,8 @@ export async function POST(
 
       console.error("[ONRAMP CHECKOUT] Checkout failed:", data);
       return NextResponse.json(
-        { ok: false, error: data.error?.message || "checkout_failed", code: data.error?.code },
+        { ok: false, error: data.error?.message || "checkout_failed", code: data.error?.code,
+          decline_code: diagnostic.declineCode, requestId: diagnostic.requestId, sessionId },
         { status: response.status }
       );
     }
@@ -254,7 +269,7 @@ export async function POST(
     );
   } finally {
     if (reservation && checkoutResponseReceived) {
-      try { await finishStripeReceiptCheckout(reservation.container, reservation.receipt, reservation.requestId, definitiveDecline); }
+      try { await finishStripeReceiptCheckout(reservation.container, reservation.receipt, reservation.requestId, definitiveDecline, diagnostic); }
       catch (error) { console.error("[ONRAMP CHECKOUT] Receipt remains reserved pending recovery:", error); }
     }
   }

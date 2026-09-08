@@ -112,7 +112,7 @@ export function PortalPayAccordionCheckoutV2(props: PortalPayAccordionCheckoutV2
         receiptId={receiptId}
         amountUsd={amountUsd}
         activeStep={state.activeStep}
-        activeError={state.activeError}
+        activeError={state.activeError ? [state.activeError, props.headlessErrorDetails?.code, props.headlessErrorDetails?.message, props.headlessErrorDetails?.requestId].filter(Boolean).join("\n") : null}
         isLightText={isLightText}
         primaryColor={state.primaryColor}
         brandName={theme?.brandName}

@@ -1,7 +1,7 @@
 // Explicit SDK phases control blocking UI; an open accordion panel alone does not.
 export function isCheckoutPaymentInFlight(step?: string): boolean {
   return ["verifying_wallet_ownership", "creating_session", "confirming_fees",
-    "checking_out", "awaiting_funds", "transferring"].includes(step || "");
+    "checking_out", "payment_recovery", "awaiting_funds", "transferring"].includes(step || "");
 }
 
 export function isCheckoutIdentityStep(step?: string): boolean {

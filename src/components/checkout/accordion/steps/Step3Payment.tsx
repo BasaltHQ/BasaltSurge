@@ -28,6 +28,7 @@ export function Step3Payment({
   paymentElement,
   paymentContainerRef,
   activeError,
+  errorDetails,
   isSimulationMode = false,
   walletOwnershipChallenge,
   isWalletOwnershipVerified = false,
@@ -39,7 +40,9 @@ export function Step3Payment({
   onHeaderClick,
 }: Step3PaymentProps) {
   const isIdentityVerifying = headlessStep === "verifying_identity";
-  const isServiceError = parseOnrampError(activeError)?.category === "service";
+  const providerInteractive = isOpen || headlessStep === "checking_out";
+  const recovery = parseOnrampError(errorDetails || activeError);
+  const isPaymentError = recovery?.isDecline === true;
   const isWalletOwnershipRequired =
     Boolean(walletOwnershipChallenge) && !isWalletOwnershipVerified;
   const internalPaymentContainerRef = React.useRef<HTMLDivElement | null>(null);
@@ -54,7 +57,7 @@ export function Step3Payment({
   }, [isOpen]);
 
   return (
-    <AccordionCard isActive={isOpen} isLightText={isLightText}>
+    <AccordionCard isActive={providerInteractive} isLightText={isLightText} overflowVisible={providerInteractive}>
       {/* Step 3 Header */}
       <AccordionStepHeader
         stepNumber={3}
@@ -67,7 +70,7 @@ export function Step3Payment({
           isCompleted ? (
             <p className={`text-xs font-medium opacity-70 flex items-center gap-1.5 ${isLightText ? "text-white" : "text-black"}`}>
               <CreditCard className="w-3 h-3 opacity-60" />
-              <span>Authorized via Stripe Secure Payment</span>
+              <span>Payment method selected</span>
             </p>
           ) : undefined
         }
@@ -86,7 +89,7 @@ export function Step3Payment({
       />
 
       {/* Step 3 Expanded Body */}
-      <AccordionContent isOpen={isOpen} position={motionPosition}>
+      <AccordionContent isOpen={providerInteractive} position={motionPosition} overflowVisible interactive={headlessStep === "checking_out"}>
         <div className="p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10">
         {/* Top Error Alert Banner & Decline Recovery Panel */}
         {activeError && !isWalletOwnershipRequired && (
@@ -98,7 +101,7 @@ export function Step3Payment({
                 <p className="text-xs leading-relaxed text-amber-300/90">{activeError}</p>
               </div>
             </div>
-            {!isServiceError && (activeError.toLowerCase().includes("frozen") || activeError.toLowerCase().includes("freeze")) && (
+            {isPaymentError && (activeError.toLowerCase().includes("frozen") || activeError.toLowerCase().includes("freeze")) && (
               <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
                 <span className="font-semibold text-amber-300">Card Locked or Frozen:</span>
                 <p className="pl-1 opacity-90">
@@ -106,32 +109,31 @@ export function Step3Payment({
                 </p>
               </div>
             )}
-            {!isServiceError && (activeError.toLowerCase().includes("decline") || activeError.toLowerCase().includes("support") || activeError.toLowerCase().includes("failed")) && !(activeError.toLowerCase().includes("frozen") || activeError.toLowerCase().includes("freeze")) && (
+            {isPaymentError && !(activeError.toLowerCase().includes("frozen") || activeError.toLowerCase().includes("freeze")) && (
               <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
                 <span className="font-semibold text-amber-300">Quick Tips:</span>
                 <ul className="list-disc list-inside space-y-0.5 pl-1 opacity-90">
-                  <li>Try another debit card or Apple Pay / Google Pay</li>
-                  <li>Check your banking app or SMS for a temporary verification prompt, then retry</li>
+                  <li>Follow Stripe's instructions to update or choose another payment method</li>
+                  <li>For a card authentication failure, check your banking app for a verification request</li>
                 </ul>
               </div>
             )}
-            {!isServiceError && activeError.toLowerCase().includes("bank") && activeError.toLowerCase().includes("supported") && (
+            {recovery?.code === "crypto_onramp_bank_institution_block" && (
               <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
                 <span className="font-semibold text-amber-300">Recommendation:</span>
                 <p className="pl-1 opacity-90">
-                  This specific banking institution does not allow instant card checkout. Please use a debit card, Apple Pay, or another bank.
+                  This bank is not eligible for this bank-account payment. Choose another bank account or an available card.
                 </p>
               </div>
             )}
-            {!isServiceError && (activeError.toLowerCase().includes("limit") || activeError.toLowerCase().includes("maximum")) && (
+            {recovery?.guidance && (
               <div className="pt-2 border-t border-amber-500/20 text-xs text-amber-200/80 space-y-1">
-                <span className="font-semibold text-amber-300">Higher Limits Available:</span>
                 <p className="pl-1 opacity-90">
-                  ACH Direct Debit (US Bank Account) offers significantly higher single-transaction purchase limits.
+                  {recovery.guidance}
                 </p>
               </div>
             )}
-            {headlessStep === "error" && onTimeoutRetry && !isLocked && !isCompleted && (
+            {headlessStep === "error" && recovery?.canRestart !== false && onTimeoutRetry && !isLocked && !isCompleted && (
               <button
                 type="button"
                 onClick={onTimeoutRetry}
@@ -178,7 +180,7 @@ export function Step3Payment({
           <div className="space-y-2">
             <StripeEmbedContainer
               element={paymentElement}
-              isVisible={isOpen && !isWalletOwnershipRequired}
+              isVisible={providerInteractive && !isWalletOwnershipRequired}
               containerRef={paymentContainerRef}
               isLightText={isLightText}
               minHeight={210}

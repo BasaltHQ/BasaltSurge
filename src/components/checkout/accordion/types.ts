@@ -1,5 +1,6 @@
 import React from "react";
 import type { AccordionStepTransitionInput } from "@/lib/checkout-flow-tracking";
+import type { OnrampErrorDetails } from "@/lib/stripe-onramp-errors";
 
 export type StateSetter<T> = React.Dispatch<React.SetStateAction<T>> | ((val: T) => void);
 export type AccordionMotionPosition = -1 | 0 | 1;
@@ -77,6 +78,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   receiptId?: string;
   isReceiptPaid?: boolean;
   headlessError?: string | null;
+  headlessErrorDetails?: OnrampErrorDetails | null;
   kycTierRequired?: "l0" | "l1" | "l2" | string;
   kycLevel?: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING" | string;
   kycTiers?: Array<{ tier: string; verification_status: string }>;
@@ -257,6 +259,7 @@ export interface Step2IdentityProps extends Step2Props {
 }
 
 export interface Step3Props {
+  errorDetails?: OnrampErrorDetails | null;
   headlessStep?: string;
   paymentElement?: HTMLElement | React.ReactNode | null;
   paymentContainerRef?: React.RefObject<any> | React.MutableRefObject<any> | any;
