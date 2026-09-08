@@ -2,6 +2,10 @@
 // Types are noisy in Next config across versions; disable TS checks for this file.
 
 import createNextIntlPlugin from 'next-intl/plugin';
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { PHASE_DEVELOPMENT_SERVER, PHASE_PRODUCTION_BUILD } from 'next/constants';
 
 const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
@@ -78,6 +82,16 @@ const nextConfig = {
   // Add global headers for CSP and COOP to support embedded wallet flows
   async headers() {
     return [
+      // Checkout documents and payment responses must never be reused by an
+      // HTTP/CDN cache. Content-hashed /_next/static assets remain immutable.
+      ...['/portal/:path*', '/api/portal/:path*', '/api/stripe/:path*', '/api/receipts/:path*'].map(source => ({
+        source,
+        headers: [
+          { key: 'Cache-Control', value: 'private, no-store, max-age=0, must-revalidate' },
+          { key: 'CDN-Cache-Control', value: 'no-store' },
+          { key: 'Cloudflare-CDN-Cache-Control', value: 'no-store' },
+        ],
+      })),
       {
         source: "/(.*).(svg|jpg|jpeg|png|gif|ico|webp)",
         locale: false,
@@ -188,4 +202,20 @@ const nextConfig = {
   },
 };
 
-export default withNextIntl(nextConfig);
+export default (phase: string) => {
+  let portalBuildId = 'development';
+  if (phase === PHASE_PRODUCTION_BUILD) {
+    // Inherit the same ID in build workers; bake it into both browser and route
+    // bundles. All replicas must deploy this same built artifact.
+    portalBuildId = process.env.PORTALPAY_BUILD_ID ||= randomUUID();
+  } else if (phase !== PHASE_DEVELOPMENT_SERVER) {
+    // A server restart is not a new release. Reuse the artifact's build ID.
+    try { portalBuildId = readFileSync(join(process.cwd(), '.next', 'BUILD_ID'), 'utf8').trim(); }
+    catch { portalBuildId = 'unknown'; }
+  }
+  return withNextIntl({
+    ...nextConfig,
+    generateBuildId: async () => portalBuildId,
+    env: { NEXT_PUBLIC_PORTAL_BUILD_ID: portalBuildId },
+  });
+};

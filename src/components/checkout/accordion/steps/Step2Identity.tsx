@@ -89,6 +89,7 @@ export function Step2Identity({
   effectiveStatus,
   headlessStep,
   showStepUpForm,
+  requiresL1Fields,
   showFullForm,
   showVerifyDocs,
   isL2Requirement,
@@ -119,8 +120,9 @@ export function Step2Identity({
   const isEU = countryConfig.isEU;
   const ssnDigits = (ssn || "").replace(/\D/g, "");
   const buttonTextColor = getContrastingTextColor(primaryColor);
-  const showDobField = showStepUpForm || isL2Requirement || isEU;
-  const showSsnField = isUS && (showStepUpForm || isL2Requirement);
+  const needsL1Fields = requiresL1Fields ?? (!isL1Approved && (showStepUpForm || isL2Requirement));
+  const showDobField = needsL1Fields || isEU;
+  const showSsnField = isUS && needsL1Fields;
   const showMicaField = Boolean(countryConfig.micaIdentifier);
   const nationalityCodes = nationalities
     .split(/[\s,]+/)
@@ -206,7 +208,7 @@ export function Step2Identity({
   );
 
   const isDocVerifyRequired = Boolean(
-    (showVerifyDocs || isL2Requirement) && !isL2Approved && !showFullForm && !showStepUpForm
+    (showVerifyDocs || isL2Requirement) && !isL2Approved && !showFullForm && !showStepUpForm && (!isUS || isL1Approved)
   );
 
   const isAlreadyVerifiedCard = Boolean(

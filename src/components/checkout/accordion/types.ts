@@ -226,6 +226,7 @@ export interface Step2Props {
   effectiveStatus?: string;
   headlessStep?: string;
   showStepUpForm: boolean;
+  requiresL1Fields?: boolean;
   showFullForm: boolean;
   showVerifyDocs?: boolean;
   isL2Requirement: boolean;

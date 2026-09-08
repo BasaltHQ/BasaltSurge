@@ -682,9 +682,12 @@ export function useStripeEmbeddedOnramp({
     }
   }, [sessionKey]);
   const kycTierRequiredRef = useRef<"l0" | "l1" | "l2">("l0");
+  const pendingL2Ref = useRef(false);
+  const verifyDocumentsRef = useRef<(() => Promise<boolean>) | null>(null);
   const kycRequiredLevelDetectedRef = useRef<"l0" | "l1" | "l2" | null>(null);
   const [kycTierRequired, setKycTierRequiredState] = useState<"l0" | "l1" | "l2">("l0");
   const setKycTierRequired = useCallback((tier: "l0" | "l1" | "l2") => {
+    if (tier === "l2") pendingL2Ref.current = true;
     kycTierRequiredRef.current = tier;
     const current = kycRequiredLevelDetectedRef.current;
     const rank = { l0: 1, l1: 2, l2: 3 } as const;
@@ -1566,6 +1569,7 @@ export function useStripeEmbeddedOnramp({
   }, [receiptId, buildTrackedCustomerUrl, consumeKycTrackingResponse]);
 
   const reset = useCallback(() => {
+    pendingL2Ref.current = false;
     if (onrampRef.current) {
       try {
         console.log("[EMBEDDED ONRAMP] Destroying onramp coordinator on reset...");
@@ -2981,6 +2985,13 @@ export function useStripeEmbeddedOnramp({
   ]);
 
   const resumeAfterKyc = useCallback(() => {
+    if (pendingL2Ref.current && !isEuEeaCountry(activeCountryRef.current) && latestKycSnapshotRef.current?.region !== "eu") {
+      setKycTierRequired("l2");
+      isRunningRef.current = false;
+      updateStep("collecting_kyc");
+      void verifyDocumentsRef.current?.().catch(err => handleError(err?.message || "Identity verification unavailable", err));
+      return;
+    }
     if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current && paymentTokenRef.current) {
       runCheckoutLoop(
         activeEmailRef.current,
@@ -2995,14 +3006,19 @@ export function useStripeEmbeddedOnramp({
     setTimeout(() => {
       startOnrampRef.current?.(activeEmailRef.current || undefined, undefined, undefined, true);
     }, 50);
-  }, [detectedCardFunding, handleError, runCheckoutLoop]);
+  }, [detectedCardFunding, handleError, runCheckoutLoop, setKycTierRequired, updateStep]);
 
   const checkKycStatus = useCallback(async () => {
     if (stepRef.current !== "kyc_pending" || !customerIdRef.current || isRunningRef.current) return;
     isRunningRef.current = true;
     updateStep("checking_kyc");
     try {
+      if (pendingL2Ref.current && kycTierRequiredRef.current === "l1" && !isEuEeaCountry(activeCountryRef.current) && latestKycSnapshotRef.current?.region !== "eu") {
+        await verifyDocumentsRef.current?.();
+        return;
+      }
       if (await pollKycStatus(customerIdRef.current, kycTierRequiredRef.current)) {
+        if (kycTierRequiredRef.current === "l2") pendingL2Ref.current = false;
         setError(null);
         setPersistedError(null);
         resumeAfterKyc();
@@ -3010,6 +3026,8 @@ export function useStripeEmbeddedOnramp({
     } catch (err: any) {
       if (err?.code === "kyc_observation_pending") return;
       if (/^kyc_l[012]_rejected$/.test(err?.code || "")) {
+        setKycLevel("REJECTED");
+        kycLevelRef.current = "REJECTED";
         setError(err.message);
         updateStep("collecting_kyc");
         isRunningRef.current = false;
@@ -3343,6 +3361,14 @@ export function useStripeEmbeddedOnramp({
         kycTierRequiredRef.current = submittedTier;
       }
 
+      if (pendingL2Ref.current && !isEuUser) {
+        // Do not resume or create a payment while the requested document tier
+        // is outstanding. The original token/session remain in their refs.
+        setKycTierRequired("l2");
+        await verifyDocumentsRef.current?.();
+        return;
+      }
+
       if (activeEmailRef.current && customerIdRef.current && buyerWalletRef.current) {
         if (paymentTokenRef.current) {
           runCheckoutLoop(
@@ -3421,7 +3447,13 @@ export function useStripeEmbeddedOnramp({
       if (isAlreadyVerified) {
         const snapshot = latestKycSnapshotRef.current;
         const isEuCustomer = isEuEeaCountry(activeCountryRef.current);
-        const alreadyComplete = isEuCustomer ? snapshot?.euFullyVerified === true : Boolean(snapshot?.verifiedTier);
+        if (!isEuCustomer && pendingL2Ref.current) {
+          await verifyDocumentsRef.current?.();
+          return;
+        }
+        const needsL1 = kycTierRequiredRef.current === "l1" || Boolean(kycInfo?.date_of_birth || kycInfo?.id_number);
+        const alreadyComplete = isEuCustomer ? snapshot?.euFullyVerified === true
+          : needsL1 ? snapshot?.verifiedTier === "L1" || snapshot?.verifiedTier === "L2" : Boolean(snapshot?.verifiedTier);
         if (!alreadyComplete) {
           handleError("Stripe reports that identity data cannot be updated, but the required verification is not complete. Please contact support.");
           return;
@@ -3556,18 +3588,65 @@ export function useStripeEmbeddedOnramp({
   ]);
 
   const verifyDocuments = useCallback(async (): Promise<boolean> => {
+    if (isVerifyingRef.current) return false;
     if (!onrampRef.current) {
       console.warn("[EMBEDDED ONRAMP] Onramp coordinator not initialized for verifyDocuments.");
       throw new Error("Onramp not initialized");
     }
-    console.log("[EMBEDDED ONRAMP] verifyDocuments triggered directly...");
+    // Enforce the prerequisite here as well as in the UI: direct calls and
+    // stale renders must not bypass unsubmitted/pending/rejected US L1 data.
+    pendingL2Ref.current = true;
     isVerifyingRef.current = true;
     isRunningRef.current = true;
-    reportKycEvent("documents_started", "l2");
-    updateStep("verifying_identity");
-    setKycTierRequired("l2");
 
     try {
+      if (!isEuEeaCountry(activeCountryRef.current) && latestKycSnapshotRef.current?.region !== "eu") {
+        const customerId = customerIdRef.current;
+        if (!customerId) throw new Error("Customer identity is unavailable. Please sign in again.");
+        setKycTierRequired("l1");
+        updateStep("checking_kyc");
+        let snapshot: StripeKycSnapshot;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        try {
+          const res = await fetch(buildTrackedCustomerUrl(customerId, "current"), {
+            cache: "no-store", signal: controller.signal,
+            headers: { "x-stripe-oauth-token": oauthTokenRef.current || "" },
+          });
+          if (!res.ok) throw new Error("Verification status unavailable");
+          const data = await res.json();
+          if (data.refreshedToken) oauthTokenRef.current = data.refreshedToken;
+          snapshot = consumeKycTrackingResponse(data);
+        } catch {
+          // Observation failures are not permission to collect documents or
+          // resubmit SSN. Let the customer check the existing verification.
+          updateStep("kyc_pending");
+          isRunningRef.current = false;
+          isVerifyingRef.current = false;
+          return false;
+        } finally {
+          clearTimeout(timeoutId);
+        }
+        const l1 = snapshot.tiers.find(tier => tier.tier === "l1");
+        if (l1?.verification_status !== "verified" && snapshot.verifiedTier !== "L2") {
+          if (l1?.verification_status === "pending") {
+            await pollKycStatus(customerId, "l1");
+          } else {
+            setIsAllKycCompleted(false);
+            const level = l1?.verification_status === "rejected" ? "REJECTED" : snapshot.verifiedTier === "L0" ? "L0" : "REQUIRES_KYC";
+            setKycLevel(level);
+            kycLevelRef.current = level;
+            setError(l1?.verification_status === "rejected" ? "Correct your legal name, address, date of birth and SSN before continuing to document verification." : null);
+            updateStep("collecting_kyc");
+            isRunningRef.current = false;
+            isVerifyingRef.current = false;
+            return false;
+          }
+        }
+      }
+      reportKycEvent("documents_started", "l2");
+      updateStep("verifying_identity");
+      setKycTierRequired("l2");
       const res = await onrampRef.current.verifyDocuments();
       console.log("[EMBEDDED ONRAMP] verifyDocuments response:", res);
       isVerifyingRef.current = false;
@@ -3598,6 +3677,8 @@ export function useStripeEmbeddedOnramp({
       kycFinalStatusRef.current = "verified";
       kycVerifiedLevelRef.current = "L2";
       reportKycEvent("completed", "l2");
+      pendingL2Ref.current = false;
+      isVerifyingRef.current = false;
       setError(null);
       setPersistedError(null);
       resumeAfterKyc();
@@ -3607,6 +3688,14 @@ export function useStripeEmbeddedOnramp({
       if (err?.code === "kyc_observation_pending") return false;
       isVerifyingRef.current = false;
       isRunningRef.current = false;
+      if (err?.code === "kyc_l1_rejected") {
+        setKycTierRequired("l1");
+        setKycLevel("REJECTED");
+        kycLevelRef.current = "REJECTED";
+        setError(err.message);
+        updateStep("collecting_kyc");
+        return false;
+      }
       const errMsg = String(err?.message || err || "").toLowerCase();
       if (errMsg.includes("invalid request") || errMsg.includes("already_verified") || errMsg.includes("cannot be updated")) {
         const snapshot = latestKycSnapshotRef.current;
@@ -3647,8 +3736,11 @@ export function useStripeEmbeddedOnramp({
 
       handleError(err?.message || "Identity verification failed", err);
       return false;
+    } finally {
+      isVerifyingRef.current = false;
     }
-  }, [pollKycStatus, updateStep, handleError, reportKycEvent, setKycTierRequired, resumeAfterKyc, setPersistedError]);
+  }, [pollKycStatus, updateStep, handleError, reportKycEvent, setKycTierRequired, resumeAfterKyc, setPersistedError, buildTrackedCustomerUrl, consumeKycTrackingResponse]);
+  verifyDocumentsRef.current = verifyDocuments;
 
   const startOnramp = useCallback(async (
     overrideEmail?: string,
