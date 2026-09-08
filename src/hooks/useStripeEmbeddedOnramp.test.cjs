@@ -84,7 +84,7 @@ function createStorage(initial = {}) {
   };
 }
 
-function createHarness({ accordion = false, ownership = null } = {}) {
+function createHarness({ accordion = false, ownership = null, storage = null, customerId = CUSTOMER_ID } = {}) {
   const runner = createHookRunner();
   const calls = { initialize: 0, authenticate: 0, destroy: 0, verifyDocuments: 0, performCheckout: 0, paymentOptions: [], requests: [], errors: [], steps: [], challenges: [], signedMessages: [], signatures: [], checkoutSessions: [], successes: [] };
   const state = { kycVerified: false, paymentCompletion: null, sessionFailure: null, walletVerified: false };
@@ -92,9 +92,9 @@ function createHarness({ accordion = false, ownership = null } = {}) {
   const listeners = new Map();
   let timerId = 0;
   let sdkAuthenticated = false;
-  const localStorage = createStorage({
+  const localStorage = storage || createStorage({
     stripe_onramp_email: EMAIL,
-    stripe_onramp_customer_id: CUSTOMER_ID,
+    stripe_onramp_customer_id: customerId,
     stripe_onramp_oauth_token: "liwltoken_restored_test",
     stripe_onramp_buyer_wallet: BUYER_WALLET,
   });
@@ -104,7 +104,7 @@ function createHarness({ accordion = false, ownership = null } = {}) {
     authenticate: async (_intent, complete) => {
       calls.authenticate++;
       sdkAuthenticated = true;
-      complete({ result: "success", crypto_customer_id: CUSTOMER_ID });
+      complete({ result: "success", crypto_customer_id: customerId });
       return new Element();
     },
     verifyDocuments: async () => {
@@ -196,7 +196,7 @@ function createHarness({ accordion = false, ownership = null } = {}) {
     if (pathname === "/api/stripe/link-auth-tokens") return jsonResponse({ accessToken: "liwltoken_authenticated_test" });
     if (pathname === "/api/auth/mark-verified") return jsonResponse({ verificationToken: "verification_test" });
     if (["/api/users/profile", "/api/receipts/status", "/api/portal/log"].includes(pathname)) return jsonResponse({ ok: true });
-    if (pathname === "/api/stripe/onramp-limits") return jsonResponse({ ok: true, limits: [] });
+    if (pathname === "/api/stripe/onramp-limits") return jsonResponse({ ok: true, limits: state.limits || [] });
     if (pathname === "/api/stripe/onramp-session-v2" && state.hangSession) return new Promise((_, reject) => {
       options.signal.addEventListener("abort", () => reject(new Error("session_request_aborted")), { once: true });
     });
@@ -230,7 +230,10 @@ function createHarness({ accordion = false, ownership = null } = {}) {
       if (state.backgroundOutage) throw new Error("Background response lost");
       return jsonResponse({ ok: true, stripeStatus: state.backgroundStatus || "fulfillment_processing" });
     }
-    if (pathname === `/api/stripe/crypto-customer/${CUSTOMER_ID}`) {
+    if (pathname === `/api/stripe/crypto-customer/${customerId}`) {
+      if (state.hangCustomer) return new Promise((_, reject) => {
+        options.signal.addEventListener('abort', () => reject(new Error('customer_request_aborted')), { once: true });
+      });
       if (state.customerOutage) return { ok: false, status: 503, json: async () => ({}) };
       if (state.customerData) return jsonResponse(state.customerData);
       if (state.hangFinalKyc && String(url).includes("trackingPhase=final")) return new Promise(() => {});
@@ -712,6 +715,267 @@ function usCustomer(l1 = 'not_started', l2 = 'not_started') {
       currentStatus: l2 !== 'not_started' ? l2 : l1 !== 'not_started' ? l1 : 'verified',
       verifiedTier, tiers, providedFields: [], identifiersSatisfied: true, attestationAccepted: false, euFullyVerified: false } };
 }
+
+function usRejectedL0(l1 = 'verified', l2 = 'not_started') {
+  const customer = usCustomer(l1, l2);
+  customer.kycTiers[0].verification_status = 'rejected';
+  if (l1 === 'not_started' && l2 === 'not_started') {
+    customer.kycStatus = 'rejected';
+    customer.kycSnapshot.currentStatus = 'rejected';
+    customer.kycSnapshot.verifiedTier = null;
+  }
+  return customer;
+}
+
+test('L0 rejection followed by L1 approval advances to payment without repeating lower-tier KYC', async t => {
+  const h = createHarness({ownership: {source: 'backend'}}); t.after(h.unmount);
+  h.state.customerData = usRejectedL0('not_started');
+  await h.render().startOnramp();
+  assert.equal(h.render().kycTierRequired, 'l1');
+  h.state.onKycSubmission = () => { h.state.customerData = usRejectedL0(); };
+  await h.render().submitKycInfo({date_of_birth: {year: 1990, month: 1, day: 1}, id_number: {type: 'us_ssn', value: '000000000'}});
+  h.runResumeTimer();
+  await settleUntil(() => h.calls.paymentOptions.length === 1);
+  assert.equal(h.render().step, 'collecting_payment');
+  assert.equal(h.render().kycLevel, 'L1');
+  assert.equal(h.calls.kycSubmissions.length, 1);
+  assert.equal(h.calls.verifyDocuments, 0);
+  h.state.paymentCompletion({});
+});
+
+for (const sdkError of [
+  {code: 'crypto_onramp_verification_error', message: 'KYC is incomplete'},
+  {message: 'KYC information required'},
+  {message: 'minimum_identity required'},
+]) {
+test(`L1-approved customer with rejected L0 recovers ${sdkError.message} on the same payment session`, async t => {
+  const h = createHarness({ownership: {source: 'backend'}}); t.after(h.unmount);
+  h.state.customerData = usRejectedL0();
+  h.state.walletVerified = true;
+  h.state.onCheckout = () => {
+    h.state.sdkError = h.calls.performCheckout === 1 ? sdkError : null;
+  };
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, 'completed');
+  assert.deepEqual(h.calls.checkoutSessions, ['cos_test_ownership', 'cos_test_ownership']);
+  assert.equal(h.calls.requests.filter(r => r.pathname === '/api/stripe/onramp-session-v2').length, 1);
+  assert.equal(h.calls.steps.includes('collecting_kyc'), false);
+  assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.calls.kycSubmissions, undefined);
+  assert.equal(hook.kycTiers.find(tier => tier.tier === 'l0').verification_status, 'rejected');
+  assert.equal(hook.kycTiers.find(tier => tier.tier === 'l1').verification_status, 'verified');
+});
+}
+
+for (const source of ['creation', 'checkout']) {
+  test(`${source} contradictory KYC errors stop without recycling L0 and L1 or permitting force retries`, async t => {
+    const h = createHarness({ownership: {source: 'backend'}}); t.after(h.unmount);
+    h.state.customerData = usRejectedL0();
+    if (source === 'creation') h.state.sessionFailure = {code: 'crypto_onramp_missing_identity_verification', error: 'Identity verification required'};
+    else h.state.sdkError = {code: 'crypto_onramp_verification_error', message: 'KYC is incomplete'};
+    const hook = await completeOwnershipCheckout(h);
+    assert.equal(hook.step, 'error');
+    assert.equal(hook.errorDetails.code, 'verification_recovery_exhausted');
+    assert.equal(hook.kycTiers.find(tier => tier.tier === 'l1').verification_status, 'verified');
+    assert.equal(h.calls.steps.includes('collecting_kyc'), false);
+    assert.equal(h.calls.verifyDocuments, 0);
+    assert.equal(h.calls.kycSubmissions, undefined);
+    assert.equal(source === 'creation' ? h.calls.requests.filter(r => r.pathname === '/api/stripe/onramp-session-v2').length : h.calls.performCheckout, 3);
+    const requests = h.calls.requests.length;
+    await hook.startOnramp(EMAIL, '', 'US', true);
+    assert.equal(h.calls.requests.length, requests);
+  });
+}
+
+test('pending L1 after failed L0 resumes the original checkout when L1 is verified', async t => {
+  const h = createHarness({ownership: {source: 'backend'}}); t.after(h.unmount);
+  h.state.customerData = usCustomer();
+  h.state.onCheckout = () => {
+    h.state.customerData = usRejectedL0('pending');
+    h.state.sdkError = {code: 'crypto_onramp_verification_error', message: 'Verification is processing'};
+  };
+  const flow = completeOwnershipCheckout(h);
+  await settleUntil(() => h.hasTimer(2000));
+  assert.equal(h.render().step, 'checking_kyc');
+  assert.equal(h.calls.performCheckout, 1);
+  h.state.onCheckout = null;
+  h.state.sdkError = null;
+  h.state.walletVerified = true;
+  h.state.customerData = usRejectedL0();
+  await h.runTimer(2000);
+  assert.equal((await flow).step, 'completed');
+  assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.calls.paymentOptions.length, 1);
+  assert.equal(h.calls.kycSubmissions, undefined);
+});
+
+test('explicit L2 requirement with verified L1 and rejected L0 still completes documents on the same session', async t => {
+  const h = createHarness({ownership: {source: 'backend'}}); t.after(h.unmount);
+  h.state.customerData = usRejectedL0();
+  h.state.sdkError = {code: 'crypto_onramp_missing_document_verification'};
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, 'collecting_kyc');
+  assert.equal(hook.kycTierRequired, 'l2');
+  assert.equal(hook.kycTiers.find(tier => tier.tier === 'l1').verification_status, 'verified');
+  h.state.onDocuments = () => { h.state.customerData = usRejectedL0('verified', 'verified'); };
+  h.state.sdkError = null;
+  h.state.walletVerified = true;
+  await hook.verifyDocuments();
+  await settleUntil(() => h.calls.successes.length === 1);
+  assert.equal(h.calls.verifyDocuments, 1);
+  assert.equal(h.calls.kycSubmissions, undefined);
+  assert.equal(h.calls.paymentOptions.length, 1);
+  assert.equal(h.render().sessionId, 'cos_test_ownership');
+});
+
+test('outage while resolving required L1 retains that requirement after status becomes available', async t => {
+  const h = createHarness({ownership: {source: 'backend'}}); t.after(h.unmount);
+  h.state.customerData = usCustomer();
+  h.state.onCheckout = () => { h.state.customerOutage = true; };
+  h.state.sdkError = {code: 'crypto_onramp_missing_identity_verification'};
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, 'kyc_pending');
+  h.state.customerOutage = false;
+  h.state.onCheckout = null;
+  await hook.checkKycStatus();
+  assert.equal(h.render().step, 'collecting_kyc');
+  assert.equal(h.render().kycTierRequired, 'l1');
+  assert.equal(h.calls.performCheckout, 1);
+  assert.equal(h.calls.verifyDocuments, 0);
+});
+
+test('global KYC error observes approved L1 without routing back to L0 or inventing L2', {timeout: 5000}, async t => {
+  const h = createHarness({ownership: {source: 'backend'}}); t.after(h.unmount);
+  h.state.customerData = usRejectedL0();
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.calls.paymentOptions.length === 1);
+  h.render();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.equal(h.rejectGlobally(new Error('Identity verification required')), true);
+    await settleUntil(() => h.render().step === 'collecting_payment');
+    assert.equal(h.render().kycLevel, 'L1');
+    assert.equal(h.calls.steps.includes('collecting_kyc'), false);
+  }
+  h.rejectGlobally(new Error('Identity verification required'));
+  await settleUntil(() => h.render().step === 'error');
+  assert.equal(h.render().errorDetails.code, 'verification_recovery_exhausted');
+  assert.equal(h.calls.verifyDocuments, 0);
+  h.state.paymentCompletion({});
+  await flow;
+  const requests = h.calls.requests.length;
+  await h.render().startOnramp(EMAIL, '', 'US', true);
+  assert.equal(h.calls.requests.length, requests, 'settling the selection waiter must not erase the stop policy');
+});
+
+test('verified L1 does not make the accordion infer L2 from collecting_kyc alone', t => {
+  const h = createHarness({accordion: true}); t.after(h.unmount);
+  const state = h.render({country: 'US', headlessStep: 'collecting_kyc', kycLevel: 'L1', kycTierRequired: 'l0', kycTiers: usRejectedL0().kycTiers});
+  assert.equal(state.step2Props.isL2Requirement, false);
+  assert.equal(state.isStep2Satisfied, true);
+  assert.equal(h.render({kycTierRequired: 'l2'}).step2Props.isL2Requirement, true);
+});
+
+for (const [required, l1, l2, step, tier] of [
+  ['L1', 'not_started', 'not_started', 'collecting_kyc', 'l1'],
+  ['L2', 'not_started', 'not_started', 'collecting_kyc', 'l1'],
+  ['L2', 'verified', 'not_started', 'collecting_kyc', 'l2'],
+  ['L2', 'pending', 'not_started', 'kyc_pending', 'l1'],
+  ['L2', 'verified', 'pending', 'kyc_pending', 'l2'],
+  ['L1', 'rejected', 'not_started', 'collecting_kyc', 'l1'],
+]) {
+  test(`reopening receipt requiring ${required} with L1 ${l1}/L2 ${l2} resumes ${tier} before payment`, async t => {
+    const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+    h.state.customerData = { ...usCustomer(l1, l2), tracking: { requiredLevel: required } };
+    await h.render().startOnramp();
+    const hook = h.render();
+    assert.equal(hook.step, step);
+    assert.equal(hook.kycTierRequired, tier);
+    assert.equal(h.calls.paymentOptions.length, 0);
+    assert.equal(h.calls.performCheckout, 0);
+    assert.equal(h.calls.verifyDocuments, 0);
+    assert.equal(h.calls.requests.some(r => r.pathname === '/api/stripe/onramp-session-v2'), false);
+    const ui = createHarness({ accordion: true }); t.after(ui.unmount);
+    const screen = ui.render({ headlessStep: hook.step, kycTierRequired: hook.kycTierRequired, kycLevel: hook.kycLevel, kycTiers: hook.kycTiers });
+    assert.equal(screen.activeStep, 2);
+    if (l1 === 'rejected') {
+      assert.equal(screen.step2Props.showFullForm, true, 'a rejected L1 must retain full legal-detail correction after reopening');
+      assert.equal(screen.step2Props.requiresL1Fields, true);
+    }
+  });
+}
+
+for (const [required, customer] of [['L1', usRejectedL0()], ['L2', usCustomer('verified', 'verified')]]) {
+  test(`fresh Stripe approval satisfies saved ${required} without repeating KYC after reopening`, async t => {
+    const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+    h.state.customerData = { ...customer, tracking: { requiredLevel: required } };
+    const hook = await completeOwnershipCheckout(h);
+    assert.equal(hook.step, 'completed');
+    assert.equal(h.calls.verifyDocuments, 0);
+    assert.equal(h.calls.kycSubmissions, undefined);
+    assert.equal(h.calls.requests.filter(r => r.pathname === '/api/stripe/onramp-session-v2').length, 1);
+  });
+}
+
+test('reopening with unavailable customer status pauses, then restores the server requirement when status recovers', async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.hangCustomer = true;
+  const start = h.render().startOnramp();
+  await h.runTimer(15000); await start;
+  assert.equal(h.render().step, 'kyc_pending');
+  assert.equal(h.calls.paymentOptions.length, 0);
+  h.state.hangCustomer = false;
+  h.state.customerData = { ...usCustomer(), tracking: { requiredLevel: 'L2' } };
+  await h.render().checkKycStatus();
+  assert.equal(h.render().step, 'collecting_kyc');
+  assert.equal(h.render().kycTierRequired, 'l1');
+  assert.equal(h.calls.paymentOptions.length, 0);
+});
+
+test('document requirement survives a full remount before server tracking catches up, then L1 and L2 finish before payment', async t => {
+  const first = createHarness({ ownership: { source: 'backend' } });
+  first.state.customerData = usCustomer();
+  first.state.sessionFailure = { code: 'crypto_onramp_missing_document_verification', error: 'Document verification is required to create an onramp session.' };
+  await completeOwnershipCheckout(first);
+  assert.equal(first.render().kycTierRequired, 'l1');
+  assert.equal(first.calls.performCheckout, 0);
+  first.unmount();
+
+  const h = createHarness({ ownership: { source: 'backend' }, storage: first.localStorage }); t.after(h.unmount);
+  h.state.customerData = usCustomer(); // no server tracking available in this response
+  await h.render().startOnramp();
+  assert.equal(h.render().kycTierRequired, 'l1');
+  assert.equal(h.calls.paymentOptions.length, 0);
+  h.state.onKycSubmission = () => { h.state.customerData = usCustomer('verified'); };
+  h.state.onDocuments = () => { h.state.customerData = usCustomer('verified', 'verified'); };
+  await h.render().submitKycInfo({ date_of_birth: { year: 1990, month: 5, day: 12 }, id_number: { type: 'us_ssn', value: '123456789' } });
+  assert.equal(h.calls.kycSubmissions.length, 1);
+  assert.equal(h.calls.verifyDocuments, 1);
+  assert.equal(h.calls.performCheckout, 0);
+  h.runResumeTimer();
+  await settleUntil(() => h.calls.paymentOptions.length === 1);
+  h.state.paymentCompletion({ cryptoPaymentToken: 'cpt_after_resume', paymentMethodDetails: { type: 'card', card: { funding: 'debit' } } });
+  await settleUntil(() => h.calls.successes.length === 1);
+  assert.equal(h.calls.requests.filter(r => r.pathname === '/api/stripe/onramp-session-v2').length, 1);
+  assert.equal(h.calls.authenticate, 1);
+});
+
+test('saved KYC requirement cannot leak to another receipt, merchant, or Stripe customer', async t => {
+  const first = createHarness({ ownership: { source: 'backend' } });
+  first.state.customerData = { ...usCustomer(), tracking: { requiredLevel: 'L2' } };
+  await first.render().startOnramp(); first.unmount();
+  for (const scenario of [
+    { props: { receiptId: 'R-OTHER' } },
+    { props: { merchantWallet: '0x4444444444444444444444444444444444444444' } },
+    { customerId: 'crc_other_buyer' },
+  ]) {
+    const h = createHarness({ storage: first.localStorage, customerId: scenario.customerId }); t.after(h.unmount);
+    h.state.customerData = usCustomer();
+    const start = h.render(scenario.props).startOnramp();
+    await settleUntil(() => h.calls.paymentOptions.length === 1);
+    assert.equal(h.calls.steps.includes('collecting_kyc'), false);
+    h.state.paymentCompletion({}); await start;
+  }
+});
 
 async function usL2StepUp(h) {
   h.state.customerData = usCustomer();
@@ -1314,6 +1578,14 @@ for (const { code, cases } of require('../lib/stripe-onramp-errors.fixtures.json
 test('generic basic-KYC checkout failure returns to L0 on the same session', async t => {
   const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
   h.state.customerData = usCustomer();
+  h.state.onCheckout = () => {
+    const customer = usCustomer();
+    customer.kycTiers[0].verification_status = 'not_started';
+    customer.kycSnapshot.currentTier = null;
+    customer.kycSnapshot.currentStatus = 'not_started';
+    customer.kycSnapshot.verifiedTier = null;
+    h.state.customerData = customer;
+  };
   h.state.sdkError = { code: 'crypto_onramp_verification_error', message: 'Basic KYC information must be submitted before this endpoint can be used.' };
   const hook = await completeOwnershipCheckout(h);
   assert.equal(hook.step, 'collecting_kyc');
@@ -1399,6 +1671,14 @@ test('terminal provider errors cannot be retried from the accordion even after d
 test('200 checkout last_error is retained even with a client_secret and unsuccessful SDK result', async t => {
   const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
   h.state.customerData = usCustomer();
+  h.state.onCheckout = () => {
+    const customer = usCustomer();
+    customer.kycTiers[0].verification_status = 'not_started';
+    customer.kycSnapshot.currentTier = null;
+    customer.kycSnapshot.currentStatus = 'not_started';
+    customer.kycSnapshot.verifiedTier = null;
+    h.state.customerData = customer;
+  };
   h.state.walletVerified = true;
   h.state.sdkUnsuccessfulAfterCallback = true;
   h.state.checkoutResponse = { ok: true, client_secret: 'test_client_secret', lastError: { code: 'crypto_onramp_verification_error', message: 'Basic KYC information must be submitted before this endpoint can be used.' }, requestId: 'req_context' };

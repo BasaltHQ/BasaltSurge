@@ -393,7 +393,7 @@ export function useAccordionCheckoutState(
   const l1Verified = kyc.isL1Verified || kycTiers.some((t: any) => t.tier === "l1" && t.verification_status === "verified");
   const l2Verified = kyc.isL2Verified || docVerificationSuccess || kycTiers.some((t: any) => t.tier === "l2" && t.verification_status === "verified");
 
-  const isL0Approved = kyc.isL0Verified || isAllKycCompleted;
+  const isL0Approved = kyc.isL0Verified || l1Verified || l2Verified || isAllKycCompleted;
   const isL1Approved = l1Verified;
   const isL2Approved = l2Verified;
 
@@ -468,8 +468,7 @@ export function useAccordionCheckoutState(
       isProactiveL2StepUp ||
       parsedActiveError?.kycTargetTier === "l2" ||
       Boolean(parsedActiveError?.isAmountLimit && !l2Verified) ||
-      headlessStep === "verifying_identity" ||
-      (headlessStep === "collecting_kyc" && (l1Verified || isEU)));
+      headlessStep === "verifying_identity");
 
   const isL2Requirement = showVerifyDocs;
 

@@ -9,7 +9,7 @@ const SOURCE_ROOT = path.resolve(__dirname, "../../../..");
 
 // Run the actual route, FX loader, and conversion helper with HTTP and database
 // boundaries replaced. No test request can reach Stripe or a live receipt.
-function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides = {}, legacy = false } = {}) {
+function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides = {}, legacy = false, onKycPatch = null } = {}) {
   const requests = [];
   const writes = [];
   const receipt = { id: "receipt:R-currency-test", wallet: "0x1111111111111111111111111111111111111111", receiptId: "R-currency-test", totalUsd: 10, status: "pending", ...receiptOverrides };
@@ -18,6 +18,9 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides =
     requests.push({ url: String(url), options });
     if (String(url) === "https://api.coinbase.com/v2/exchange-rates?currency=USD") {
       return jsonResponse({ data: { rates: eurPerUsd === null ? {} : { EUR: String(eurPerUsd) } } });
+    }
+    if (String(url) === 'https://api.stripe.com/v1/crypto/onramp_sessions/cos_previous') {
+      return jsonResponse({ id: 'cos_previous', status: 'requires_payment', ui_mode: 'headless' });
     }
     assert.equal(String(url), "https://api.stripe.com/v1/crypto/onramp_sessions");
     assert.equal(options.method, "POST");
@@ -30,6 +33,7 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides =
       item: () => ({
         read: async () => ({ resource: { ...receipt } }),
         patch: async (operations, options = {}) => {
+          if (operations.length === 1 && operations[0].path === '/kycRequiredLevel') onKycPatch?.(receipt);
           for (const [key, expected] of Object.entries(options.matchFields || {})) assert.equal(receipt[key] ?? null, expected);
           for (const operation of operations) receipt[operation.path.slice(1)] = operation.value;
           writes.push({ ...receipt });
@@ -57,7 +61,7 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides =
         }
         throw new Error(`Unexpected module: ${name}`);
       },
-      fetch, URLSearchParams, Response,
+      fetch, URLSearchParams, Response, AbortSignal,
       process: { env: { STRIPE_API_KEY: "sk_test_mock" } },
       console: { log() {}, warn() {}, error() {} },
     }, { filename: file });
@@ -65,7 +69,7 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides =
   }
   const route = load(path.join(__dirname, legacy ? "../onramp-session/route.ts" : "route.ts"));
   return {
-    requests, writes,
+    requests, writes, receipt,
     async post(overrides = {}) {
       const response = await route.POST({
         headers: new Headers(),
@@ -140,4 +144,58 @@ test("Stripe rejection responses preserve the provider request ID without writin
   assert.equal(response.data.requestId, "req_test_currency");
   assert.equal(response.data.code, "crypto_onramp_test_verification");
   assert.equal(harness.writes.length, 0);
+});
+
+for (const [code, tier] of [
+  ['crypto_onramp_missing_minimum_identity_verification', 'L0'],
+  ['crypto_onramp_missing_identity_verification', 'L1'],
+  ['crypto_onramp_missing_document_verification', 'L2'],
+]) {
+  test(`Stripe ${code} persists ${tier} for the bound receipt without altering payment data`, async () => {
+    const h = createHarness({ stripeError: { code, message: 'Verification required' }, receiptOverrides: { cryptoCustomerId: 'crc_mock', stripeSessionId: 'cos_previous', stripeSessionStatus: 'requires_payment' } });
+    const response = await h.post({ sourceCurrency: 'usd' });
+    assert.equal(response.status, 400);
+    assert.equal(response.data.code, code);
+    assert.equal(response.data.requestId, 'req_test_currency');
+    assert.equal(h.receipt.kycRequiredLevel, tier);
+    assert.equal(h.receipt.status, 'pending');
+    assert.equal(h.receipt.totalUsd, 10);
+    assert.equal(h.receipt.stripeSessionId, 'cos_previous');
+    assert.equal(h.receipt.stripeSessionStatus, 'requires_payment');
+    assert.equal(h.receipt.stripePaidSessionId, undefined);
+  });
+}
+
+test('KYC requirement write conflicts reread the receipt and preserve a concurrently higher requirement and paid status', async () => {
+  let attempts = 0;
+  const h = createHarness({ stripeError: { code: 'crypto_onramp_missing_identity_verification', message: 'L1 required' }, receiptOverrides: { cryptoCustomerId: 'crc_mock' },
+    onKycPatch: receipt => {
+      attempts++;
+      receipt.kycRequiredLevel = 'L2'; receipt.status = 'paid';
+      throw Object.assign(new Error('conflict'), { code: 412 });
+    },
+  });
+  const response = await h.post({ sourceCurrency: 'usd' });
+  assert.equal(response.status, 400);
+  assert.equal(h.receipt.kycRequiredLevel, 'L2');
+  assert.equal(h.receipt.status, 'paid');
+  assert.equal(attempts, 1);
+});
+
+test('a different customer cannot change a receipt KYC requirement', async () => {
+  const h = createHarness({ stripeError: { code: 'crypto_onramp_missing_document_verification' }, receiptOverrides: { cryptoCustomerId: 'crc_other', kycRequiredLevel: 'L1' } });
+  const response = await h.post({ sourceCurrency: 'usd' });
+  assert.equal(response.data.code, 'crypto_onramp_missing_document_verification');
+  assert.equal(h.receipt.kycRequiredLevel, 'L1');
+  assert.equal(h.writes.length, 0);
+});
+
+test('KYC persistence outage preserves the actionable Stripe response and never retries a charge', async () => {
+  const h = createHarness({ stripeError: { code: 'crypto_onramp_missing_document_verification' }, receiptOverrides: { cryptoCustomerId: 'crc_mock' }, onKycPatch: () => { throw new Error('DB unavailable'); } });
+  const response = await h.post({ sourceCurrency: 'usd' });
+  assert.equal(response.status, 400);
+  assert.equal(response.data.code, 'crypto_onramp_missing_document_verification');
+  assert.equal(response.data.requestId, 'req_test_currency');
+  assert.equal(h.writes.length, 0);
+  assert.equal(h.requests.length, 1);
 });
