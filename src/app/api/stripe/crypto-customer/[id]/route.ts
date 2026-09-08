@@ -124,9 +124,10 @@ async function persistProviderKycSnapshot(params: {
       try {
         const result = await container.item(receipt.id, merchantWallet).patch(
           operations,
-          current._etag
-            ? { accessCondition: { type: "IfMatch", condition: current._etag } }
-            : undefined
+          {
+            matchFields: { cryptoCustomerId: current.cryptoCustomerId ?? null, kycRequiredLevel: current.kycRequiredLevel ?? null },
+            ...(current._etag ? { accessCondition: { type: "IfMatch", condition: current._etag } } : {}),
+          } as any
         );
         latest = result.resource || { ...current, ...next };
         applied = true;

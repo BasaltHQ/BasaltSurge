@@ -5,6 +5,7 @@ import { getPublicClientIp } from "@/lib/request-client-ip";
 import { normalizeStripeOnrampCheckoutMode } from "@/lib/stripe-onramp-status";
 import { fetchUsdRates } from "@/lib/eth";
 import { resolveStripeOnrampSourceAmounts, StripeOnrampCurrencyError } from "@/lib/stripe-onramp-currency";
+import { persistStripeKycRequirement } from "@/lib/stripe-kyc-requirement";
 
 export const dynamic = 'force-dynamic';
 
@@ -215,6 +216,21 @@ export async function POST(req: NextRequest) {
     }
 
     if (!response.ok) {
+      const requiredTier = data.error?.code === "crypto_onramp_missing_document_verification" ? "L2"
+        : data.error?.code === "crypto_onramp_missing_identity_verification" ? "L1"
+        : data.error?.code === "crypto_onramp_missing_minimum_identity_verification" ? "L0" : null;
+      if (requiredTier && receiptId && merchantWallet) {
+        try {
+          await persistStripeKycRequirement(
+            await getContainer(undefined, undefined, { profile: "critical" }),
+            receiptId, merchantWallet, cryptoCustomerId, requiredTier,
+          );
+        } catch (error: any) {
+          // Keep the actionable Stripe error if telemetry storage is unavailable;
+          // the client also preserves the requirement and retries tracked reads.
+          console.warn("[ONRAMP V2] Could not persist KYC requirement:", error?.message);
+        }
+      }
       console.error("[ONRAMP V2] Session creation failed:", data);
       return NextResponse.json(
         {

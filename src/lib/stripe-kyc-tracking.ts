@@ -213,6 +213,45 @@ export function deriveKycCompletedDuringTransaction(
   return kycTierRank(finalTier) > kycTierRank(initialVerifiedTier) ? finalTier : null;
 }
 
+/** A higher verified US tier supersedes historical lower-tier rejection.
+ * Pending verification and a rejected current tier still block progression.
+ * Keep raw tier statuses intact for diagnostics and Stripe's next requirements.
+ */
+export function isStripeKycTierSatisfied(snapshot: StripeKycSnapshot, tier: StripeKycTierLower): boolean {
+  return snapshot.currentStatus === "verified"
+    && !snapshot.tiers.some(entry => entry.verification_status === "pending")
+    && kycTierRank(snapshot.verifiedTier) >= kycTierRank(tier);
+}
+
+export type StripeKycRecoveryDecision =
+  | { kind: "ready" | "unavailable" }
+  | { kind: "collect" | "pending"; tier: StripeKycTierLower };
+
+/** US KYC recovery follows the current tier, never the first failed tier.
+ * Explicit document challenges may require L2 again despite prior approval.
+ */
+export function resolveUsStripeKycRecovery(
+  snapshot: StripeKycSnapshot,
+  requestedTier?: StripeKycTierLower,
+  forceDocuments = false,
+): StripeKycRecoveryDecision {
+  const pending = [...snapshot.tiers].reverse().find(entry => entry.verification_status === "pending");
+  if (pending) return { kind: "pending", tier: pending.tier };
+  const current = normalizeKycTierLower(snapshot.currentTier);
+  if (snapshot.currentStatus === "rejected" && current) {
+    return { kind: "collect", tier: current === "l0" ? "l1" : current };
+  }
+  if (requestedTier === "l2") {
+    if (!isStripeKycTierSatisfied(snapshot, "l1")) return { kind: "collect", tier: "l1" };
+    if (forceDocuments || !isStripeKycTierSatisfied(snapshot, "l2")) return { kind: "collect", tier: "l2" };
+    return { kind: "ready" };
+  }
+  if (isStripeKycTierSatisfied(snapshot, requestedTier || "l0")) return { kind: "ready" };
+  if (requestedTier) return { kind: "collect", tier: requestedTier };
+  if (snapshot.tiers.length && !snapshot.verifiedTier) return { kind: "collect", tier: "l0" };
+  return { kind: "unavailable" };
+}
+
 export function normalizeMicaIdentifier(type: string, value: string): string {
   const compact = String(value || "").replace(/[\s\-/]/g, "");
   return ["es_nif", "it_cf", "mt_nic", "mt_pp"].includes(String(type || "").toLowerCase())

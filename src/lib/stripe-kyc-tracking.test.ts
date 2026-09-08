@@ -11,7 +11,47 @@ const {
   isValidIsoCountryCode,
   normalizeMicaIdentifier,
   validateMicaIdentifier,
+  isStripeKycTierSatisfied,
+  resolveUsStripeKycRecovery,
 } = kycTracking;
+
+function usTiers(l0: string, l1: string, l2 = "not_started") {
+  return deriveStripeKycSnapshot({ kyc_region: "us", kyc_tiers: [
+    { tier: "l0", verification_status: l0 },
+    { tier: "l1", verification_status: l1 },
+    { tier: "l2", verification_status: l2 },
+  ] });
+}
+
+test("verified L1 supersedes rejected L0 without rewriting Stripe's history", () => {
+  const snapshot = usTiers("rejected", "verified");
+  for (const requested of [undefined, "l0", "l1"] as const) {
+    assert.deepEqual(resolveUsStripeKycRecovery(snapshot, requested), { kind: "ready" });
+  }
+  assert.equal(isStripeKycTierSatisfied(snapshot, "l0"), true);
+  assert.equal(snapshot.tiers[0].verification_status, "rejected");
+});
+
+test("rejected L0 steps up to L1, and rejected L1 cannot fall back to L0", () => {
+  assert.deepEqual(resolveUsStripeKycRecovery(usTiers("rejected", "not_started")), {kind: "collect", tier: "l1"});
+  assert.deepEqual(resolveUsStripeKycRecovery(usTiers("verified", "rejected"), "l0"), {kind: "collect", tier: "l1"});
+  assert.equal(isStripeKycTierSatisfied(usTiers("verified", "rejected"), "l0"), false);
+});
+
+test("pending KYC blocks retries, including when another tier is already verified", () => {
+  assert.deepEqual(resolveUsStripeKycRecovery(usTiers("rejected", "pending")), {kind: "pending", tier: "l1"});
+  assert.deepEqual(resolveUsStripeKycRecovery(usTiers("pending", "verified")), {kind: "pending", tier: "l0"});
+  assert.deepEqual(resolveUsStripeKycRecovery(usTiers("verified", "verified", "pending")), {kind: "pending", tier: "l2"});
+});
+
+test("L2 challenges preserve US prerequisites and require documents when explicitly requested", () => {
+  assert.deepEqual(resolveUsStripeKycRecovery(usTiers("rejected", "not_started"), "l2", true), {kind: "collect", tier: "l1"});
+  assert.deepEqual(resolveUsStripeKycRecovery(usTiers("rejected", "verified"), "l2", true), {kind: "collect", tier: "l2"});
+  const complete = usTiers("rejected", "verified", "verified");
+  assert.deepEqual(resolveUsStripeKycRecovery(complete, "l2"), {kind: "ready"});
+  assert.deepEqual(resolveUsStripeKycRecovery(complete, "l2", true), {kind: "collect", tier: "l2"});
+  assert.deepEqual(resolveUsStripeKycRecovery(usTiers("verified", "verified", "rejected")), {kind: "collect", tier: "l2"});
+});
 
 test("derives current attempted tier separately from highest verified tier", () => {
   const snapshot = deriveStripeKycSnapshot({
