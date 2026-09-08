@@ -397,6 +397,7 @@ export function useAccordionCheckoutState(
   // Full L0 form (name, address): for new users (REQUIRES_KYC) or REJECTED where L1 itself failed
   const showFullForm =
     kycLevel === "REQUIRES_KYC" ||
+    kycTiers.some((t: any) => t.tier === "l1" && t.verification_status === "rejected") ||
     (kycLevel === "REJECTED" && !l1Verified) ||
     manualEditAddress ||
     (!l1Verified && !kyc.isL0Verified && !isL0Approved);
@@ -449,6 +450,7 @@ export function useAccordionCheckoutState(
       (kycTierRequired as string) === "l1" ||
       isProactiveL1StepUp ||
       parsedActiveError?.kycTargetTier === "l1" ||
+      (isUS && !l2Verified && (effectiveTier === "l2" || parsedActiveError?.kycTargetTier === "l2" || effectiveStatus === "doc_verify")) ||
       Boolean(parsedActiveError?.isAmountLimit && !l1Verified) ||
       (headlessStep === "collecting_kyc" && (kycTierRequired as string) === "l1") ||
       headlessStep === "submitting_kyc");
@@ -468,8 +470,9 @@ export function useAccordionCheckoutState(
 
   const isL2Requirement = showVerifyDocs;
 
-  const showDobField = showStepUpForm || isL2Requirement || isEU;
-  const showSsnField = isUS && (showStepUpForm || isL2Requirement);
+  const needsL1Fields = !l1Verified && (showStepUpForm || isL2Requirement || effectiveTier === "l1");
+  const showDobField = needsL1Fields || isEU;
+  const showSsnField = isUS && needsL1Fields;
 
   const normalizedState = (stateCode || "").trim().toUpperCase();
   const isUnsupportedState = isUS && (normalizedState === "HI" || normalizedState === "HAWAII");
@@ -784,7 +787,8 @@ export function useAccordionCheckoutState(
     if (!fieldValidation.city) missingIdentityFields.push({ key: "city", label: countryConfig.cityLabel });
     if (countryConfig.requiresState && !fieldValidation.stateCode) missingIdentityFields.push({ key: "stateCode", label: countryConfig.stateLabel });
     if (!fieldValidation.zipCode) missingIdentityFields.push({ key: "zipCode", label: countryConfig.postalCodeLabel });
-    if (isEU && !fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
+    if (showDobField && !fieldValidation.dob) missingIdentityFields.push({ key: "dob", label: dobStatus.error || "Date of Birth" });
+    if (showSsnField && !fieldValidation.ssn) missingIdentityFields.push({ key: "ssn", label: "9-Digit SSN" });
     if (isEU && !fieldValidation.nationalities) missingIdentityFields.push({ key: "nationalities", label: "Nationality country code" });
     if (isEU && !fieldValidation.birthCountry) missingIdentityFields.push({ key: "birthCountry", label: "Birth country" });
     if (isEU && !fieldValidation.birthCity) missingIdentityFields.push({ key: "birthCity", label: "Birth city" });
@@ -923,6 +927,10 @@ export function useAccordionCheckoutState(
 
   // Level 2 Document Verification Action Handler
   const handleVerifyDocuments = async () => {
+    if (isUS && !isL1Approved && !isL2Approved) {
+      setLocalError("Complete date of birth and SSN verification before uploading identity documents.");
+      return;
+    }
     if (!onVerifyDocuments) return;
     try {
       setIsSubmittingIdentity(true);
@@ -959,7 +967,7 @@ export function useAccordionCheckoutState(
       return;
     }
 
-    if (isL2Requirement && !isL2Approved && !showStepUpForm && !showFullForm) {
+    if (isL2Requirement && !isL2Approved && !showStepUpForm && !showFullForm && (!isUS || isL1Approved)) {
       if (onVerifyDocuments) {
         await handleVerifyDocuments();
         return;
@@ -1019,8 +1027,7 @@ export function useAccordionCheckoutState(
 
       if (onSubmitKycInfo && !isSimulationMode) {
         await onSubmitKycInfo({
-          given_name: firstName.trim(),
-          surname: lastName.trim(),
+          ...(!isStepUpOnly ? { given_name: firstName.trim(), surname: lastName.trim() } : {}),
           ...(!isStepUpOnly && line1.trim()
             ? {
                 address: {
@@ -1051,10 +1058,10 @@ export function useAccordionCheckoutState(
               }
             : {}),
         });
-        // The headless coordinator owns the EU sequence after demographics:
-        // missing identifiers -> CARF attestation -> L2 documents -> provider
-        // confirmation. Do not launch a second document flow from this layer.
-        if (isEU) return;
+        // The coordinator owns verification and continuation for every region.
+        // A resolved submission can mean pending/rejected, not approval. Never
+        // launch documents or advance using this render's stale props.
+        return;
       }
 
       // Post-KYC Step Routing Discrimination:
@@ -1289,6 +1296,7 @@ export function useAccordionCheckoutState(
       effectiveStatus,
       headlessStep: effectiveHeadlessStep,
       showStepUpForm,
+      requiresL1Fields: needsL1Fields,
       showFullForm,
       showVerifyDocs,
       isL2Requirement,
