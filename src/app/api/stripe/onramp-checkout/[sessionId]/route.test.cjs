@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const test = require("node:test");
 const ts = require("typescript");
 
-function harness({ receiptOverrides = {}, providerStatus = "requires_payment", readError = null, postError = null, postResponse = null } = {}) {
+function harness({ receiptOverrides = {}, providerStatus = "requires_payment", providerError = null, readError = null, postError = null, postResponse = null } = {}) {
   const wallet = "0x1111111111111111111111111111111111111111";
   const receipt = { id: "receipt:R1", receiptId: "R1", wallet, status: "pending", stripeSessionId: "cos_current", ...receiptOverrides };
   const requests = [];
@@ -42,7 +42,7 @@ function harness({ receiptOverrides = {}, providerStatus = "requires_payment", r
           if (postResponse) return postResponse();
           return response({ client_secret: "cos_mock_secret_test", status: "requires_payment" });
         }
-        return response({ id: "cos_current", status: providerStatus, metadata: { receiptId: "R1", merchantWallet: wallet } });
+        return response({ id: "cos_current", status: providerStatus, metadata: { receiptId: "R1", merchantWallet: wallet }, transaction_details: { last_error: providerError } });
       },
       Response, URLSearchParams, AbortSignal,
       process: { env: { STRIPE_API_KEY: "sk_test_mock" } },
@@ -78,6 +78,25 @@ test("stale tab cannot confirm a session replaced on the receipt", async () => {
   assert.equal(result.status, 409);
   assert.equal(result.data.code, "receipt_session_superseded");
   assert.equal(h.requests.length, 1);
+});
+
+for (const code of ['crypto_onramp_transaction_blocked', 'crypto_onramp_identity_verification_failed', 'crypto_onramp_unsupported_country', 'crypto_onramp_disabled']) {
+  test(`server refuses a repeated checkout for Stripe terminal error ${code}`, async () => {
+    const h = harness({ providerError: { code, message: 'This purchase cannot continue.' } });
+    const result = await h.post();
+    assert.equal(result.status, 409);
+    assert.equal(result.data.code, code);
+    assert.equal(h.requests.filter(r => r.options.method === 'POST').length, 0);
+    assert.equal(h.receipt.stripePaymentAttemptSessionId, undefined);
+  });
+}
+
+test('accepted provider status takes precedence over a lingering terminal last_error', async () => {
+  const h = harness({ providerStatus: 'fulfillment_processing', providerError: { code: 'crypto_onramp_transaction_blocked' } });
+  const result = await h.post();
+  assert.equal(result.status, 200);
+  assert.equal(result.data.status, 'fulfillment_processing');
+  assert.equal(h.requests.filter(r => r.options.method === 'POST').length, 0);
 });
 test("pending current receipt confirms once using the provider receipt metadata", async () => {
   const h = harness();
@@ -153,3 +172,19 @@ test("sequential SDK callbacks for 3DS can reacquire the same session reservatio
   }
   assert.equal(h.requests.filter(r => r.options.method === "POST").length, 2);
 });
+
+for (const status of [200, 202, 402]) {
+  test(`HTTP ${status} preserves provider decline evidence and request ID independently of the lock`, async () => {
+    const error = { code: 'payment_method_authentication_failed', decline_code: 'authentication_not_handled', message: 'Authentication failed' };
+    const h = harness({ postResponse: () => new Response(JSON.stringify(status === 402 ? { error } : {
+      status: 'requires_payment', client_secret: 'cos_mock_secret_test', transaction_details: { last_error: error },
+    }), { status, headers: { 'request-id': 'req_provider_test' } }) });
+    const result = await h.post();
+    assert.equal(result.data.requestId, 'req_provider_test');
+    assert.equal(result.data.decline_code, 'authentication_not_handled');
+    assert.equal(h.receipt.stripeCheckoutRequestId, null);
+    assert.equal(h.receipt.stripeCheckoutDeclineCode, 'payment_method_authentication_failed');
+    assert.equal(h.receipt.stripeCheckoutDiagnostic.requestId, 'req_provider_test');
+    assert.equal(JSON.stringify(h.receipt).includes('cos_mock_secret_test'), false);
+  });
+}

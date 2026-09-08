@@ -112,12 +112,12 @@ test('payment-to-KYC transition removes portal and restores scroll/touch before 
   };
   const transition = props => { index = 0; return render(props); };
   try {
-    assert.ok(transition({ headlessStep: 'checking_out' }).some(node => node?.type === 'portal'));
+    assert.ok(transition({ headlessStep: 'confirming_fees' }).some(node => node?.type === 'portal'));
     assert.equal(body.style.overflow, 'hidden');
     assert.equal(body.style.touchAction, 'none');
     assert.equal(transition({ headlessStep: 'collecting_kyc' }).some(node => node?.type === 'portal'), false);
     assert.deepEqual(body.style, { overflow: 'auto', touchAction: 'pan-y', overscrollBehavior: 'contain' });
-    assert.ok(transition({ headlessStep: 'checking_out' }).some(node => node?.type === 'portal'));
+    assert.ok(transition({ headlessStep: 'confirming_fees' }).some(node => node?.type === 'portal'));
     assert.equal(body.style.overflow, 'hidden');
     assert.equal(transition({ headlessStep: 'completed', isConfirmed: true }).some(node => node?.type === 'portal'), false);
     assert.equal(body.style.overflow, 'auto');
@@ -125,4 +125,15 @@ test('payment-to-KYC transition removes portal and restores scroll/touch before 
     effects.forEach(effect => effect.cleanup?.());
     runEffect = undefined;
   }
+});
+
+test('SDK checkout yields the full screen and recovery exposes status without claiming settlement', () => {
+  for (const headlessStep of ['checking_out', 'payment_recovery']) {
+    assert.equal(render({ headlessStep }).some(node => node?.type === 'portal'), false);
+  }
+  const nodes = render({ headlessStep: 'payment_recovery', receiptId: 'R-REVIEW', onCheckPaymentStatus: async () => {} });
+  assert.match(textOf(nodes), /Payment needs review/);
+  assert.doesNotMatch(textOf(nodes), /Processing Payment|Confirmation can take longer/);
+  assert.ok(nodes.some(node => node?.type === 'button' && node.props.onClick));
+  assert.doesNotMatch(textOf(render({ headlessStep: 'collecting_payment' })), /Processing Payment|do not submit another payment/);
 });

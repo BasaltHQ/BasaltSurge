@@ -2,7 +2,7 @@ import { isProtectedPaymentStatus, shouldIgnoreCanonicalStatusTransition } from 
 import { isStripePaymentAcceptedStatus, isStripeFulfillmentCompleteStatus, shouldRestoreStripeAchPendingStatus, resolveStripeAcceptedReceiptStatus } from "@/lib/stripe-onramp-status";
 import { resolveStripeOnrampFunding } from "@/lib/payment-split-routing";
 import { isStripeSourceAmountSufficient, resolveStripeSourceAmount } from "@/lib/stripe-onramp-amounts";
-import { isDefinitiveOnrampDecline, onrampErrorCode } from "@/lib/stripe-onramp-errors";
+import { isDefinitiveOnrampDecline, isTerminalOnrampError, onrampErrorDetails, onrampErrorCode } from "@/lib/stripe-onramp-errors";
 
 const normalize = (value: unknown) => String(value || "").trim().toLowerCase();
 const receiptKey = (value: unknown) => normalize(value).replace(/^receipt:/, "");
@@ -100,7 +100,7 @@ export async function persistStripeReceiptUpdate(container: any, receipt: any): 
   });
   if (shouldIgnoreCanonicalStatusTransition(current.status, receipt.status) && !achCorrection) throw new Error("receipt_status_changed");
   const fields = Object.fromEntries(Object.entries(receipt).filter(([key, value]) => value !== undefined
-    && !key.startsWith("_") && !["id", "wallet", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "stripeCheckoutDeclineCode"].includes(key)));
+    && !key.startsWith("_") && !["id", "wallet", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "stripeCheckoutDeclineCode", "stripeCheckoutDiagnostic"].includes(key)));
   if (receipt.stripeSessionId && isStripePaymentAcceptedStatus(receipt.stripeSessionStatus)) fields.stripePaidSessionId = receipt.stripeSessionId;
   // Workers update provider/settlement observations, not the merchant's order.
   for (const key of ["totalUsd", "tipAmount", "lineItems"]) delete fields[key];
@@ -160,10 +160,27 @@ function paymentInProgress(receipt?: any) {
 export function stripeReceiptAttemptCanRetry(receipt: any, session: any): boolean {
   try { assertStripeReceiptUnpaid(receipt); } catch { return false; }
   if (isStripePaymentAcceptedStatus(session.status) || receipt.stripeCheckoutRequestId) return false;
-  if (session.id !== receipt.stripeSessionId || session.id !== receipt.stripePaymentAttemptSessionId) return false;
+  if (isTerminalOnrampError(session.transaction_details?.last_error)) return false;
+  if (session.id !== receipt.stripeSessionId) return false;
+  // A headless session whose confirmation was never reserved is still unused.
+  // Match creation's existing rule so SDK failures before its first callback
+  // do not manufacture an uncertain payment that was never submitted.
+  if (!receipt.stripePaymentAttemptSessionId) {
+    return session.ui_mode === "headless" && ["initialized", "requires_payment"].includes(normalize(session.status));
+  }
+  if (session.id !== receipt.stripePaymentAttemptSessionId) return false;
   if (["rejected", "canceled", "cancelled", "expired"].includes(normalize(session.status))) return true;
   return receipt.stripePaymentAttemptKind === "headless" && normalize(session.status) === "requires_payment" &&
     Boolean(session.transaction_details?.last_error || isDefinitiveOnrampDecline(receipt.stripeCheckoutDeclineCode));
+}
+
+/** Only use with a session freshly retrieved from Stripe, never client input. */
+export function assertStripeSessionRecoveryAllowed(session: any): void {
+  const error = session.transaction_details?.last_error;
+  if (isTerminalOnrampError(error)) {
+    const details = onrampErrorDetails(error);
+    throw Object.assign(new Error(details.message || "Stripe cannot complete this purchase. Please contact support."), { code: details.code, statusCode: 409 });
+  }
 }
 
 /** A new session may replace only an attempt whose failure is confirmed by Stripe. */
@@ -176,6 +193,7 @@ export async function assertStripeReceiptCanCreateSession(container: any, receip
     const existing = await retrieve(receipt.stripeSessionId);
     if (existing.id !== receipt.stripeSessionId) throw paymentInProgress(receipt);
     if (isStripePaymentAcceptedStatus(existing.status)) throw Object.assign(new Error("This receipt has already been paid."), { code: "receipt_already_paid", statusCode: 409 });
+    assertStripeSessionRecoveryAllowed(existing);
     const status = normalize(existing.status);
     if (["rejected", "canceled", "cancelled", "expired"].includes(status)) return;
     if (existing.ui_mode === "headless" && ["initialized", "requires_payment"].includes(status)) return;
@@ -185,6 +203,7 @@ export async function assertStripeReceiptCanCreateSession(container: any, receip
   const previous = await retrieve(receipt.stripePaymentAttemptSessionId);
   if (previous.id !== receipt.stripePaymentAttemptSessionId) throw paymentInProgress(receipt);
   if (isStripePaymentAcceptedStatus(previous.status)) throw Object.assign(new Error("This receipt has already been paid."), { code: "receipt_already_paid", statusCode: 409 });
+  assertStripeSessionRecoveryAllowed(previous);
   const status = normalize(previous.status);
   const terminal = ["rejected", "canceled", "cancelled", "expired"].includes(status);
   // A headless failed attempt can no longer confirm after replacement: every
@@ -224,7 +243,8 @@ export async function claimStripeReceiptCheckout(container: any, receipt: any, s
 }
 
 /** Clear only a completed HTTP call; keep the session reserved through 3DS. */
-export async function finishStripeReceiptCheckout(container: any, receipt: any, requestId: string, decline?: unknown): Promise<void> {
+export async function finishStripeReceiptCheckout(container: any, receipt: any, requestId: string, decline?: unknown,
+  diagnostic?: { requestId: string | null; httpStatus: number; code: string | null; declineCode: string | null; sessionId: string; at: number }): Promise<void> {
   const item = container.item(receipt.id, receipt.wallet);
   for (let attempt = 0; attempt < 3; attempt++) {
     const { resource: current } = await item.read();
@@ -233,6 +253,7 @@ export async function finishStripeReceiptCheckout(container: any, receipt: any, 
       await item.patch([
         { op: "set", path: "/stripeCheckoutRequestId", value: null },
         { op: "set", path: "/stripeCheckoutDeclineCode", value: isDefinitiveOnrampDecline(decline) ? onrampErrorCode(decline) : null },
+        ...(diagnostic ? [{ op: "set", path: "/stripeCheckoutDiagnostic", value: diagnostic }] : []),
       ], stripeReceiptWriteCondition(current));
       return;
     } catch (error: any) {

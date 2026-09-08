@@ -3974,6 +3974,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     checkPaymentStatus: checkHeadlessPaymentStatus,
     checkKycStatus: checkHeadlessKycStatus,
     error: headlessError,
+    errorDetails: headlessErrorDetails,
     authElement: headlessAuthElement,
     paymentElement: headlessPaymentElement,
     startOnramp: startHeadlessOnramp,
@@ -4884,6 +4885,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           receiptId={receiptId}
           isReceiptPaid={isSettled(receipt?.status) || Boolean(paymentConfirmed)}
           headlessError={headlessError || displayError}
+          headlessErrorDetails={headlessErrorDetails}
           kycTierRequired={kycTierRequired}
           kycLevel={headlessKycLevel}
           kycTiers={headlessKycTiers}

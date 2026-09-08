@@ -21,6 +21,7 @@ export interface StepProgressionGuardProps {
   isStep2Satisfied: boolean;
   propPaymentElement?: any;
   activeError?: string | null;
+  errorDetails?: { code: string; message: string } | null;
   effectiveError?: string | null;
   onPaymentDeclined?: (reason?: string) => void;
   onStepAutoAdvanced?: (fromStep: number, toStep: number, reason: string) => void;
@@ -55,6 +56,7 @@ export function useStepProgressionGuard({
   isStep2Satisfied,
   propPaymentElement,
   activeError,
+  errorDetails,
   effectiveError,
   onPaymentDeclined,
   onStepAutoAdvanced,
@@ -122,7 +124,7 @@ export function useStepProgressionGuard({
     if (activeStep === 4 && (headlessStep === "error" || headlessStep === "collecting_payment")) {
       const actualError = (activeError && activeError !== "none") ? activeError : (effectiveError && effectiveError !== "none") ? effectiveError : null;
       const parsed = actualError
-        ? parseOnrampError(actualError, {
+        ? parseOnrampError(errorDetails || actualError, {
             isL1Approved: kyc.isL1Verified,
             isL2Approved: kyc.isL2Verified,
             currentTier: kyc.currentTier,
@@ -143,13 +145,10 @@ export function useStepProgressionGuard({
       onPaymentDeclined?.(declineReason);
 
       if (!declineTimerRef.current) {
-        logTransition(
-          4,
-          3,
-          `${parsed?.isDecline ? "Payment Declined" : "Checkout Needs Attention"} / Returned to Payment Method (${parsed?.code || headlessStep || headlessStatus || "checkout_error"}) - Waiting 2s before return`
-        );
         declineTimerRef.current = setTimeout(() => {
           setActiveStep(3);
+          logTransition(4, 3,
+            `${parsed?.isDecline ? "Payment Declined" : "Checkout Needs Attention"} / Returned to Payment Method (${parsed?.code || headlessStep || "checkout_error"})`);
           onPaymentDeclined?.(declineReason);
           declineTimerRef.current = null;
         }, 2200);
@@ -166,6 +165,7 @@ export function useStepProgressionGuard({
     };
   }, [
     activeError,
+    errorDetails,
     effectiveError,
     headlessStep,
     headlessStatus,
@@ -182,7 +182,7 @@ export function useStepProgressionGuard({
   useEffect(() => {
     if (isPaid || isOrderConfirmed || isFulfillmentInFlight) return;
 
-    const parsed = parseOnrampError(activeError || effectiveError, {
+    const parsed = parseOnrampError(errorDetails || activeError || effectiveError, {
       isL1Verified: kyc.isL1Verified,
       isL2Verified: kyc.isL2Verified,
       currentTier: kyc.currentTier,
@@ -228,6 +228,7 @@ export function useStepProgressionGuard({
     propPaymentElement,
     kyc,
     activeError,
+    errorDetails,
     effectiveError,
     activeStep,
     isPaid,
@@ -240,7 +241,7 @@ export function useStepProgressionGuard({
   useEffect(() => {
     if (isPaid || isOrderConfirmed || isFulfillmentInFlight) return;
 
-    const recovery = parseOnrampError(activeError || effectiveError);
+    const recovery = parseOnrampError(errorDetails || activeError || effectiveError);
     if (recovery?.targetStep === 1) return; // Authentication recovery above takes priority.
     if (isCheckoutIdentityStep(headlessStep)) {
       if (activeStep !== 2) {

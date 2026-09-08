@@ -92,7 +92,10 @@ export function Step4Fulfillment({
 
   // Hide immediately when the SDK returns to identity/auth/payment collection,
   // even before the parent effect moves the accordion off Step 4.
-  const isProcessingModalActive = isOpen && !isConfirmed &&
+  // Stripe owns the interactive surface for the entire SDK checkout call.
+  // Never cover a challenge, even before its iframe announces itself.
+  const needsPaymentReview = headlessStep === "payment_recovery";
+  const isProcessingModalActive = isOpen && !isConfirmed && headlessStep !== "checking_out" && !needsPaymentReview &&
     (isCheckoutPaymentInFlight(headlessStep) || headlessStep === "error");
 
   // ─── Scroll Locking Guard for Processing Modal ───
@@ -662,7 +665,7 @@ export function Step4Fulfillment({
                     className="w-2.5 h-2.5 rounded-full animate-pulse shadow-sm"
                     style={{ backgroundColor: primaryColor }}
                   />
-                  <span>Processing Payment</span>
+                  <span>{needsPaymentReview ? "Payment needs review" : isCheckoutPaymentInFlight(headlessStep) ? "Processing Payment" : "Payment not completed"}</span>
                 </div>
                 <span
                   className={`text-xs font-mono font-medium px-2.5 py-0.5 rounded-full backdrop-blur-md ${
@@ -699,8 +702,24 @@ export function Step4Fulfillment({
                     isLightText ? "text-white/70" : "text-neutral-600"
                   }`}
                 >
-                  Confirmation can take longer than expected. Keep this page open for updates and do not submit another payment.
+                  {needsPaymentReview
+                    ? "We have kept your existing payment reference. Check its status or chat with us before submitting another payment."
+                    : headlessStep === "checking_out"
+                    ? "Complete any verification requested by Stripe in the secure payment form."
+                    : isCheckoutPaymentInFlight(headlessStep)
+                    ? "Confirmation can take longer than expected. Keep this page open for updates and do not submit another payment."
+                    : "Review your payment method to continue checkout."}
                 </p>
+                {needsPaymentReview && (
+                  <div className="space-y-2 text-xs">
+                    <p>Receipt reference: {receiptId}</p>
+                    {onCheckPaymentStatus && <button type="button" disabled={checkingStatus}
+                      className="rounded-lg border border-current/30 px-4 py-2 font-semibold disabled:opacity-50"
+                      onClick={async () => { setCheckingStatus(true); try { await onCheckPaymentStatus(); } finally { setCheckingStatus(false); } }}>
+                      {checkingStatus ? "Checking status…" : "Check payment status"}
+                    </button>}
+                  </div>
+                )}
               </div>
 
               {/* Stepper Timeline */}

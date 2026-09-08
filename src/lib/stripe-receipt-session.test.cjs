@@ -82,6 +82,17 @@ test('upstream HTML lookup is identified without mutating the receipt or exposin
   assert.equal(h.calls.length, 0);
 });
 
+for (const reserved of [false, true]) {
+  test(`terminal provider restriction blocks session replacement with reserved=${reserved}`, async () => {
+    const receipt = { ...base, stripeSessionId: 'cos_old', ...(reserved ? { stripePaymentAttemptSessionId: 'cos_old', stripePaymentAttemptKind: 'headless' } : {}) };
+    const h = harness(receipt);
+    const session = { id: 'cos_old', status: 'requires_payment', ui_mode: 'headless', transaction_details: { last_error: { code: 'crypto_onramp_transaction_blocked', message: 'This transaction has been blocked.' } } };
+    assert.equal(h.helpers.stripeReceiptAttemptCanRetry(receipt, session), false);
+    await assert.rejects(h.helpers.assertStripeReceiptCanCreateSession(h.container, receipt, async () => session), error => error.code === 'crypto_onramp_transaction_blocked');
+    assert.equal(h.calls.length, 0);
+  });
+}
+
 test('signed completed retry replaces unpaid session and marks receipt paid', async () => {
   const h = harness();
   const response = await h.webhook();
@@ -357,4 +368,16 @@ test('foreground acceptance refuses a second funded session and never regresses 
   assert.equal(h.doc.stripeSessionStatus, 'fulfillment_complete');
   await assert.rejects(h.helpers.acceptVerifiedStripeReceiptSession(h.container, { ...incoming, id: 'cos_duplicate' }));
   assert.equal(h.doc.stripePaidSessionId, incoming.id);
+});
+
+test('unused headless session permits recovery, but an SDK-only failure after confirmation remains reserved', async () => {
+  const h = harness();
+  const provider = { id: 'cos_old', ui_mode: 'headless', status: 'requires_payment', transaction_details: { last_error: null } };
+  assert.equal(h.helpers.stripeReceiptAttemptCanRetry(h.doc, provider), true);
+  assert.equal(h.helpers.stripeReceiptAttemptCanRetry(h.doc, { ...provider, ui_mode: 'embedded' }), false);
+  await h.helpers.claimStripeReceiptCheckout(h.container, h.doc, 'cos_old', 'request');
+  assert.equal(h.helpers.stripeReceiptAttemptCanRetry(h.doc, provider), false);
+  await h.helpers.finishStripeReceiptCheckout(h.container, h.doc, 'request');
+  assert.equal(h.helpers.stripeReceiptAttemptCanRetry(h.doc, provider), false);
+  await assert.rejects(h.helpers.assertStripeReceiptCanCreateSession(h.container, h.doc, async () => provider), { code: 'receipt_payment_in_progress' });
 });

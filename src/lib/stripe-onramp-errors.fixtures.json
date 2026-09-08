@@ -1,0 +1,686 @@
+[
+    {
+        "code":  "crypto_onramp_amount_above_maximum",
+        "cases":  [
+                      {
+                          "message":  "{currency_symbol}{amount_limit}",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_amount_below_minimum",
+        "cases":  [
+                      {
+                          "message":  "{currency_symbol}{amount_limit}",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_bank_institution_block",
+        "cases":  [
+                      {
+                          "message":  "This bank isn’t supported for crypto purchases. Try again with a different bank account or debit card.",
+                          "action":  "payment_method"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_conflicting_destination_currency",
+        "cases":  [
+                      {
+                          "message":  "`transaction_details.supported_destination_currencies` doesn’t contain `transaction_details.destination_currency`. Only use a supported destination currency for the suggested destination currency.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_conflicting_destination_network",
+        "cases":  [
+                      {
+                          "message":  "`transaction_details.supported_destination_networks` doesn’t contain `transaction_details.destination_network`. Only use a supported destination network for the suggested destination network.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_conflicting_source_total_amount_parameters",
+        "cases":  [
+                      {
+                          "message":  "The `source_total_amount`, `source_amount`, and `destination_amount` parameters are mutually exclusive. Only set one of these when creating an onramp session.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_consumer_wallet_doesnt_exist",
+        "cases":  [
+                      {
+                          "message":  "The wallet address doesn’t exist for the current user.",
+                          "action":  "wallet"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_currency_not_available_in_region",
+        "cases":  [
+                      {
+                          "message":  "Source currency {source_currency} isn’t supported in the user’s KYC region ({kyc_region}). Use a different source currency.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_declaration_not_found",
+        "cases":  [
+                      {
+                          "message":  "No CRS or CARF declaration is available.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "No partner terms declaration exists for declaration type {declaration_type} in region {region}.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_destination_tags_not_supported",
+        "cases":  [
+                      {
+                          "message":  "The networks provided in `destination_tags` aren’t valid tag-based networks.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_disabled",
+        "cases":  [
+                      {
+                          "message":  "We temporarily disabled the `/v1/crypto/onramp_sessions` endpoint. We’ll contact you with outage details.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_headless_invalid_amount",
+        "cases":  [
+                      {
+                          "message":  "The amount isn’t valid for headless mode. Provide a positive amount with no more than 2 decimal places.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_headless_unsupported_currency_or_network",
+        "cases":  [
+                      {
+                          "message":  "Headless mode doesn’t support the provided currency or network.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_identity_verification_failed",
+        "cases":  [
+                      {
+                          "message":  "We couldn’t verify your identity. Contact support for assistance.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_incomplete_destination_currency_and_network_pair",
+        "cases":  [
+                      {
+                          "message":  "You must specify both `transaction_details.destination_currency` and `transaction_details.destination_network` if you specify either one.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_amount",
+        "cases":  [
+                      {
+                          "message":  "The {direction} purchase amount is {currency_symbol}{amount_limit}",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_currency_pair",
+        "cases":  [
+                      {
+                          "message":  "This currency pair is invalid.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_destination_currency_and_network_pair",
+        "cases":  [
+                      {
+                          "message":  "The `transaction_details.destination_currency` and `transaction_details.destination_network` pair isn’t supported.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_destination_exchange_amount",
+        "cases":  [
+                      {
+                          "message":  "The `destination_exchange_amount` value must be positive. Provide a positive amount.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_merchant_configuration",
+        "cases":  [
+                      {
+                          "message":  "Allowlisted domains must be formatted as a valid domain name. Only use lowercase letters, numbers, dots, and hyphens.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "Business name not found. Fill in public business name in Settings.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "Terms of Service hasn’t been accepted. Accept terms of service before submitting application.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "High risk countries and regions attestation hasn’t been accepted. Accept the attestation before submitting application.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "We couldn’t secure your device for the current domain. Make sure that you’re on the correct domain to mitigate phishing attacks.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_parameter",
+        "cases":  [
+                      {
+                          "message":  "{currency} is an invalid currency value for {param}. Select a supported currency.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "{network} is an invalid network value for {param}. Select a supported network.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "`transaction_details.wallet_address` is set, but `transaction_details.destination_networks` isn’t set. Set destination networks if you’re setting a wallet address.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "Use the proper quotes route for your onramp version. Use `/v1/crypto/onramp/quotes` for an integration with no beta header, or beta v1. Use `/v1/crypto/onramp_quotes` for beta v2.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "The wallet address specified is not compatible with the selected network.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "The parameter {param} provided to onramp advance is not valid for an onramp in state {state}.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "Request made on a user who doesn’t have an EU-based address.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "Invalid country code: {country_code}.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "Non-EU country code: {country_code}.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "The partner terms declaration is invalid.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "The user has already accepted this partner terms declaration.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "The wallet address cannot be changed when locked.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_payment_method",
+        "cases":  [
+                      {
+                          "message":  "The bank account must be linked before it can be used for this crypto purchase.",
+                          "action":  "payment_method"
+                      },
+                      {
+                          "message":  "We’re unable to confirm you are the owner of this bank account. Try again with a different payment method.",
+                          "action":  "payment_method"
+                      },
+                      {
+                          "message":  "This bank account isn’t eligible for this transaction. Please use a different bank account or payment method.",
+                          "action":  "payment_method"
+                      },
+                      {
+                          "message":  "This bank account doesn’t have enough transaction history for this crypto purchase. Try again with a different payment method.",
+                          "action":  "payment_method"
+                      },
+                      {
+                          "message":  "We’re unable to verify you own this card. Try again with a different card.",
+                          "action":  "payment_method"
+                      },
+                      {
+                          "message":  "Your card doesn’t support crypto purchases. Try again with a different card or pay using a bank account.",
+                          "action":  "payment_method"
+                      },
+                      {
+                          "message":  "This bank account doesn’t have enough funds for this crypto purchase. Try again with a different payment method or after adding funds.",
+                          "action":  "payment_method"
+                      },
+                      {
+                          "message":  "You’ve exceeded the number of payment methods on your Link account. Remove a few to transact.",
+                          "action":  "payment_method"
+                      },
+                      {
+                          "message":  "This payment method isn’t saved to your Link account. Add it before transacting.",
+                          "action":  "payment_method"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_source_currency",
+        "cases":  [
+                      {
+                          "message":  "The source currency isn’t supported.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_source_destination_pair",
+        "cases":  [
+                      {
+                          "message":  "`transaction_details.source_exchange_amount` and `transaction_details.destination_exchange_amount` are mutually exclusive. Only set one of these when creating an onramp session.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_source_exchange_amount",
+        "cases":  [
+                      {
+                          "message":  "The `source_exchange_amount` value isn’t valid. Provide a positive fiat amount with no more than 2 decimal places.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_supported_destination_currencies_and_networks",
+        "cases":  [
+                      {
+                          "message":  "None of the `transaction_details.destination_currency` and `transaction_details.destination_network` pairs are supported.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_invalid_wallet_address_parameters",
+        "cases":  [
+                      {
+                          "message":  "`transaction_details.wallet_address` and `transaction_details.wallet_addresses` can’t both be set.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_limit_exceeded",
+        "cases":  [
+                      {
+                          "message":  "Your purchase limit has been reached. Try a smaller amount.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "You’ve reached your purchase limit. Try again in a few hours.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_merchant_not_properly_setup",
+        "cases":  [
+                      {
+                          "message":  "Add `business_name` and `business_url` to your Stripe account before creating an onramp session.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_missing_destination_currency",
+        "cases":  [
+                      {
+                          "message":  "`transaction_details.destination_exchange_amount` is set, but `transaction_details.destination_currency` isn’t. Set a destination currency if you’re setting a destination exchange amount.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_missing_document_verification",
+        "cases":  [
+                      {
+                          "message":  "Document verification is required to {action}.",
+                          "action":  "kyc_l2"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_missing_identity_verification",
+        "cases":  [
+                      {
+                          "message":  "Identity verification is required to {action}.",
+                          "action":  "kyc_l1"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_missing_minimum_identity_verification",
+        "cases":  [
+                      {
+                          "message":  "Minimum identity verification is required for this transaction.",
+                          "action":  "kyc_l0"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_missing_source_currency",
+        "cases":  [
+                      {
+                          "message":  "`transaction_details.source_exchange_amount` is set, but `transaction_details.source_currency` isn’t. Set a source currency if you’re setting a source exchange amount.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_missing_source_total_amount_parameters",
+        "cases":  [
+                      {
+                          "message":  "`source_total_amount` is set, but some of the `source_currency`, `destination_currency`, `destination_network`, or `preferred_payment_method` parameters aren’t set. Set all of these parameters if you’re setting a source total amount.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_missing_tax_attestation",
+        "cases":  [
+                      {
+                          "message":  "Submit a tax attestation before confirming the CRS or CARF declaration.",
+                          "action":  "attestation"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_no_wallet_address_to_lock",
+        "cases":  [
+                      {
+                          "message":  "`transaction_details.lock_wallet_address` is set to `true`, but no wallet address was provided in `transaction_details.wallet_address`.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_quote_expired",
+        "cases":  [
+                      {
+                          "message":  "The exchange rate has moved significantly since your quote was locked. Fetch a new quote.",
+                          "action":  "refresh_quote"
+                      },
+                      {
+                          "message":  "Sorry, the quote expired while processing your payment. Please try again.",
+                          "action":  "refresh_quote"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_quote_invalid_destination_currencies_and_networks",
+        "cases":  [
+                      {
+                          "message":  "None of the `destination_currencies` and `destination_networks` pairs are supported.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_quote_too_many_destination_currencies_and_networks",
+        "cases":  [
+                      {
+                          "message":  "When you set `destination_exchange_amount`, provide one `destination_currencies` entry and one `destination_networks` entry.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_service_error",
+        "cases":  [
+                      {
+                          "message":  "We’re unable to continue with your purchase.",
+                          "action":  "backoff"
+                      },
+                      {
+                          "message":  "An unrecoverable server error was encountered.",
+                          "action":  "backoff"
+                      },
+                      {
+                          "message":  "The service timed out processing your request. Try again.",
+                          "action":  "backoff"
+                      },
+                      {
+                          "message":  "The crypto onramp service is experiencing high request volume. Please try again later.",
+                          "action":  "backoff"
+                      },
+                      {
+                          "message":  "An error occurred with your crypto purchase session. Try creating a new session or contact support if the issue persists.",
+                          "action":  "backoff"
+                      },
+                      {
+                          "message":  "We couldn’t find the consumer account for this onramp session.",
+                          "action":  "backoff"
+                      },
+                      {
+                          "message":  "We couldn’t find the consumer settings for this business.",
+                          "action":  "backoff"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_session_error",
+        "cases":  [
+                      {
+                          "message":  "An error occurred with your crypto purchase session. Try creating a new session or contact support if the issue persists.",
+                          "action":  "new_session"
+                      },
+                      {
+                          "message":  "The FX quote for this session is no longer valid. Refresh your quote and try again.",
+                          "action":  "refresh_quote"
+                      },
+                      {
+                          "message":  "Verify ownership of the destination wallet to complete this purchase, then try again.",
+                          "action":  "context"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_skip_quote_screen_not_allowed",
+        "cases":  [
+                      {
+                          "message":  "To set `skip_quote_screen` to `true`, provide `source_currency`, `destination_currency`, `destination_network`, and either `source_amount` or `destination_amount`.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_transaction_blocked",
+        "cases":  [
+                      {
+                          "message":  "We’re unable to complete this request because the consumer account is closed.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "We’re unable to complete this request because the customer’s account is disabled.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "This transaction has been blocked.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_unsupportable_customer",
+        "cases":  [
+                      {
+                          "message":  "Crypto onramp can’t support this customer based on the information they provided.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_unsupported",
+        "cases":  [
+                      {
+                          "message":  "This crypto purchase cannot be completed because cross-border transactions are not supported.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "The issuing country of the identity document isn’t supported.",
+                          "action":  "kyc_l2"
+                      },
+                      {
+                          "message":  "We’re unable to support transactions in {state}.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "This service isn’t available in your current region.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "This payment method isn’t supported.",
+                          "action":  "payment_method"
+                      },
+                      {
+                          "message":  "Cannot purchase {currency} as a {location} resident.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "We’re unable to support transactions in {country}.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "The provided nationality is not supported.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "{id_type} is not a supported ID type.",
+                          "action":  "kyc_l2"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_unsupported_country",
+        "cases":  [
+                      {
+                          "message":  "Crypto onramp transactions aren’t available in this country.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_unsupported_region",
+        "cases":  [
+                      {
+                          "message":  "The provided region isn’t supported. Provide a supported ISO 3166-2 country-subdivision code.",
+                          "action":  "kyc_l0"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_verification_error",
+        "cases":  [
+                      {
+                          "message":  "We need additional identity verification for you to purchase this amount.",
+                          "action":  "kyc_l1"
+                      },
+                      {
+                          "message":  "Consumer account {consumer_account} has incomplete KYC data.",
+                          "action":  "kyc_status"
+                      },
+                      {
+                          "message":  "Basic KYC information must be submitted before this endpoint can be used.",
+                          "action":  "kyc_l0"
+                      },
+                      {
+                          "message":  "Consumer person verification is still processing. Try again shortly.",
+                          "action":  "kyc_pending"
+                      },
+                      {
+                          "message":  "Address couldn’t be verified.",
+                          "action":  "kyc_l0"
+                      },
+                      {
+                          "message":  "WebAuthn verification failed. Try again later or use a different method.",
+                          "action":  "payment_method"
+                      },
+                      {
+                          "message":  "We couldn’t verify your address. Update your address and try again.",
+                          "action":  "kyc_l0"
+                      },
+                      {
+                          "message":  "Identity verification is required to {action}.",
+                          "action":  "kyc_l1"
+                      },
+                      {
+                          "message":  "Document verification is required to {action}.",
+                          "action":  "kyc_l2"
+                      },
+                      {
+                          "message":  "We couldn’t verify your identity. Contact support for assistance.",
+                          "action":  "stop"
+                      },
+                      {
+                          "message":  "Stripe Terms of Service acceptance is required for this transaction.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_wallet_address_invalid",
+        "cases":  [
+                      {
+                          "message":  "The wallet address provided isn’t a valid address for the {network} network.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "crypto_onramp_wallet_addresses_not_all_networks_supported",
+        "cases":  [
+                      {
+                          "message":  "One or more networks in `transaction_details.wallet_addresses` aren’t in `transaction_details.supported_destination_networks`.",
+                          "action":  "stop"
+                      }
+                  ]
+    },
+    {
+        "code":  "zerohash_api_error",
+        "cases":  [
+                      {
+                          "message":  "We couldn’t process the crypto onramp request. Try again.",
+                          "action":  "backoff"
+                      }
+                  ]
+    }
+]

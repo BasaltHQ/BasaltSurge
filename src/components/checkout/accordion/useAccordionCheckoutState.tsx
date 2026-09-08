@@ -49,6 +49,7 @@ export function useAccordionCheckoutState(
     amountUsd = 25.0,
     isReceiptPaid = false,
     headlessError: propError,
+    headlessErrorDetails: propErrorDetails,
     kycTierRequired = "l0",
     kycLevel = "L0",
     kycTiers = [],
@@ -327,7 +328,9 @@ export function useAccordionCheckoutState(
   const rawActiveError = localError || (propError && propError !== "none" ? propError : null) || (effectiveError && effectiveError !== "none" ? effectiveError : null);
   const paymentAlreadyConfirmed = isReceiptPaid || Boolean(propPaymentConfirmed) || headlessStep === "completed";
   const activeError = !paymentAlreadyConfirmed && rawActiveError && rawActiveError !== dismissedError
-    ? (formatErrorMessage(rawActiveError) || rawActiveError) : null;
+    ? (propErrorDetails && propError ? propError : formatErrorMessage(rawActiveError) || rawActiveError) : null;
+  const recoveryError = propErrorDetails || rawActiveError;
+  const canRestartCheckout = parseOnrampError(recoveryError)?.canRestart !== false;
   const dismissError = () => { setDismissedError(rawActiveError); setLocalError(null); };
   useEffect(() => {
     if (!rawActiveError) setDismissedError(null);
@@ -649,7 +652,7 @@ export function useAccordionCheckoutState(
   // Background pre-warm Stripe Onramp initialization as soon as valid email is present
   const hasPrewarmedRef = useRef(false);
   useEffect(() => {
-    if (hasPrewarmedRef.current || isSimulationMode) return;
+    if (hasPrewarmedRef.current || isSimulationMode || !canRestartCheckout) return;
     if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       if (!propPaymentElement && onHeadlessSubmitEmailPhone) {
         hasPrewarmedRef.current = true;
@@ -659,10 +662,11 @@ export function useAccordionCheckoutState(
         });
       }
     }
-  }, [email, phone, country, firstName, lastName, propPaymentElement, onHeadlessSubmitEmailPhone, isSimulationMode]);
+  }, [email, phone, country, firstName, lastName, propPaymentElement, onHeadlessSubmitEmailPhone, isSimulationMode, canRestartCheckout]);
 
   // Manual or Watchdog Reconnection Trigger for Step 3 Payment Element
   const handlePaymentTimeoutRetry = useCallback(() => {
+    if (!canRestartCheckout) return;
     console.log("[ACCORDION STATE] Triggering onramp force retry for payment element collection...");
     if (onHeadlessSubmitEmailPhone && email) {
       onHeadlessSubmitEmailPhone(
@@ -675,7 +679,7 @@ export function useAccordionCheckoutState(
         console.warn("[ACCORDION STATE] Payment retry attempt failed:", err);
       });
     }
-  }, [onHeadlessSubmitEmailPhone, email, phone, country, firstName, lastName]);
+  }, [onHeadlessSubmitEmailPhone, email, phone, country, firstName, lastName, canRestartCheckout]);
 
   // Reactive Step 3 Watchdog: Trigger recovery initialization if Step 3 is active with null paymentElement
   useEffect(() => {
@@ -829,6 +833,7 @@ export function useAccordionCheckoutState(
     isStep2Satisfied,
     propPaymentElement,
     activeError,
+    errorDetails: propErrorDetails,
     effectiveError,
     onPaymentDeclined: (reason) => {
       const isCardDeclinedCode = !reason || reason === "card_declined" || reason === "none";
@@ -1322,6 +1327,7 @@ export function useAccordionCheckoutState(
       paymentElement: effectivePaymentElement,
       paymentContainerRef,
       activeError,
+      errorDetails: propErrorDetails,
       isSimulationMode,
       walletOwnershipChallenge,
       isWalletOwnershipVerified,
@@ -1332,7 +1338,7 @@ export function useAccordionCheckoutState(
       // collectPaymentMethod() is already an active user-interaction request.
       // If Stripe truly stalls, reload cleanly instead of starting a competing
       // coordinator request against the same authenticated session.
-      onTimeoutRetry: effectiveHeadlessStep === "collecting_payment" ? undefined : handlePaymentTimeoutRetry,
+      onTimeoutRetry: effectiveHeadlessStep === "collecting_payment" || !canRestartCheckout ? undefined : handlePaymentTimeoutRetry,
       onHeaderClick: () => handleStepChange(3),
     },
     // Step 4 Props Bundle

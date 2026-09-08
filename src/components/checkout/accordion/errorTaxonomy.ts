@@ -6,6 +6,9 @@
  * user-facing guidance, and programmatic recovery strategy.
  */
 
+// @ts-expect-error Explicit extension also supports the direct Node regression runner.
+import { resolveOnrampError } from "../../../lib/stripe-onramp-errors.ts";
+
 export type ErrorCategory =
   | "amount"
   | "payment"
@@ -56,6 +59,8 @@ export interface ParsedOnrampError {
   isKycRequirement: boolean;
   isAmountLimit: boolean;
   isRecoverable: boolean;
+  canRestart?: boolean;
+  guidance?: string;
   kycTargetTier?: "l0" | "l1" | "l2";
 }
 
@@ -125,8 +130,8 @@ export const STRIPE_ONRAMP_ERRORS: Record<string, OnrampErrorDefinition> = {
     defaultTargetStep: 3,
     title: "Transaction Limit Reached",
     userMessage:
-      "Your purchase limit has been reached for your current tier. Upgrade your identity verification to unlock higher limits, or try paying with a bank account.",
-    recoveryAction: "prompt_limit_step_up",
+      "Your purchase limit has been reached. Follow Stripe's instruction to adjust the order or wait for the limit to reset.",
+    recoveryAction: "contact_support",
   },
 
   // ─── 2. PAYMENT METHOD & DECLINE ERRORS ───
@@ -456,6 +461,7 @@ export function parseOnrampError(
       isKycRequirement: false,
       isAmountLimit: false,
       isRecoverable: true,
+      canRestart: serviceCode !== "verified_session_creation_failed" && !["publishable_key_missing", "checkout_disabled", "invalid_amount"].includes(serviceCode),
     };
   }
 
@@ -463,6 +469,26 @@ export function parseOnrampError(
   const matchedCode = extractedCode || findMatchingErrorCode(rawLower) || extractedDeclineCode || "general_error";
 
   const def = STRIPE_ONRAMP_ERRORS[matchedCode];
+
+  // The same provider decision drives the hook and every accordion action.
+  if (matchedCode.startsWith("crypto_onramp_") || resolveOnrampError({ code: matchedCode, message: rawString }).action !== "context") {
+    const policy = resolveOnrampError({ code: matchedCode, message: rawString });
+    const tier = policy.action === "kyc_l0" ? "l0" : policy.action === "kyc_l1" ? "l1" : policy.action === "kyc_l2" ? "l2" : undefined;
+    const identity = policy.action.startsWith("kyc_") || policy.action === "attestation";
+    const amount = /amount|limit/.test(matchedCode);
+    const action: RecoveryAction = tier === "l0" ? "prompt_l0_kyc" : tier === "l1" ? "prompt_l1_step_up" : tier === "l2" ? "prompt_l2_id_doc"
+      : policy.action === "payment_method" ? "retry_payment" : policy.action === "wallet" ? "link_wallet"
+      : policy.action === "refresh_quote" ? "refresh_quote" : ["new_quote", "new_session"].includes(policy.action) ? "recreate_session"
+      : policy.action === "stop" ? "contact_support" : "none";
+    return {
+      raw: rawError, code: matchedCode, category: identity ? "kyc" : amount ? "amount" : def?.category || "service",
+      actionable: policy.action !== "stop", targetStep: identity ? 2 : 3, title: def?.title || "Checkout Notice",
+      userMessage: rawString && rawString !== matchedCode ? rawString : def?.userMessage || policy.guidance,
+      recoveryAction: action, isDecline: policy.action === "payment_method", isKycRequirement: identity,
+      isAmountLimit: amount, isRecoverable: policy.action !== "stop", canRestart: policy.canRestart,
+      guidance: policy.guidance, kycTargetTier: tier,
+    };
+  }
 
   const isDecline =
     matchedCode === "card_declined" ||
@@ -526,7 +552,7 @@ export function parseOnrampError(
     targetStep = def.defaultTargetStep as 1 | 2 | 3 | 4;
   }
 
-  const userMessage = def?.userMessage || formatFallbackErrorMessage(rawLower);
+  const userMessage = def?.userMessage || rawString || formatFallbackErrorMessage(rawLower);
 
   return {
     raw: rawError,
@@ -541,6 +567,7 @@ export function parseOnrampError(
     isKycRequirement,
     isAmountLimit,
     isRecoverable: isRecoverableCode(matchedCode),
+    canRestart: isRecoverableCode(matchedCode),
     kycTargetTier,
   };
 }

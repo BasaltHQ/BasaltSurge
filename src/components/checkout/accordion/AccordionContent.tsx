@@ -8,6 +8,7 @@ interface AccordionContentProps {
   isOpen: boolean;
   position?: AccordionMotionPosition;
   overflowVisible?: boolean;
+  interactive?: boolean;
   children: React.ReactNode;
 }
 
@@ -22,6 +23,7 @@ export function AccordionContent({
   isOpen,
   position = 0,
   overflowVisible = false,
+  interactive = false,
   children,
 }: AccordionContentProps) {
   const prefersReducedMotion = useReducedMotion();
@@ -33,7 +35,7 @@ export function AccordionContent({
       initial={false}
       animate={{ height: isOpen ? "auto" : 0 }}
       transition={{
-        duration: prefersReducedMotion ? 0.01 : isOpen ? 0.46 : 0.34,
+        duration: interactive ? 0 : prefersReducedMotion ? 0.01 : isOpen ? 0.46 : 0.34,
         ease: PREMIUM_EASE,
       }}
       onAnimationStart={() => {
@@ -42,7 +44,7 @@ export function AccordionContent({
       onAnimationComplete={() => setExpansionComplete(isOpen)}
       aria-hidden={!isOpen}
       className={
-        overflowVisible && isOpen && expansionComplete
+        overflowVisible && isOpen && (expansionComplete || interactive)
           ? "overflow-visible"
           : "overflow-hidden"
       }
@@ -60,8 +62,8 @@ export function AccordionContent({
           filter: isOpen || prefersReducedMotion ? "blur(0px)" : "blur(3px)",
         }}
         transition={{
-          duration: prefersReducedMotion ? 0.01 : isOpen ? 0.36 : 0.2,
-          delay: prefersReducedMotion || !isOpen ? 0 : 0.07,
+          duration: interactive ? 0 : prefersReducedMotion ? 0.01 : isOpen ? 0.36 : 0.2,
+          delay: interactive || prefersReducedMotion || !isOpen ? 0 : 0.07,
           ease: PREMIUM_EASE,
         }}
         inert={!isOpen}
