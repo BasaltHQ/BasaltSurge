@@ -34,6 +34,7 @@ export type AdminRole =
   | 'merchant_kitchen'       // Merchant Kitchen / BOH Staff
   | 'merchant_finance'       // Merchant Bookkeeper / Finance
   | 'merchant_inventory'     // Merchant Stock / Inventory Manager
+  | 'merchant_customer_service' // Merchant Customer Service
   | 'manager'                // Legacy Merchant Manager
   | 'staff'                  // Legacy Merchant Staff
   | string;                  // Custom Role Keys
@@ -53,6 +54,7 @@ export type AdminPermission =
   | 'manage:roles'           // Create/Edit custom roles & permission maps
   | 'manage:inventory'       // Manage catalog, stock, items
   | 'manage:orders'          // Process sales, refunds, receipts
+  | 'manage:messages'        // Read and reply to merchant customer conversations
   | 'manage:payouts'         // Manage tip payouts & USDC transfers
   | 'access:terminal'        // Terminal checkout access
   | 'manage:settings';       // Store settings
@@ -146,6 +148,7 @@ const ROLE_PERMISSIONS: Record<string, AdminPermission[]> = {
     'manage:support'
   ],
   merchant_owner: [
+    'manage:messages',
     'manage:admins',
     'manage:team',
     'manage:roles',
@@ -159,6 +162,7 @@ const ROLE_PERMISSIONS: Record<string, AdminPermission[]> = {
     'manage:settings'
   ],
   merchant_admin: [
+    'manage:messages',
     'manage:team',
     'manage:inventory',
     'manage:orders',
@@ -171,6 +175,9 @@ const ROLE_PERMISSIONS: Record<string, AdminPermission[]> = {
   merchant_cashier: [
     'manage:orders',
     'access:terminal'
+  ],
+  merchant_customer_service: [
+    'manage:messages'
   ],
   merchant_kitchen: [
     'manage:orders'
@@ -185,6 +192,7 @@ const ROLE_PERMISSIONS: Record<string, AdminPermission[]> = {
     'view:analytics'
   ],
   manager: [
+    'manage:messages',
     'manage:team',
     'manage:inventory',
     'manage:orders',
@@ -199,6 +207,11 @@ const ROLE_PERMISSIONS: Record<string, AdminPermission[]> = {
     'access:terminal'
   ]
 };
+
+/** Built-in defaults for server authorization; custom role overrides resolve separately. */
+export function getDefaultRolePermissions(role: string): readonly AdminPermission[] {
+  return ROLE_PERMISSIONS[role] || [];
+}
 
 export type AdminPanel =
   | 'partners'        // Manage Partners
@@ -237,6 +250,7 @@ export type AdminPanel =
   | 'emailConfig'     // Email sender/DKIM settings
   | 'sandbox'         // Sandbox panel
   | 'platformAnalytics' // Platform Analytics HUD
+  | 'partnerAnalytics'  // Partner brand analytics
   | 'users';          // Users/Merchants tab in partner group
 
 // ------------------------------------------------------------------
@@ -411,6 +425,15 @@ export const isPartnerCtx = (): boolean => isPartnerContext();
 export function canAccessPanel(panel: AdminPanel, wallet?: string): boolean {
   const role = resolveWalletRole(wallet);
   if (!role) return false;
+
+  if (panel === 'partnerAnalytics') {
+    if (role.startsWith('merchant_') || role === 'manager' || role === 'staff') return false;
+    const customRole = getCustomRolesList().find(item => item.key === role);
+    const overrides = getCustomRolePermissions();
+    const permissions = overrides[role] ?? customRole?.permissions ?? ROLE_PERMISSIONS[role] ?? [];
+    const isAdminRole = role.startsWith('partner_') || role.startsWith('platform_') || !!customRole;
+    return isAdminRole && permissions.includes('view:analytics');
+  }
 
   // Platform level admins have complete authority to see any panel and make changes
   if (role.startsWith('platform_')) {

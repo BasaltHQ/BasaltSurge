@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { getMerchantBrandScope, requireMerchantPermission } from "@/lib/merchant-team-access";
 import {
     MerchantPermissionKey,
     MerchantCustomRole,
@@ -9,6 +10,19 @@ import {
 
 export const dynamic = "force-dynamic";
 
+function errorStatus(error: any): number {
+    return error?.status === 400 || error?.status === 401 || error?.status === 403 ? error.status : 500;
+}
+
+async function requireRolesReadAccess(req: NextRequest, wallet: string) {
+    try {
+        // Roster managers need the role options even when they cannot edit permissions.
+        return await requireMerchantPermission(req, wallet, "manage:team");
+    } catch (error: any) {
+        if (error?.status !== 403) throw error;
+        return requireMerchantPermission(req, wallet, "manage:roles");
+    }
+}
 
 export async function GET(req: NextRequest) {
     try {
@@ -16,32 +30,22 @@ export async function GET(req: NextRequest) {
         if (!walletHeader) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
-        const merchantWallet = walletHeader.toLowerCase();
+        const { merchantWallet } = await requireRolesReadAccess(req, walletHeader);
 
         const container = await getContainer();
-        const envBrandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
+        const scope = getMerchantBrandScope(req);
 
         // 1. Query merchant roles doc
-        let query = "SELECT * FROM c WHERE c.type = 'merchant_roles' AND c.merchantWallet = @wallet";
-        const parameters: any[] = [{ name: "@wallet", value: merchantWallet }];
-
-        if (envBrandKey && envBrandKey !== "portalpay" && envBrandKey !== "basaltsurge") {
-            query += " AND c.brandKey = @brandKey";
-            parameters.push({ name: "@brandKey", value: envBrandKey });
-        }
+        const query = `SELECT * FROM c WHERE c.type = 'merchant_roles' AND c.merchantWallet = @wallet AND ${scope.clause}`;
+        const parameters = [{ name: "@wallet", value: merchantWallet }, ...scope.parameters];
 
         const querySpec = { query, parameters };
         const { resources } = await container.items.query(querySpec).fetchAll();
-        const doc = resources[0] || null;
+        const doc = resources.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0] || null;
 
         // 2. Query team members for active role counts
-        let teamQueryStr = "SELECT c.role FROM c WHERE c.type = 'merchant_team_member' AND c.merchantWallet = @wallet AND (NOT IS_DEFINED(c.active) OR c.active = true)";
-        const teamParameters: any[] = [{ name: "@wallet", value: merchantWallet }];
-
-        if (envBrandKey && envBrandKey !== "portalpay" && envBrandKey !== "basaltsurge") {
-            teamQueryStr += " AND c.brandKey = @brandKey";
-            teamParameters.push({ name: "@brandKey", value: envBrandKey });
-        }
+        const teamQueryStr = `SELECT c.role FROM c WHERE c.type = 'merchant_team_member' AND c.merchantWallet = @wallet AND (NOT IS_DEFINED(c.active) OR c.active = true) AND ${scope.clause}`;
+        const teamParameters = [{ name: "@wallet", value: merchantWallet }, ...scope.parameters];
 
         const teamQuery = { query: teamQueryStr, parameters: teamParameters };
         const { resources: teamMembers } = await container.items.query(teamQuery).fetchAll();
@@ -65,7 +69,7 @@ export async function GET(req: NextRequest) {
 
     } catch (e: any) {
         console.error("GET /api/merchant/roles failed", e);
-        return NextResponse.json({ error: e.message }, { status: 500 });
+        return NextResponse.json({ error: e.message }, { status: errorStatus(e) });
     }
 }
 
@@ -75,10 +79,10 @@ export async function POST(req: NextRequest) {
         if (!walletHeader) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
-        const merchantWallet = walletHeader.toLowerCase();
+        const { merchantWallet, actorWallet } = await requireMerchantPermission(req, walletHeader, "manage:roles");
 
         const container = await getContainer();
-        const envBrandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
+        const scope = getMerchantBrandScope(req);
         const body = await req.json();
         const { customRoles, roleOverrides } = body;
 
@@ -117,17 +121,12 @@ export async function POST(req: NextRequest) {
         }
 
         // Check if doc exists
-        let checkQueryStr = "SELECT * FROM c WHERE c.type = 'merchant_roles' AND c.merchantWallet = @wallet";
-        const checkParameters: any[] = [{ name: "@wallet", value: merchantWallet }];
-
-        if (envBrandKey && envBrandKey !== "portalpay" && envBrandKey !== "basaltsurge") {
-            checkQueryStr += " AND c.brandKey = @brandKey";
-            checkParameters.push({ name: "@brandKey", value: envBrandKey });
-        }
+        const checkQueryStr = `SELECT * FROM c WHERE c.type = 'merchant_roles' AND c.merchantWallet = @wallet AND ${scope.clause}`;
+        const checkParameters = [{ name: "@wallet", value: merchantWallet }, ...scope.parameters];
 
         const querySpec = { query: checkQueryStr, parameters: checkParameters };
         const { resources } = await container.items.query(querySpec).fetchAll();
-        const existingDoc = resources[0] || null;
+        const existingDoc = resources.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))[0] || null;
 
         const docId = existingDoc ? existingDoc.id : `merchant_roles_${merchantWallet.slice(2, 10)}_${Date.now()}`;
 
@@ -136,11 +135,11 @@ export async function POST(req: NextRequest) {
             type: "merchant_roles",
             merchantWallet,
             wallet: merchantWallet,
-            brandKey: envBrandKey || undefined,
+            brandKey: scope.brandKey || undefined,
             customRoles: sanitizedCustomRoles,
             roleOverrides: sanitizedOverrides,
             updatedAt: Math.floor(Date.now() / 1000),
-            updatedBy: merchantWallet
+            updatedBy: actorWallet
         };
 
         await container.items.upsert(newDoc);
@@ -153,6 +152,6 @@ export async function POST(req: NextRequest) {
 
     } catch (e: any) {
         console.error("POST /api/merchant/roles failed", e);
-        return NextResponse.json({ error: e.message }, { status: 500 });
+        return NextResponse.json({ error: e.message }, { status: errorStatus(e) });
     }
 }

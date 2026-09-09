@@ -4,6 +4,8 @@ import { getRpcClient, eth_getBalance, eth_call } from "thirdweb/rpc";
 import { fetchEthRates, fetchBtcUsd, fetchXrpUsd, fetchSolUsd } from "@/lib/eth";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { getContainer } from "@/lib/cosmos";
+import { getMerchantBrandScope } from "@/lib/merchant-team-access";
+import { dashboardNumber, indexBelongsToMerchantSplits } from "@/lib/merchant-dashboard";
 
 // Force dynamic rendering to avoid build-time evaluation
 export const dynamic = 'force-dynamic';
@@ -23,6 +25,11 @@ export async function GET(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   try {
     const url = new URL(req.url);
+    // Dashboard reads must be strictly scoped and must never repair/index data on page load.
+    const readOnly = url.searchParams.get("readOnly") === "1";
+    const scope = readOnly ? getMerchantBrandScope(req) : null;
+    let balanceReadFailed = false;
+    let scopedConfigs: any[] = [];
     const queryWallet = String(url.searchParams.get("wallet") || "").toLowerCase();
     const headerWallet = String(req.headers.get("x-wallet") || "").toLowerCase();
     const envOwner = String(process.env.NEXT_PUBLIC_OWNER_WALLET || "").toLowerCase();
@@ -35,9 +42,9 @@ export async function GET(req: NextRequest) {
     }
 
     // Support direct splitAddress parameter to bypass lookup (used by Partners panel accordion)
-    const querySplitAddress = String(url.searchParams.get("splitAddress") || "").toLowerCase();
-    const querySplitAddressCredit = String(url.searchParams.get("splitAddressCredit") || "").toLowerCase();
-    const queryBrandKey = String(url.searchParams.get("brandKey") || "").toLowerCase();
+    const querySplitAddress = readOnly ? "" : String(url.searchParams.get("splitAddress") || "").toLowerCase();
+    const querySplitAddressCredit = readOnly ? "" : String(url.searchParams.get("splitAddressCredit") || "").toLowerCase();
+    const queryBrandKey = scope?.brandKey || String(url.searchParams.get("brandKey") || "").toLowerCase();
 
     const { isDualSplitEnabled } = await import("@/lib/env");
     const isDual = isDualSplitEnabled();
@@ -56,24 +63,34 @@ export async function GET(req: NextRequest) {
 
     // Priority 2: Try site-config lookup
     try {
-      const cfg = await getSiteConfigForWallet(wallet, queryBrandKey);
+      if (scope) {
+        const container = await getContainer();
+        const { resources } = await container.items.query({
+          query: `SELECT * FROM c WHERE c.type = 'site_config' AND c.wallet = @w AND ${scope.clause}`,
+          parameters: [{ name: "@w", value: wallet }, ...scope.parameters],
+        }).fetchAll();
+        scopedConfigs = resources || [];
+        scopedConfigs.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+      }
+      // The legacy resolver deliberately falls back across configs; dashboard access must not.
+      const cfg = scope ? scopedConfigs[0] : await getSiteConfigForWallet(wallet, queryBrandKey);
       if (cfg) {
         if (!splitAddressDebit) {
-          const splitAddr = (cfg as any)?.splitAddress || (cfg as any)?.split?.address;
+          const splitAddr = (cfg as any)?.splitAddress || (cfg as any)?.split?.address || (cfg as any)?.config?.splitAddress || (cfg as any)?.config?.split?.address;
           if (typeof splitAddr === "string" && /^0x[a-f0-9]{40}$/i.test(splitAddr)) {
             splitAddressDebit = splitAddr.toLowerCase();
           }
         }
-        const splitAddrCredit = (cfg as any)?.splitAddressCredit || (cfg as any)?.splitCredit?.address;
+        const splitAddrCredit = (cfg as any)?.splitAddressCredit || (cfg as any)?.splitCredit?.address || (cfg as any)?.config?.splitAddressCredit || (cfg as any)?.config?.splitCredit?.address;
         if (typeof splitAddrCredit === "string" && /^0x[a-f0-9]{40}$/i.test(splitAddrCredit)) {
           splitAddressCredit = splitAddrCredit.toLowerCase();
         }
       }
-    } catch { }
+    } catch { if (readOnly) balanceReadFailed = true; }
 
     // Fallback: if site-config did not yield split addresses, attempt to read via split/deploy API.
     // Propagate auth headers/cookies so the deploy endpoint can read stored configuration.
-    if (!splitAddressDebit || (isDual && !splitAddressCredit)) {
+    if (!readOnly && (!splitAddressDebit || (isDual && !splitAddressCredit))) {
       try {
         const xfProto = req.headers.get("x-forwarded-proto");
         const xfHost = req.headers.get("x-forwarded-host");
@@ -151,6 +168,7 @@ export async function GET(req: NextRequest) {
       try {
         return BigInt(h);
       } catch {
+        if (readOnly) balanceReadFailed = true;
         return BigInt(0);
       }
     }
@@ -164,6 +182,7 @@ export async function GET(req: NextRequest) {
         const r = await eth_call(rpc, { to: token, data });
         return hexToBigInt(String(r || "0x0"));
       } catch {
+        if (readOnly) balanceReadFailed = true;
         return BigInt(0);
       }
     }
@@ -184,7 +203,10 @@ export async function GET(req: NextRequest) {
       }
 
       // ETH native
-      const ethWei = await eth_getBalance(rpc, { address: addressToQuery as `0x${string}` }).catch(() => "0x0");
+      const ethWei = await eth_getBalance(rpc, { address: addressToQuery as `0x${string}` }).catch(() => {
+        if (readOnly) balanceReadFailed = true;
+        return "0x0";
+      });
       const ethRaw = BigInt(ethWei);
       const ethUnits = Number(ethRaw) / 1e18;
       const ethUsd = ethUnits * (ethUsdRate > 0 ? ethUsdRate : 0);
@@ -218,6 +240,10 @@ export async function GET(req: NextRequest) {
       const cbbtcUsd = cbbtcUnits * (btcUsdRate > 0 ? btcUsdRate : 0);
       const cbxrpUsd = cbxrpUnits * (xrpUsdRate > 0 ? xrpUsdRate : 0);
       const solUsdVal = solUnits * (solUsdRate > 0 ? solUsdRate : 0);
+      if (readOnly && ((ethUnits > 0 && !(ethUsdRate > 0)) || (cbbtcUnits > 0 && !(btcUsdRate > 0))
+        || (cbxrpUnits > 0 && !(xrpUsdRate > 0)) || (solUnits > 0 && !(solUsdRate > 0)))) {
+        balanceReadFailed = true;
+      }
 
       const balances = {
         ETH: { units: ethUnits, usd: ethUsd, decimals: 18 },
@@ -246,7 +272,7 @@ export async function GET(req: NextRequest) {
       const container2 = await getContainer();
       // Use a broader query — fetch ALL fields for site_config docs matching this wallet
       // (avoid LOWER() which the MongoDB adapter may not support in SQL mode)
-      const { resources: allSiteConfigs } = await container2.items.query({
+      const { resources: allSiteConfigs } = scope ? { resources: scopedConfigs } : await container2.items.query({
         query: `SELECT * FROM c WHERE c.type = 'site_config' AND c.wallet = @w`,
         parameters: [{ name: "@w", value: wallet }],
       }).fetchAll();
@@ -277,7 +303,9 @@ export async function GET(req: NextRequest) {
         const nested = String(doc?.split?.address || "").toLowerCase();
         const configNested = String(doc?.config?.split?.address || "").toLowerCase();
         const configTop = String(doc?.config?.splitAddress || "").toLowerCase();
-        for (const addr of [topLevel, nested, configNested, configTop]) {
+        const creditAddresses = readOnly ? [doc?.splitAddressCredit, doc?.splitCredit?.address,
+          doc?.config?.splitAddressCredit, doc?.config?.splitCredit?.address].map(value => String(value || "").toLowerCase()) : [];
+        for (const addr of [topLevel, nested, configNested, configTop, ...creditAddresses]) {
           if (addr && /^0x[a-f0-9]{40}$/i.test(addr) && !seenAddrs.has(addr)) {
             seenAddrs.add(addr);
             discoveredAddresses.push(addr);
@@ -292,7 +320,7 @@ export async function GET(req: NextRequest) {
       }
 
       // AUTO-HEAL: If we discovered addresses not in any splitHistory, permanently patch the newest doc
-      if (discoveredAddresses.length > 0 && (allSiteConfigs || []).length > 0) {
+      if (!readOnly && discoveredAddresses.length > 0 && (allSiteConfigs || []).length > 0) {
         console.log(`[RESERVE BALANCES] Auto-healing: Adding ${discoveredAddresses.length} discovered split(s) to splitHistory for ${wallet.slice(0, 10)}...`);
         try {
           const sortedDocs = [...(allSiteConfigs || [])].sort((a: any, b: any) => {
@@ -328,9 +356,12 @@ export async function GET(req: NextRequest) {
       }
     } catch (e) {
       console.warn("[RESERVE BALANCES] Split history merge failed:", e);
-      try {
-        mergedSplitHistory = (await getSiteConfigForWallet(wallet, queryBrandKey) as any)?.splitHistory || [];
-      } catch { }
+      if (readOnly) balanceReadFailed = true;
+      else {
+        try {
+          mergedSplitHistory = (await getSiteConfigForWallet(wallet, queryBrandKey) as any)?.splitHistory || [];
+        } catch { }
+      }
     }
 
     const hasCredit = !!splitAddressCredit && /^0x[a-f0-9]{40}$/i.test(splitAddressCredit);
@@ -359,6 +390,7 @@ export async function GET(req: NextRequest) {
           const res = await getBalancesForAddress(splitAddr);
           splitBalancesMap.set(splitAddr.toLowerCase(), res);
         } catch (e) {
+          if (readOnly) balanceReadFailed = true;
           console.error(`[RESERVE BALANCES] Failed to fetch balances for split ${splitAddr}:`, e);
         }
       })
@@ -428,25 +460,45 @@ export async function GET(req: NextRequest) {
     let indexedMetrics: any = null;
     try {
       const container = await getContainer();
+      // Unbranded indexes require split-level proof even on the platform: old partner
+      // index writers also omitted brandKey, so absence is not evidence of platform ownership.
+      const indexBrandClause = scope?.brandKey === "basaltsurge"
+        ? "(LOWER(c.brandKey) = 'basaltsurge' OR LOWER(c.brandKey) = 'portalpay')"
+        : scope?.clause;
       const spec = {
         query: `
           SELECT c.totalVolumeUsd, c.merchantEarnedUsd, c.platformFeeUsd, 
                  c.customers, c.totalCustomerXp, c.transactionCount
           FROM c
-          WHERE c.type='split_index' AND c.merchantWallet=@wallet
+          WHERE c.type='split_index' AND c.merchantWallet=@wallet ${indexBrandClause ? `AND ${indexBrandClause}` : ""}
         `,
-        parameters: [{ name: "@wallet", value: wallet }]
+        parameters: [{ name: "@wallet", value: wallet }, ...(scope?.parameters || [])]
       };
       const { resources } = await container.items.query(spec as any).fetchAll();
-      if (Array.isArray(resources) && resources.length > 0) {
-        const row = resources[0];
+      let row = Array.isArray(resources) ? resources[0] : null;
+      if (!row && scope) {
+        // Some historic index writers omitted brandKey. Never infer tenancy from wallet alone:
+        // every recorded split must belong to configs already proven to be in this brand.
+        const { resources: legacyRows } = await container.items.query({
+          query: `SELECT c.totalVolumeUsd, c.merchantEarnedUsd, c.platformFeeUsd, c.customers,
+            c.totalCustomerXp, c.transactionCount, c.splitAddress, c.splitAddressCredit,
+            c.splitAddresses, c.cumulativePerSplit FROM c
+            WHERE c.type='split_index' AND c.merchantWallet=@wallet
+            AND (NOT IS_DEFINED(c.brandKey) OR c.brandKey = null OR c.brandKey = '')`,
+          parameters: [{ name: "@wallet", value: wallet }],
+        }).fetchAll();
+        const scopedSplits = new Set(Array.from(allUniqueSplits).filter(address => address !== wallet));
+        row = (legacyRows || []).find(candidate => indexBelongsToMerchantSplits(candidate, scopedSplits));
+      }
+      if (row) {
+        const metric = (value: unknown) => readOnly ? dashboardNumber(value) : Number(value || 0);
         indexedMetrics = {
-          totalVolumeUsd: Number(row?.totalVolumeUsd || 0),
-          merchantEarnedUsd: Number(row?.merchantEarnedUsd || 0),
-          platformFeeUsd: Number(row?.platformFeeUsd || 0),
-          customers: Number(row?.customers || 0),
-          totalCustomerXp: Number(row?.totalCustomerXp || 0),
-          transactionCount: Number(row?.transactionCount || 0),
+          totalVolumeUsd: metric(row?.totalVolumeUsd),
+          merchantEarnedUsd: metric(row?.merchantEarnedUsd),
+          platformFeeUsd: metric(row?.platformFeeUsd),
+          customers: metric(row?.customers),
+          totalCustomerXp: metric(row?.totalCustomerXp),
+          transactionCount: metric(row?.transactionCount),
         };
       }
     } catch (e) {
@@ -462,6 +514,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(
       {
+        ...(readOnly ? { degraded: balanceReadFailed } : {}),
         merchantWallet: wallet,
         sourceWallet: debitQueryAddr,
         splitAddressUsed: splitAddressDebit || null,

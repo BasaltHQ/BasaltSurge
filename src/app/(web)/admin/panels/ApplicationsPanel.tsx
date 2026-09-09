@@ -5,7 +5,7 @@ import { useActiveAccount } from "thirdweb/react";
 
 type PartnerApplication = {
   id: string;
-  wallet: string; // partition key = brandKey candidate
+  wallet: string; // stable partition key from the original brand key candidate
   type: "partner_application";
   brandKey: string;
   companyName?: string;
@@ -26,6 +26,10 @@ type PartnerApplication = {
   approvedBy?: string;
 };
 
+function canEditBrandKey(app: PartnerApplication) {
+  return app.status !== "approved" && app.approvedAt == null && !app.approvedBy;
+}
+
 export default function ApplicationsPanel() {
   const account = useActiveAccount();
   // Platform-only: hide Applications panel in partner containers
@@ -44,6 +48,7 @@ export default function ApplicationsPanel() {
   }
   const [items, setItems] = useState<PartnerApplication[]>([]);
   const [loading, setLoading] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
@@ -51,8 +56,9 @@ export default function ApplicationsPanel() {
   const [detail, setDetail] = useState<PartnerApplication | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  // Edit images state
+  // Application editor state
   const [editApp, setEditApp] = useState<PartnerApplication | null>(null);
+  const [editBrandKey, setEditBrandKey] = useState("");
   const [editLogos, setEditLogos] = useState<{ app?: string; favicon?: string; symbol?: string; footer?: string }>({});
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState("");
@@ -119,6 +125,7 @@ export default function ApplicationsPanel() {
 
   async function approve(id: string) {
     try {
+      setActionBusy(true);
       setError("");
       setInfo("");
       const r = await fetch(`/api/platform/partners/applications/${encodeURIComponent(id)}`, {
@@ -140,11 +147,14 @@ export default function ApplicationsPanel() {
       await load();
     } catch (e: any) {
       setError(e?.message || "Approve failed");
+    } finally {
+      setActionBusy(false);
     }
   }
 
   async function syncBrandConfig(id: string) {
     try {
+      setActionBusy(true);
       setError("");
       setInfo("");
       const r = await fetch(`/api/platform/partners/applications/${encodeURIComponent(id)}`, {
@@ -167,12 +177,16 @@ export default function ApplicationsPanel() {
       await load();
     } catch (e: any) {
       setError(e?.message || "Sync failed");
+    } finally {
+      setActionBusy(false);
     }
   }
   
   function startEdit(app: PartnerApplication) {
     setEditApp(app);
+    setEditBrandKey(app.brandKey);
     setEditError("");
+    setInfo("");
     setEditLogos({ ...(app.logos || {}) });
   }
 
@@ -213,6 +227,12 @@ export default function ApplicationsPanel() {
 
   async function saveEdit() {
     if (!editApp) return;
+    const brandKey = editBrandKey.trim().toLowerCase();
+    const brandKeyChanged = canEditBrandKey(editApp) && brandKey !== editApp.brandKey;
+    if (brandKeyChanged && !/^[a-z0-9]+(?:-+[a-z0-9]+)*$/.test(brandKey)) {
+      setEditError("Use letters, numbers, and hyphens for the brand key, starting and ending with a letter or number.");
+      return;
+    }
     try {
       setEditError("");
       setEditBusy(true);
@@ -226,21 +246,26 @@ export default function ApplicationsPanel() {
         cache: "no-store",
         body: JSON.stringify({
           action: "update",
-          updates: { logos: editLogos },
+          updates: { logos: editLogos, ...(brandKeyChanged ? { brandKey } : {}) },
         }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.error) {
-        setEditError(j?.error || "Failed to update application");
+        const messages: Record<string, string> = {
+          invalid_brand_key: "Use letters, numbers, and hyphens for the brand key, starting and ending with a letter or number.",
+          brand_key_locked: "This application's brand key is locked because it has already been approved. Refresh the applications to see its latest status.",
+          brand_key_in_use: "That brand key is already used by another application or brand. Choose a different key.",
+        };
+        setEditError(messages[j?.error] || j?.error || "Failed to update application");
         return;
       }
-      setInfo(`Updated images for ${editApp.brandKey}.`);
       const current = editApp;
       setEditApp(null);
       await load();
       if (detail?.id === current.id) {
         await view(current.id);
       }
+      setInfo(`Updated application ${String(j?.brandKey || current.brandKey)}.`);
     } catch (e: any) {
       setEditError(e?.message || "Update failed");
     } finally {
@@ -250,6 +275,7 @@ export default function ApplicationsPanel() {
 
   async function reject(id: string) {
     try {
+      setActionBusy(true);
       setError("");
       setInfo("");
       const r = await fetch(`/api/platform/partners/applications/${encodeURIComponent(id)}`, {
@@ -271,6 +297,8 @@ export default function ApplicationsPanel() {
       await load();
     } catch (e: any) {
       setError(e?.message || "Reject failed");
+    } finally {
+      setActionBusy(false);
     }
   }
 
@@ -288,9 +316,10 @@ export default function ApplicationsPanel() {
             {loading ? "Refreshing…" : "Refresh"}
           </button>
           <button
-            className="px-3 py-1.5 rounded-md border border-foreground/10 bg-foreground/5 hover:bg-foreground/10 text-xs font-bold transition-colors uppercase tracking-wider"
+            className="px-3 py-1.5 rounded-md border border-foreground/10 bg-foreground/5 hover:bg-foreground/10 text-xs font-bold transition-colors uppercase tracking-wider disabled:opacity-30"
             onClick={async () => {
               try {
+                setActionBusy(true);
                 setError("");
                 setInfo("");
                 const approved = (items || []).filter((it) => String(it.status || "").toLowerCase() === "approved");
@@ -313,8 +342,11 @@ export default function ApplicationsPanel() {
                 await load();
               } catch (e: any) {
                 setError(e?.message || "Bulk sync failed");
+              } finally {
+                setActionBusy(false);
               }
             }}
+            disabled={actionBusy || editBusy || !!editApp}
             title="Re-apply branding from all approved applications into brand configs"
           >
             Sync All Approved
@@ -329,14 +361,14 @@ export default function ApplicationsPanel() {
         <div className="rounded-xl border border-foreground/10 bg-foreground/[0.03] p-5 shadow-sm">
           <div className="flex items-center justify-between border-b border-foreground/5 pb-3">
             <div className="text-sm font-bold tracking-tight">
-              Edit Images — <span className="font-mono text-primary">{editApp.brandKey}</span>
+              Edit Application — <span className="font-mono text-primary">{editApp.brandKey}</span>
             </div>
             <div className="flex items-center gap-2">
               <button
                 className="px-3 py-1 rounded-md border border-foreground/10 hover:bg-foreground/5 text-[10px] font-bold uppercase tracking-wider transition-colors"
                 onClick={() => setEditApp(null)}
                 disabled={editBusy}
-                title="Cancel image edits"
+                title="Cancel application edits"
               >
                 Cancel
               </button>
@@ -344,13 +376,35 @@ export default function ApplicationsPanel() {
                 className="px-3 py-1 rounded-md border border-primary/20 bg-primary/10 text-primary hover:bg-primary/20 text-[10px] font-bold uppercase tracking-wider transition-colors"
                 onClick={saveEdit}
                 disabled={editBusy}
-                title="Save image URLs to application"
+                title="Save application changes"
               >
                 {editBusy ? "Saving…" : "Save"}
               </button>
             </div>
           </div>
           {editError && <div className="text-[10px] uppercase font-bold text-red-500 tracking-wider mt-3">{editError}</div>}
+          <div className="mt-4 max-w-md space-y-2">
+            <label htmlFor="application-brand-key" className="block text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
+              Brand Key
+            </label>
+            <input
+              id="application-brand-key"
+              type="text"
+              value={editBrandKey}
+              onChange={(e) => setEditBrandKey(e.target.value)}
+              disabled={editBusy || !canEditBrandKey(editApp)}
+              autoCapitalize="none"
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby="application-brand-key-help"
+              className="w-full rounded-md border border-foreground/10 bg-background/50 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
+            />
+            <p id="application-brand-key-help" className="text-xs text-muted-foreground">
+              {canEditBrandKey(editApp)
+                ? "Correct the brand key before approval. Use letters, numbers, and hyphens; letters are saved in lowercase. Save or cancel your edits before approving."
+                : "The brand key is locked after approval. You can still update application images."}
+            </p>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
             <div className="rounded-lg border border-foreground/5 bg-background/50 p-3 hover:shadow-md transition-shadow">
               <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider mb-2">App</div>
@@ -672,11 +726,12 @@ export default function ApplicationsPanel() {
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     <div className="flex items-center justify-end gap-2 opacity-50 group-hover:opacity-100 transition-opacity">
                       <button
-                        className="px-2 py-1 rounded-md border border-foreground/10 hover:bg-foreground/5 text-[10px] font-bold uppercase tracking-wider transition-colors"
+                        className="px-2 py-1 rounded-md border border-foreground/10 hover:bg-foreground/5 text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-30"
                         onClick={() => startEdit(app)}
-                        title="Edit application images"
+                        disabled={editBusy || actionBusy}
+                        title="Edit application brand key and images"
                       >
-                        Images
+                        Edit
                       </button>
                       <button
                         className="px-2 py-1 rounded-md border border-foreground/10 hover:bg-foreground/5 text-[10px] font-bold uppercase tracking-wider transition-colors"
@@ -686,8 +741,9 @@ export default function ApplicationsPanel() {
                         View
                       </button>
                       <button
-                        className="px-2 py-1 rounded-md border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 text-[10px] font-bold uppercase tracking-wider transition-colors"
+                        className="px-2 py-1 rounded-md border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-30"
                         onClick={() => syncBrandConfig(app.id)}
+                        disabled={actionBusy || editBusy || editApp?.id === app.id}
                         title="Sync branding from application into brand config"
                       >
                         Sync
@@ -695,7 +751,7 @@ export default function ApplicationsPanel() {
                       <button
                         className="px-2 py-1 rounded-md border border-emerald-500/20 bg-emerald-500/5 text-emerald-600 hover:bg-emerald-500/10 text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-30"
                         onClick={() => approve(app.id)}
-                        disabled={String(app.status || "").toLowerCase() === "approved"}
+                        disabled={actionBusy || editBusy || app.status === "approved" || editApp?.id === app.id}
                         title="Approve application: create brand key and persist config"
                       >
                         Approve
@@ -703,7 +759,7 @@ export default function ApplicationsPanel() {
                       <button
                         className="px-2 py-1 rounded-md border border-red-500/20 bg-red-500/5 text-red-600 hover:bg-red-500/10 text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-30"
                         onClick={() => reject(app.id)}
-                        disabled={String(app.status || "").toLowerCase() === "rejected"}
+                        disabled={actionBusy || editBusy || app.status === "rejected" || editApp?.id === app.id}
                         title="Reject application"
                       >
                         Reject

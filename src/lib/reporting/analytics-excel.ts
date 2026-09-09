@@ -2,7 +2,8 @@ import type {
   AnalyticsBrandStat,
   AnalyticsFailureReason,
   AnalyticsReceiptItem,
-  AnalyticsReportStat
+  AnalyticsReportStat,
+  AnalyticsReportIdentity
 } from "./analytics-pdf";
 import { isAnalyticsPaidReceipt } from "@/lib/platform-analytics-metrics";
 import { extractAnalyticsFailureReasons, getAnalyticsFailureReportData } from "@/lib/platform-analytics-failures";
@@ -22,8 +23,9 @@ function text(value: unknown, maxLength = 32000): string {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
 }
 
-function reportFilename(stem: string): string {
-  return `basaltsurge_${stem}_${new Date().toISOString().replace(/[:.]/g, "-")}.xlsx`;
+function reportFilename(stem: string, identity?: AnalyticsReportIdentity): string {
+  const brandKey = identity?.brandKey.replace(/[^a-z0-9_-]/gi, "_") || "basaltsurge";
+  return `${brandKey}_${stem}_${new Date().toISOString().replace(/[:.]/g, "-")}.xlsx`;
 }
 
 async function loadXlsx() {
@@ -334,20 +336,22 @@ export async function exportAnalyticsXLSX(
   failures: AnalyticsFailureReason[],
   receipts: AnalyticsReceiptItem[],
   scope: string,
-  timeZone: string
+  timeZone: string,
+  identity?: AnalyticsReportIdentity
 ): Promise<void> {
   const XLSX = await loadXlsx();
   const failureData = getAnalyticsFailureReportData(receipts);
   const workbook = XLSX.utils.book_new();
+  const brandName = text(identity?.brandName || "BasaltSurge");
   workbook.Props = {
-    Title: `BasaltSurge ${kind} analytics report`,
+    Title: `${brandName} ${kind} analytics report`,
     Subject: scope,
-    Author: "BasaltSurge Platform Analytics",
+    Author: `${brandName} ${identity ? "Partner" : "Platform"} Analytics`,
     CreatedDate: new Date()
   };
 
   const addSummary = () => addSheet(XLSX, workbook, "Summary", buildSheet(
-    XLSX, "BasaltSurge Analytics Summary", "Reconciled metrics and explicit data-quality definitions", scope,
+    XLSX, `${brandName} Analytics Summary`, "Reconciled metrics and explicit data-quality definitions", scope,
     SUMMARY_COLUMNS, summaryRows(stats)
   ));
   const addBrands = () => addSheet(XLSX, workbook, "Partner Performance", buildSheet(
@@ -407,5 +411,5 @@ export async function exportAnalyticsXLSX(
   }
   addDefinitions();
 
-  downloadWorkbook(XLSX, workbook, reportFilename(`${kind}_analytics`));
+  downloadWorkbook(XLSX, workbook, reportFilename(`${kind}_analytics`, identity));
 }

@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth } from "@/lib/auth";
 import { getBrandConfig } from "@/config/brands";
+import { merchantConversationAuthorizer, resolveMerchantMessageContext } from "@/lib/merchant-message-access";
 
 /**
  * Conversations API (brand-scoped)
@@ -81,7 +82,8 @@ async function resolveCallerWallet(req: NextRequest): Promise<string> {
 export async function GET(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   try {
-    const me = await resolveCallerWallet(req);
+    const merchantContext = await resolveMerchantMessageContext(req);
+    const me = merchantContext?.merchantWallet || await resolveCallerWallet(req);
     if (!/^0x[a-f0-9]{40}$/i.test(me)) {
       return NextResponse.json(
         { ok: false, error: "invalid_wallet" },
@@ -111,7 +113,7 @@ export async function GET(req: NextRequest) {
     // Query 1: Partition-targeted (fast) - conversations where partitionKey (wallet) == me
     const specPk = {
       query:
-        "SELECT c.id, c.wallet, c.brandKey, c.participants, c.subject, c.lastMessageAt, c.createdAt " +
+        "SELECT c.id, c.type, c.wallet, c.brandKey, c.participants, c.subject, c.lastMessageAt, c.createdAt " +
         "FROM c WHERE c.type = 'conversation' AND c.wallet = @me",
       parameters: [{ name: "@me", value: me }],
     } as { query: string; parameters: { name: string; value: any }[] };
@@ -121,7 +123,7 @@ export async function GET(req: NextRequest) {
     // Query 2: Cross-partition - conversations where participants include me (may reside in other participant partitions)
     const specCross = {
       query:
-        "SELECT c.id, c.wallet, c.brandKey, c.participants, c.subject, c.lastMessageAt, c.createdAt " +
+        "SELECT c.id, c.type, c.wallet, c.brandKey, c.participants, c.subject, c.lastMessageAt, c.createdAt " +
         "FROM c WHERE c.type = 'conversation' AND ARRAY_CONTAINS(c.participants, @me)",
       parameters: [{ name: "@me", value: me }],
     } as { query: string; parameters: { name: string; value: any }[] };
@@ -146,14 +148,17 @@ export async function GET(req: NextRequest) {
         parameters: [{ name: "@me", value: me }],
       };
       const { resources: myReceipts } = await container.items.query(specReceipts, { partitionKey: me as any }).fetchAll();
-      const myReceiptIds = Array.isArray(myReceipts) ? myReceipts.map((r: any) => String(r.receiptId || "")).filter(Boolean) : [];
+      const myReceiptIds = Array.isArray(myReceipts) ? Array.from(new Set(myReceipts.flatMap((r: any) => {
+        const id = String(r.receiptId || "");
+        return [id, id.toLowerCase()].filter(Boolean);
+      }))) : [];
 
       if (myReceiptIds.length > 0) {
         // Query checkout conversations matching this merchant's receipts
         const specCheckout = {
           query:
-            "SELECT c.id, c.wallet, c.brandKey, c.participants, c.subject, c.lastMessageAt, c.createdAt " +
-            "FROM c WHERE c.type = 'conversation' AND c.subject.type = 'checkout' AND ARRAY_CONTAINS(@rids, c.subject.id)",
+            "SELECT c.id, c.type, c.wallet, c.brandKey, c.participants, c.subject, c.lastMessageAt, c.createdAt " +
+            "FROM c WHERE c.type = 'conversation' AND (c.subject.type = 'checkout' OR c.subject.type = 'order') AND ARRAY_CONTAINS(@rids, c.subject.id)",
           parameters: [{ name: "@rids", value: myReceiptIds }],
         };
         const { resources: resCheckout } = await container.items.query(specCheckout).fetchAll();
@@ -163,13 +168,6 @@ export async function GET(req: NextRequest) {
             if (cid && !seen.has(cid)) {
               seen.add(cid);
               rows.push(cc);
-              // Auto-heal: add merchant to participants if missing
-              const parts = Array.isArray(cc.participants) ? cc.participants.map(normalizeWallet) : [];
-              if (!parts.includes(me)) {
-                parts.push(me);
-                const updatedDoc = { ...cc, participants: parts };
-                container.items.upsert(updatedDoc as any).catch(() => {});
-              }
             }
           }
         }
@@ -177,7 +175,7 @@ export async function GET(req: NextRequest) {
     } catch {}
 
     // Fallback: derive conversations from messages if none found (cross-partition)
-    if (rows.length === 0) {
+    if (!merchantContext && rows.length === 0) {
       try {
         // Get distinct conversationIds from messages sent by or read by this wallet
         const specMsgs = {
@@ -203,7 +201,7 @@ export async function GET(req: NextRequest) {
             if (!c) {
               const specOne = {
                 query:
-                  "SELECT c.id, c.wallet, c.brandKey, c.participants, c.subject, c.lastMessageAt, c.createdAt " +
+                  "SELECT c.id, c.type, c.wallet, c.brandKey, c.participants, c.subject, c.lastMessageAt, c.createdAt " +
                   "FROM c WHERE c.type='conversation' AND c.id=@id",
                 parameters: [{ name: "@id", value: cid }],
               } as { query: string; parameters: { name: string; value: any }[] };
@@ -233,6 +231,12 @@ export async function GET(req: NextRequest) {
       } catch {}
     }
 
+    if (merchantContext) {
+      const canAccess = merchantConversationAuthorizer(container, merchantContext);
+      const allowed = await Promise.all(rows.map(canAccess));
+      rows = rows.filter((_, index) => allowed[index]);
+    }
+
     // Sort by lastMessageAt desc then createdAt desc
     rows.sort((a: any, b: any) => {
       const la = Number(a?.lastMessageAt || 0);
@@ -252,7 +256,7 @@ export async function GET(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message || "failed" },
-      { status: 500, headers: { "x-correlation-id": crypto.randomUUID() } }
+      { status: e?.status || (e?.message === "unauthorized" ? 401 : 500), headers: { "x-correlation-id": correlationId } }
     );
   }
 }
@@ -260,6 +264,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   try {
+    if (await resolveMerchantMessageContext(req)) {
+      return NextResponse.json({ ok: false, error: "merchant_conversation_creation_not_supported" }, { status: 403, headers: { "x-correlation-id": correlationId } });
+    }
     const me = await resolveCallerWallet(req);
     if (!/^0x[a-f0-9]{40}$/i.test(me)) {
       return NextResponse.json(
@@ -350,7 +357,7 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message || "failed" },
-      { status: 500, headers: { "x-correlation-id": crypto.randomUUID() } }
+      { status: e?.status || (e?.message === "unauthorized" ? 401 : 500), headers: { "x-correlation-id": correlationId } }
     );
   }
 }

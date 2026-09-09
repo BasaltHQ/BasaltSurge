@@ -433,41 +433,15 @@ export default function HomeContent() {
           <div className="absolute inset-0 bg-gradient-to-r from-background/90 via-background/40 to-transparent z-10" />
           <div className="absolute inset-0 bg-gradient-to-t from-background via-background/10 to-transparent z-10" />
           
-          {!isPartnerContainer ? (
-            <video
-              autoPlay
-              loop
-              muted
-              playsInline
-              className="absolute inset-0 w-full h-full object-cover opacity-80"
-            >
-              <source src="/SurgeHeader.mp4" type="video/mp4" />
-            </video>
-          ) : (
-            <div className="absolute inset-0 overflow-hidden bg-black/50">
-              <svg className="hidden">
-                <filter id="hero-plasma">
-                  <feTurbulence type="fractalNoise" baseFrequency="0.005 0.01" numOctaves="3" seed="5" result="noise" />
-                  <feDisplacementMap in="SourceGraphic" in2="noise" scale="150" xChannelSelector="R" yChannelSelector="G" />
-                </filter>
-              </svg>
-              <div className="absolute inset-0 opacity-50 mix-blend-screen" style={{ filter: 'url(#hero-plasma)' }}>
-                <motion.div
-                  initial={{ x: "-50%", y: "-50%" }}
-                  animate={{ x: "150%", y: "150%" }}
-                  transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-                  className="absolute top-0 left-0 w-[150vw] h-[150vh] blur-[80px] opacity-60"
-                  style={{ background: 'radial-gradient(circle, var(--pp-primary, #34d399) 0%, transparent 50%)' }}
-                />
-                <motion.div
-                  animate={{ scale: [1, 1.3, 1], opacity: [0.4, 0.8, 0.4] }}
-                  transition={{ duration: 15, repeat: Infinity, ease: "easeInOut" }}
-                  className="absolute top-1/2 left-1/2 w-[80vw] h-[80vh] -translate-x-1/2 -translate-y-1/2 rounded-[100%] blur-[100px]"
-                  style={{ background: 'radial-gradient(ellipse, var(--pp-secondary, #10b981) 0%, transparent 60%)' }}
-                />
-              </div>
-            </div>
-          )}
+          <video
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="absolute inset-0 w-full h-full object-cover opacity-80"
+          >
+            <source src="/SurgeHeader.mp4" type="video/mp4" />
+          </video>
         </div>
 
         <div className="max-w-7xl mx-auto px-6 md:px-8 relative z-20 w-full">

@@ -16,20 +16,21 @@ export interface TrendExplorerProps {
   metricLabel?: string;
   scaleType?: TrendScale;
   timezone?: string;
+  aggregateLabel?: string;
   gitCommits?: GitCommitEvent[];
   showGitCommitsOverlay?: boolean;
   setShowGitCommitsOverlay?: (value: boolean | ((previous: boolean) => boolean)) => void;
 }
 
-const labelFor = (series: string) => series === "aggregate" ? "Platform aggregate" : series;
 const formatValue = (value: number | null, metric: TrendMetric) => value === null ? "Unavailable" : metric === "successRate" ? `${value.toLocaleString("en-US", { maximumFractionDigits: 1 })}%` : value.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
 const countValue = (value: unknown) => finiteTrendValue(value)?.toLocaleString("en-US") ?? "Unavailable";
 
 function TrendExplorer({
   data, brandKeys, hoveredKey, setHoveredKey, metricType = "successRate", metricLabel,
   scaleType = "linear", timezone = "America/Los_Angeles", gitCommits = [],
-  showGitCommitsOverlay = true, setShowGitCommitsOverlay, kind,
+  showGitCommitsOverlay = true, setShowGitCommitsOverlay, kind, aggregateLabel = "Platform aggregate",
 }: TrendExplorerProps & { kind: "line" | "bar" }) {
+  const labelFor = (series: string) => series === "aggregate" ? aggregateLabel : series;
   const id = useId();
   const viewport = useChartViewport();
   const [selectedSeries, setSelectedSeries] = useState<string | null>(null);

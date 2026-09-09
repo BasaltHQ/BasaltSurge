@@ -75,3 +75,11 @@ test('bar chart includes supplied buckets and handles logarithmic zeros and miss
   const empty = renderToStaticMarkup(React.createElement(CustomInteractiveLineChart, { data: [], brandKeys: [], hoveredKey: null, setHoveredKey: () => {} }));
   assert.match(empty, /No observations match this query/);
 });
+
+test('partner trend labels the brand aggregate without platform Git controls or empty Git panels', () => {
+  const html = renderToStaticMarkup(React.createElement(CustomInteractiveLineChart, { data, brandKeys: [], hoveredKey: null, setHoveredKey: () => {}, aggregateLabel: 'Brand aggregate', showGitCommitsOverlay: false }));
+  assert.match(html, /Brand aggregate/);
+  assert.doesNotMatch(html, /Platform aggregate|No Git events are available|aria-label="Inspect Git event"/);
+  assert.match(html, /Inspect observation/);
+  assert.match(html, /View data table/);
+});

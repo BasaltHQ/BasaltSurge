@@ -3,6 +3,8 @@
 import { isAnalyticsPaidReceipt, type AnalyticsKycProfile } from "@/lib/platform-analytics-metrics";
 import { extractAnalyticsFailureReasons, getAnalyticsFailureReportData, type AnalyticsFailureReceipt } from "@/lib/platform-analytics-failures";
 
+export type AnalyticsReportIdentity = { brandKey: string; brandName: string };
+
 export interface AnalyticsReportStat {
   totalCreated: number;
   totalPaid: number;
@@ -134,8 +136,9 @@ function formatDate(value: string | undefined, timeZone: string): string {
   return date.toLocaleString("en-US", { dateStyle: "short", timeStyle: "short", timeZone });
 }
 
-function reportFilename(stem: string): string {
-  return `basaltsurge_${stem}_${new Date().toISOString().replace(/[:.]/g, "-")}.pdf`;
+function reportFilename(stem: string, identity?: AnalyticsReportIdentity): string {
+  const brandKey = identity?.brandKey.replace(/[^a-z0-9_-]/gi, "_") || "basaltsurge";
+  return `${brandKey}_${stem}_${new Date().toISOString().replace(/[:.]/g, "-")}.pdf`;
 }
 
 let brandLogoPromise: Promise<Uint8Array | null> | null = null;
@@ -156,7 +159,7 @@ function loadBrandLogo(): Promise<Uint8Array | null> {
   return brandLogoPromise;
 }
 
-async function createPdfDoc(orientation: PdfOrientation = "portrait") {
+async function createPdfDoc(orientation: PdfOrientation = "portrait", identity?: AnalyticsReportIdentity) {
   const jsPDFMod = await import("jspdf");
   const autoTableMod = await import("jspdf-autotable");
   const jsPDFDefault = (jsPDFMod as any).default;
@@ -172,7 +175,8 @@ async function createPdfDoc(orientation: PdfOrientation = "portrait") {
   if (typeof autoTable !== "function") throw new Error("The PDF table engine could not be initialized.");
 
   const doc = new jsPDF({ orientation, unit: "mm", format: "a4", compress: true, putOnlyUsedFonts: true });
-  (doc as any).__basaltSurgeLogo = await loadBrandLogo();
+  (doc as any).__analyticsIdentity = identity;
+  (doc as any).__basaltSurgeLogo = identity ? null : await loadBrandLogo();
   return { doc, autoTable };
 }
 
@@ -201,12 +205,14 @@ function downloadPdf(doc: any, filename: string) {
 
 function setMetadata(doc: any, title: string, scope: string) {
   doc.__analyticsFullScope = scope;
+  const identity = doc.__analyticsIdentity as AnalyticsReportIdentity | undefined;
+  const brandName = identity?.brandName || "BasaltSurge";
   doc.setProperties({
     title: pdfText(title),
     subject: pdfText(scope),
-    author: "BasaltSurge Platform Analytics",
-    creator: "BasaltSurge Admin",
-    keywords: "BasaltSurge, analytics, audit, reporting"
+    author: pdfText(`${brandName} ${identity ? "Partner" : "Platform"} Analytics`),
+    creator: pdfText(`${brandName} Admin`),
+    keywords: pdfText(`${brandName}, analytics, audit, reporting`)
   });
 }
 
@@ -244,7 +250,9 @@ function drawHeader(
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.5);
     doc.setTextColor(...COLORS.navy);
-    doc.text("BS", 18, 12.2, { align: "center" });
+    const brandName = (doc.__analyticsIdentity as AnalyticsReportIdentity | undefined)?.brandName;
+    const initials = brandName ? pdfText(brandName).split(/\s+/).map(word => word[0]).join("").slice(0, 2).toUpperCase() : "BS";
+    doc.text(initials || "PA", 18, 12.2, { align: "center" });
   }
 
   doc.setTextColor(255, 255, 255);
@@ -259,7 +267,8 @@ function drawHeader(
   doc.setFontSize(7.2);
   doc.setTextColor(203, 213, 225);
   doc.text(`Generated ${generated}`, pageWidth - 13, 9.5, { align: "right" });
-  doc.text("BASALTSURGE | INTERNAL", pageWidth - 13, 15.2, { align: "right" });
+  const brandName = (doc.__analyticsIdentity as AnalyticsReportIdentity | undefined)?.brandName || "BasaltSurge";
+  doc.text(`${pdfText(brandName, 30).toUpperCase()} | INTERNAL`, pageWidth - 13, 15.2, { align: "right" });
 
   doc.setFillColor(...COLORS.surface);
   doc.setDrawColor(...COLORS.border);
@@ -407,11 +416,12 @@ export async function exportExecutiveSummaryPDF(
   brandStats: AnalyticsBrandStat[],
   failureReasons: AnalyticsFailureReason[],
   filterContext = "All Time | All Brands",
-  receipts?: AnalyticsReceiptItem[]
+  receipts?: AnalyticsReceiptItem[],
+  identity?: AnalyticsReportIdentity
 ): Promise<void> {
   const title = "Executive Analytics Brief";
   const subtitle = "Performance, conversion, and data-quality review";
-  const { doc, autoTable } = await createPdfDoc("portrait");
+  const { doc, autoTable } = await createPdfDoc("portrait", identity);
   setMetadata(doc, title, filterContext);
   let y = drawHeader(doc, title, subtitle, filterContext, "portrait");
   const failureData = receipts ? getAnalyticsFailureReportData(receipts) : undefined;
@@ -552,7 +562,7 @@ export async function exportExecutiveSummaryPDF(
   });
 
   drawFooters(doc);
-  downloadPdf(doc, reportFilename("executive_brief"));
+  downloadPdf(doc, reportFilename("executive_brief", identity));
 }
 
 export async function exportTransactionLedgerPDF(
@@ -560,11 +570,12 @@ export async function exportTransactionLedgerPDF(
   stats: AnalyticsReportStat | null,
   queryFilter = "No search query",
   scope = "All Time",
-  reportTimezone = "America/Los_Angeles"
+  reportTimezone = "America/Los_Angeles",
+  identity?: AnalyticsReportIdentity
 ): Promise<void> {
   const title = "Transaction Audit Ledger";
   const subtitle = `${receipts.length.toLocaleString()} complete filtered records | ${queryFilter}`;
-  const { doc, autoTable } = await createPdfDoc("landscape");
+  const { doc, autoTable } = await createPdfDoc("landscape", identity);
   setMetadata(doc, title, scope);
   drawHeader(doc, title, subtitle, scope, "landscape");
 
@@ -617,17 +628,18 @@ export async function exportTransactionLedgerPDF(
   }
 
   drawFooters(doc);
-  downloadPdf(doc, reportFilename("transaction_ledger"));
+  downloadPdf(doc, reportFilename("transaction_ledger", identity));
 }
 
 export async function exportBrandFinancialPDF(
   brandStats: AnalyticsBrandStat[],
   stats: AnalyticsReportStat | null,
-  scope = "All Time"
+  scope = "All Time",
+  identity?: AnalyticsReportIdentity
 ): Promise<void> {
   const title = "Partner Financial Performance";
   const subtitle = "Recorded GMV and platform-fee evidence by partner";
-  const { doc, autoTable } = await createPdfDoc("landscape");
+  const { doc, autoTable } = await createPdfDoc("landscape", identity);
   setMetadata(doc, title, scope);
   let y = drawHeader(doc, title, subtitle, scope, "landscape");
   const quality = reportQuality(stats);
@@ -684,7 +696,7 @@ export async function exportBrandFinancialPDF(
   doc.text("Platform fees use persisted fee evidence when available and never less than the contractual 50 BPS floor.", 17, noteY + 6.8);
 
   drawFooters(doc);
-  downloadPdf(doc, reportFilename("partner_financials"));
+  downloadPdf(doc, reportFilename("partner_financials", identity));
 }
 
 export async function exportFailureDiagnosticsPDF(
@@ -692,11 +704,12 @@ export async function exportFailureDiagnosticsPDF(
   stats: AnalyticsReportStat | null,
   receipts: AnalyticsReceiptItem[],
   scope = "All Time",
-  reportTimezone = "America/Los_Angeles"
+  reportTimezone = "America/Los_Angeles",
+  identity?: AnalyticsReportIdentity
 ): Promise<void> {
   const title = "Failure Diagnostics";
   const subtitle = "Persisted error signals, including recovered receipts; inclusive reason counts";
-  const { doc, autoTable } = await createPdfDoc("landscape");
+  const { doc, autoTable } = await createPdfDoc("landscape", identity);
   setMetadata(doc, title, scope);
   let y = drawHeader(doc, title, subtitle, scope, "landscape");
   const failureData = getAnalyticsFailureReportData(receipts);
@@ -758,5 +771,5 @@ export async function exportFailureDiagnosticsPDF(
   }
 
   drawFooters(doc);
-  downloadPdf(doc, reportFilename("failure_diagnostics"));
+  downloadPdf(doc, reportFilename("failure_diagnostics", identity));
 }

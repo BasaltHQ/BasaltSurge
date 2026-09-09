@@ -1,31 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
-import { resolveWalletRole } from "@/lib/authz";
+import { requirePlatformAnalyticsAccess } from "@/lib/partner-analytics-access";
 
 export const dynamic = 'force-dynamic';
 
+function privateJson(body: unknown, status = 200) {
+  return NextResponse.json(body, { status, headers: { "Cache-Control": "private, no-store" } });
+}
+
 export async function GET(req: NextRequest) {
   try {
-    // 1. Authorize the caller
-    const wallet = req.headers.get("x-wallet") || "";
-    const role = resolveWalletRole(wallet);
-    if (!role || !role.startsWith("platform_")) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 403 });
-    }
+    await requirePlatformAnalyticsAccess(req);
 
     const receiptId = req.nextUrl.searchParams.get("receiptId");
     if (!receiptId) {
-      return NextResponse.json({ ok: false, error: "Missing receiptId" }, { status: 400 });
+      return privateJson({ ok: false, error: "Missing receiptId" }, 400);
     }
 
-    const container = await getContainer();
+    const container = await getContainer(undefined, "portal_logs");
     let logs: any[] = [];
 
     // 2. Fetch logs for this receiptId
     if ((container as any).getCollection) {
       const collection = (container as any).getCollection();
-      const db = collection.db;
-      logs = await db.collection("portal_logs").find(
+      logs = await collection.find(
         { receiptId: receiptId },
         {
           projection: {
@@ -49,12 +47,12 @@ export async function GET(req: NextRequest) {
       logs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     }
 
-    return NextResponse.json({
+    return privateJson({
       ok: true,
       logs
     });
   } catch (e: any) {
-    console.error("[RECEIPT LOGS API] Error:", e);
-    return NextResponse.json({ ok: false, error: e?.message || "Internal server error" }, { status: 500 });
+    const status = [401, 403, 503].includes(Number(e?.status)) ? Number(e.status) : 500;
+    return privateJson({ ok: false, error: status === 500 ? "Receipt logs could not be loaded." : e.message }, status);
   }
 }

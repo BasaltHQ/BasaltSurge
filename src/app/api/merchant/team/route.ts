@@ -1,38 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
-import { requireRole } from "@/lib/auth";
+import { getMerchantBrandScope, requireMerchantPermission } from "@/lib/merchant-team-access";
 import { TeamMember } from "@/types/merchant-features";
 import { randomUUID } from "node:crypto";
+
+function teamQuery(req: NextRequest, merchantWallet: string, id?: string) {
+    let query = "SELECT * FROM c WHERE c.type = 'merchant_team_member' AND c.merchantWallet = @wallet";
+    const parameters = [{ name: "@wallet", value: merchantWallet }];
+    if (id) {
+        query += " AND c.id = @id";
+        parameters.push({ name: "@id", value: id });
+    }
+
+    const scope = getMerchantBrandScope(req);
+    query += ` AND ${scope.clause}`;
+    parameters.push(...scope.parameters);
+    return { query, parameters };
+}
+
+function errorStatus(error: any): number {
+    return error?.status === 400 || error?.status === 401 || error?.status === 403 ? error.status : 500;
+}
 
 // GET: List team members for the authenticated merchant
 export async function GET(req: NextRequest) {
     try {
-        const container = await getContainer();
-
         const walletHeader = req.headers.get("x-wallet") || "";
         if (!walletHeader) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
-        const merchantWallet = walletHeader.toLowerCase();
-
-        // Strict Isolation Logic
-        const envBrandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
-
-        let query = "SELECT * FROM c WHERE c.type = 'merchant_team_member' AND c.merchantWallet = @wallet";
-        const parameters = [{ name: "@wallet", value: merchantWallet }];
-
-        if (envBrandKey && envBrandKey !== "portalpay" && envBrandKey !== "basaltsurge") {
-            // Partner Container: Strict filter matching THIS brand
-            query += " AND c.brandKey = @brandKey";
-            parameters.push({ name: "@brandKey", value: envBrandKey });
-        } else {
-            // Platform Container: Show only Platform members (no brandKey or default brands)
-            query += " AND (NOT IS_DEFINED(c.brandKey) OR c.brandKey = 'portalpay' OR c.brandKey = 'basaltsurge')";
-        }
-
-        const querySpec = { query, parameters };
-
-        const { resources } = await container.items.query(querySpec).fetchAll();
+        const { merchantWallet } = await requireMerchantPermission(req, walletHeader, "manage:team");
+        const container = await getContainer();
+        const { resources } = await container.items.query(teamQuery(req, merchantWallet)).fetchAll();
 
         const sanitized = resources.map((r: any) => ({
             ...r,
@@ -42,21 +41,21 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ items: sanitized });
     } catch (e: any) {
         console.error("GET team failed", e);
-        return NextResponse.json({ error: e.message }, { status: 500 });
+        return NextResponse.json({ error: e.message }, { status: errorStatus(e) });
     }
 }
 
 // POST: Add new team member
 export async function POST(req: NextRequest) {
     try {
-        const container = await getContainer();
-        const body = await req.json();
         const walletHeader = req.headers.get("x-wallet") || "";
         if (!walletHeader) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        const merchantWallet = walletHeader.toLowerCase();
+        const { merchantWallet } = await requireMerchantPermission(req, walletHeader, "manage:team");
+        const body = await req.json();
+        const container = await getContainer();
 
-        // Capture Brand Key from Environment (Partner Mode)
-        const brandKey = String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase();
+        // Use the same trusted brand scope as membership authorization.
+        const { brandKey } = getMerchantBrandScope(req);
 
         if (!body.name || !body.pin || !body.role) {
             return NextResponse.json({ error: "Missing required fields (name, pin, role)" }, { status: 400 });
@@ -92,19 +91,15 @@ export async function POST(req: NextRequest) {
 
     } catch (e: any) {
         console.error("POST team failed", e);
-        return NextResponse.json({ error: e.message }, { status: 500 });
+        return NextResponse.json({ error: e.message }, { status: errorStatus(e) });
     }
 }
 
 // Helper to find doc and its partition key. Caches the PK path for performance.
 let cachedPkPath: string | null = null;
 
-async function findDocAndPk(container: any, id: string) {
-    const querySpec = {
-        query: "SELECT * FROM c WHERE c.id = @id",
-        parameters: [{ name: "@id", value: id }]
-    };
-    const { resources } = await container.items.query(querySpec).fetchAll();
+async function findDocAndPk(container: any, req: NextRequest, merchantWallet: string, id: string) {
+    const { resources } = await container.items.query(teamQuery(req, merchantWallet, id)).fetchAll();
     if (!resources || resources.length === 0) return null;
     const doc = resources[0];
 
@@ -138,17 +133,16 @@ async function findDocAndPk(container: any, id: string) {
 // PATCH: Update team member
 export async function PATCH(req: NextRequest) {
     try {
-        const container = await getContainer();
-        const body = await req.json();
         const walletHeader = req.headers.get("x-wallet") || "";
-        // Note: We allow update if authorized.
         if (!walletHeader) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        const merchantWallet = walletHeader.toLowerCase();
+        const { merchantWallet } = await requireMerchantPermission(req, walletHeader, "manage:team");
+        const body = await req.json();
+        const container = await getContainer();
 
         if (!body.id) return NextResponse.json({ error: "Missing ID" }, { status: 400 });
 
         // Lookup first to handle potential PK mismatch
-        const found = await findDocAndPk(container, body.id);
+        const found = await findDocAndPk(container, req, merchantWallet, body.id);
         if (!found) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
         const { doc, pkValue } = found;
@@ -203,7 +197,7 @@ export async function PATCH(req: NextRequest) {
 
         return NextResponse.json({ success: true });
     } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 });
+        return NextResponse.json({ error: e.message }, { status: errorStatus(e) });
     }
 }
 
@@ -213,13 +207,13 @@ export async function DELETE(req: NextRequest) {
         const { searchParams } = new URL(req.url);
         const id = searchParams.get("id");
         const walletHeader = req.headers.get("x-wallet") || "";
-        if (!walletHeader || !id) return NextResponse.json({ error: "Unauthorized or missing ID" }, { status: 401 });
-
+        if (!walletHeader) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        const { merchantWallet } = await requireMerchantPermission(req, walletHeader, "manage:team");
+        if (!id) return NextResponse.json({ error: "Missing ID" }, { status: 400 });
         const container = await getContainer();
-        const merchantWallet = walletHeader.toLowerCase();
 
         // Lookup first
-        const found = await findDocAndPk(container, id);
+        const found = await findDocAndPk(container, req, merchantWallet, id);
         if (!found) return NextResponse.json({ error: "Member not found" }, { status: 404 });
 
         const { doc, pkValue } = found;
@@ -236,6 +230,6 @@ export async function DELETE(req: NextRequest) {
 
         return NextResponse.json({ success: true });
     } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 });
+        return NextResponse.json({ error: e.message }, { status: errorStatus(e) });
     }
 }

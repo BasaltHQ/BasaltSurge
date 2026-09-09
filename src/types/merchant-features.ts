@@ -10,6 +10,7 @@ export type MerchantRoleKey =
     | "merchant_kitchen"
     | "merchant_finance"
     | "merchant_inventory"
+    | "merchant_customer_service"
     | "manager"
     | "staff"
     | string;
@@ -19,6 +20,7 @@ export type MerchantPermissionKey =
     | "manage:roles"
     | "manage:inventory"
     | "manage:orders"
+    | "manage:messages"
     | "view:analytics"
     | "manage:payouts"
     | "access:terminal"
@@ -57,6 +59,7 @@ export const DEFAULT_MERCHANT_ROLES = [
             "manage:roles",
             "manage:inventory",
             "manage:orders",
+            "manage:messages",
             "view:analytics",
             "manage:payouts",
             "access:terminal",
@@ -73,10 +76,19 @@ export const DEFAULT_MERCHANT_ROLES = [
             "manage:team",
             "manage:inventory",
             "manage:orders",
+            "manage:messages",
             "view:analytics",
             "access:terminal",
             "manage:settings"
         ] as MerchantPermissionKey[]
+    },
+    {
+        key: "merchant_customer_service",
+        name: "Customer Service",
+        description: "Read and respond to customer conversations in the merchant Messages panel.",
+        color: "rose",
+        isSystem: true,
+        permissions: ["manage:messages"] as MerchantPermissionKey[]
     },
     {
         key: "merchant_cashier",
@@ -128,6 +140,7 @@ export const AVAILABLE_MERCHANT_PERMISSIONS: { key: MerchantPermissionKey; name:
     { key: "manage:roles", name: "Roles & Permissions", desc: "Create custom roles and customize permission mappings", category: "Access & Staffing" },
     { key: "manage:inventory", name: "Inventory & Catalog", desc: "Manage catalog items, categories, pricing, and stock levels", category: "Operations & Catalog" },
     { key: "manage:orders", name: "Orders & Receipts", desc: "Process sales, view live receipts, and issue order refunds", category: "Operations & Catalog" },
+    { key: "manage:messages", name: "Customer Messages", desc: "Read customer conversations, send replies and attachments, and mark messages as read", category: "Customer Service" },
     { key: "view:analytics", name: "Sales Analytics", desc: "Inspect sales dashboards, revenue reports, and shift statistics", category: "Finance & Analytics" },
     { key: "manage:payouts", name: "Tip Payouts & Transfers", desc: "Approve tip allocations, process cash payouts, and send USDC transfers", category: "Finance & Analytics" },
     { key: "access:terminal", name: "POS Terminal Checkout", desc: "Register active sessions and operate point-of-sale checkout terminals", category: "Terminal & POS" },

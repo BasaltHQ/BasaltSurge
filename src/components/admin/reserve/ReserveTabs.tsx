@@ -11,8 +11,8 @@ import { OfframpPanel } from "./OfframpPanel";
 
 type ReserveTab = "configuration" | "analytics" | "transactions" | "tax" | "tips" | "offramp";
 
-export function ReserveTabs() {
-  const [activeTab, setActiveTab] = useState<ReserveTab>("configuration");
+export function ReserveTabs({ initialTab = "configuration" }: { initialTab?: ReserveTab } = {}) {
+  const [activeTab, setActiveTab] = useState<ReserveTab>(initialTab);
 
   return (
     <div className="-mt-6 w-full h-[calc(100vh-116px)] flex flex-col relative z-20">
