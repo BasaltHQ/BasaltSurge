@@ -44,10 +44,14 @@ export function Step1Contact({
   isStep2Satisfied = false,
   onSubmit,
   onHeaderClick,
+  phoneVerificationFailed = false,
+  contactAuthenticationRequired = false,
+  onRetryContactVerification,
 }: Step1ContactProps) {
   const [emailSuggestion, setEmailSuggestion] = React.useState<string | null>(null);
   const buttonTextColor = getContrastingTextColor(primaryColor);
   const isLinkPhoneRegistration = headlessStep === "collecting_phone";
+  const hasVisibleAuthElement = Boolean(authElement && (!headlessStep || ["authenticating", "collecting_phone"].includes(headlessStep)));
   const emailCorrection = suggestEmailCorrection(email);
   const countryDialCode = SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial || "+1";
   const internalAuthContainerRef = React.useRef<HTMLDivElement | null>(null);
@@ -89,7 +93,11 @@ export function Step1Contact({
           ) : undefined
         }
         badge={
-          isCompleted && (effectiveStatus === "verified" || isAllKycCompleted || isEmailLocked) ? (
+          phoneVerificationFailed ? (
+            <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded bg-amber-500/20 text-amber-400 border border-amber-500/40">
+              Review verification
+            </span>
+          ) : isCompleted && (effectiveStatus === "verified" || isAllKycCompleted || isEmailLocked) ? (
             <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
               <CheckCircle2 className="w-3 h-3 text-emerald-400" />
               {isEmailLocked ? "Authorized" : "Verified"}
@@ -97,7 +105,7 @@ export function Step1Contact({
           ) : undefined
         }
         isActive={isOpen}
-        isCompleted={isCompleted}
+        isCompleted={isCompleted && !phoneVerificationFailed}
         isLocked={isLocked}
         isLightText={isLightText}
         onHeaderClick={onHeaderClick}
@@ -110,6 +118,19 @@ export function Step1Contact({
           className="p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10"
         >
         {/* Email Address */}
+        {phoneVerificationFailed && !hasVisibleAuthElement && (
+          <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs space-y-3">
+            <p>{contactAuthenticationRequired
+              ? "Complete secure Link verification before continuing with identity verification."
+              : "Stripe could not verify the phone details on your Link account. You can retry secure Link verification, or continue with identity verification."}</p>
+            {onRetryContactVerification && (
+              <button type="button" onClick={() => { void onRetryContactVerification(); }} disabled={isSubmittingContact}
+                className="rounded-lg border border-current/25 px-3 py-2 font-semibold disabled:opacity-50">
+                {isSubmittingContact ? "Opening Link verification…" : "Retry Link verification"}
+              </button>
+            )}
+          </div>
+        )}
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <label className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider ${isLightText ? "text-white/60" : "text-black/60"}`}>
@@ -274,7 +295,7 @@ export function Step1Contact({
           );
         })()}
 
-        {!authElement && (() => {
+        {!hasVisibleAuthElement && !(phoneVerificationFailed && contactAuthenticationRequired) && (() => {
           const isLoadingLink = isSubmittingContact || (
             headlessStep === "checking_link" ||
             headlessStep === "authenticating" ||
@@ -307,6 +328,8 @@ export function Step1Contact({
                   <span style={{ color: buttonTextColor }}>
                     {isLinkPhoneRegistration
                       ? "Register & Continue"
+                      : phoneVerificationFailed
+                      ? "Continue to Identity Verification"
                       : isStep2Satisfied
                       ? "Continue to Payment"
                       : isEmailLocked

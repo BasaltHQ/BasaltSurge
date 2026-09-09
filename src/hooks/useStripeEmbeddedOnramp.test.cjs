@@ -103,6 +103,10 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
   const coordinator = {
     authenticate: async (_intent, complete) => {
       calls.authenticate++;
+      if (state.deferAuthentication) {
+        state.authenticationCompletion = result => { sdkAuthenticated = result.result === 'success'; complete(result); };
+        return new Element();
+      }
       sdkAuthenticated = true;
       complete({ result: "success", crypto_customer_id: customerId });
       return new Element();
@@ -727,6 +731,147 @@ function usRejectedL0(l1 = 'verified', l2 = 'not_started') {
   return customer;
 }
 
+function usPhoneFailure(l1 = 'not_started', l2 = 'not_started') {
+  const customer = usRejectedL0(l1, l2);
+  customer.kycTiers[0].verification_errors = ['phone_verification_failed'];
+  return customer;
+}
+
+test('a failed L0 phone check allows Step 1 review and explicit retry without skipping L1', async t => {
+  const h = createHarness({ accordion: true }); t.after(h.unmount);
+  let retries = 0;
+  let state = h.render({ country: 'US', headlessStep: 'collecting_kyc', kycLevel: 'REJECTED', kycTierRequired: 'l1',
+    kycTiers: usPhoneFailure().kycTiers, authElement: h.paymentElement,
+    onRetryContactVerification: async () => { retries++; },
+  });
+  assert.equal(state.activeStep, 2);
+  assert.equal(state.step1Props.phoneVerificationFailed, true);
+  state.step2Props.onReviewContactVerification();
+  state = h.render();
+  assert.equal(state.activeStep, 1, 'KYC auto-routing must not immediately undo contact review');
+  await state.step1Props.onRetryContactVerification();
+  assert.equal(retries, 1);
+  assert.equal(h.render().activeStep, 1, 'a resolved retry callback alone does not imply verification');
+  await h.render().step1Props.onSubmit();
+  state = h.render();
+  assert.equal(state.activeStep, 2);
+  assert.equal(state.isStep2Satisfied, false);
+  state.step1Props.onHeaderClick();
+  assert.equal(h.render().activeStep, 1, 'the existing Step 1 header is usable as well');
+  state = h.render({ headlessStep: 'collecting_payment', kycLevel: 'L1', kycTiers: usPhoneFailure('verified').kycTiers });
+  assert.equal(state.step1Props.phoneVerificationFailed, false, 'old L0 phone errors do not override L1 approval');
+  assert.equal(state.step1Props.onRetryContactVerification, undefined);
+});
+
+for (const headlessStep of ['submitting_kyc', 'checking_kyc', 'kyc_pending', 'verifying_identity', 'checking_out', 'awaiting_funds', 'completed']) {
+  test(`phone recovery cannot interrupt ${headlessStep}`, t => {
+    const h = createHarness({ accordion: true }); t.after(h.unmount);
+    let state = h.render({ headlessStep, kycLevel: 'REJECTED', kycTierRequired: 'l1',
+      kycTiers: usPhoneFailure().kycTiers, onRetryContactVerification: async () => assert.fail('must not retry'),
+    });
+    assert.equal(state.step1Props.onRetryContactVerification, undefined);
+    assert.equal(state.step2Props.onReviewContactVerification, undefined);
+    state.step1Props.onHeaderClick();
+    assert.notEqual(h.render().activeStep, 1);
+  });
+}
+
+test('explicit phone recovery invokes Stripe authentication again without replacing receipt/session/customer', async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usPhoneFailure();
+  h.localStorage.setItem('stripe_onramp_session_id:R-TEST-EU', 'cos_phone_recovery');
+  await h.render().startOnramp();
+  const customer = h.render().cryptoCustomerId;
+  const before = h.localStorage.snapshot();
+  assert.equal(h.calls.authenticate, 1);
+  h.state.deferAuthentication = true;
+  const retry = h.render().retryContactVerification();
+  await settleUntil(() => Boolean(h.state.authenticationCompletion));
+  assert.equal(h.render().step, 'authenticating');
+  assert.ok(h.render().authElement, 'the newly returned Stripe auth UI is exposed');
+  await h.render().submitKycInfo({ given_name: 'Test' });
+  assert.equal(await h.render().verifyDocuments(), false);
+  assert.equal(h.calls.kycSubmissions?.length || 0, 0);
+  assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.render().step, 'authenticating', 'stale KYC handlers cannot hide the active authentication UI');
+  await h.render().retryContactVerification();
+  assert.equal(h.calls.authenticate, 2, 'overlapping retries cannot start another SDK flow');
+  h.state.authenticationCompletion({ result: 'success', crypto_customer_id: CUSTOMER_ID });
+  await retry;
+  assert.equal(h.render().step, 'collecting_kyc');
+  assert.equal(h.render().kycTierRequired, 'l1', 'an unchanged phone check still requires L1');
+  assert.equal(h.render().cryptoCustomerId, customer);
+  assert.equal(h.localStorage.getItem('stripe_onramp_session_id:R-TEST-EU'), before['stripe_onramp_session_id:R-TEST-EU']);
+  assert.equal(h.localStorage.getItem('stripe_onramp_buyer_wallet'), before.stripe_onramp_buyer_wallet);
+  assert.equal(h.calls.performCheckout, 0);
+  assert.equal(h.calls.requests.some(r => r.pathname === '/api/stripe/onramp-session-v2'), false);
+});
+
+test('cancelling contact recovery requires authentication before KYC and does not report payment failure', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = usPhoneFailure();
+  await h.render().startOnramp();
+  const priorWrites = h.calls.requests.length;
+  h.state.deferAuthentication = true;
+  const retry = h.render().retryContactVerification();
+  await settleUntil(() => Boolean(h.state.authenticationCompletion));
+  h.state.authenticationCompletion({ result: 'abandoned' });
+  await retry;
+  assert.equal(h.render().step, 'error');
+  assert.equal(h.render().errorDetails.code, 'authentication_required');
+  assert.equal(h.render().authElement, null);
+  assert.equal(h.calls.requests.slice(priorWrites).some(r => r.pathname === '/api/receipts/status'), false);
+  assert.equal(h.calls.errors.length, 0);
+  await h.render().submitKycInfo({ given_name: 'Test' });
+  await h.render().submitKycIdentifiers({});
+  assert.equal(await h.render().verifyDocuments(), false);
+  assert.equal(h.calls.kycSubmissions?.length || 0, 0);
+  assert.equal(h.calls.verifyDocuments, 0);
+
+  h.state.authenticationCompletion = null;
+  const secondRetry = h.render().retryContactVerification();
+  await settleUntil(() => Boolean(h.state.authenticationCompletion));
+  h.state.authenticationCompletion({ result: 'success', crypto_customer_id: CUSTOMER_ID });
+  await secondRetry;
+  assert.equal(h.render().step, 'collecting_kyc');
+  assert.equal(h.calls.authenticate, 3, 'the abandoned attempt cannot be treated as authenticated');
+  h.state.onKycSubmission = () => { h.state.customerData = usPhoneFailure('verified'); };
+  await h.render().submitKycInfo({ date_of_birth: { year: 1990, month: 1, day: 1 }, id_number: { type: 'us_ssn', value: '123456789' } });
+  assert.equal(h.calls.kycSubmissions.length, 1, 'KYC is accepted only after successful Link authentication');
+});
+
+test('contact recovery cannot use the Continue shortcut when Stripe authentication is required', async t => {
+  const h = createHarness({ accordion: true }); t.after(h.unmount);
+  let retries = 0;
+  const state = h.render({ headlessStep: 'error', kycLevel: 'REJECTED', kycTierRequired: 'l1',
+    kycTiers: usPhoneFailure().kycTiers, isEmailLocked: true,
+    headlessError: 'Please complete Link verification before continuing with identity verification.',
+    headlessErrorDetails: { code: 'authentication_required', message: 'Authentication required' },
+    onRetryContactVerification: async () => { retries++; },
+  });
+  assert.equal(state.activeStep, 1);
+  assert.equal(state.step1Props.contactAuthenticationRequired, true);
+  await state.step1Props.onSubmit();
+  assert.equal(retries, 1);
+  assert.equal(h.render().activeStep, 1, 'cached email authorization cannot advance past the required authentication');
+});
+
+test('contact recovery cannot attach a different Link customer to the existing checkout', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = usPhoneFailure();
+  await h.render().startOnramp();
+  h.state.deferAuthentication = true;
+  const retry = h.render().retryContactVerification();
+  await settleUntil(() => Boolean(h.state.authenticationCompletion));
+  h.state.authenticationCompletion({ result: 'success', crypto_customer_id: 'crc_different_buyer' });
+  await retry;
+  assert.equal(h.render().cryptoCustomerId, CUSTOMER_ID);
+  assert.equal(h.localStorage.getItem('stripe_onramp_customer_id'), CUSTOMER_ID);
+  assert.match(h.render().error, /same Link account/);
+  assert.equal(h.calls.performCheckout, 0);
+  assert.equal(h.calls.requests.some(r => r.pathname.includes('crc_different_buyer')), false);
+});
+
 test('L0 rejection followed by L1 approval advances to payment without repeating lower-tier KYC', async t => {
   const h = createHarness({ownership: {source: 'backend'}}); t.after(h.unmount);
   h.state.customerData = usRejectedL0('not_started');
@@ -1027,6 +1172,60 @@ test('rejected US L1 requires full legal details plus DOB and SSN, while verifie
   assert.equal(state.step2Props.showStepUpForm, false);
   assert.equal(state.step2Props.requiresL1Fields, false);
 });
+
+test('a full L1 correction is submitted to Stripe instead of taking the L0-approved Continue shortcut', async t => {
+  const h = createHarness({ accordion: true }); t.after(h.unmount);
+  const submissions = [];
+  let state = h.render({ country: 'US', headlessStep: 'collecting_kyc', kycLevel: 'L0', kycTierRequired: 'l1',
+    kycTiers: usCustomer('rejected').kycTiers,
+    firstName: 'Test', lastName: 'Buyer', line1: '123 Main St', city: 'Denver', stateCode: 'CO', zipCode: '80202',
+    onSubmitKycInfo: async payload => submissions.push(payload),
+  });
+  assert.equal(state.step2Props.isL0Approved, true);
+  assert.equal(state.step2Props.showFullForm, true);
+  assert.equal(state.step2Props.showStepUpForm, false);
+  assert.equal(state.isStep2Satisfied, false);
+  await state.step2Props.onContinueToStep3();
+  assert.equal(submissions.length, 0);
+  assert.match(h.render().localError, /Date of birth is required/);
+  state.step2Props.setDob('1990-05-12'); state.step2Props.setSsn('123-45-6789');
+  state = h.render();
+  assert.equal(state.step2Props.isIdentityComplete, true);
+  assert.equal(state.isStep2Satisfied, false, 'completed inputs still require provider verification');
+  await state.step2Props.onSubmit();
+  assert.equal(submissions.length, 1);
+  assert.equal(submissions[0].given_name, 'Test');
+  assert.equal(submissions[0].address.line1, '123 Main St');
+  assert.equal(submissions[0].date_of_birth.year, 1990);
+  assert.equal(submissions[0].id_number.value, '123456789');
+  assert.equal(h.render().activeStep, 2, 'submission alone is not approval');
+});
+
+for (const nextStep of ['collecting_payment', 'verifying_identity']) {
+  test(`manual address correction releases the form after verified L1 reaches ${nextStep}`, async t => {
+    const h = createHarness({ accordion: true }); t.after(h.unmount);
+    let state = h.render({ country: 'US', headlessStep: 'collecting_kyc', kycLevel: 'L0', kycTierRequired: 'l1',
+      kycTiers: usCustomer('rejected').kycTiers,
+      firstName: 'Test', lastName: 'Buyer', line1: '123 Main St', city: 'Denver', stateCode: 'CO', zipCode: '80202',
+      onSubmitKycInfo: async () => {},
+    });
+    state.step2Props.setManualEditAddress(true);
+    state.step2Props.setDob('1990-05-12'); state.step2Props.setSsn('123-45-6789');
+    state = h.render();
+    await state.step2Props.onSubmit();
+    assert.equal(h.render().step2Props.manualEditAddress, true, 'resolving the callback alone cannot dismiss the correction');
+    state = h.render({ headlessStep: 'kyc_pending', kycTiers: usCustomer('pending').kycTiers });
+    assert.equal(state.isStep2Satisfied, false);
+    assert.equal(state.step2Props.manualEditAddress, true);
+    state = h.render({ headlessStep: nextStep, kycLevel: 'L1',
+      kycTierRequired: nextStep === 'verifying_identity' ? 'l2' : 'l1', kycTiers: usCustomer('verified').kycTiers });
+    assert.equal(state.step2Props.manualEditAddress, false);
+    assert.equal(state.step2Props.showFullForm, false);
+    assert.equal(state.step2Props.requiresL1Fields, false);
+    assert.equal(state.isStep2Satisfied, nextStep === 'collecting_payment');
+    assert.equal(state.activeStep, nextStep === 'collecting_payment' ? 3 : 2);
+  });
+}
 
 test('direct US L2 calls cannot bypass missing L1, and L1 approval resumes documents on the same session', { timeout: 10000 }, async t => {
   const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);

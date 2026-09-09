@@ -5,6 +5,7 @@ import { isDualSplitEnabled } from "@/lib/env";
 import { maskSensitiveData } from "@/lib/sanitize-logs";
 import { resolveStripeOnrampFunding } from "@/lib/payment-split-routing";
 import { canReuseStripeCoordinatorSession } from "@/lib/stripe-coordinator-session";
+import { hasUnresolvedPhoneVerificationFailure } from "@/lib/stripe-phone-verification";
 import { getStripeOnrampPreflightError } from "@/lib/stripe-onramp-preflight";
 import { getStripeOnrampPaymentMethodTypes } from "@/lib/stripe-onramp-payment-methods";
 import { onrampErrorCode, onrampErrorDetails, onrampRecovery, resolveOnrampError, type OnrampErrorDetails, type OnrampRecovery } from "@/lib/stripe-onramp-errors";
@@ -376,6 +377,8 @@ export type UseStripeEmbeddedOnrampReturn = {
   /** Read the existing payment outcome without submitting another checkout. */
   checkPaymentStatus: () => Promise<void>;
   checkKycStatus: () => Promise<void>;
+  /** Explicit customer retry of Link verification after a failed L0 phone check. */
+  retryContactVerification: () => Promise<void>;
   /** Start the full onramp flow */
   startOnramp: (
     overrideEmail?: string,
@@ -778,6 +781,7 @@ export function useStripeEmbeddedOnramp({
   const [showSpeedSelection, setShowSpeedSelection] = useState(false);
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
   const authenticatedCoordinatorRef = useRef<OnrampCoordinator | null>(null);
+  const contactReauthenticationCustomerRef = useRef<string | null>(null);
   const kycOccurredRef = useRef(false);
   const activeCountryRef = useRef<string>("US");
   const kycInitialLevelRef = useRef<string | null>(null);
@@ -887,6 +891,16 @@ export function useStripeEmbeddedOnramp({
     setStep(newStep);
     onStepChangeRef.current?.(newStep);
   }, []);
+
+  const isContactAuthenticationPending = useCallback(() => {
+    if (!contactReauthenticationCustomerRef.current) return false;
+    if (!isRunningRef.current) {
+      const message = "Please complete Link verification before continuing with identity verification.";
+      setError(message, { code: "authentication_required", message });
+      updateStep("error");
+    }
+    return true;
+  }, [setError, updateStep]);
 
   const buildTrackedCustomerUrl = useCallback((custId: string, phase: "initial" | "current" | "final" = "current") => {
     const query = new URLSearchParams({
@@ -1696,6 +1710,7 @@ export function useStripeEmbeddedOnramp({
   verificationRecoveryRef.current = recoverVerification;
 
   const reset = useCallback(() => {
+    contactReauthenticationCustomerRef.current = null;
     verificationRecoveryAttemptsRef.current.clear();
     verificationStatusRecoveryRef.current = false;
     sdkPaymentFailureRef.current = false;
@@ -3068,6 +3083,7 @@ export function useStripeEmbeddedOnramp({
     input: Record<string, string> | Array<{ type: string; value: string }>,
     allowEmpty = false
   ): Promise<void> => {
+    if (isContactAuthenticationPending()) return;
     const coordinator = onrampRef.current;
     if (!coordinator || typeof coordinator.updateKycInfo !== "function") {
       throw new Error("Stripe MiCA identifier collection is unavailable. Please refresh and try again.");
@@ -3142,9 +3158,10 @@ export function useStripeEmbeddedOnramp({
       }
       throw completionError;
     }
-  }, [completeEuKyc, handleError, kycIdentifierAlternatives, missingKycIdentifiers, reportKycEvent, resumeAfterKyc, updateStep]);
+  }, [completeEuKyc, handleError, kycIdentifierAlternatives, missingKycIdentifiers, reportKycEvent, resumeAfterKyc, updateStep, isContactAuthenticationPending]);
 
   const submitKycInfo = useCallback(async (kycInfo: any) => {
+    if (isContactAuthenticationPending()) return;
     if (!onrampRef.current) {
       console.warn("[EMBEDDED ONRAMP] Onramp coordinator not initialized for submitKycInfo. Initializing now...");
       if (startOnrampRef.current && activeEmailRef.current) {
@@ -3524,11 +3541,13 @@ export function useStripeEmbeddedOnramp({
     detectedCardFunding,
     completeEuKyc,
     submitKycIdentifiers,
+    isContactAuthenticationPending,
     reportKycEvent,
     setKycTierRequired,
   ]);
 
   const verifyDocuments = useCallback(async (): Promise<boolean> => {
+    if (isContactAuthenticationPending()) return false;
     if (isVerifyingRef.current) return false;
     if (!onrampRef.current) {
       console.warn("[EMBEDDED ONRAMP] Onramp coordinator not initialized for verifyDocuments.");
@@ -3680,7 +3699,7 @@ export function useStripeEmbeddedOnramp({
     } finally {
       isVerifyingRef.current = false;
     }
-  }, [pollKycStatus, updateStep, handleError, reportKycEvent, setKycTierRequired, resumeAfterKyc, setPersistedError, buildTrackedCustomerUrl, consumeKycTrackingResponse]);
+  }, [pollKycStatus, updateStep, handleError, reportKycEvent, setKycTierRequired, resumeAfterKyc, setPersistedError, buildTrackedCustomerUrl, consumeKycTrackingResponse, isContactAuthenticationPending]);
   verifyDocumentsRef.current = verifyDocuments;
 
   const startOnramp = useCallback(async (
@@ -3688,7 +3707,8 @@ export function useStripeEmbeddedOnramp({
     overridePhone?: string,
     overrideNameOrCountry?: string,
     isForceRetryOrName?: boolean | string,
-    overrideCountry?: string
+    overrideCountry?: string,
+    authOptions?: { reauthenticate: boolean }
   ) => {
     // Robust, dynamic argument parsing for all caller permutations:
     // - (email, phone, country, fullName)
@@ -3761,6 +3781,10 @@ export function useStripeEmbeddedOnramp({
     }
     isRunningRef.current = true;
 
+    if (authOptions?.reauthenticate) {
+      contactReauthenticationCustomerRef.current = customerIdRef.current;
+      authenticatedCoordinatorRef.current = null;
+    }
     if (isForceRetry) paymentAuthRecoveryAttemptsRef.current = 0;
     if (isForceRetry || Date.now() - lastErrorSetTimeRef.current > 5000) {
       setError(null);
@@ -3847,7 +3871,7 @@ export function useStripeEmbeddedOnramp({
         return;
       }
 
-      const hasAuthenticatedSession = canReuseStripeCoordinatorSession({
+      const hasAuthenticatedSession = !authOptions?.reauthenticate && !contactReauthenticationCustomerRef.current && canReuseStripeCoordinatorSession({
         coordinator: onramp,
         authenticatedCoordinator: authenticatedCoordinatorRef.current,
         customerId,
@@ -3942,6 +3966,7 @@ export function useStripeEmbeddedOnramp({
       if (!mountedRef.current) return;
 
       // ─── Step 3: Authenticate via Stripe Link (buyer does OTP here) ───
+      if (authOptions?.reauthenticate) setAuthElement(null);
       updateStep("authenticating");
 
       const authPromise = new Promise<string>((resolve, reject) => {
@@ -3955,12 +3980,18 @@ export function useStripeEmbeddedOnramp({
             authenticationCompleted = true;
             clearTimeout(authTimeout);
             if (result.result === "success" && result.crypto_customer_id) {
+              const expectedCustomerId = contactReauthenticationCustomerRef.current || (authOptions?.reauthenticate ? customerId : null);
+              if (expectedCustomerId && result.crypto_customer_id !== expectedCustomerId) {
+                authenticatedCoordinatorRef.current = null;
+                reject(new Error("Please sign in to the same Link account to resume this checkout."));
+                return;
+              }
               authenticatedCoordinatorRef.current = onramp;
               resolve(result.crypto_customer_id);
             } else if (result.result === "abandoned") {
-              reject(new Error("Authentication cancelled by user"));
+              reject(Object.assign(new Error("Authentication cancelled by user"), { code: "link_verification_cancelled" }));
             } else if (result.result === "declined") {
-              reject(new Error("OAuth consent declined"));
+              reject(Object.assign(new Error("OAuth consent declined"), { code: "link_verification_cancelled" }));
             } else {
               reject(new Error("Link authentication failed. Please try again."));
             }
@@ -3985,7 +4016,16 @@ export function useStripeEmbeddedOnramp({
         }
       });
 
-      customerId = await authPromise;
+      try {
+        customerId = await authPromise;
+      } catch (authError: any) {
+        if (!contactReauthenticationCustomerRef.current || authError?.code !== "link_verification_cancelled") throw authError;
+        // Dismissal of an optional contact retry is not a failed payment.
+        setAuthElement(null);
+        isRunningRef.current = false;
+        isContactAuthenticationPending();
+        return;
+      }
       if (!mountedRef.current) return;
 
       setCryptoCustomerId(customerId);
@@ -4015,6 +4055,7 @@ export function useStripeEmbeddedOnramp({
 
       const tokenData = await tokenRes.json();
       oauthTokenRef.current = tokenData.accessToken;
+      contactReauthenticationCustomerRef.current = null;
       if (typeof window !== "undefined") {
         sessionStorage.setItem("stripe_onramp_oauth_token", tokenData.accessToken);
       }
@@ -4996,10 +5037,20 @@ export function useStripeEmbeddedOnramp({
     updateStep, setPersistedError, createBuyerWallet, runCheckoutLoop, pollKycStatus, recoverVerification, resumeAfterKyc,
     buildTrackedCustomerUrl, consumeKycTrackingResponse, completeEuKyc, restoreKycRequirement, requestKycVerification,
     resumeAfterKyc, reportKycEvent, getOnrampAmount, achEnabled, theme, isEcommerceMode,
+    isContactAuthenticationPending,
   ]);
 
   useEffect(() => {
     startOnrampRef.current = startOnramp;
+  }, [startOnramp]);
+
+  const retryContactVerification = useCallback(async () => {
+    // Explicit action only: never interrupt payment, pending KYC, or another
+    // SDK operation. Keep the receipt, session, customer and tier requirements.
+    if (isRunningRef.current || isVerifyingRef.current || !["collecting_kyc", "error"].includes(stepRef.current)) return;
+    if (!customerIdRef.current) return;
+    if (!hasUnresolvedPhoneVerificationFailure(latestKycSnapshotRef.current?.tiers, errorPolicyRef.current?.message)) return;
+    await startOnramp(undefined, undefined, undefined, true, undefined, { reauthenticate: true });
   }, [startOnramp]);
 
   const submitPhone = useCallback((phoneNumber: string, emailOverride?: string, countryOverride?: string) => {
@@ -5032,6 +5083,7 @@ export function useStripeEmbeddedOnramp({
     statusMessage,
     checkPaymentStatus,
     checkKycStatus,
+    retryContactVerification,
     error,
     errorDetails,
     authElement,

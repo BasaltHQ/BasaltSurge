@@ -23,6 +23,7 @@ import { parseOnrampError, formatOnrampErrorMessage } from "./errorTaxonomy";
 import { useStepProgressionGuard } from "./useStepProgressionGuard";
 import { shouldAutoInitializeStripePaymentElement } from "@/lib/stripe-payment-element-guard";
 import { isValidIsoCountryCode } from "@/lib/stripe-kyc-tracking";
+import { hasUnresolvedPhoneVerificationFailure } from "@/lib/stripe-phone-verification";
 import type {
   AccordionStepNumber,
   AccordionTransitionTrigger,
@@ -66,6 +67,7 @@ export function useAccordionCheckoutState(
     isEmailLocked: propIsEmailLocked,
     onHeadlessSubmitEmailPhone,
     onSubmitPhone,
+    onRetryContactVerification,
     onSubmitKycInfo,
     onSubmitKycIdentifiers,
     missingKycIdentifiers = [],
@@ -331,6 +333,7 @@ export function useAccordionCheckoutState(
     ? (propErrorDetails && propError ? propError : formatErrorMessage(rawActiveError) || rawActiveError) : null;
   const recoveryError = propErrorDetails || rawActiveError;
   const canRestartCheckout = parseOnrampError(recoveryError)?.canRestart !== false;
+  const contactAuthenticationRequired = parseOnrampError(recoveryError)?.targetStep === 1;
   const dismissError = () => { setDismissedError(rawActiveError); setLocalError(null); };
   useEffect(() => {
     if (!rawActiveError) setDismissedError(null);
@@ -396,6 +399,15 @@ export function useAccordionCheckoutState(
   const isL0Approved = kyc.isL0Verified || l1Verified || l2Verified || isAllKycCompleted;
   const isL1Approved = l1Verified;
   const isL2Approved = l2Verified;
+
+  useEffect(() => {
+    // End the address editing mode only when the coordinator moves beyond
+    // demographic verification. A resolved submit or pending review is not approval.
+    if (headlessStep === "collecting_payment" || headlessStep === "creating_wallet"
+      || headlessStep === "registering_wallet" || (headlessStep === "verifying_identity" && l1Verified)) {
+      setManualEditAddress(false);
+    }
+  }, [headlessStep, l1Verified]);
 
   // Full L0 form (name, address): for new users (REQUIRES_KYC) or REJECTED where L1 itself failed
   const showFullForm =
@@ -806,10 +818,13 @@ export function useAccordionCheckoutState(
   const isIdentityComplete = missingIdentityFields.length === 0;
 
   // Step 2 satisfaction check: KYC / Demographics are verified and no further step-up / doc verification is required
+  const phoneVerificationFailed = hasUnresolvedPhoneVerificationFailure(kycTiers, propError || rawActiveError);
+  const allowContactVerificationRecovery = phoneVerificationFailed && !isPaid && canRestartCheckout
+    && ["collecting_kyc", "error"].includes(effectiveHeadlessStep || "");
   const isStep2Satisfied = Boolean(
     effectiveHeadlessStep !== "kyc_pending" && effectiveHeadlessStep !== "checking_kyc" &&
     (isIdentityComplete || isL0Approved || isAllKycCompleted || effectiveStatus === "verified" || isL2Approved || docVerificationSuccess) &&
-    !showStepUpForm &&
+    !showStepUpForm && !showFullForm && !needsL1Fields &&
     (!showVerifyDocs || isL2Approved || docVerificationSuccess)
   );
 
@@ -854,6 +869,7 @@ export function useAccordionCheckoutState(
       );
     },
     manualStepOverride,
+    allowContactVerificationRecovery,
   });
 
   // Step 1 Submit
@@ -862,6 +878,14 @@ export function useAccordionCheckoutState(
       e.preventDefault();
     }
     if (!email) return;
+    if (contactAuthenticationRequired && phoneVerificationFailed) {
+      await handleRetryContactVerification();
+      return;
+    }
+    if (allowContactVerificationRecovery) {
+      transitionToStep(2, "Customer continued identity verification after reviewing contact", "submission");
+      return;
+    }
     if (!isSimulationMode && !onHeadlessSubmitEmailPhone) {
       setLocalError("Checkout is still loading. Please wait a moment and try again.");
       return;
@@ -925,6 +949,19 @@ export function useAccordionCheckoutState(
     } catch (err: any) {
       console.error("Contact submission error:", err);
       setLocalError(err?.message || "Failed to submit contact information.");
+      setIsSubmittingContact(false);
+    }
+  };
+
+  const handleRetryContactVerification = async () => {
+    if (!allowContactVerificationRecovery || !onRetryContactVerification || isSubmittingContact) return;
+    setIsSubmittingContact(true);
+    setLocalError(null);
+    try {
+      await onRetryContactVerification();
+    } catch (error: any) {
+      setLocalError(error?.message || "Contact verification could not restart. Please try again.");
+    } finally {
       setIsSubmittingContact(false);
     }
   };
@@ -1014,7 +1051,7 @@ export function useAccordionCheckoutState(
         }
       }
 
-      if (!isUnsupportedState && (isL1Approved || isL0Approved || isAllKycCompleted || effectiveStatus === "verified") && !showStepUpForm && (!isL2Requirement || isL2Approved)) {
+      if (!isUnsupportedState && isStep2Satisfied) {
         setIsSubmittingIdentity(false);
         transitionToStep(3, "Existing KYC verification satisfies the transaction", "submission");
         return;
@@ -1228,6 +1265,9 @@ export function useAccordionCheckoutState(
     isStep2Satisfied,
     // Step 1 Props Bundle
     step1Props: {
+      contactAuthenticationRequired,
+      phoneVerificationFailed,
+      onRetryContactVerification: allowContactVerificationRecovery && onRetryContactVerification ? handleRetryContactVerification : undefined,
       email,
       setEmail,
       phone,
@@ -1248,6 +1288,7 @@ export function useAccordionCheckoutState(
     },
     // Step 2 Props Bundle
     step2Props: {
+      onReviewContactVerification: allowContactVerificationRecovery ? () => handleStepChange(1) : undefined,
       firstName,
       setFirstName,
       lastName,
