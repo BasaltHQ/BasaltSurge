@@ -26,6 +26,7 @@ export interface StepProgressionGuardProps {
   onPaymentDeclined?: (reason?: string) => void;
   onStepAutoAdvanced?: (fromStep: number, toStep: number, reason: string) => void;
   manualStepOverride?: number | null;
+  allowContactVerificationRecovery?: boolean;
 }
 
 /**
@@ -61,6 +62,7 @@ export function useStepProgressionGuard({
   onPaymentDeclined,
   onStepAutoAdvanced,
   manualStepOverride,
+  allowContactVerificationRecovery = false,
 }: StepProgressionGuardProps) {
   const lastLoggedTransitionRef = useRef<string>("");
 
@@ -243,6 +245,9 @@ export function useStepProgressionGuard({
 
     const recovery = parseOnrampError(errorDetails || activeError || effectiveError);
     if (recovery?.targetStep === 1) return; // Authentication recovery above takes priority.
+    // Let the customer review a failed phone check without cancelling an
+    // active verification or weakening the payment lock above.
+    if (allowContactVerificationRecovery && manualStepOverride === 1 && activeStep === 1) return;
     if (isCheckoutIdentityStep(headlessStep)) {
       if (activeStep !== 2) {
         logTransition(activeStep, 2, `Identity step required (${headlessStep})`);
@@ -365,7 +370,9 @@ export function useStepProgressionGuard({
     activeStep,
     setActiveStep,
     manualStepOverride,
+    allowContactVerificationRecovery,
     activeError,
+    errorDetails,
     effectiveError,
   ]);
 }

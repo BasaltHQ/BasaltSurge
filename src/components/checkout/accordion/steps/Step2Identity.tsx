@@ -108,6 +108,7 @@ export function Step2Identity({
   attestationElement,
   onHeaderClick,
   onContinueToStep3,
+  onReviewContactVerification,
 }: Step2IdentityProps) {
   const [dynamicIdentifierValues, setDynamicIdentifierValues] = useState<Record<string, string>>({});
   const [selectedIdentifierTypes, setSelectedIdentifierTypes] = useState<string[]>([]);
@@ -208,11 +209,17 @@ export function Step2Identity({
   );
 
   const isDocVerifyRequired = Boolean(
-    (showVerifyDocs || isL2Requirement) && !isL2Approved && !showFullForm && !showStepUpForm && (!isUS || isL1Approved)
+    (showVerifyDocs || isL2Requirement) && !isL2Approved && !showFullForm && !showStepUpForm && !needsL1Fields && (!isUS || isL1Approved)
   );
 
+  const requiresIdentityInput = showFullForm || manualEditAddress || needsL1Fields || showStepUpForm || hasAddressError || isUnsupportedState;
+  const isVerificationPending = headlessStep === "kyc_pending" || headlessStep === "checking_kyc"
+    || headlessStep === "submitting_kyc" || headlessStep === "verifying_identity";
+  // L0 approval cannot hide inputs required by L1, a rejected-tier correction,
+  // or a manual edit. Use the same decision for the summary, badge and lock.
   const isAlreadyVerifiedCard = Boolean(
-    isL0Approved && !showStepUpForm && !isDocVerifyRequired && (!isL2Requirement || isL2Approved) && !hasAddressError && !isUnsupportedState
+    isL0Approved && isIdentityComplete && !requiresIdentityInput && !isDocVerifyRequired
+    && (!isL2Requirement || isL2Approved) && !isVerificationPending && !isIdentifierStage && !isAttestationStage
   );
 
   return (
@@ -226,11 +233,15 @@ export function Step2Identity({
         stepNumber={2}
         title="Identity & Residential Verification"
         badge={
-          !hasAddressError && !isUnsupportedState && (isL2Approved || (isL0Approved && !showStepUpForm && !isDocVerifyRequired)) ? (
+          isAlreadyVerifiedCard ? (
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1">
               <Check className="w-3 h-3 stroke-[3]" /> Verified
             </span>
-          ) : (showStepUpForm || isDocVerifyRequired || hasAddressError || isUnsupportedState) ? (
+          ) : isVerificationPending ? (
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 inline-flex items-center gap-1">
+              <Clock className="w-3 h-3" /> Pending
+            </span>
+          ) : (requiresIdentityInput || isDocVerifyRequired || isIdentifierStage || isAttestationStage) ? (
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-400 border border-amber-500/30 inline-flex items-center gap-1">
               <Shield className="w-3 h-3" /> Action Required
             </span>
@@ -246,8 +257,8 @@ export function Step2Identity({
           ) : undefined
         }
         isActive={isOpen}
-        isCompleted={isCompleted}
-        isLocked={isLocked || Boolean(isL0Approved && !showStepUpForm && !isDocVerifyRequired && (!isL2Requirement || isL2Approved))}
+        isCompleted={isCompleted && isAlreadyVerifiedCard}
+        isLocked={isLocked || isAlreadyVerifiedCard}
         isLightText={isLightText}
         onHeaderClick={onHeaderClick}
       />
@@ -259,6 +270,14 @@ export function Step2Identity({
         overflowVisible={showSuggestions || isCalendarOpen}
       >
         <div className="p-3.5 pt-0 space-y-3.5 border-t border-dashed border-white/10">
+        {onReviewContactVerification && (
+          <div className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs space-y-2">
+            <p>Stripe could not verify your phone details. Continue with identity verification below, or review your contact verification.</p>
+            <button type="button" onClick={onReviewContactVerification} className="font-semibold underline underline-offset-4">
+              Review contact verification
+            </button>
+          </div>
+        )}
         {headlessStep === "kyc_pending" || headlessStep === "checking_kyc" ? (
           <div role="status" aria-live="polite" className="mt-3 rounded-xl border border-current/15 bg-current/5 p-4 space-y-3">
             <div className="flex items-center gap-2 font-semibold text-sm"><Clock className="h-4 w-4" /> Verification pending</div>

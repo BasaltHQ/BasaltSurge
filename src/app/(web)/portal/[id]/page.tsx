@@ -3973,6 +3973,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     statusMessage: headlessStatus,
     checkPaymentStatus: checkHeadlessPaymentStatus,
     checkKycStatus: checkHeadlessKycStatus,
+    retryContactVerification: retryHeadlessContactVerification,
     error: headlessError,
     errorDetails: headlessErrorDetails,
     authElement: headlessAuthElement,
@@ -4893,6 +4894,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           onrampLimits={headlessOnrampLimits}
           onHeadlessSubmitEmailPhone={configLoaded ? (email, phone, country, isForceRetry, fullName) => startHeadlessOnramp(email, phone, country, isForceRetry, fullName) : undefined}
           onSubmitPhone={headlessSubmitPhone}
+          onRetryContactVerification={retryHeadlessContactVerification}
           onSubmitKycInfo={submitKycInfo}
           onSubmitKycIdentifiers={headlessSubmitKycIdentifiers}
           missingKycIdentifiers={headlessMissingKycIdentifiers}

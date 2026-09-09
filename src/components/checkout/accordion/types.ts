@@ -81,7 +81,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   headlessErrorDetails?: OnrampErrorDetails | null;
   kycTierRequired?: "l0" | "l1" | "l2" | string;
   kycLevel?: "L0" | "L1" | "L2" | "REQUIRES_KYC" | "REJECTED" | "PENDING" | string;
-  kycTiers?: Array<{ tier: string; verification_status: string }>;
+  kycTiers?: Array<{ tier: string; verification_status: string; verification_errors?: string[] }>;
   walletAddress?: string;
   walletNetwork?: string;
   walletOwnershipChallenge?: WalletOwnershipChallenge | null;
@@ -95,6 +95,7 @@ export interface PortalPayAccordionCheckoutV2Props {
   isEmailLocked?: boolean;
   onHeadlessSubmitEmailPhone?: (email: string, phone: string, country?: string, isForceRetryOrName?: boolean | string, fullName?: string) => Promise<void>;
   onSubmitPhone?: (phoneNumber: string, email?: string, country?: string) => void | Promise<void>;
+  onRetryContactVerification?: () => Promise<void>;
   onSubmitKycInfo?: (info: any) => Promise<void>;
   onSubmitKycIdentifiers?: (identifiers: Record<string, string>) => Promise<void>;
   missingKycIdentifiers?: Array<{ type: string; regulation: string }>;
@@ -147,6 +148,9 @@ export interface CheckoutHeaderProps {
 }
 
 export interface Step1Props {
+  contactAuthenticationRequired?: boolean;
+  phoneVerificationFailed?: boolean;
+  onRetryContactVerification?: () => void | Promise<void>;
   email: string;
   setEmail: StateSetter<string>;
   phone: string;
@@ -176,6 +180,7 @@ export interface Step1ContactProps extends Step1Props {
 }
 
 export interface Step2Props {
+  onReviewContactVerification?: () => void;
   firstName: string;
   setFirstName: StateSetter<string>;
   lastName: string;
