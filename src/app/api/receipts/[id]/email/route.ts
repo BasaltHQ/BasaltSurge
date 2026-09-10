@@ -1,3 +1,4 @@
+import { formatReceiptAmount } from "@/lib/receipt-currency";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { sendEmail } from "@/lib/aws/ses";
@@ -153,7 +154,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                                 <strong style="color: #666;">${it.qty || 1}x</strong> ${it.label || "Item"}
                             </td>
                             <td style="padding: 10px 0; border-bottom: 1px solid #f5f5f5; text-align: right; color: #333; font-weight: 500;">
-                                $${Number(it.priceUsd || 0).toFixed(2)}
+                                ${formatReceiptAmount(receipt, Number(it.priceUsd || 0), it.label)}
                             </td>
                         </tr>
                     `).join('')}
@@ -161,21 +162,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 ${receipt.taxComponents ? `
                     <div style="display: flex; justify-content: space-between; margin-top: 12px; font-size: 14px; color: #666;">
                         <span>Subtotal</span>
-                        <span>$${Number((receipt.totalUsd || 0) - (receipt.taxComponents.totalTax || 0) - (receipt.tipAmount || 0)).toFixed(2)}</span>
+                        <span>${formatReceiptAmount(receipt, Number((receipt.totalUsd || 0) - (receipt.taxComponents.totalTax || 0) - (receipt.tipAmount || 0)))}</span>
                     </div>
                     <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 14px; color: #666;">
                         <span>Tax</span>
-                        <span>$${Number(receipt.taxComponents.totalTax || 0).toFixed(2)}</span>
+                        <span>${formatReceiptAmount(receipt, Number(receipt.taxComponents.totalTax || 0))}</span>
                     </div>
                 ` : ''}
                 ${receipt.tipAmount ? `
                     <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 14px; color: #666;">
                         <span>Tip</span>
-                        <span>$${Number(receipt.tipAmount || 0).toFixed(2)}</span>
+                        <span>${formatReceiptAmount(receipt, Number(receipt.tipAmount || 0))}</span>
                     </div>
                 ` : ''}
                 <div style="text-align: right; margin-top: 16px; font-weight: bold; font-size: 20px; color: #111; border-top: 2px solid #eaeaea; padding-top: 16px;">
-                    Total: $${Number(receipt.totalUsd || 0).toFixed(2)}
+                    Total: ${formatReceiptAmount(receipt, Number(receipt.totalUsd || 0))}
                 </div>
             </div>
             `;

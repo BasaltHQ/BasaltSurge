@@ -13,6 +13,8 @@ import { getBrandKey } from "@/config/brands";
 import { requireCsrf, rateLimitOrThrow, rateKey } from "@/lib/security";
 import { requireApimOrJwt } from "@/lib/gateway-auth";
 import { isPartnerContext } from "@/lib/env";
+import { fetchUsdRates } from "@/lib/eth";
+import { createReceiptPricing, nativeAmount, nativeAmountToUsd, receiptCurrency, ReceiptCurrencyError } from "@/lib/receipt-currency";
 
 /**
  * Inventory API
@@ -26,7 +28,8 @@ import { isPartnerContext } from "@/lib/env";
 type InventoryItemBody = {
   sku: string;
   name: string;
-  priceUsd: number;
+  priceUsd?: number;
+  price?: number;
   stockQty: number;
   deliveryEnabled?: boolean;
   currency?: string;
@@ -310,7 +313,7 @@ export async function GET(req: NextRequest) {
       }
       const spec = (() => {
         const baseSelect =
-          "SELECT c.id, c.wallet, c.sku, c.name, c.priceUsd, c.currency, c.stockQty, c.category, c.description, c.tags, c.images, c.attributes, c.costUsd, c.taxable, c.jurisdictionCode, c.industryPack, c.metrics, c.createdAt, c.updatedAt, c.isBook, c.bookFileUrl, c.bookCoverUrl, c.approvalStatus, c.contentDetails, c.releaseDate, c.previewUrl, c.allowDownload, c.drmEnabled, c.isSubscription, c.subscriptionPlanId, c.shippingEnabled, c.shippingConfig, c.deliveryEnabled FROM c WHERE c.type='inventory_item' AND c.wallet=@wallet";
+          "SELECT c.id, c.wallet, c.sku, c.name, c.priceUsd, c.nativePrice, c.currency, c.stockQty, c.category, c.description, c.tags, c.images, c.attributes, c.costUsd, c.taxable, c.jurisdictionCode, c.industryPack, c.metrics, c.createdAt, c.updatedAt, c.isBook, c.bookFileUrl, c.bookCoverUrl, c.approvalStatus, c.contentDetails, c.releaseDate, c.previewUrl, c.allowDownload, c.drmEnabled, c.isSubscription, c.subscriptionPlanId, c.shippingEnabled, c.shippingConfig, c.deliveryEnabled FROM c WHERE c.type='inventory_item' AND c.wallet=@wallet";
         if (brandKey) {
           const partner = isPartnerContext();
           return partner
@@ -406,10 +409,18 @@ export async function POST(req: NextRequest) {
 
     const sku = String(body.sku || "").trim();
     const name = String(body.name || "").trim();
-    const priceUsd = Number(body.priceUsd);
+    let priceUsd = Number(body.priceUsd);
+    let nativePrice: { amount: number; currency: "USD" | "EUR" } | undefined;
+    if (body.price !== undefined) {
+      if (body.priceUsd !== undefined) throw new ReceiptCurrencyError("conflicting_inventory_prices", "Use price or priceUsd, not both.");
+      const currency = receiptCurrency(body.currency);
+      nativePrice = { amount: nativeAmount(body.price), currency };
+      const pricing = createReceiptPricing(currency, currency === "USD" ? {} : await fetchUsdRates());
+      priceUsd = nativeAmountToUsd(nativePrice.amount, pricing);
+    }
     const stockQty = Number(body.stockQty);
     const currencyInput = typeof body.currency === "string" ? body.currency.toUpperCase() : "USD";
-    const currency = isSupportedCurrency(currencyInput) ? currencyInput : "USD";
+    const currency = nativePrice?.currency || (isSupportedCurrency(currencyInput) ? currencyInput : "USD");
 
     // Allow stockQty === -1 to represent infinite stock
     if (!sku || !name || !Number.isFinite(priceUsd) || priceUsd < 0 || !Number.isFinite(stockQty) || stockQty < -1) {
@@ -441,6 +452,7 @@ export async function POST(req: NextRequest) {
       sku,
       name,
       priceUsd,
+      ...(nativePrice ? { nativePrice } : {}),
       currency,
       stockQty,
       category: typeof body.category === "string" ? body.category : undefined,
@@ -515,8 +527,8 @@ export async function POST(req: NextRequest) {
     }
   } catch (e: any) {
     return NextResponse.json(
-      { error: e?.message || "failed" },
-      { status: 500, headers: { "x-correlation-id": correlationId } }
+      { error: e instanceof ReceiptCurrencyError ? e.code : (e?.message || "failed"), message: e?.message },
+      { status: e instanceof ReceiptCurrencyError ? e.status : 500, headers: { "x-correlation-id": correlationId } }
     );
   }
 }

@@ -40,6 +40,39 @@ Generate an order/receipt from inventory items.
 }
 ```
 
+### EUR-priced inventory and orders
+
+Store an explicit native inventory price through `POST /api/inventory`:
+
+```json
+{
+  "sku": "EU-COFFEE",
+  "name": "Coffee",
+  "price": 5.00,
+  "currency": "EUR",
+  "stockQty": 100,
+  "taxable": true
+}
+```
+
+Then create the order:
+
+```json
+{
+  "currency": "EUR",
+  "items": [{ "sku": "EU-COFFEE", "qty": 2 }],
+  "taxRate": 0.20
+}
+```
+
+The item line is €10 before tax and the existing fee policy. Orders reads the merchant's saved inventory price; `currency` does not enable a buyer-supplied price override. All explicit native inventory prices must match the order currency. A mismatch or unsupported currency returns HTTP 400; an unavailable EUR exchange rate returns HTTP 503.
+
+The server values native inventory prices in USD before applying the existing discounts, tax, fee−/fee+, and payment calculations. It stores that exchange rate on the receipt and reuses it when creating the EU Stripe session. The receipt response includes `currency`, native `total` and `lineItems[].amount`, USD `totalUsd` and `lineItems[].priceUsd`, and the saved `pricing` valuation. The portal defaults to the native receipt currency. The saved valuation stays fixed for the receipt; a new order obtains a fresh rate.
+
+**Compatibility:** existing inventory `priceUsd` always means USD, including legacy items tagged `currency: "EUR"`. To establish a true EUR catalog price, explicitly save `price` and `currency`; do not send `priceUsd` in that same inventory request. Requesting an EUR receipt for legacy USD inventory converts its USD value for presentation and does not reinterpret the stored number as euros. Existing modifier adjustments, fixed discounts, shipping configuration, and fields ending in `Usd` retain their USD units. Updating inventory later through `priceUsd` returns that item to legacy USD pricing.
+
+Credit/ACH continue using `splitConfig`/`splitAddress`; debit/prepaid continue using `splitConfigCredit`/`splitAddressCredit`, with existing fallbacks. Receipt currency does not change customer-region selection, EU verification, or payment eligibility. Settlement still uses Stripe's actual delivered USDC amount. See [Receipt APIs](./receipts.md#native-eur-receipts) for the direct native receipt format and valuation details.
+
 ### Prerequisites
 
 ⚠️ Split contract must be configured before creating orders. See [Split Contract APIs](./split.md).
@@ -58,6 +91,7 @@ Body Parameters:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `items` | array | Yes | Array of items to include in order |
+| `currency` | string | No | Native receipt denomination: `USD` or `EUR`, case-insensitive. Defaults to the native catalog currency when present; omitted on legacy orders preserves existing behavior. |
 | `items[].id` | string | No | Inventory item ID |
 | `items[].sku` | string | No | Inventory item SKU (if ID not provided) |
 | `items[].qty` | number | Yes | Quantity (≥ 1) |

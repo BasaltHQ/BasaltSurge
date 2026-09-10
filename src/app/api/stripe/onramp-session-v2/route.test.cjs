@@ -127,6 +127,39 @@ test("USD route preserves the dollar amount without making an FX request", async
   assert.equal(params.get("metadata[onrampSourceToUsdRate]"), "1");
 });
 
+test("native EUR receipts reuse the saved valuation instead of fetching a different EUR rate", async () => {
+  const pricing = { version: 1, currency: "EUR", usdPerUnit: 1.25, quotedAt: 1234, provider: "coinbase", originalTotal: 100, originalTotalUsd: 125 };
+  const h = createHarness({ eurPerUsd: null, receiptOverrides: { pricing, currency: "EUR", totalUsd: 125, orderTotalUsd: 125 } });
+  const response = await h.post({ sourceAmountUsd: 125 / 1.035, pricing: { usdPerUnit: 99 } });
+  assert.equal(response.status, 200);
+  assert.equal(h.requests.length, 1, "the server-owned receipt rate is sufficient even when the live FX feed is unavailable");
+  const params = new URLSearchParams(h.requests[0].options.body);
+  assert.equal(params.get("source_currency"), "eur");
+  assert.equal(params.get("source_amount"), "96.62");
+  assert.equal(params.get("metadata[onrampSourceToUsdRate]"), "1.25");
+  assert.equal(params.has("destination_amount"), false);
+  assert.equal(h.receipt.totalUsd, 125);
+  assert.deepEqual(h.receipt.pricing, pricing);
+});
+
+test("a native EUR receipt keeps USD source funding for a US customer", async () => {
+  const h = createHarness({ eurPerUsd: null, receiptOverrides: { totalUsd: 125, pricing: { version: 1, currency: "EUR", usdPerUnit: 1.25 } } });
+  const response = await h.post({ sourceAmountUsd: 125, sourceCurrency: "usd" });
+  assert.equal(response.status, 200);
+  const params = new URLSearchParams(h.requests[0].options.body);
+  assert.equal(params.get("source_amount"), "125.00");
+  assert.equal(params.get("source_currency"), "usd");
+  assert.equal(params.get("metadata[onrampSourceToUsdRate]"), "1");
+});
+
+test("invalid native receipt FX stops session creation without a fiat fallback", async () => {
+  const h = createHarness({ receiptOverrides: { pricing: { version: 1, currency: "EUR", usdPerUnit: 0 } } });
+  const response = await h.post();
+  assert.equal(response.data.code, "invalid_receipt_pricing");
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.writes.length, 0);
+});
+
 test("unavailable EUR FX prevents any Stripe session POST or receipt write", async () => {
   const harness = createHarness({ eurPerUsd: null });
   const response = await harness.post();

@@ -103,7 +103,7 @@ export async function persistStripeReceiptUpdate(container: any, receipt: any): 
     && !key.startsWith("_") && !["id", "wallet", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "stripeCheckoutDeclineCode", "stripeCheckoutDiagnostic"].includes(key)));
   if (receipt.stripeSessionId && isStripePaymentAcceptedStatus(receipt.stripeSessionStatus)) fields.stripePaidSessionId = receipt.stripeSessionId;
   // Workers update provider/settlement observations, not the merchant's order.
-  for (const key of ["totalUsd", "tipAmount", "lineItems"]) delete fields[key];
+  for (const key of ["totalUsd", "tipAmount", "lineItems", "pricing"]) delete fields[key];
   if (current.orderTotalUsd != null && Number.isFinite(Number(current.orderTotalUsd))) delete fields.orderTotalUsd;
   for (const key of ["transactionHash", "leg1TxHash", "leg2TxHash"]) {
     if (/^0x[a-f0-9]{64}$/i.test(String(current[key] || ""))) {
@@ -124,6 +124,7 @@ export async function attachCreatedStripeSession(container: any, snapshot: any, 
     const item = container.item(snapshot.id, snapshot.wallet);
     const { resource: current } = await item.read();
     if (!current) throw new Error("receipt_not_found");
+    if (snapshot.pricing && JSON.stringify(snapshot.pricing) !== JSON.stringify(current.pricing)) throw new Error("receipt_pricing_changed");
     try { assertStripeReceiptUnpaid(current); }
     catch { throw Object.assign(new Error("receipt_already_has_accepted_payment"), { code: "receipt_already_paid", statusCode: 409 }); }
     if (current.stripePaymentAttemptSessionId && current.stripePaymentAttemptSessionId !== session.id) throw paymentInProgress(current);

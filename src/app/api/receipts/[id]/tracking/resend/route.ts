@@ -1,3 +1,4 @@
+import { formatReceiptAmount } from "@/lib/receipt-currency";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth } from "@/lib/auth";
@@ -115,13 +116,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                                 <strong style="color: #666;">${it.qty || 1}x</strong> ${it.label || "Item"}
                             </td>
                             <td style="padding: 8px 0; border-bottom: 1px solid #f5f5f5; text-align: right; color: #333;">
-                                $${Number(it.priceUsd || 0).toFixed(2)}
+                                ${formatReceiptAmount(receipt, Number(it.priceUsd || 0), it.label)}
                             </td>
                         </tr>
                     `).join('')}
                 </table>
                 <div style="text-align: right; margin-top: 12px; font-weight: bold; font-size: 16px; color: #111;">
-                    Total: $${Number(receipt.totalUsd || 0).toFixed(2)}
+                    Total: ${formatReceiptAmount(receipt, Number(receipt.totalUsd || 0))}
                 </div>
             </div>
             `;

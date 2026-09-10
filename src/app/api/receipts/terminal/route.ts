@@ -5,6 +5,8 @@ import { pushReceipts } from "@/lib/receipts-mem";
 import { isSupportedCurrency } from "@/lib/fx";
 import { getBrandKey } from "@/config/brands";
 import { getContainerIdentity, getBrandConfigFromCosmos } from "@/lib/brand-config";
+import { fetchUsdRates } from "@/lib/eth";
+import { createReceiptPricing, nativeAmount, nativeAmountToUsd, receiptCurrency, receiptCurrencyFields, snapshotReceiptPricing, ReceiptCurrencyError, type ReceiptPricing } from "@/lib/receipt-currency";
 
 /**
  * POST /api/receipts/terminal
@@ -86,7 +88,14 @@ export async function POST(req: NextRequest) {
     }
     const wallet = rawWallet;
 
-    const amountUsd = Number(body?.amountUsd);
+    let amountUsd = Number(body?.amount ?? body?.amountUsd);
+    let pricing: ReceiptPricing | undefined;
+    if (body?.amount !== undefined) {
+      if (body.amountUsd !== undefined) throw new ReceiptCurrencyError("conflicting_receipt_amounts", "Use amount or amountUsd, not both.");
+      const code = receiptCurrency(body.currency);
+      pricing = createReceiptPricing(code, code === "USD" ? {} : await fetchUsdRates());
+      amountUsd = nativeAmountToUsd(nativeAmount(body.amount), pricing);
+    }
     if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
       return NextResponse.json(
         { error: "invalid_amount" },
@@ -136,7 +145,7 @@ export async function POST(req: NextRequest) {
 
     const baseLabel = (String(body?.label || "").trim() || "Terminal Payment").slice(0, 120);
     const currencyInput = typeof body?.currency === "string" ? body.currency.toUpperCase() : (cfg?.storeCurrency || "USD");
-    const currency = isSupportedCurrency(currencyInput) ? currencyInput : "USD";
+    const currency = pricing?.currency || (isSupportedCurrency(currencyInput) ? currencyInput : "USD");
     const jurisdictionCode = typeof body?.jurisdictionCode === "string" ? body.jurisdictionCode : undefined;
     const taxRateOverride = typeof body?.taxRate === "number" ? Number(body.taxRate) : undefined;
     const taxComponents: string[] = Array.isArray(body?.taxComponents) ? body.taxComponents : [];
@@ -339,6 +348,7 @@ export async function POST(req: NextRequest) {
       totalUsd = fromCents(baseWithoutFeeCents + processingFeeCents);
     }
     const receiptId = genReceiptId();
+    if (pricing) pricing = snapshotReceiptPricing(pricing, lineItems.map((item, index) => index === 0 ? { ...item, nativeAmount: body.amount } : item), totalUsd);
     const ts = Date.now();
 
     // Extract employee attribution metadata with alias support
@@ -364,6 +374,7 @@ export async function POST(req: NextRequest) {
       receiptId,
       totalUsd,
       currency,
+      ...(pricing ? { pricing } : {}),
       lineItems,
       createdAt: ts,
       brandName,
@@ -392,8 +403,7 @@ export async function POST(req: NextRequest) {
     const receipt: Receipt = {
       receiptId,
       totalUsd,
-      currency,
-      lineItems,
+      ...(pricing ? receiptCurrencyFields({ pricing, totalUsd, lineItems }) : { currency, lineItems }),
       createdAt: ts,
       brandName,
       jurisdictionCode: appliedJurisdictionCode,
@@ -424,8 +434,8 @@ export async function POST(req: NextRequest) {
     }
   } catch (e: any) {
     return NextResponse.json(
-      { error: e?.message || "failed" },
-      { status: 500, headers: { "x-correlation-id": crypto.randomUUID() } }
+      { error: e instanceof ReceiptCurrencyError ? e.code : (e?.message || "failed"), message: e?.message },
+      { status: e instanceof ReceiptCurrencyError ? e.status : 500, headers: { "x-correlation-id": crypto.randomUUID() } }
     );
   }
 }

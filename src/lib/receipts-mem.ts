@@ -1,7 +1,10 @@
+import type { ReceiptPricing } from "./receipt-currency";
+
 export type ReceiptMem = {
   receiptId: string;
   totalUsd: number;
-  currency: "USD";
+  currency: string;
+  pricing?: ReceiptPricing;
   lineItems: { label: string; priceUsd: number; qty?: number }[];
   createdAt: number;
   brandName?: string;

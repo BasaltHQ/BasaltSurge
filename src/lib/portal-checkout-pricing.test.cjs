@@ -13,6 +13,7 @@ function load(name) {
 }
 const { resolveFundingOnrampAmount, resolveFundingPlatformFeePct } = load("portal-checkout-pricing");
 const { recalculateReceiptForCardFunding, resolveFeeMinusBaseCents } = load("receipts");
+const { receiptAmountFromUsd } = load("receipt-currency");
 const config = {
   splitConfig: { platformBps: 100, partnerBps: 200, agents: [{ bps: 50 }] },
   splitConfigCredit: { platformBps: 50, partnerBps: 100, agents: [{ bps: 25 }] },
@@ -51,6 +52,16 @@ test("portal callback prices the newly selected credit method even before React 
 test("portal fee− amount includes the internal allocation exactly once", () => {
   const values = { receipt: { totalUsd: 110 }, feeMinusEnabled: true, itemsSubtotalUsd: 95.24, taxUsd: 0, shippingCostUsd: 0, tipUsd: 10, storedProcessingFeeUsd: 4.76, processingFeeUsd: 99 };
   assert.equal(portalCalculation("totalUsd", values)(), 110);
+});
+
+test("portal native EUR totals and item display use receipt FX even when live rates differ", () => {
+  const pricing = { version: 1, currency: "EUR", usdPerUnit: 1.25, originalTotalUsd: 125, originalTotal: 100,
+    originalLineItems: [{ label: "Item", priceUsd: 125, amount: 100 }] };
+  const values = { currency: "EUR", totalUsd: 125, receipt: { pricing }, nativePricing: pricing,
+    usdRates: { EUR: 0.99 }, rates: {}, receiptAmountFromUsd };
+  assert.equal(portalCalculation("displayTotalRounded", values)(), 100);
+  assert.equal(portalCalculation("convertReceiptDisplayAmount", values)(125, "Item"), 100);
+  assert.equal(portalCalculation("convertReceiptDisplayAmount", values)(12.5, "Gratuity"), 10);
 });
 
 test("fee+ preserves component fees, processor rates, and rounding for each split", () => {

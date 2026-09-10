@@ -173,6 +173,9 @@ Response Headers (when enabled at gateway):
 
 ## POST /portalpay/api/inventory
 
+Native unit pricing is also available using `price` and `currency` (`USD` by default, or `EUR`). Example: `{ "sku": "EU-COFFEE", "name": "Coffee", "price": 5, "currency": "EUR", "stockQty": 100 }`. Do not send `price` and `priceUsd` together. The server stores `nativePrice` and a USD compatibility value; Orders revalues the explicit native price when creating a receipt. Legacy `priceUsd` remains USD even on EUR-labelled records. See [EUR orders](./orders.md#eur-priced-inventory-and-orders).
+
+
 Required scopes: inventory:write
 
 Create a new product or update an existing one.
@@ -214,7 +217,8 @@ Body Parameters:
 | `id` | string | No | Product ID (for updates) |
 | `sku` | string | Yes | Stock keeping unit (unique identifier) |
 | `name` | string | Yes | Product name |
-| `priceUsd` | number | Yes | Price in USD (≥ 0) |
+| `priceUsd` | number | Legacy format | Unit price in USD (≥ 0); mutually exclusive with `price` |
+| `price` | number | Native format | Unit price in `currency` (`USD` or `EUR`), in whole cents; mutually exclusive with `priceUsd` |
 | `stockQty` | number | Yes | Stock quantity (-1 for unlimited, ≥ -1) |
 | `currency` | string | No | Currency code (default: USD) |
 | `category` | string | No | Product category |

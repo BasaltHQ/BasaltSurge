@@ -26,6 +26,7 @@ import TrustlessPermissionlessSection from "@/components/landing/TrustlessPermis
 import { AgenticPaymentsSection } from "@/components/landing/AgenticPaymentsSection";
 import ContactFormSection from "@/components/landing/ContactFormSection";
 import IndustryTouchpointsSection from "@/components/landing/IndustryTouchpointsSection";
+import PartnersProgramSection from "@/components/landing/PartnersProgramSection";
 
 type Metrics = {
   totalUsers: number;
@@ -236,6 +237,11 @@ export default function HomeContent() {
     const ctFromAttr = domAttrs.containerType;
     return ctFromState === "partner" || ctFromAttr === "partner";
   }, [containerType, domAttrs.containerType]);
+
+  // Wait for a confirmed platform identity before promoting the partner program.
+  const showPartnersProgram = !isPartnerContainer && (
+    containerType.toLowerCase() === "platform" || domAttrs.containerType === "platform"
+  );
 
   const displayBrandName = React.useMemo(() => {
     try {
@@ -1164,6 +1170,9 @@ export default function HomeContent() {
 
         {/* Philosophy: Trustless & Permissionless */}
         <TrustlessPermissionlessSection />
+
+        {/* Partners Program - Platform Only */}
+        {showPartnersProgram && <PartnersProgramSection />}
 
         {/* Merchant Onboarding Contact Form — Platform Only */}
         {!isPartnerContainer && (

@@ -4,6 +4,7 @@ import { attachCreatedStripeSession, readStripeReceiptForPayment, assertStripeRe
 import { getPublicClientIp } from "@/lib/request-client-ip";
 import { normalizeStripeOnrampCheckoutMode } from "@/lib/stripe-onramp-status";
 import { fetchUsdRates } from "@/lib/eth";
+import { getReceiptPricing, ReceiptCurrencyError } from "@/lib/receipt-currency";
 import { resolveStripeOnrampSourceAmounts, StripeOnrampCurrencyError } from "@/lib/stripe-onramp-currency";
 import { persistStripeKycRequirement } from "@/lib/stripe-kyc-requirement";
 
@@ -53,9 +54,11 @@ export async function POST(req: NextRequest) {
     const merchantWallet = String(body.merchantWallet || "").trim();
     const brandKey = String(body.brandKey || "").trim();
     const checkoutMode = normalizeStripeOnrampCheckoutMode(body.checkoutMode);
+    let paymentReceipt: any;
     if (receiptId) {
       const container = await getContainer(undefined, undefined, { profile: "critical" });
-      await assertStripeReceiptCanCreateSession(container, await readStripeReceiptForPayment(container, receiptId, merchantWallet));
+      paymentReceipt = await readStripeReceiptForPayment(container, receiptId, merchantWallet);
+      await assertStripeReceiptCanCreateSession(container, paymentReceipt);
     }
 
     if (!cryptoCustomerId || !cryptoPaymentToken) {
@@ -108,7 +111,10 @@ export async function POST(req: NextRequest) {
     // sourceAmountUsd is the portal's existing USD amount. EU sessions require
     // EUR, so convert it on the server before constructing the Stripe request.
     // USD requests don't need an FX lookup.
-    const usdRates = requestedSourceCurrency === "eur" ? await fetchUsdRates() : undefined;
+    const pricing = getReceiptPricing(paymentReceipt);
+    const usdRates = requestedSourceCurrency === "eur"
+      ? (pricing?.currency === "EUR" ? { EUR: 1 / pricing.usdPerUnit } : await fetchUsdRates())
+      : undefined;
     const sourceAmounts = resolveStripeOnrampSourceAmounts({
       sourceCurrency: requestedSourceCurrency,
       sourceAmount: body.sourceAmount,
@@ -282,6 +288,9 @@ export async function POST(req: NextRequest) {
         }
 
         if (receipt) {
+          if (pricing && JSON.stringify(receipt.pricing) !== JSON.stringify(pricing)) {
+            throw new Error("receipt_pricing_changed");
+          }
           const hadStripeSession = Boolean(receipt.stripeSessionId);
           if (sourceAmounts.sourceAmountUsd !== undefined && sourceAmounts.sourceAmountUsd > 0) {
             // Keep the merchant order total stable. Stripe `source_amount`
@@ -329,6 +338,9 @@ export async function POST(req: NextRequest) {
       ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
     });
   } catch (e: any) {
+    if (e instanceof ReceiptCurrencyError) {
+      return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.status });
+    }
     if (e instanceof StripeOnrampCurrencyError) {
       return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.code === "fx_rate_unavailable" ? 503 : 400 });
     }

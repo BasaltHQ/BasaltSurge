@@ -16,6 +16,7 @@ import { buildReceiptEndpoint, buildReceiptFetchInit } from "@/lib/receipts";
 import { useActiveAccount } from "thirdweb/react";
 import { getDefaultBrandName, getDefaultBrandSymbol, resolveBrandAppLogo, resolveBrandSymbol } from "@/lib/branding";
 import { fetchEthRates, fetchUsdRates, fetchBtcUsd, fetchXrpUsd, type EthRates } from "@/lib/eth";
+import { getReceiptPricing, receiptAmountFromUsd, type ReceiptPricing } from "@/lib/receipt-currency";
 import { SUPPORTED_CURRENCIES, convertFromUsd, formatCurrency, getCurrencyFlag, roundForCurrency } from "@/lib/fx";
 import { useStripeOnrampInterceptor } from "@/hooks/useStripeOnrampInterceptor";
 import { useStripeEmbeddedOnramp } from "@/hooks/useStripeEmbeddedOnramp";
@@ -134,7 +135,8 @@ type ReceiptLineItem = {
 type Receipt = {
   receiptId: string;
   totalUsd: number;
-  currency: "USD";
+  currency: string;
+  pricing?: ReceiptPricing;
   lineItems: ReceiptLineItem[];
   createdAt: number;
   brandName?: string;
@@ -2943,13 +2945,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [usdRates, setUsdRates] = useState<Record<string, number>>({});
   const curParam = searchParams?.get("cur");
   const [currency, setCurrency] = useState(curParam || "USD");
+  const nativePricing = useMemo(() => getReceiptPricing(receipt), [receipt?.pricing]);
+  useEffect(() => {
+    if (!curParam && nativePricing) setCurrency(nativePricing.currency);
+  }, [curParam, nativePricing?.currency, receiptId]);
+  const convertReceiptDisplayAmount = useCallback((usd: number, label?: string) => {
+    return nativePricing?.currency === currency
+      ? receiptAmountFromUsd(receipt, usd, label)
+      : convertFromUsd(usd, currency, rates);
+  }, [receipt, nativePricing, currency, rates]);
   const [currencyOpen, setCurrencyOpen] = useState(false);
   const currencyRef = useRef<HTMLDivElement | null>(null);
   const [ratesUpdatedAt, setRatesUpdatedAt] = useState<Date | null>(null);
   const availableFiatCurrencies = useMemo(() => {
     const keys = new Set(Object.keys(rates || {}).map((k) => k.toUpperCase()));
-    return SUPPORTED_CURRENCIES.filter((c) => c.code === "USD" || keys.has(c.code));
-  }, [rates]);
+    return SUPPORTED_CURRENCIES.filter((c) => c.code === "USD" || c.code === nativePricing?.currency || keys.has(c.code));
+  }, [rates, nativePricing?.currency]);
 
   useEffect(() => {
     fetchEthRates()
@@ -3754,11 +3765,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const displayTotalRounded = useMemo(() => {
     if (currency === "USD") return Number(totalUsd.toFixed(2));
+    if (nativePricing?.currency === currency) return receiptAmountFromUsd(receipt, totalUsd);
     const usdRateDirect = Number(usdRates[currency] || 0);
     const converted = usdRateDirect > 0 ? totalUsd * usdRateDirect : convertFromUsd(totalUsd, currency, rates);
     const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
     return rounded;
-  }, [currency, totalUsd, usdRates, rates]);
+  }, [currency, totalUsd, usdRates, rates, nativePricing, receipt]);
 
   // ── Stripe Onramp Mode Toggle & Region Support Check ──
   // NEXT_PUBLIC_STRIPE_HEADLESS=TRUE → New Embedded Components headless flow (Smart Wallet Bridge)
@@ -4035,7 +4047,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
         // 2. Spending limit check: ONLY trigger warning if customer has ALREADY completed all KYC tiers
         const methodType = card.funding === "us_bank_account" ? "us_bank_account" : "card";
-        const limitEntry = getMatchingLimitEntry(headlessOnrampLimits, methodType, receipt?.currency || "usd");
+        const limitEntry = getMatchingLimitEntry(headlessOnrampLimits, methodType, "usd");
         if (limitEntry && isAllKycCompleted) {
           const limitInDollars = limitEntry.amount / 100;
           if (limitInDollars > 0 && totalUsd > limitInDollars && !hasWarnedLimit) {
@@ -4212,7 +4224,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   useEffect(() => {
     if (!detectedCardFunding || !headlessOnrampLimits || hasWarnedLimit || !isAllKycCompleted) return;
     const methodType = detectedCardFunding === "us_bank_account" ? "us_bank_account" : "card";
-    const limitEntry = getMatchingLimitEntry(headlessOnrampLimits, methodType, receipt?.currency || "usd");
+    const limitEntry = getMatchingLimitEntry(headlessOnrampLimits, methodType, "usd");
     if (limitEntry) {
       const limitInDollars = limitEntry.amount / 100;
       if (limitInDollars > 0 && totalUsd > limitInDollars) {
@@ -7124,9 +7136,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 if (currency === "USD") {
                                   return formatCurrency(usdVal, "USD");
                                 }
-                                const converted = convertFromUsd(usdVal, currency, rates);
-                                const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                                return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(usdVal, "USD");
+                                const converted = convertReceiptDisplayAmount(usdVal, it.label);
+                                const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                                return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(usdVal, "USD");
                               })()}</span>
                             </div>
                           ));
@@ -7183,9 +7195,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             if (currency === "USD") {
                               return formatCurrency(displayItemsSubtotalUsd, "USD");
                             }
-                            const converted = convertFromUsd(displayItemsSubtotalUsd, currency, rates);
-                            const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                            return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayItemsSubtotalUsd, "USD");
+                            const converted = convertReceiptDisplayAmount(displayItemsSubtotalUsd);
+                            const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                            return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayItemsSubtotalUsd, "USD");
                           })()}</span>
                         </div>
                         {shippingCostUsd > 0 && (
@@ -7196,9 +7208,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               if (currency === "USD") {
                                 return formatCurrency(shipVal, "USD");
                               }
-                              const converted = convertFromUsd(shipVal, currency, rates);
-                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(shipVal, "USD");
+                              const converted = convertReceiptDisplayAmount(shipVal);
+                              const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(shipVal, "USD");
                             })()}</span>
                           </div>
                         )}
@@ -7209,9 +7221,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               if (currency === "USD") {
                                 return formatCurrency(tipUsd, "USD");
                               }
-                              const converted = convertFromUsd(tipUsd, currency, rates);
-                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(tipUsd, "USD");
+                              const converted = convertReceiptDisplayAmount(tipUsd);
+                              const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(tipUsd, "USD");
                             })()}</span>
                           </div>
                         )}
@@ -7222,9 +7234,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               if (currency === "USD") {
                                 return formatCurrency(displayTaxUsd, "USD");
                               }
-                              const converted = convertFromUsd(displayTaxUsd, currency, rates);
-                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayTaxUsd, "USD");
+                              const converted = convertReceiptDisplayAmount(displayTaxUsd);
+                              const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayTaxUsd, "USD");
                             })()}</span>
                           </div>
                         )}
@@ -7242,9 +7254,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               if (currency === "USD") {
                                 return formatCurrency(processingFeeUsd, "USD");
                               }
-                              const converted = convertFromUsd(processingFeeUsd, currency, rates);
-                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(processingFeeUsd, "USD");
+                              const converted = convertReceiptDisplayAmount(processingFeeUsd);
+                              const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(processingFeeUsd, "USD");
                             })()}</span>
                           </div>
                         )}
@@ -7254,9 +7266,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               if (currency === "USD") {
                                 return formatCurrency(creditTotalUsd, "USD");
                               }
-                              const converted = convertFromUsd(creditTotalUsd, currency, rates);
-                              const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                              return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(creditTotalUsd, "USD");
+                              const converted = convertReceiptDisplayAmount(creditTotalUsd);
+                              const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(creditTotalUsd, "USD");
                             })()})
                           </div>
                         )}
@@ -7268,9 +7280,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             if (currency === "USD") {
                               return formatCurrency(totalUsd, "USD");
                             }
-                            const converted = convertFromUsd(totalUsd, currency, rates);
-                            const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                            return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(totalUsd, "USD");
+                            const converted = convertReceiptDisplayAmount(totalUsd);
+                            const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                            return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(totalUsd, "USD");
                           })()}</span>
                         </div>
 
@@ -7979,9 +7991,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                           if (currency === "USD") {
                             return formatCurrency(usdVal, "USD");
                           }
-                          const converted = convertFromUsd(usdVal, currency, rates);
-                          const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                          return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(usdVal, "USD");
+                          const converted = convertReceiptDisplayAmount(usdVal, it.label);
+                          const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                          return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(usdVal, "USD");
                         })()}</span>
                       </div>
                     ));
@@ -8042,9 +8054,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       if (currency === "USD") {
                         return formatCurrency(displayItemsSubtotalUsd, "USD");
                       }
-                      const converted = convertFromUsd(displayItemsSubtotalUsd, currency, rates);
-                      const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                      return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayItemsSubtotalUsd, "USD");
+                      const converted = convertReceiptDisplayAmount(displayItemsSubtotalUsd);
+                      const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                      return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayItemsSubtotalUsd, "USD");
                     })()}</span>
                   </div>
                   {shippingCostUsd > 0 && (
@@ -8055,9 +8067,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         if (currency === "USD") {
                           return formatCurrency(shipVal, "USD");
                         }
-                        const converted = convertFromUsd(shipVal, currency, rates);
-                        const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                        return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(shipVal, "USD");
+                        const converted = convertReceiptDisplayAmount(shipVal);
+                        const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                        return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(shipVal, "USD");
                       })()}</span>
                     </div>
                   )}
@@ -8068,9 +8080,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         if (currency === "USD") {
                           return formatCurrency(tipUsd, "USD");
                         }
-                        const converted = convertFromUsd(tipUsd, currency, rates);
-                        const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                        return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(tipUsd, "USD");
+                        const converted = convertReceiptDisplayAmount(tipUsd);
+                        const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                        return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(tipUsd, "USD");
                       })()}</span>
                     </div>
                   )}
@@ -8081,9 +8093,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         if (currency === "USD") {
                           return formatCurrency(displayTaxUsd, "USD");
                         }
-                        const converted = convertFromUsd(displayTaxUsd, currency, rates);
-                        const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                        return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayTaxUsd, "USD");
+                        const converted = convertReceiptDisplayAmount(displayTaxUsd);
+                        const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                        return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(displayTaxUsd, "USD");
                       })()}</span>
                     </div>
                   )}
@@ -8101,9 +8113,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         if (currency === "USD") {
                           return formatCurrency(processingFeeUsd, "USD");
                         }
-                        const converted = convertFromUsd(processingFeeUsd, currency, rates);
-                        const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                        return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(processingFeeUsd, "USD");
+                        const converted = convertReceiptDisplayAmount(processingFeeUsd);
+                        const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                        return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(processingFeeUsd, "USD");
                       })()}</span>
                     </div>
                   )}
@@ -8114,9 +8126,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                       if (currency === "USD") {
                         return formatCurrency(totalUsd, "USD");
                       }
-                      const converted = convertFromUsd(totalUsd, currency, rates);
-                      const rounded = converted > 0 ? roundForCurrency(converted, currency) : 0;
-                      return rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(totalUsd, "USD");
+                      const converted = convertReceiptDisplayAmount(totalUsd);
+                      const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                      return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(totalUsd, "USD");
                     })()}</span>
                   </div>
                   <div className="border-t border-dashed my-2" />
