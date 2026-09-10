@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useCallback } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { useTheme } from "@/contexts/ThemeContext";
 import { X, CheckCircle2, Loader2, Send } from "lucide-react";
 
@@ -59,17 +60,25 @@ const inputCls =
 /* ------------------------------------------------------------------ */
 /*  SUCCESS MODAL                                                      */
 /* ------------------------------------------------------------------ */
+function ContactModalShell({ onClose, children, className }: { onClose: () => void; children: React.ReactNode; className: string }) {
+  return (
+    <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[11000] bg-black/80 backdrop-blur-sm" />
+        <Dialog.Content
+          aria-describedby={undefined}
+          className={`fixed left-1/2 top-1/2 z-[11001] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-neutral-900/95 backdrop-blur-xl shadow-2xl custom-scrollbar ${className}`}
+        >
+          {children}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 function SuccessModal({ onClose, accentColor }: { onClose: () => void; accentColor: string }) {
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" onClick={onClose}>
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-
-      {/* Card */}
-      <div
-        className="relative w-full max-w-md rounded-2xl border border-white/10 bg-neutral-900/95 backdrop-blur-xl p-8 text-center shadow-2xl animate-in zoom-in-95 fade-in duration-300"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <ContactModalShell onClose={onClose} className="max-w-md p-8 text-center">
         <button
           onClick={onClose}
           className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors"
@@ -85,7 +94,7 @@ function SuccessModal({ onClose, accentColor }: { onClose: () => void; accentCol
           <CheckCircle2 className="w-8 h-8" style={{ color: accentColor }} />
         </div>
 
-        <h3 className="text-2xl font-bold text-white mb-2">Submission Received!</h3>
+        <Dialog.Title asChild><h3 className="text-2xl font-bold text-white mb-2">Submission Received!</h3></Dialog.Title>
         <p className="text-gray-400 text-sm leading-relaxed mb-6">
           Thank you for your interest in BasaltSurge. Our team will review your application and reach out within
           1–2 business days.
@@ -98,8 +107,7 @@ function SuccessModal({ onClose, accentColor }: { onClose: () => void; accentCol
         >
           GOT IT
         </button>
-      </div>
-    </div>
+    </ContactModalShell>
   );
 }
 
@@ -237,15 +245,7 @@ export function ContactFormModal({ isOpen, onClose }: { isOpen: boolean; onClose
   }
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" onClick={onClose}>
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-
-      {/* Scrollable card */}
-      <div
-        className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-neutral-900/95 backdrop-blur-xl shadow-2xl animate-in zoom-in-95 fade-in duration-300 custom-scrollbar"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <ContactModalShell onClose={onClose} className="max-w-2xl">
         {/* Top accent */}
         <div
           className="sticky top-0 z-10 h-[2px]"
@@ -270,9 +270,9 @@ export function ContactFormModal({ isOpen, onClose }: { isOpen: boolean; onClose
             >
               /// MERCHANT ONBOARDING
             </span>
-            <h2 className="text-2xl sm:text-3xl font-black text-white mb-2">
+            <Dialog.Title asChild><h2 className="text-2xl sm:text-3xl font-black text-white mb-2">
               Ready to Accept Web3 Payments?
-            </h2>
+            </h2></Dialog.Title>
             <p className="text-gray-400 text-sm leading-relaxed">
               Fill out the form and our team will help you get onboarded onto the BasaltSurge network.
             </p>
@@ -295,8 +295,7 @@ export function ContactFormModal({ isOpen, onClose }: { isOpen: boolean; onClose
             onSuccess={() => setShowSuccess(true)}
           />
         </div>
-      </div>
-    </div>
+    </ContactModalShell>
   );
 }
 

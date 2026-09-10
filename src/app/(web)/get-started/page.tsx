@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import dynamic from "next/dynamic";
 import React from "react";
 import { ArrowDown, ArrowRight, ArrowUpRight, Check, ChevronDown, Code2, Globe2, Layers3, Pause, Play, ShieldCheck, Wallet, Zap } from "lucide-react";
@@ -11,6 +10,7 @@ import { isPlatformBrand, normalizeBrandName } from "@/lib/branding";
 import { cachedFetch } from "@/lib/client-api-cache";
 import { SignupButton } from "@/components/landing/SignupButton";
 import ContactFormSection from "@/components/landing/ContactFormSection";
+import SiteFooter from "@/components/landing/SiteFooter";
 import AccordionCheckoutPreview from "@/components/landing/AccordionCheckoutPreview";
 import styles from "./get-started.module.css";
 
@@ -63,6 +63,7 @@ export default function GetStartedPage() {
   ];
 
   return (
+    <>
     <main className={styles.page} style={pageStyle}>
       <section className={styles.hero} aria-labelledby="landing-title">
         {!isPartner && <>
@@ -159,18 +160,9 @@ export default function GetStartedPage() {
       <section className={styles.finalSection} aria-labelledby="start-title"><div className={styles.container}><div className={styles.eyebrow}>YOUR NEXT CHAPTER STARTS HERE</div><h2 id="start-title">Better payments.<br /><span>More possibilities.</span></h2><p>Bring the {brandName} experience to your business.</p><div className={styles.actions}><SignupButton className={styles.primaryButton}>Start accepting payments <ArrowUpRight size={18} /></SignupButton><Link href="/pricing" className={styles.textButton}>Explore pricing <ArrowRight size={17} /></Link></div>
         {!isPartner && <details className={styles.contactDisclosure}><summary>Prefer to talk with our team? <ChevronDown size={16} /></summary><div className={styles.contactForm}><ContactFormSection /></div></details>}
       </div></section>
-      <footer className={`${styles.container} ${styles.footer}`}>
-        <Link href="/" className={styles.footerBrand}>
-          {!isPartner && <Image src="/Surge.png" alt="" width={40} height={40} className={styles.footerSymbol} />}
-          <span className={styles.footerBrandCopy}>
-            {isPartner ? brandName : <span className={styles.footerWordmark}><span>BASALT</span><strong>SURGE</strong></span>}
-            <span className={styles.footerTagline}>Payments for what comes next.</span>
-          </span>
-        </Link>
-        <nav aria-label="Footer navigation"><Link href="/developers">Developers</Link><Link href="/support">Support</Link><Link href="/legal/privacy">Privacy</Link><Link href="/legal/terms">Terms</Link></nav>
-        <span>© {new Date().getFullYear()} {brandName}</span>
-      </footer>
       {localSignupOpen && <SignupWizard isOpen onClose={() => setLocalSignupOpen(false)} onComplete={() => setLocalSignupOpen(false)} />}
     </main>
+    <div className={styles.fullFooter}><SiteFooter /></div>
+    </>
   );
 }
