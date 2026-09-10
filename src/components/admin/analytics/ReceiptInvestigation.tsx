@@ -181,16 +181,19 @@ export interface ReceiptInvestigationReceipt {
 
 
 export interface ReceiptInvestigationProps {
+  /** Display stored evidence without platform administration actions or config lookups. */
+  readOnly?: boolean;
   receipt: ReceiptInvestigationReceipt;
   activeTab: string;
   onTabChange: (tab: string) => void;
   timezone: string;
   siteConfig?: Record<string, any>;
   loadSiteConfigForReceipt: (receiptId: string, wallet?: string | null, brandKey?: string) => void;
-  fetchReceiptLogs: (receiptId: string) => void | Promise<void>;
+  fetchReceiptLogs: (receiptId: string, merchantWallet?: string | null) => void | Promise<void>;
   expandedLogs: Record<string, ReceiptInvestigationLog[]>;
   loadingLogs: Record<string, boolean>;
   logErrors?: Record<string, string>;
+  logNotes?: Record<string, string>;
   refreshingLimits: Record<string, boolean>;
   refreshLimitsStatus: Record<string, string>;
   enrichCustomerLimits: (receiptId: string) => void | Promise<void>;
@@ -226,10 +229,10 @@ const NO_LOG_ERRORS: Record<string, string> = {};
 /** Shared receipt investigation: the same evidence and actions on every viewport. */
 export default function ReceiptInvestigation({
   receipt: r, activeTab, onTabChange, timezone, siteConfig, loadSiteConfigForReceipt,
-  fetchReceiptLogs, expandedLogs, loadingLogs, logErrors = NO_LOG_ERRORS,
+  fetchReceiptLogs, expandedLogs, loadingLogs, logErrors = NO_LOG_ERRORS, logNotes = NO_LOG_ERRORS,
   refreshingLimits, refreshLimitsStatus, enrichCustomerLimits, copySuccess,
   handleCopy, actionLoading, actionFeedback, handleTargetedReconcile,
-  handleStripeTelemetryCheck,
+  handleStripeTelemetryCheck, readOnly = false,
 }: ReceiptInvestigationProps) {
   const siteCfg = siteConfig || r.merchantConfig || r.brandConfig || {};
   const isSettled = isAnalyticsPaidReceipt(r);
@@ -289,7 +292,7 @@ export default function ReceiptInvestigation({
   { id: "logs", label: "Client Logs", icon: Activity },
   { id: "customers", label: "Customer Metadata", icon: Users },
   { id: "fees", label: "Fee & Split Breakdown", icon: Percent },
-  { id: "reconcile", label: "Reconcile & Actions", icon: Wrench }
+  ...(!readOnly ? [{ id: "reconcile", label: "Reconcile & Actions", icon: Wrench }] : [])
   ];
 
 
@@ -301,14 +304,15 @@ export default function ReceiptInvestigation({
   const rowActiveTab = investigationTabs.some(tab => tab.id === activeTab) ? activeTab : "overview";
 
   useEffect(() => {
+    if (readOnly) return;
     loadSiteConfigForReceipt(r.receiptId, r.wallet || r.merchantWallet, r.brandKey);
-  }, [loadSiteConfigForReceipt, r.receiptId, r.wallet, r.merchantWallet, r.brandKey]);
+  }, [loadSiteConfigForReceipt, r.receiptId, r.wallet, r.merchantWallet, r.brandKey, readOnly]);
 
   useEffect(() => {
     if (rowActiveTab === "logs" && !expandedLogs[r.receiptId] && !loadingLogs[r.receiptId] && !logErrors[r.receiptId]) {
-      void fetchReceiptLogs(r.receiptId);
+      void fetchReceiptLogs(r.receiptId, r.merchantWallet || r.wallet);
     }
-  }, [rowActiveTab, r.receiptId, fetchReceiptLogs, expandedLogs, loadingLogs, logErrors]);
+  }, [rowActiveTab, r.receiptId, r.merchantWallet, r.wallet, fetchReceiptLogs, expandedLogs, loadingLogs, logErrors]);
 
   return (
     <Tabs value={rowActiveTab} onValueChange={onTabChange} className="min-w-0 gap-5">
@@ -1322,6 +1326,7 @@ export default function ReceiptInvestigation({
   {/* Tab 4: Client Logs */}
   {rowActiveTab === "logs" && (
     <div className="space-y-2 animate-in fade-in duration-200 mt-1">
+      {logNotes[r.receiptId] && <p role="status" className="rounded-lg border border-white/10 p-3 text-xs text-zinc-400">{logNotes[r.receiptId]}</p>}
       {loadingLogs[r.receiptId] || (!expandedLogs[r.receiptId] && !logErrors[r.receiptId]) ? (
         <div className="text-xs text-muted-foreground p-6 text-center flex items-center justify-center gap-2">
           <RefreshCw className="w-4 h-4 animate-spin text-primary" />
@@ -1330,7 +1335,7 @@ export default function ReceiptInvestigation({
       ) : logErrors[r.receiptId] ? (
         <div role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-200">
           <p>Client logs could not be loaded: {logErrors[r.receiptId]}</p>
-          <button type="button" onClick={() => fetchReceiptLogs(r.receiptId)} className="mt-3 min-h-10 rounded-lg border border-rose-500/30 px-3 font-semibold focus-visible:outline focus-visible:outline-2">Retry logs</button>
+          <button type="button" onClick={() => fetchReceiptLogs(r.receiptId, r.merchantWallet || r.wallet)} className="mt-3 min-h-10 rounded-lg border border-rose-500/30 px-3 font-semibold focus-visible:outline focus-visible:outline-2">Retry logs</button>
         </div>
       ) : (expandedLogs[r.receiptId] && expandedLogs[r.receiptId].length > 0) ? (
         <div className="bg-black/40 border border-white/10 rounded-2xl divide-y divide-white/5 max-h-[260px] overflow-y-auto font-mono text-xs leading-relaxed">
@@ -1359,7 +1364,7 @@ export default function ReceiptInvestigation({
         </div>
       ) : (
         <div className="text-xs text-muted-foreground p-5 border border-white/10 border-dashed rounded-2xl text-center">
-          No client logs were recorded for this receipt. Missing telemetry does not establish whether checkout completed or where it stopped.
+          {readOnly ? "No client logs with verified brand and receipt attribution are available." : "No client logs were recorded for this receipt."} Missing telemetry does not establish whether checkout completed or where it stopped.
         </div>
       )}
     </div>
@@ -1377,7 +1382,7 @@ export default function ReceiptInvestigation({
             </span>
           )}
         </div>
-        <button
+        {!readOnly && <button
           type="button"
           onClick={() => enrichCustomerLimits(r.receiptId)}
           disabled={refreshingLimits[r.receiptId]}
@@ -1385,7 +1390,7 @@ export default function ReceiptInvestigation({
         >
           <RefreshCw className={`w-3.5 h-3.5 ${refreshingLimits[r.receiptId] ? "animate-spin text-primary" : ""}`} />
           <span>{refreshingLimits[r.receiptId] ? "Enriching Limits..." : "Enrich & Sync Limits"}</span>
-        </button>
+        </button>}
       </div>
 
       {(() => {

@@ -82,7 +82,14 @@ function cx(...args: Array<string | false | null | undefined>) {
 
 export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer' | 'merchant'; overrideWallet?: string }) {
   const account = useActiveAccount();
-  const me = (overrideWallet || String((account as any)?.address || "")).toLowerCase();
+  const actorWallet = String(account?.address || "").toLowerCase();
+  const me = (role === 'merchant' ? overrideWallet || actorWallet : actorWallet).toLowerCase();
+  // A merchant/account switch gets a fresh thread, composer, attachments and request state.
+  return <MessagesPanelContent key={`${role || 'all'}:${me}:${actorWallet}`} role={role} me={me} />;
+}
+
+function MessagesPanelContent({ role, me }: { role?: 'buyer' | 'merchant'; me: string }) {
+  const messageHeaders: Record<string, string> = role === 'merchant' ? { 'x-merchant-wallet': me } : {};
   
   // Conversations state... (preserving structure)
 
@@ -97,6 +104,8 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
 
   // Active conversation/thread state
   const [activeConvoId, setActiveConvoId] = React.useState<string | null>(null);
+  const selectedConversation = React.useRef(activeConvoId);
+  selectedConversation.current = activeConvoId;
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [loadingMsgs, setLoadingMsgs] = React.useState(false);
   const [msgError, setMsgError] = React.useState("");
@@ -330,7 +339,7 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
           try {
             const r = await fetch(
               `/api/messages/conversations/${encodeURIComponent(c.id)}/messages?page=0&limit=1`,
-              { cache: "no-store" }
+              { cache: "no-store", headers: messageHeaders }
             );
             const j = await r.json().catch(() => ({}));
             if (!r.ok || j?.ok !== true) {
@@ -363,7 +372,7 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
     try {
       setLoadingConvos(true);
       setConvoError("");
-      const r = await fetch("/api/messages/conversations", { cache: "no-store" });
+      const r = await fetch("/api/messages/conversations", { cache: "no-store", headers: messageHeaders });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok !== true) {
         setConvoError(j?.error || "Failed to load conversations");
@@ -380,9 +389,7 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
             Number(b.createdAt || 0) - Number(a.createdAt || 0)
         );
       setConversations(items);
-      if (items.length && !activeConvoId) {
-        setActiveConvoId(items[0].id);
-      }
+      setActiveConvoId(current => current && items.some(item => item.id === current) ? current : items[0]?.id || null);
       await computeUnread(items);
     } catch (e: any) {
       setConvoError(e?.message || "Failed to load conversations");
@@ -393,14 +400,16 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
   }
 
   async function loadMessages(convoId: string) {
+    if (selectedConversation.current !== convoId) return;
     try {
       setLoadingMsgs(true);
       setMsgError("");
       const r = await fetch(
-        `/api/messages/conversations/${encodeURIComponent(convoId)}/messages?page=0&limit=100`,
-        { cache: "no-store" }
+        `/api/messages/conversations/${encodeURIComponent(convoId)}/messages?page=0&limit=100&markRead=true`,
+        { cache: "no-store", headers: messageHeaders }
       );
       const j = await r.json().catch(() => ({}));
+      if (selectedConversation.current !== convoId) return;
       if (!r.ok || j?.ok !== true) {
         setMsgError(j?.error || "Failed to load messages");
         setMessages([]);
@@ -421,10 +430,11 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
         setUnread((prev) => ({ ...prev, [convoId]: isUnread ? true : false }));
       } catch { }
     } catch (e: any) {
+      if (selectedConversation.current !== convoId) return;
       setMsgError(e?.message || "Failed to load messages");
       setMessages([]);
     } finally {
-      setLoadingMsgs(false);
+      if (selectedConversation.current === convoId) setLoadingMsgs(false);
     }
   }
 
@@ -468,8 +478,8 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
   }, [activeConvo, me]);
 
   async function sendMessage() {
+    const cid = String(activeConvoId || "");
     try {
-      const cid = String(activeConvoId || "");
       if (!cid || (!composerBody.trim() && attachments.length === 0)) return;
       setMsgError("");
       setShowEmoji(false);
@@ -492,11 +502,12 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
 
       const r = await fetch(`/api/messages/conversations/${encodeURIComponent(cid)}/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...messageHeaders, "Content-Type": "application/json" },
         cache: "no-store",
         body: JSON.stringify({ body: composerBody, attachments }),
       });
       const j = await r.json().catch(() => ({}));
+      if (selectedConversation.current !== cid) return;
       if (!r.ok || j?.ok !== true) {
         // Remove optimistic message on failure
         setMessages((prev) => prev.filter((m) => m.id !== tempId));
@@ -514,9 +525,9 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
       // Refresh conversations to update ordering and unread badges
       await loadConversations();
     } catch (e: any) {
+      if (selectedConversation.current !== cid) return;
       // Remove optimistic message on error
       try {
-        const cid = String(activeConvoId || "");
         setMessages((prev) =>
           prev.filter(
             (m) => m.conversationId !== cid || !String(m.id).startsWith("message:local:")
@@ -535,6 +546,10 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
 
   // Load messages when active convo changes
   React.useEffect(() => {
+    setMessages([]);
+    setComposerBody("");
+    setAttachments([]);
+    setMsgError("");
     if (activeConvoId) loadMessages(activeConvoId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConvoId]);
@@ -606,17 +621,8 @@ export default function MessagesPanel({ role, overrideWallet }: { role?: 'buyer'
           // These are likely legacy messages or general inquiries
           return true;
         }
-      } else if (role === 'merchant') {
-        // As a merchant, I see conversations where customers contacted ME directly or via checkout/order
-        const parts = (Array.isArray(c.participants) ? c.participants : []).map((p) => String(p || "").toLowerCase());
-        if (subjectType === 'merchant') {
-          if (subjectId !== me && !parts.includes(me)) return false;
-        } else if (subjectType === 'checkout' || subjectType === 'order') {
-          if (!parts.includes(me) && subjectId !== me) return false;
-        } else {
-          if (!parts.includes(me)) return false;
-        }
       }
+      // The merchant endpoint has already verified ownership of each conversation's subject.
 
       if (filterMode === "unread" && !unread[c.id]) return false;
       if (!q) return true;

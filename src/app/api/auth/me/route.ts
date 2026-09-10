@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedWallet, requireThirdwebAuth } from "@/lib/auth";
 import { getContainer } from "@/lib/cosmos";
 import { getBrandKey } from "@/config/brands";
+import { getMerchantBrandScope } from "@/lib/merchant-team-access";
 
 export const dynamic = "force-dynamic";
 
@@ -135,10 +136,12 @@ export async function GET(req: NextRequest) {
       // they should bypass the merchant sign-up gate on closed partner containers so they can
       // access the admin console without having to register as a new merchant.
       if (shopStatus === "none" && !blocked) {
-        const teamMemberQuery = "SELECT top 1 c.id, c.merchantWallet, c.role, c.brandKey, c.name FROM c WHERE c.type = 'merchant_team_member' AND c.linkedWallet = @w AND (NOT IS_DEFINED(c.active) OR c.active = true)";
-        const { resources: teamRes } = await container.items.query({
+        const teamScope = getMerchantBrandScope(req);
+        const teamContainer = await getContainer(undefined, undefined, { profile: "critical" });
+        const teamMemberQuery = `SELECT top 1 c.id, c.merchantWallet, c.role, c.brandKey, c.name FROM c WHERE c.type = 'merchant_team_member' AND LOWER(c.linkedWallet) = @w AND (NOT IS_DEFINED(c.active) OR c.active = true) AND ${teamScope.clause}`;
+        const { resources: teamRes } = await teamContainer.items.query({
           query: teamMemberQuery,
-          parameters: [{ name: "@w", value: wallet.toLowerCase() }]
+          parameters: [{ name: "@w", value: wallet.toLowerCase() }, ...teamScope.parameters]
         }).fetchAll();
 
         if (teamRes.length > 0) {

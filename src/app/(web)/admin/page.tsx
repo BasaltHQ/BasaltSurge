@@ -27,6 +27,7 @@ import type { IndustryPackType, IndustryAttributes } from "@/types/inventory";
 import KitchenDisplayPanel from "@/components/admin/KitchenDisplayPanel";
 import PMSPanel from "@/components/admin/PMSPanel";
 import { ReserveTabs } from "@/components/admin/reserve";
+import { MerchantDashboard } from "@/components/admin/panels/merchant-dashboard";
 import { Modal } from "@/components/ui/modal";
 import { useBrand } from "@/contexts/BrandContext";
 import { getDefaultBrandName, isPlatformBrand, getEffectiveBrandKey, isRuntimePlatformBrand } from "@/lib/branding";
@@ -72,6 +73,7 @@ import CannabisCompliancePanel from "@/app/(web)/admin/panels/CannabisCompliance
 import PublicationsPanelExt from "@/app/(web)/admin/panels/PublicationsPanel";
 import AgentUniversityPanelExt from "@/app/(web)/admin/panels/AgentUniversityPanel";
 import PlatformAnalyticsPanel from "@/app/(web)/admin/panels/PlatformAnalyticsPanel";
+import PartnerAnalyticsPanel from "@/app/(web)/admin/panels/PartnerAnalyticsPanel";
 // Placeholder to avoid errors - I will read file first
 import ReportsPanel from "@/app/(web)/admin/panels/ReportsPanel";
 import ReportsPanelMerchant from "@/app/(web)/admin/panels/ReportsPanelMerchant";
@@ -90,6 +92,7 @@ import { NodeDashboardPanel } from "@/app/(web)/admin/panels/NodeDashboardPanel"
 import AutoclosePanel from "@/app/(web)/admin/panels/AutoclosePanel";
 import EmailConfigPanelExt from "./panels/EmailConfigPanel";
 import { isPlatformCtx, isPartnerCtx, isPlatformSuperAdmin, canAccessPanel } from "@/lib/authz";
+import { canAccessMerchantPanel, defaultMerchantPanel, isMerchantPanel } from "@/lib/merchant-panel-access";
 
 function ResendTrackingBtn({ receipt, operatorWallet }: { receipt: any, operatorWallet: string }) {
   const [resending, setResending] = React.useState(false);
@@ -11657,11 +11660,25 @@ export default function AdminPage() {
   const canPartners = canAccessPanel("partners", wallet);
   const canBranding = canAccessPanel("branding", wallet);
   const canAdmins = canAccessPanel("admins", wallet);
-  const [activeTab, setActiveTab] = useState<AdminTabKey>("reserve");
+  const [activeTab, setActiveTab] = useState<AdminTabKey>("dashboard");
+  const [reserveInitialTab, setReserveInitialTab] = useState<"configuration" | "analytics">("configuration");
+  const navigateToPanel = (tab: AdminTabKey) => {
+    if (tab === "reserve") setReserveInitialTab("configuration");
+    setActiveTab(tab);
+  };
+  const [authRevision, setAuthRevision] = useState(0);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("tab") === "platformAnalytics") {
-      setActiveTab("platformAnalytics");
-    }
+    const refreshAccess = () => setAuthRevision(value => value + 1);
+    window.addEventListener("pp:auth:logged_in", refreshAccess);
+    window.addEventListener("pp:auth:logged_out", refreshAccess);
+    return () => {
+      window.removeEventListener("pp:auth:logged_in", refreshAccess);
+      window.removeEventListener("pp:auth:logged_out", refreshAccess);
+    };
+  }, []);
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (tab === "platformAnalytics" || tab === "partnerAnalytics") setActiveTab(tab);
   }, []);
   const [industryPack, setIndustryPack] = useState<string | null>(null);
   const containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").toLowerCase();
@@ -11678,10 +11695,15 @@ export default function AdminPage() {
   });
 
   const effectiveMerchantWallet = activeTeamContext?.merchantWallet ? String(activeTeamContext.merchantWallet).toLowerCase() : wallet;
+  const [merchantAccess, setMerchantAccess] = useState<{ wallet: string; hasOwnShop: boolean } | null>(null);
+  const [merchantAccessStatus, setMerchantAccessStatus] = useState<"loading" | "sign-in" | "unavailable">("loading");
+  const verifiedTeamProfiles = useRef<any[]>([]);
 
   useEffect(() => {
     const handler = (e: any) => {
-      setActiveTeamContext(e.detail || null);
+      const selected = e.detail;
+      const profile = selected && verifiedTeamProfiles.current.find(p => p.id === selected.id && p.merchantWallet === selected.merchantWallet);
+      setActiveTeamContext(profile || null);
     };
     try { window.addEventListener("pp:merchantContextChanged", handler as any); } catch { }
     return () => {
@@ -11691,6 +11713,21 @@ export default function AdminPage() {
 
   // Partner module configuration — which merchant panels are disabled
   const [disabledMerchantModules, setDisabledMerchantModules] = useState<string[]>([]);
+  const canViewMerchantPanel = (panel: string) => {
+    if (merchantAccess?.wallet !== wallet || disabledMerchantModules.includes(panel)) return false;
+    if (activeTeamContext) return canAccessMerchantPanel(panel, activeTeamContext.permissions);
+    return merchantAccess.hasOwnShop;
+  };
+  const dashboardPanels = [
+    "analytics", "terminal", "inventory", "orders", "subscriptions", "messages-merchant", "team", "reports", "shopSetup", "notificationsMerchant",
+    ...(!activeTeamContext ? ["reserve", "loyalty", "leaderboard", "integrations"] : []),
+  ].filter(canViewMerchantPanel);
+  useEffect(() => {
+    if (merchantAccess?.wallet !== wallet || !isMerchantPanel(activeTab)) return;
+    if (!canViewMerchantPanel(activeTab)) {
+      setActiveTab(activeTeamContext ? defaultMerchantPanel(activeTeamContext.permissions, disabledMerchantModules) as AdminTabKey : "support");
+    }
+  }, [activeTeamContext, activeTab, merchantAccess, wallet, disabledMerchantModules]);
   useEffect(() => {
     if (!wallet) return;
     fetch("/api/admin/modules", { headers: { "x-wallet": wallet } })
@@ -11720,11 +11757,24 @@ export default function AdminPage() {
   // When user lands on /admin check both their auth session and approval status
   useEffect(() => {
     let cancelled = false;
+    verifiedTeamProfiles.current = [];
+    setMerchantAccess(null);
+    setMerchantAccessStatus("loading");
     (async () => {
       try {
         if (!wallet) return;
-        const me = await fetch('/api/auth/me', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null);
-        if (cancelled || !me) return;
+        const me = await fetch('/api/auth/me', { cache: 'no-store' }).then(r => r.ok || r.status === 401 ? r.json() : null).catch(() => null);
+        if (cancelled) return;
+        if (!me) {
+          setMerchantAccessStatus("unavailable");
+          return;
+        }
+        if (!me.authed || String(me.wallet || "").toLowerCase() !== wallet) {
+          setActiveTeamContext(null);
+          setMerchantAccessStatus("sign-in");
+          window.dispatchEvent(new CustomEvent("pp:auth:prompt", { detail: { preferSocial: false } }));
+          return;
+        }
 
         // 1. Approval Gate
         const domContainerType = typeof document !== 'undefined' ? (document.documentElement.getAttribute('data-pp-container-type') || '').toLowerCase() : '';
@@ -11738,32 +11788,32 @@ export default function AdminPage() {
           return;
         }
 
-        // Auto-select primary team context for team-only members
-        if (me.isTeamMember && me.hasOwnShop === false && !activeTeamContext) {
-          try {
-            const accRes = await fetch(`/api/admin/reports/access?wallet=${encodeURIComponent(wallet)}`).then(r => r.ok ? r.json() : null);
-            if (accRes && Array.isArray(accRes.profiles) && accRes.profiles.length > 0) {
-              const primaryTeam = accRes.profiles[0];
-              setActiveTeamContext(primaryTeam);
-              try {
-                localStorage.setItem('pp_active_merchant_context', JSON.stringify(primaryTeam));
-              } catch {}
-              setActiveTab((prev) => prev === 'reserve' ? 'terminal' : prev);
-            }
-          } catch {}
+        // Revalidate stored selection and permissions for this session and brand.
+        const accRes = me.authed ? await fetch(`/api/admin/reports/access?wallet=${encodeURIComponent(wallet)}`, { cache: 'no-store' })
+          .then(r => r.ok ? r.json() : null).catch(() => null) : null;
+        if (cancelled) return;
+        if (!accRes) {
+          setMerchantAccessStatus("unavailable");
+          return;
         }
-
-        // 2. Authentication Gate (prompt signature if needed)
-        if (!me.authed) {
-          try {
-            // Signal Navbar/AuthModal to open
-            window.dispatchEvent(new CustomEvent("pp:auth:prompt", { detail: { preferSocial: false } }));
-          } catch { }
-        }
-      } catch { }
+        const profiles = Array.isArray(accRes?.profiles) ? accRes.profiles.filter((p: any) => String(p.merchantWallet).toLowerCase() !== wallet) : [];
+        verifiedTeamProfiles.current = profiles;
+        const storedMerchant = String(activeTeamContext?.merchantWallet || '').toLowerCase();
+        const selected = profiles.find((p: any) => String(p.merchantWallet).toLowerCase() === storedMerchant)
+          || (me.hasOwnShop === false && me.isTeamMember ? profiles[0] : null);
+        setActiveTeamContext(selected || null);
+        setMerchantAccess({ wallet, hasOwnShop: !(me.isTeamMember && me.hasOwnShop === false) || !!me.isPlatformAdmin });
+        try {
+          if (selected) localStorage.setItem('pp_active_merchant_context', JSON.stringify(selected));
+          else localStorage.removeItem('pp_active_merchant_context');
+        } catch {}
+        if (selected) setActiveTab(prev => prev === 'dashboard' ? defaultMerchantPanel(selected.permissions) as AdminTabKey : prev);
+      } catch {
+        if (!cancelled) setMerchantAccessStatus("unavailable");
+      }
     })();
     return () => { cancelled = true; };
-  }, [wallet]);
+  }, [wallet, authRevision]);
 
   // Fetch industry pack to conditionally show Kitchen tab
   useEffect(() => {
@@ -11819,7 +11869,7 @@ export default function AdminPage() {
         <AdminHero />
         <AdminSidebar
           activeTab={activeTab}
-          onChangeTab={setActiveTab}
+          onChangeTab={navigateToPanel}
           industryPack={industryPack || ""}
           canBranding={canBranding}
           canMerchants={canMerchants}
@@ -11979,30 +12029,31 @@ export default function AdminPage() {
 
         {/* Tabs Content */}
         {activeTeamContext && (
-          <div className="bg-purple-950/40 border border-purple-500/30 rounded-xl p-3.5 mb-5 flex items-center justify-between text-xs text-purple-200 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300">
-            <div className="flex items-center gap-2.5">
-              <div className="w-2.5 h-2.5 rounded-full bg-purple-400 animate-pulse" />
+          <div className="bg-purple-950/40 border border-purple-500/30 rounded-xl p-3.5 mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-xs text-purple-200 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="w-2.5 h-2.5 shrink-0 rounded-full bg-purple-400 animate-pulse" />
               <Building2 size={16} className="text-purple-400 flex-shrink-0" />
-              <span>
+              <span className="min-w-0 break-words">
                 Active Team Merchant Context: <strong className="text-white font-semibold text-sm">{activeTeamContext.merchantName || activeTeamContext.name || 'Merchant Team'}</strong>
-                <span className="ml-2.5 px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-mono font-medium border border-purple-500/30 uppercase text-[10px]">
-                  Role: {activeTeamContext.role}
+                <span className="inline-block max-w-full mt-1 sm:mt-0 sm:ml-2.5 px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-mono font-medium border border-purple-500/30 uppercase text-[10px]">
+                  Role: {activeTeamContext.roleName || activeTeamContext.role}
                 </span>
               </span>
             </div>
-            <button
+            {merchantAccess?.hasOwnShop && <button
               onClick={() => {
                 localStorage.removeItem('pp_active_merchant_context');
                 window.dispatchEvent(new CustomEvent('pp:merchantContextChanged', { detail: null }));
+                setActiveTab("dashboard");
               }}
               className="px-3 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-500/40 transition-colors font-medium text-xs flex items-center gap-1.5 cursor-pointer flex-shrink-0"
             >
               <X size={13} />
               Switch to My Primary Merchant
-            </button>
+            </button>}
           </div>
         )}
-        {activeTab === "notificationsMerchant" && (
+        {activeTab === "notificationsMerchant" && canViewMerchantPanel("notificationsMerchant") && (
           <NotificationsPanel level="merchant" />
         )}
         {activeTab === "notificationsPartner" && (
@@ -12020,13 +12071,47 @@ export default function AdminPage() {
             <InstallerPackagesPanel />
           </div>
         )}
-        {activeTab === "reserve" && <ReserveTabs />}
-        {activeTab === "delivery" && <DeliveryPanel />}
-        {activeTab === "shopSetup" && <ShopPanel overrideWallet={effectiveMerchantWallet} />}
+        {activeTab === "dashboard" && (
+          canViewMerchantPanel("dashboard") ? (
+            <MerchantDashboard
+              key={`${effectiveMerchantWallet}:${activeTeamContext?.id || "owner"}`}
+              merchantWallet={effectiveMerchantWallet}
+              merchantName={activeTeamContext?.merchantName}
+              canViewAnalytics={canViewMerchantPanel("analytics") || canViewMerchantPanel("reserve")}
+              allowedPanels={dashboardPanels}
+              onNavigate={panel => {
+                if (dashboardPanels.includes(panel)) navigateToPanel(panel as AdminTabKey);
+              }}
+              onOpenReserveAnalytics={!activeTeamContext && canViewMerchantPanel("reserve") ? () => {
+                setReserveInitialTab("analytics");
+                setActiveTab("reserve");
+              } : undefined}
+            />
+          ) : (
+            <div className="glass-pane rounded-2xl border p-6 md:p-8" role="status">
+              <h1 className="text-2xl font-semibold">Merchant Dashboard</h1>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {merchantAccessStatus === "sign-in" ? "Sign in with your connected wallet to open your dashboard."
+                  : merchantAccessStatus === "unavailable" ? "Your merchant dashboard could not be loaded. Please try again."
+                  : "Loading your merchant dashboard…"}
+              </p>
+              {merchantAccessStatus !== "loading" && (
+                <button className="mt-4 rounded-lg border px-4 py-2 text-sm hover:bg-foreground/5" onClick={() => {
+                  if (merchantAccessStatus === "sign-in") window.dispatchEvent(new CustomEvent("pp:auth:prompt", { detail: { preferSocial: false } }));
+                  else setAuthRevision(value => value + 1);
+                }}>{merchantAccessStatus === "sign-in" ? "Sign in" : "Try again"}</button>
+              )}
+            </div>
+          )
+        )}
+        {activeTab === "reserve" && canViewMerchantPanel("reserve") && <ReserveTabs key={reserveInitialTab} initialTab={reserveInitialTab} />}
+        {activeTab === "delivery" && canViewMerchantPanel("delivery") && <DeliveryPanel />}
+        {activeTab === "shopSetup" && canViewMerchantPanel("shopSetup") && <ShopPanel overrideWallet={effectiveMerchantWallet} />}
         {activeTab === "profileSetup" && <ProfilePanel />}
         {activeTab === "roadmap" && <RoadmapPanel brandKey={getEffectiveBrandKey()} />}
         {activeTab === "updates" && canAccessPanel("updates", wallet) && <UpdatesPanel brandKey={getEffectiveBrandKey()} />}
         {activeTab === "platformAnalytics" && canAccessPanel("platformAnalytics", wallet) && <PlatformAnalyticsPanel />}
+        {activeTab === "partnerAnalytics" && canAccessPanel("partnerAnalytics", wallet) && <PartnerAnalyticsPanel />}
 
         {activeTab === "manualWithdrawal" && (
           <div className="w-full space-y-6 pb-24 admin-panel-enter">
@@ -12052,14 +12137,14 @@ export default function AdminPage() {
           </div>
         )}
 
-        {activeTab === "loyalty" && (
+        {activeTab === "loyalty" && canViewMerchantPanel("loyalty") && (
           <div className="w-full space-y-6 pb-24 admin-panel-enter">
             <LoyaltyPanel />
           </div>
         )}
 
-        {activeTab === "analytics" && <AnalyticsPanel overrideWallet={effectiveMerchantWallet} />}
-        {activeTab === "leaderboard" && <LeaderboardPanel />}
+        {activeTab === "analytics" && canViewMerchantPanel("analytics") && <AnalyticsPanel overrideWallet={effectiveMerchantWallet} />}
+        {activeTab === "leaderboard" && canViewMerchantPanel("leaderboard") && <LeaderboardPanel />}
         {activeTab === "autoclose" && <AutoclosePanel />}
 
         {activeTab === "loyaltyConfig" && (
@@ -12071,7 +12156,7 @@ export default function AdminPage() {
             )}
           </div>
         )}
-        {activeTab === "integrations" && (
+        {activeTab === "integrations" && canViewMerchantPanel("integrations") && (
           <IntegrationsPanel />
         )}
         {activeTab === "branding" && (
@@ -12096,11 +12181,11 @@ export default function AdminPage() {
           <PlatformSettingsPanelExt />
         )}
 
-        {activeTab === "inventory" && (
+        {activeTab === "inventory" && canViewMerchantPanel("inventory") && (
           <InventoryPanel overrideWallet={effectiveMerchantWallet} />
         )}
 
-        {activeTab === "orders" && (
+        {activeTab === "orders" && canViewMerchantPanel("orders") && (
           <OrdersPanel overrideWallet={effectiveMerchantWallet} />
         )}
 
@@ -12114,14 +12199,14 @@ export default function AdminPage() {
         {activeTab === "messages-buyer" && (
           <MessagesPanelExt role="buyer" />
         )}
-        {activeTab === "messages-merchant" && (
+        {activeTab === "messages-merchant" && canViewMerchantPanel("messages-merchant") && (
           <MessagesPanelExt role="merchant" overrideWallet={effectiveMerchantWallet} />
         )}
         {activeTab === "rewards" && (
           <RewardsPanel />
         )}
 
-        {activeTab === "terminal" && (
+        {activeTab === "terminal" && canViewMerchantPanel("terminal") && (
           <TerminalPanel overrideWallet={effectiveMerchantWallet} />
         )}
 
@@ -12129,19 +12214,19 @@ export default function AdminPage() {
           <UsersPanel />
         )}
 
-        {activeTab === "kitchen" && industryPack === 'restaurant' && (
+        {activeTab === "kitchen" && canViewMerchantPanel("kitchen") && industryPack === 'restaurant' && (
           <KitchenDisplayPanel />
         )}
 
-        {activeTab === "tables" && (
+        {activeTab === "tables" && canViewMerchantPanel("tables") && (
           <TablesPanel />
         )}
 
-        {activeTab === "pms" && (
+        {activeTab === "pms" && canViewMerchantPanel("pms") && (
           <PMSPanel />
         )}
 
-        {activeTab === "cannabisCompliance" && (
+        {activeTab === "cannabisCompliance" && canViewMerchantPanel("cannabisCompliance") && (
           <CannabisCompliancePanel />
         )}
 
@@ -12204,22 +12289,22 @@ export default function AdminPage() {
         {activeTab === "contracts" && canAccessPanel("contracts", wallet) && (
           <ContractsPanel />
         )}
-        {activeTab === "writersWorkshop" && (
+        {activeTab === "writersWorkshop" && canViewMerchantPanel("writersWorkshop") && (
           <WritersWorkshopPanelExt />
         )}
         {activeTab === "publications" && canAccessPanel("publications", wallet) && (
           <PublicationsPanelExt />
         )}
-        {activeTab === "endpoints" && (
+        {activeTab === "endpoints" && canViewMerchantPanel("endpoints") && (
           <EndpointsPanel industryPack={industryPack} onNavigateToTab={(tab) => setActiveTab(tab as any)} />
         )}
-        {activeTab === "team" && (
-          <TeamPanel overrideWallet={activeTeamContext?.merchantWallet} />
+        {activeTab === "team" && canViewMerchantPanel("team") && (
+          <TeamPanel key={`${effectiveMerchantWallet}:${activeTeamContext?.permissions?.join(",") || "owner"}`} overrideWallet={activeTeamContext?.merchantWallet} permissions={activeTeamContext?.permissions} />
         )}
-        {activeTab === "subscriptions" && (
+        {activeTab === "subscriptions" && canViewMerchantPanel("subscriptions") && (
           <SubscriptionsPanel />
         )}
-        {activeTab === "reports" && (
+        {activeTab === "reports" && canViewMerchantPanel("reports") && (
           <ReportsPanelMerchant overrideWallet={effectiveMerchantWallet} />
         )}
         {activeTab === "reportsPartner" && canAccessPanel("reportsPartner", wallet) && (

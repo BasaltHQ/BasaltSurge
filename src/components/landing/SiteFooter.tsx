@@ -7,10 +7,9 @@ import { useTheme } from "../../contexts/ThemeContext";
 import { useBrand } from "../../contexts/BrandContext";
 
 const navigationLinks = [
-  { label: 'Home', href: '#hero' },
-  { label: 'Features', href: '#features' },
-  { label: 'AI Agents', href: '#ai-agents' },
-  { label: 'Pricing', href: '#pricing' },
+  { label: 'Industries', href: '/crypto-payments' },
+  { label: 'Comparisons', href: '/vs' },
+  { label: 'Locations', href: '/locations' },
 ];
 
 const ecosystemLinks = [

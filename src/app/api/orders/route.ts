@@ -8,6 +8,8 @@ import { pushReceipts } from "@/lib/receipts-mem";
 import { requireApimOrJwt } from "@/lib/gateway-auth";
 import { isValidRedirectUrl, isValidWebhookUrl } from "@/lib/webhook-dispatch";
 import { getContainerIdentity, getBrandConfigFromCosmos } from "@/lib/brand-config";
+import { fetchUsdRates } from "@/lib/eth";
+import { createReceiptPricing, nativeAmount, nativeAmountToUsd, receiptCurrency, receiptCurrencyFields, roundReceiptAmount, snapshotReceiptPricing, ReceiptCurrencyError, type ReceiptPricing } from "@/lib/receipt-currency";
 
 /**
  * Orders API
@@ -42,6 +44,7 @@ type OrderItemBody = {
 type ReceiptLineItem = {
   label: string;
   priceUsd: number;
+  nativeAmount?: number;
   qty?: number;
   thumb?: string; // base64 square thumbnail (first image of inventory item)
   itemId?: string; // inventory id
@@ -74,7 +77,8 @@ type ReceiptLineItem = {
 export type Receipt = {
   receiptId: string;
   totalUsd: number;
-  currency: "USD";
+  currency: string;
+  pricing?: ReceiptPricing;
   lineItems: ReceiptLineItem[];
   createdAt: number;
   brandName?: string;
@@ -457,7 +461,7 @@ export async function POST(req: NextRequest) {
     try {
       const container = await getContainer();
       const baseSelect =
-        "SELECT c.id, c.wallet, c.sku, c.name, c.priceUsd, c.currency, c.stockQty, c.category, c.description, c.tags, c.images, c.attributes, c.costUsd, c.taxable, c.jurisdictionCode, c.metrics, c.createdAt, c.updatedAt, c.shippingEnabled, c.shippingConfig, c.deliveryEnabled FROM c WHERE c.type='inventory_item' AND c.wallet=@wallet";
+        "SELECT c.id, c.wallet, c.sku, c.name, c.priceUsd, c.nativePrice, c.currency, c.stockQty, c.category, c.description, c.tags, c.images, c.attributes, c.costUsd, c.taxable, c.jurisdictionCode, c.metrics, c.createdAt, c.updatedAt, c.shippingEnabled, c.shippingConfig, c.deliveryEnabled FROM c WHERE c.type='inventory_item' AND c.wallet=@wallet";
       // Determine if we're in a strict partner context
       const partner = isPartnerContext();
       const spec =
@@ -508,6 +512,30 @@ export async function POST(req: NextRequest) {
         invIndex[suffix] = row as any;
         invIndex[`inventory:${suffix}`] = row as any;
         if (row?.sku) invIndex[`sku:${String(row.sku)}`] = row as any;
+      }
+    }
+
+    // Native catalog prices are normalized once, before the existing discount,
+    // tax and fee calculations. Legacy priceUsd always remains USD.
+    const selectedInventory = itemsBody.map(it => {
+      const id = String(it.id || "").replace(/^inventory:/i, "");
+      return invIndex[String(it.id || "")] || invIndex[id] || invIndex[`inventory:${id}`] || invIndex[`sku:${it.sku || ""}`];
+    });
+    const nativeCurrencies = new Set(selectedInventory.filter(Boolean).map((item: any) => item.nativePrice?.currency).filter(Boolean));
+    const requestedCurrency = body.currency !== undefined ? receiptCurrency(body.currency) : undefined;
+    let pricing: ReceiptPricing | undefined;
+    if (requestedCurrency || nativeCurrencies.size) {
+      const currency = requestedCurrency || receiptCurrency([...nativeCurrencies][0]);
+      if ([...nativeCurrencies].some(code => code !== currency)) {
+        throw new ReceiptCurrencyError("mixed_order_currencies", "Native inventory prices must use the order currency.");
+      }
+      pricing = createReceiptPricing(currency, currency === "USD" ? {} : await fetchUsdRates());
+      const converted = new Map<any, any>();
+      for (const [key, item] of Object.entries(invIndex)) {
+        const nativePrice = (item as any).nativePrice;
+        if (!nativePrice || !selectedInventory.includes(item)) continue;
+        if (!converted.has(item)) converted.set(item, { ...item, priceUsd: nativeAmountToUsd(nativeAmount(nativePrice.amount), pricing) });
+        invIndex[key] = converted.get(item);
       }
     }
 
@@ -814,6 +842,9 @@ export async function POST(req: NextRequest) {
       lineItems.push({
         label: inv.name || inv.sku || "Item",
         priceUsd: lineTotal,
+        ...(pricing && (inv as any).nativePrice ? { nativeAmount: roundReceiptAmount(
+          (Number((inv as any).nativePrice.amount) + modifiers.reduce((sum, mod) => sum + mod.priceAdjustment * (mod.quantity || 1), 0) / pricing.usdPerUnit) * qty
+        ) } : {}),
         qty,
         thumb: Array.isArray((inv as any)?.images) && (inv as any).images.length ? (inv as any).images[0] : undefined,
         itemId: String(inv.id || ""),
@@ -990,6 +1021,10 @@ export async function POST(req: NextRequest) {
     ];
 
     const totalUsd = fromCents(baseWithoutFeeCents + processingFeeCents);
+    if (pricing) {
+      pricing = snapshotReceiptPricing(pricing, finalLineItems, totalUsd);
+      for (const item of finalLineItems) delete item.nativeAmount;
+    }
 
     // --- x402 Agentic Payment Logic START ---
     // Check if the client is an agent requesting L402 flow
@@ -1080,13 +1115,12 @@ export async function POST(req: NextRequest) {
     const ts = Date.now();
 
     // Use storeCurrency from config instead of hardcoded USD
-    const receiptCurrency = typeof cfg?.storeCurrency === "string" ? cfg.storeCurrency : "USD";
+    const receiptCurrencyCode = pricing?.currency || (typeof cfg?.storeCurrency === "string" ? cfg.storeCurrency : "USD");
 
     const receipt: Receipt = {
       receiptId,
       totalUsd,
-      currency: receiptCurrency as "USD",
-      lineItems: finalLineItems,
+      ...(pricing ? receiptCurrencyFields({ pricing, totalUsd, lineItems: finalLineItems }) : { currency: receiptCurrencyCode, lineItems: finalLineItems }),
       createdAt: ts,
       brandName,
       jurisdictionCode: appliedJurisdictionCode,
@@ -1115,7 +1149,8 @@ export async function POST(req: NextRequest) {
       brandKey: brandKey || undefined,
       receiptId,
       totalUsd,
-      currency: receiptCurrency,
+      currency: receiptCurrencyCode,
+      ...(pricing ? { pricing } : {}),
       lineItems: finalLineItems,
       createdAt: ts,
       brandName,
@@ -1219,8 +1254,8 @@ export async function POST(req: NextRequest) {
     }
   } catch (e: any) {
     return NextResponse.json(
-      { error: e?.message || "failed" },
-      { status: 500, headers: { "x-correlation-id": correlationId } }
+      { error: e instanceof ReceiptCurrencyError ? e.code : (e?.message || "failed"), message: e?.message },
+      { status: e instanceof ReceiptCurrencyError ? e.status : 500, headers: { "x-correlation-id": correlationId } }
     );
   }
 }

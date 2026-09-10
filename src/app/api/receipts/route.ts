@@ -8,6 +8,8 @@ import { requireCsrf, rateLimitOrThrow, rateKey } from "@/lib/security";
 import { requireThirdwebAuth, assertOwnershipOrAdmin } from "@/lib/auth";
 import { getBrandConfig, computeSplitAmounts, getEffectiveProcessingFeeBps } from "@/config/brands";
 import { isValidRedirectUrl, isValidWebhookUrl } from "@/lib/webhook-dispatch";
+import { fetchUsdRates } from "@/lib/eth";
+import { createReceiptPricing, hasNativeReceiptAmounts, normalizeNativeReceipt, receiptCurrency, receiptCurrencyFields, ReceiptCurrencyError, type ReceiptPricing } from "@/lib/receipt-currency";
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -31,7 +33,9 @@ type ReceiptLineItem = {
 export type Receipt = {
   receiptId: string;
   totalUsd: number;
-  currency: "USD";
+  currency: string;
+  pricing?: ReceiptPricing;
+  total?: number;
   lineItems: ReceiptLineItem[];
   createdAt: number;
   brandName?: string;
@@ -108,7 +112,7 @@ export async function GET(req: NextRequest) {
   try {
     const container = await getContainer();
 
-    let query = `SELECT TOP @limit c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.brandName, c.status, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.buyerWallet, c.transactionHash, c.tipAmount, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.employeeId FROM c WHERE c.type='receipt' AND c.wallet=@wallet`;
+    let query = `SELECT TOP @limit c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.brandName, c.status, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.buyerWallet, c.transactionHash, c.tipAmount, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.employeeId FROM c WHERE c.type='receipt' AND c.wallet=@wallet`;
     const parameters: { name: string; value: any }[] = [{ name: "@wallet", value: wallet }, { name: "@limit", value: limit }];
 
     if (startTs > 0) {
@@ -153,8 +157,7 @@ export async function GET(req: NextRequest) {
       ? resources.map((row: any) => ({
         receiptId: String(row.receiptId || ""),
         totalUsd: Number(row.totalUsd || 0),
-        currency: "USD",
-        lineItems: Array.isArray(row.lineItems) ? row.lineItems : [],
+        ...receiptCurrencyFields(row),
         createdAt: Number(row.createdAt || Date.now()),
         brandName: typeof row.brandName === "string" ? row.brandName : undefined,
         status: typeof row.status === "string" ? row.status : undefined,
@@ -177,7 +180,7 @@ export async function GET(req: NextRequest) {
     );
   } catch (e: any) {
     // Graceful degrade when Cosmos isn't configured/available
-    const receipts: Receipt[] = getReceipts(limit, wallet) as any;
+    const receipts: Receipt[] = getReceipts(limit, wallet).map(row => ({ ...row, ...receiptCurrencyFields(row) }));
     return NextResponse.json(
       { receipts, degraded: true, reason: e?.message || "cosmos_unavailable" },
       { status: 200, headers: { "x-correlation-id": correlationId, "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0", "Pragma": "no-cache", "Expires": "0" } }
@@ -190,8 +193,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const id = String(body?.id || "").trim();
-    const itemsBody: any[] = Array.isArray(body?.lineItems) ? body.lineItems : [];
-    const totalUsdRaw = body?.totalUsd;
+    let itemsBody: any[] = Array.isArray(body?.lineItems) ? body.lineItems : [];
+    let totalUsdRaw = body?.totalUsd;
+    let pricing: ReceiptPricing | undefined;
 
     // Auth: developer write via APIM key or JWT with receipts:write
     let caller: any;
@@ -210,6 +214,13 @@ export async function POST(req: NextRequest) {
         { error: "invalid_request", message: "id_required" },
         { status: 400, headers: { "x-correlation-id": correlationId } }
       );
+    }
+    if (hasNativeReceiptAmounts(body)) {
+      const currency = receiptCurrency(body.currency);
+      const normalized = normalizeNativeReceipt(body, createReceiptPricing(currency, currency === "USD" ? {} : await fetchUsdRates()));
+      itemsBody = normalized.lineItems;
+      totalUsdRaw = normalized.totalUsd;
+      pricing = normalized.pricing;
     }
     if (!itemsBody.length || !itemsBody.every((it) => typeof it?.label === "string" && Number.isFinite(Number(it?.priceUsd)))) {
       return NextResponse.json(
@@ -344,6 +355,12 @@ export async function POST(req: NextRequest) {
           currentStatus.includes("refund") ||
           !!(existing.transactionHash || existing.txHash || existing.onChainTxHash);
 
+        if (!isSettled && (pricing || existing.pricing)) {
+          return NextResponse.json(
+            { error: "receipt_already_exists", message: "Use a new receipt id for a new currency valuation. Existing receipt pricing is retained for payment retries." },
+            { status: 409, headers: { "x-correlation-id": correlationId } }
+          );
+        }
         if (isSettled) {
           const rawXfProto = req.headers.get("x-forwarded-proto");
           const rawXfHost = req.headers.get("x-forwarded-host");
@@ -389,7 +406,8 @@ export async function POST(req: NextRequest) {
       // Immutable merchant order amount. Stripe's source amount and the
       // customer-facing total are tracked separately during payment.
       orderTotalUsd: totalUsd,
-      currency: "USD",
+      currency: pricing?.currency || "USD",
+      ...(pricing ? { pricing } : {}),
       lineItems,
       createdAt: now,
       brandName,
@@ -435,11 +453,15 @@ export async function POST(req: NextRequest) {
     // Persist in Cosmos, degrade to in-memory when necessary
     try {
       const container = await getContainer();
-      await container.items.upsert(doc as any);
+      if (pricing) await container.items.create(doc as any);
+      else await container.items.upsert(doc as any);
     } catch (e: any) {
+      if (pricing && [409, 11000].includes(Number(e?.code || e?.statusCode))) {
+        return NextResponse.json({ error: "receipt_already_exists" }, { status: 409, headers: { "x-correlation-id": correlationId } });
+      }
       try {
         // Degraded mode: push to in-memory store
-        pushReceipts([{ receiptId: id, totalUsd, currency: "USD", lineItems, createdAt: now, brandName, status: "pending", wallet, stripeEmail } as any]);
+        pushReceipts([{ receiptId: id, totalUsd, currency: pricing?.currency || "USD", ...(pricing ? { pricing } : {}), lineItems, createdAt: now, brandName, status: "pending", wallet, stripeEmail } as any]);
       } catch { }
     }
 
@@ -473,8 +495,8 @@ export async function POST(req: NextRequest) {
     );
   } catch (e: any) {
     return NextResponse.json(
-      { error: e?.message || "server_error" },
-      { status: 500, headers: { "x-correlation-id": crypto.randomUUID() } }
+      { error: e instanceof ReceiptCurrencyError ? e.code : (e?.message || "server_error"), message: e?.message },
+      { status: e instanceof ReceiptCurrencyError ? e.status : 500, headers: { "x-correlation-id": crypto.randomUUID() } }
     );
   }
 }

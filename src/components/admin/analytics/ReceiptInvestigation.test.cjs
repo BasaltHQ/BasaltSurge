@@ -89,6 +89,20 @@ test('an unavailable conditional tab falls back to overview with accessible sele
   assert.match(html, /Receipt receipt-audit-1 investigation sections/);
 });
 
+test('partner read-only investigations retain evidence and omit mutation and live-query actions', () => {
+  const reconcileLink = render({ readOnly: true, activeTab: 'reconcile' });
+  assert.match(reconcileLink, /Card declined/, 'A stale reconcile link resolves to the evidence overview');
+  assert.doesNotMatch(reconcileLink, /Reconcile &amp; Actions|Run Targeted Reconcile|Check Live Stripe Telemetry/);
+  const customerEvidence = render({ readOnly: true, activeTab: 'customers' });
+  assert.match(customerEvidence, /test@example.invalid/);
+  assert.doesNotMatch(customerEvidence, /Enrich &amp; Sync Limits/);
+  const fees = render({ readOnly: true, activeTab: 'fees' });
+  assert.match(fees, /Fee Breakdown|Split Components|Net Payout|Charge Components/);
+  const missingLogs = render({ readOnly: true, activeTab: 'logs', expandedLogs: { [receipt.receiptId]: [] } });
+  assert.match(missingLogs, /No client logs with verified brand and receipt attribution are available/);
+  assert.doesNotMatch(missingLogs, /No client logs were recorded/);
+});
+
 test('explorer links require a recorded supported chain and keep receipt evidence available', () => {
   const { getTransactionExplorerUrl, getTransactionChainName } = require('@/lib/transaction-explorer.ts');
   assert.equal(getTransactionExplorerUrl(1, '0xabc'), 'https://etherscan.io/tx/0xabc');

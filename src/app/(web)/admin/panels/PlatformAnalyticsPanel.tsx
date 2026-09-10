@@ -13,6 +13,7 @@ import { CustomInteractiveLineChart, CustomInteractiveBarChart, type GitCommitEv
 import SafeInteractiveLineChart from "@/components/admin/analytics/TreasuryExplorer";
 import { aggregateAnalyticsReceipts } from "@/lib/platform-analytics-aggregation";
 import { parseAnalyticsViewState, writeAnalyticsViewState, analyticsMetricValue, type AnalyticsWorkspace, type AnalyticsViewState } from "@/lib/platform-analytics-view-state";
+import { parsePartnerAnalyticsViewState, writePartnerAnalyticsViewState } from "@/lib/partner-analytics-view-state";
 import "@/components/admin/analytics/analytics-workspace.css";
 import { useActiveAccount } from "thirdweb/react";
 import {
@@ -376,15 +377,25 @@ function calculateFailureReportReasons(receipts: ReceiptInfo[]): FailureReason[]
   return getAnalyticsFailureReportData(receipts).reasonCounts;
 }
 
-function readAnalyticsView(): AnalyticsViewState {
-  if (typeof window === "undefined") return parseAnalyticsViewState(new URLSearchParams());
-  return parseAnalyticsViewState(new URLSearchParams(window.location.search));
+function readAnalyticsView(partner: boolean, brandKey: string): AnalyticsViewState {
+  const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+  return partner ? parsePartnerAnalyticsViewState(params, brandKey) : parseAnalyticsViewState(params);
 }
 
-export default function PlatformAnalyticsPanel() {
+export interface PlatformAnalyticsPanelProps {
+  audience?: "platform" | "partner";
+  brandKey?: string;
+  brandName?: string;
+}
+
+export default function PlatformAnalyticsPanel({ audience = "platform", brandKey = "", brandName }: PlatformAnalyticsPanelProps = {}) {
+  const isPartner = audience === "partner";
+  const scopedBrandKey = brandKey.trim().toLowerCase();
+  const audienceLabel = isPartner ? "Partner" : "Platform";
+  const analyticsEndpoint = isPartner ? "/api/partner/analytics" : "/api/platform/analytics";
   const account = useActiveAccount();
   const wallet = account?.address || "";
-  const [initialView] = useState(readAnalyticsView);
+  const [initialView] = useState(() => readAnalyticsView(isPartner, scopedBrandKey));
   const [workspace, setWorkspace] = useState<AnalyticsWorkspace>(initialView.workspace);
   const [density, setDensity] = useState<"comfortable" | "compact">(initialView.density);
   const [queryMetadata, setQueryMetadata] = useState<any>(null);
@@ -401,6 +412,7 @@ export default function PlatformAnalyticsPanel() {
     else document.querySelector<HTMLButtonElement>('.analytics-workspaces [aria-current="page"]')?.focus();
   };
   const [logErrors, setLogErrors] = useState<Record<string, string>>({});
+  const [logNotes, setLogNotes] = useState<Record<string, string>>({});
   const logsInFlight = useRef(new Set<string>());
 
   const [loading, setLoading] = useState(true);
@@ -411,6 +423,7 @@ export default function PlatformAnalyticsPanel() {
   const [failureReasons, setFailureReasons] = useState<FailureReason[]>([]);
   const [failureHeatmap, setFailureHeatmap] = useState<FailureHeatmapData | null>(null);
   const [brandStats, setBrandStats] = useState<BrandStat[]>([]);
+  const [merchantStats, setMerchantStats] = useState<BrandStat[]>([]);
   const [recentReceipts, setRecentReceipts] = useState<ReceiptInfo[]>([]);
   const [dailySeries, setDailySeries] = useState<any[]>([]);
   const [bpFlipped, setBpFlipped] = useState(false);
@@ -484,6 +497,7 @@ export default function PlatformAnalyticsPanel() {
   const siteConfigLoadingRef = useRef<Set<string>>(new Set());
 
   const loadSiteConfigForReceipt = useCallback((receiptId: string, walletAddr?: string | null, brandKey?: string) => {
+    if (isPartner) return;
     if (!receiptId || fetchedSiteConfigs[receiptId] || siteConfigLoadingRef.current.has(receiptId)) return;
     siteConfigLoadingRef.current.add(receiptId);
     
@@ -511,7 +525,7 @@ export default function PlatformAnalyticsPanel() {
       .finally(() => {
         siteConfigLoadingRef.current.delete(receiptId);
       });
-  }, [fetchedSiteConfigs]);
+  }, [fetchedSiteConfigs, isPartner]);
 
   // Filters
   const [selectedBrand, setSelectedBrand] = useState<string>(initialView.brand);
@@ -580,7 +594,7 @@ export default function PlatformAnalyticsPanel() {
   const [refreshLimitsStatus, setRefreshLimitsStatus] = useState<Record<string, string>>({});
 
   const enrichCustomerLimits = useCallback(async (receiptId: string) => {
-    if (!wallet || refreshingLimits[receiptId]) return;
+    if (isPartner || !wallet || refreshingLimits[receiptId]) return;
     setRefreshingLimits(prev => ({ ...prev, [receiptId]: true }));
     setRefreshLimitsStatus(prev => ({ ...prev, [receiptId]: "Enriching limits from Stripe..." }));
     try {
@@ -613,7 +627,7 @@ export default function PlatformAnalyticsPanel() {
         });
       }, 4000);
     }
-  }, [wallet, refreshingLimits]);
+  }, [wallet, refreshingLimits, isPartner]);
   const [copySuccess, setCopySuccess] = useState<Record<string, boolean>>({});
   const [hoveredLineKey, setHoveredLineKey] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
@@ -627,7 +641,7 @@ export default function PlatformAnalyticsPanel() {
   const [fetchLimit, setFetchLimit] = useState<number | "all">(500);
   const effectiveTimezone = timezoneMode === "dynamic" ? DYNAMIC_TIMEZONE : SYSTEM_TIMEZONE;
   const resetAnalyticsQuery = () => {
-    setSelectedBrand("all"); setStatusFilter("all"); setKycFilter("all"); setTimeRange("today");
+    setSelectedBrand(isPartner ? scopedBrandKey : "all"); setStatusFilter("all"); setKycFilter("all"); setTimeRange("today");
     setSelectedWeekOffset(0); setSelectedMonthOffset(0); setSearchQuery(""); setAppliedSearch(""); setSelectedErrorCombo(null);
   };
   useEffect(() => {
@@ -637,11 +651,11 @@ export default function PlatformAnalyticsPanel() {
       search: appliedSearch, searchMode, basis: successRateMode, timezone: timezoneMode, reasons: selectedErrorCombo,
       receipt, receiptTab: activeTabMap[receipt] || "overview", metric: chartMetric, scale: scaleType };
     const url = new URL(window.location.href);
-    url.search = writeAnalyticsViewState(url.searchParams, state).toString();
+    url.search = (isPartner ? writePartnerAnalyticsViewState(url.searchParams, state, scopedBrandKey) : writeAnalyticsViewState(url.searchParams, state)).toString();
     window.history.replaceState(window.history.state, "", url);
   }, [workspace, density, selectedBrand, statusFilter, kycFilter, timeRange, customStartDate, customEndDate,
     selectedWeekOffset, selectedMonthOffset, appliedSearch, searchMode, successRateMode, timezoneMode, selectedErrorCombo,
-    mobileDrawerReceipt, expandedReceiptIds, activeTabMap, chartMetric, scaleType]);
+    mobileDrawerReceipt, expandedReceiptIds, activeTabMap, chartMetric, scaleType, isPartner, scopedBrandKey]);
 
   // Session deduplication cluster map for highlighting cart revisions
   const [isAlgorithmModalOpen, setIsAlgorithmModalOpen] = useState<boolean>(false);
@@ -673,13 +687,20 @@ export default function PlatformAnalyticsPanel() {
     return () => clearTimeout(timer);
   }, [searchQuery, appliedSearch]);
 
-  const fetchReceiptLogs = useCallback(async (receiptId: string) => {
+  const fetchReceiptLogs = useCallback(async (receiptId: string, merchantWallet?: string | null) => {
     if (expandedLogs[receiptId] || logsInFlight.current.has(receiptId)) return;
     logsInFlight.current.add(receiptId);
     setLogErrors(prev => ({ ...prev, [receiptId]: "" }));
     setLoadingLogs(prev => ({ ...prev, [receiptId]: true }));
     try {
-      const res = await fetch(`/api/platform/receipt-logs?receiptId=${encodeURIComponent(receiptId)}`, {
+      const params = new URLSearchParams({ receiptId });
+      if (isPartner) {
+        const receipt = recentReceipts.find(item => item.receiptId === receiptId);
+        const targetWallet = merchantWallet || receipt?.merchantWallet || receipt?.wallet;
+        if (!targetWallet) throw new Error("The merchant wallet was not recorded for this receipt. Its logs cannot be attributed safely.");
+        params.set("merchantWallet", targetWallet);
+      }
+      const res = await fetch(`${isPartner ? "/api/partner/receipt-logs" : "/api/platform/receipt-logs"}?${params.toString()}`, {
         headers: {
           "x-wallet": wallet,
         },
@@ -687,6 +708,11 @@ export default function PlatformAnalyticsPanel() {
       });
       const data = await res.json();
       if (res.ok && data.ok) {
+        if (data.unavailableReason) throw new Error(data.unavailableReason);
+        if (isPartner) setLogNotes(prev => ({ ...prev, [receiptId]: [
+          data.scopeNote || "Only logs with verified receipt and brand attribution are shown.",
+          data.logEvidence?.hasMore ? `Showing the first ${data.logEvidence.loaded || data.logs?.length || 0} verified log entries; additional entries are available.` : "",
+        ].filter(Boolean).join(" ") }));
         setExpandedLogs(prev => ({ ...prev, [receiptId]: data.logs }));
       } else {
         throw new Error(data.error || "Receipt logs could not be loaded");
@@ -697,7 +723,7 @@ export default function PlatformAnalyticsPanel() {
       logsInFlight.current.delete(receiptId);
       setLoadingLogs(prev => ({ ...prev, [receiptId]: false }));
     }
-  }, [wallet, expandedLogs]);
+  }, [wallet, expandedLogs, isPartner, recentReceipts]);
 
   const handleExpandReceipt = (receiptId: string) => {
     setExpandedReceiptIds(prev => {
@@ -739,7 +765,7 @@ export default function PlatformAnalyticsPanel() {
       timeRange,
       weekOffset: String(selectedWeekOffset),
       monthOffset: String(selectedMonthOffset),
-      brandKey: selectedBrand,
+      brandKey: isPartner ? scopedBrandKey : selectedBrand,
       statusFilter,
       kycFilter,
       includeAggregates: includeAggregates ? "true" : "false"
@@ -754,7 +780,7 @@ export default function PlatformAnalyticsPanel() {
       params.set("searchMode", searchMode);
     }
     return params;
-  }, [timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, statusFilter, kycFilter, customStartDate, customEndDate, appliedSearch, searchMode, selectedErrorCombo]);
+  }, [timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, statusFilter, kycFilter, customStartDate, customEndDate, appliedSearch, searchMode, selectedErrorCombo, isPartner, scopedBrandKey]);
 
   const fetchAnalyticsPage = useCallback(async (
     limit: number,
@@ -764,19 +790,23 @@ export default function PlatformAnalyticsPanel() {
     continuationToken?: string,
     includeAggregates = offset === 0
   ) => {
+    if (isPartner && !scopedBrandKey) throw new Error("A partner brand is required to load analytics.");
     const clientTz = typeof window !== "undefined"
       ? Intl.DateTimeFormat().resolvedOptions().timeZone
       : "America/Los_Angeles";
     const params = buildAnalyticsParams(limit, offset, snapshotEnd, continuationToken, includeAggregates);
-    const response = await fetch(`/api/platform/analytics?${params.toString()}`, {
+    const response = await fetch(`${analyticsEndpoint}?${params.toString()}`, {
       headers: { "x-wallet": wallet, "x-client-timezone": clientTz },
       cache: "no-store",
       signal
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `Analytics batch failed at offset ${offset}`);
+    if (isPartner && (data.metadata?.accessScope?.type !== "partner" || data.metadata.accessScope.brandKey !== scopedBrandKey)) {
+      throw new Error("The analytics response did not match this partner brand. Refresh the page to reload your brand context.");
+    }
     return data;
-  }, [buildAnalyticsParams, wallet]);
+  }, [buildAnalyticsParams, wallet, analyticsEndpoint, isPartner, scopedBrandKey]);
 
   const collectAnalyticsReceipts = useCallback(async ({
     signal,
@@ -869,6 +899,7 @@ export default function PlatformAnalyticsPanel() {
             setFailureReasons(firstData.failureReasons || []);
             setFailureHeatmap(firstData.failureHeatmap || null);
             setBrandStats(firstData.brandStats || []);
+            setMerchantStats(firstData.merchantStats || []);
             setDailySeries(firstData.dailySeries || []);
             setTotalServerMatches(firstData.pagination?.totalMatchingCount ?? target);
           }
@@ -888,6 +919,7 @@ export default function PlatformAnalyticsPanel() {
       setFailureReasons(result.firstData.failureReasons || []);
       setFailureHeatmap(result.firstData.failureHeatmap || null);
       setBrandStats(result.firstData.brandStats || []);
+      setMerchantStats(result.firstData.merchantStats || []);
       setDailySeries(result.firstData.dailySeries || []);
       setTotalServerMatches(result.totalMatching);
       setBatchProgress(100);
@@ -926,6 +958,7 @@ export default function PlatformAnalyticsPanel() {
       setFailureReasons(data.failureReasons);
       setFailureHeatmap(data.failureHeatmap || null);
       setBrandStats(data.brandStats);
+      setMerchantStats(data.merchantStats || []);
       setRecentReceipts(data.recentReceipts || []);
       setDailySeries(data.dailySeries || []);
       setTotalServerMatches(data.pagination?.totalMatchingCount ?? (data.stats?.totalCreated || 0));
@@ -951,6 +984,7 @@ export default function PlatformAnalyticsPanel() {
   }, [wallet, fetchLimit, fetchAnalyticsPage, loadAllBatched, cancelBatchLoad]);
 
   const handleTargetedReconcile = useCallback(async (receiptId: string) => {
+    if (isPartner) return;
     setActionLoading(prev => ({ ...prev, [receiptId]: true }));
     setActionFeedback(prev => ({ ...prev, [receiptId]: "Connecting to reconciliation engine..." }));
     try {
@@ -989,9 +1023,10 @@ export default function PlatformAnalyticsPanel() {
     } finally {
       setActionLoading(prev => ({ ...prev, [receiptId]: false }));
     }
-  }, [wallet, fetchAnalytics]);
+  }, [wallet, fetchAnalytics, isPartner]);
 
   const handleStripeTelemetryCheck = useCallback(async (receiptId: string, stripeSessionId?: string | null) => {
+    if (isPartner) return;
     const key = `stripe-${receiptId}`;
     if (!stripeSessionId) {
       setActionFeedback(prev => ({ ...prev, [receiptId]: "⚠️ No Stripe Session ID recorded on this receipt." }));
@@ -1026,10 +1061,10 @@ export default function PlatformAnalyticsPanel() {
     } finally {
       setActionLoading(prev => ({ ...prev, [key]: false }));
     }
-  }, []);
+  }, [isPartner]);
 
   const fetchSafeBalances = useCallback(async (force = false) => {
-    if (!wallet) return;
+    if (isPartner || !wallet) return;
     setSafeLoading(true);
     setSafeError(null);
     try {
@@ -1053,10 +1088,10 @@ export default function PlatformAnalyticsPanel() {
     } finally {
       setSafeLoading(false);
     }
-  }, [wallet]);
+  }, [wallet, isPartner]);
 
   const fetchGitCommits = useCallback(async () => {
-    if (!wallet) return;
+    if (isPartner || !wallet) return;
     try {
       const res = await fetch("/api/platform/git-commits", {
         headers: { "x-wallet": wallet },
@@ -1069,7 +1104,7 @@ export default function PlatformAnalyticsPanel() {
     } catch (err) {
       console.warn("Failed to fetch live git commits:", err);
     }
-  }, [wallet]);
+  }, [wallet, isPartner]);
 
   useEffect(() => { void fetchAnalytics(); }, [fetchAnalytics]);
   useEffect(() => { void fetchSafeBalances(); }, [fetchSafeBalances]);
@@ -1219,14 +1254,14 @@ export default function PlatformAnalyticsPanel() {
 
   const hasActiveFilters = useMemo(() => {
     return (
-      selectedBrand !== "all" ||
+      (!isPartner && selectedBrand !== "all") ||
       statusFilter !== "all" ||
       timeRange !== "today" || selectedErrorCombo !== null ||
       searchQuery.trim() !== "" ||
       appliedSearch.trim() !== "" ||
       kycFilter !== "all"
     );
-  }, [selectedBrand, statusFilter, timeRange, searchQuery, appliedSearch, kycFilter, selectedErrorCombo]);
+  }, [selectedBrand, statusFilter, timeRange, searchQuery, appliedSearch, kycFilter, selectedErrorCombo, isPartner]);
 
   const searchPlaceholder = useMemo(() => {
     switch (searchMode) {
@@ -1290,11 +1325,13 @@ export default function PlatformAnalyticsPanel() {
       const partnerLabel = selectedBrand === "all"
         ? "ALL"
         : resolveReportBrandName(selectedBrand, reportReceipts);
-      const filterContext = `Definition: ${collected.firstData.metadata?.definitionVersion || "current"} | Generated: ${collected.firstData.metadata?.generatedAt || new Date().toISOString()} | Start inclusive: ${collected.firstData.metadata?.query?.start || "All history"} | End exclusive: ${collected.firstData.metadata?.query?.end || collected.snapshotEnd} | ${collected.firstData.metadata?.consistencyDescription || "Bounded live query; records may change"} | Basis: ${successRateMode} | Failure selection: ${selectedErrorCombo ? Array.from(new Set(selectedErrorCombo)).join(" AND ") : "All"} | ${dateRangeStr} | Partner: ${partnerLabel} | Status: ${statusFilter.toUpperCase()} | KYC: ${kycFilter.toUpperCase()} | Search: ${searchLabel} | TZ: ${timezoneLabel}`;
+      const scopeContext = isPartner ? `Brand scope: ${scopedBrandKey} | Only explicitly attributed brand records | ` : "";
+      const filterContext = `${scopeContext}Definition: ${collected.firstData.metadata?.definitionVersion || "current"} | Generated: ${collected.firstData.metadata?.generatedAt || new Date().toISOString()} | Start inclusive: ${collected.firstData.metadata?.query?.start || "All history"} | End exclusive: ${collected.firstData.metadata?.query?.end || collected.snapshotEnd} | ${collected.firstData.metadata?.consistencyDescription || "Bounded live query; records may change"} | Basis: ${successRateMode} | Failure selection: ${selectedErrorCombo ? Array.from(new Set(selectedErrorCombo)).join(" AND ") : "All"} | ${dateRangeStr} | Partner: ${partnerLabel} | Status: ${statusFilter.toUpperCase()} | KYC: ${kycFilter.toUpperCase()} | Search: ${searchLabel} | TZ: ${timezoneLabel}`;
       setExportProgress(82);
 
       if (controller.signal.aborted) throw new DOMException("Report export cancelled", "AbortError");
 
+      const reportIdentity = isPartner ? { brandName: brandName || scopedBrandKey, brandKey: scopedBrandKey } : undefined;
       if (format === "xlsx") {
         await exportAnalyticsXLSX(
           type,
@@ -1303,16 +1340,17 @@ export default function PlatformAnalyticsPanel() {
           reportFailureReasons,
           reportReceipts,
           filterContext,
-          timezoneLabel
+          timezoneLabel,
+          reportIdentity
         );
       } else if (type === "executive") {
-        await exportExecutiveSummaryPDF(reportStats, reportBrandStats, reportFailureReasons, filterContext, reportReceipts);
+        await exportExecutiveSummaryPDF(reportStats, reportBrandStats, reportFailureReasons, filterContext, reportReceipts, reportIdentity);
       } else if (type === "ledger") {
-        await exportTransactionLedgerPDF(reportReceipts, reportStats, searchLabel, filterContext, timezoneLabel);
+        await exportTransactionLedgerPDF(reportReceipts, reportStats, searchLabel, filterContext, timezoneLabel, reportIdentity);
       } else if (type === "brands") {
-        await exportBrandFinancialPDF(reportBrandStats, reportStats, filterContext);
+        await exportBrandFinancialPDF(reportBrandStats, reportStats, filterContext, reportIdentity);
       } else {
-        await exportFailureDiagnosticsPDF(reportFailureReasons, reportStats, reportReceipts, filterContext, timezoneLabel);
+        await exportFailureDiagnosticsPDF(reportFailureReasons, reportStats, reportReceipts, filterContext, timezoneLabel, reportIdentity);
       }
       setExportProgress(100);
     } catch (err: any) {
@@ -1335,7 +1373,7 @@ export default function PlatformAnalyticsPanel() {
         setActiveExportFormat(null);
       }
     }
-  }, [collectAnalyticsReceipts, timeRange, customStartDate, customEndDate, selectedBrand, statusFilter, kycFilter, selectedErrorCombo, timezoneMode, appliedSearch, searchModeLabel, successRateMode]);
+  }, [collectAnalyticsReceipts, timeRange, customStartDate, customEndDate, selectedBrand, statusFilter, kycFilter, selectedErrorCombo, timezoneMode, appliedSearch, searchModeLabel, successRateMode, isPartner, scopedBrandKey, brandName]);
 
   const displayStats = stats;
 
@@ -1370,13 +1408,14 @@ export default function PlatformAnalyticsPanel() {
     return processRate;
   }, [successRateMode, trueIntegrationRate, integrationRate, processRate]);
 
-  const displayedBrandStats = useMemo(() => brandStats.map(b => {
+  const performanceStats = isPartner ? merchantStats : brandStats;
+  const displayedBrandStats = useMemo(() => performanceStats.map(b => {
     const paid = successRateMode === "integration" ? b.paid : b.dedupedPaid ?? b.paid;
     const total = successRateMode === "integration" ? b.total : successRateMode === "process"
       ? paid + (b.dedupedFailed ?? b.failed) : b.dedupedTotal ?? b.total;
     return { ...b, successRate: total > 0 ? paid / total * 100 : 0, hasPopulation: total > 0,
       sessionsText: paid + " paid / " + total + (successRateMode === "integration" ? " receipts" : successRateMode === "process" ? " resolved unique intents" : " unique intents") };
-  }), [brandStats, successRateMode]);
+  }), [performanceStats, successRateMode]);
 
   const maxBrandGmv = useMemo(() => {
     return Math.max(...displayedBrandStats.map(b => b.gmv), 1);
@@ -1530,25 +1569,26 @@ export default function PlatformAnalyticsPanel() {
   };
 
   const renderReceiptInvestigation = (receipt: ReceiptInfo) => <ReceiptInvestigation
+    readOnly={isPartner}
     receipt={receipt} activeTab={activeTabMap[receipt.receiptId] || "overview"}
     onTabChange={tab => setActiveTabMap(prev => ({ ...prev, [receipt.receiptId]: tab }))}
     timezone={effectiveTimezone} siteConfig={fetchedSiteConfigs[receipt.receiptId]}
     loadSiteConfigForReceipt={loadSiteConfigForReceipt} fetchReceiptLogs={fetchReceiptLogs}
-    expandedLogs={expandedLogs} loadingLogs={loadingLogs} logErrors={logErrors}
+    expandedLogs={expandedLogs} loadingLogs={loadingLogs} logErrors={logErrors} logNotes={logNotes}
     refreshingLimits={refreshingLimits} refreshLimitsStatus={refreshLimitsStatus} enrichCustomerLimits={enrichCustomerLimits}
     copySuccess={copySuccess} handleCopy={handleCopy} actionLoading={actionLoading} actionFeedback={actionFeedback}
     handleTargetedReconcile={handleTargetedReconcile} handleStripeTelemetryCheck={handleStripeTelemetryCheck}
   />;
 
   if (loading) {
-    return <AnalyticsLoadingScreen />;
+    return <AnalyticsLoadingScreen audience={audience} />;
   }
 
   if (error && !stats) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[300px] border border-red-500/20 bg-red-500/5 rounded-2xl p-6 text-center">
         <AlertCircle className="w-10 h-10 text-red-500 mb-2" />
-        <h3 className="text-base font-semibold text-red-400">Failed to load platform analytics</h3>
+        <h3 className="text-base font-semibold text-red-400">Failed to load {audienceLabel.toLowerCase()} analytics</h3>
         <p className="text-xs text-muted-foreground mt-1 max-w-sm">{error}</p>
         <button
           onClick={fetchAnalytics}
@@ -1562,13 +1602,14 @@ export default function PlatformAnalyticsPanel() {
   }
 
   return (
-    <div className="platform-analytics w-full space-y-5 pb-24" data-density={density}>
+    <div className="platform-analytics w-full space-y-5 pb-24" data-density={density} data-audience={audience}>
 
       <header className="analytics-hero flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="analytics-eyebrow"><Activity size={13}/> PLATFORM INTELLIGENCE</div>
-          <h2 className="text-2xl font-semibold tracking-tight text-white">Platform <span>Analytics</span></h2>
-          <p className="mt-1 text-sm text-zinc-400">Performance, payment evidence and operational diagnostics.</p>
+          <div className="analytics-eyebrow"><Activity size={13}/> {audienceLabel.toUpperCase()} INTELLIGENCE</div>
+          <h2 className="text-2xl font-semibold tracking-tight text-white">{audienceLabel} <span>Analytics</span></h2>
+          <p className="mt-1 text-sm text-zinc-400">{isPartner ? `Performance, payment evidence and diagnostics for ${brandName || scopedBrandKey}.` : "Performance, payment evidence and operational diagnostics."}</p>
+          {isPartner && <p className="mt-2 text-xs text-zinc-400">Brand: <span className="break-all font-medium text-zinc-200">{scopedBrandKey}</span> · Only records explicitly attributed to this brand are included.</p>}
           <p className="mt-2 text-xs text-zinc-400" role="status">{isRefetching ? "Updating metrics…" : queryMetadata?.generatedAt ? `Updated ${new Date(queryMetadata.aggregateGeneratedAt || queryMetadata.generatedAt).toLocaleString(undefined, { timeZone: effectiveTimezone })} · ${effectiveTimezone}` : "Manual refresh"}</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1584,14 +1625,14 @@ export default function PlatformAnalyticsPanel() {
       {(isRefetching || error) && queryMetadata?.query && <p className="rounded-lg border border-white/10 p-3 text-xs text-zinc-400">Displayed results: partner {queryMetadata.query.brandKey}, status {queryMetadata.query.status}, KYC {queryMetadata.query.kyc}, search {queryMetadata.query.search || "none"}. The controls below describe the requested query.</p>}
       {error && stats && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200"><span>Showing previous results. {error}</span><button type="button" onClick={fetchAnalytics} className="underline">Retry</button></div>}
       <nav className="analytics-workspaces" aria-label="Analytics workspaces">
-        {([['overview','Overview',Activity],['conversion','Conversion & Brands',BarChart2],['failures','Failures',AlertCircle],['transactions','Transactions',FileText],['treasury','Treasury',Database],['audit','Audit & Reconcile',CheckCircle2]] as const).map(([key,label,Icon]) => <button type="button" key={key} aria-current={workspace === key ? "page" : undefined} onClick={() => setWorkspace(key)}><Icon size={15}/>{label}</button>)}
+        {([['overview','Overview',Activity],['conversion',isPartner ? 'Conversion' : 'Conversion & Brands',BarChart2],['failures','Failures',AlertCircle],['transactions','Transactions',FileText],['treasury','Treasury',Database],['audit','Audit & Reconcile',CheckCircle2]] as const).filter(([key]) => !isPartner || (key !== "treasury" && key !== "audit")).map(([key,label,Icon]) => <button type="button" key={key} aria-current={workspace === key ? "page" : undefined} onClick={() => setWorkspace(key)}><Icon size={15}/>{label}</button>)}
       </nav>
       <section hidden={workspace === "audit"} aria-label="Analytics query and reports" className="rounded-xl border border-white/10 bg-zinc-950 p-4 space-y-4">
           {/* Filter Toolbar */}
-          <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3 sm:gap-4">
+          <div className="flex min-w-0 flex-col items-stretch gap-3 sm:gap-4 2xl:flex-row 2xl:items-start">
 
             {/* Enhanced Search Bar & Target Mode Selector */}
-            <div className="flex flex-col gap-2 flex-1 w-full">
+            <div className="flex min-w-0 flex-col gap-2 flex-1 w-full">
               {/* Dedicated search scopes keep receipt, customer, and wallet investigations explicit. */}
               <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/25 p-1 overflow-x-auto">
                 {([
@@ -1623,7 +1664,7 @@ export default function PlatformAnalyticsPanel() {
                 <Search className="absolute left-3.5 top-3 w-4 h-4 text-muted-foreground pointer-events-none" />
                 <input
                   type="text"
-                  aria-label={`Search platform analytics by ${searchModeLabel}`}
+                  aria-label={`Search ${audienceLabel.toLowerCase()} analytics by ${searchModeLabel}`}
                   placeholder={searchPlaceholder}
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
@@ -1652,7 +1693,7 @@ export default function PlatformAnalyticsPanel() {
                     onClick={() => setAppliedSearch(searchQuery.trim())}
                     disabled={isRefetching || isBatchLoading}
                     className="px-2.5 py-1 rounded-lg bg-primary/20 hover:bg-primary/30 border border-primary/40 text-xs font-bold text-primary flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
-                    title="Query platform database"
+                    title={`Query ${audienceLabel.toLowerCase()} analytics`}
                   >
                     {isRefetching ? (
                       <Loader2 className="w-3 h-3 animate-spin text-primary" />
@@ -1666,24 +1707,24 @@ export default function PlatformAnalyticsPanel() {
             </div>
 
             {/* Filters Dropdown */}
-            <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
-              <select
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2.5 w-full 2xl:flex-1">
+              {!isPartner && <select
                 aria-label="Partner filter"
                 value={selectedBrand}
                 onChange={e => setSelectedBrand(e.target.value)}
-                className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
+                className="h-10 min-w-0 max-w-full px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 w-full flex-none sm:w-auto"
               >
                 <option value="all" className="bg-neutral-900">All Brands</option>
                 {brandFilterKeys.map(bk => (
                   <option key={bk} value={bk} className="bg-neutral-900">{bk}</option>
                 ))}
-              </select>
+              </select>}
 
               <select
                 aria-label="Receipt status filter"
                 value={statusFilter}
                 onChange={e => setStatusFilter(e.target.value)}
-                className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
+                className="h-10 min-w-0 max-w-full px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 w-full flex-none sm:w-auto"
               >
                 <option value="all" className="bg-neutral-900">All Statuses</option>
                 {detectedStatuses.map(({ status, count }) => {
@@ -1704,7 +1745,7 @@ export default function PlatformAnalyticsPanel() {
                 aria-label="Verified KYC tier"
                 value={kycFilter}
                 onChange={e => setKycFilter(e.target.value)}
-                className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
+                className="h-10 min-w-0 max-w-full px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 w-full flex-none sm:w-auto"
               >
                 <option value="all" className="bg-neutral-900">All KYC Tiers</option>
                 <option value="L0" className="bg-neutral-900">L0 (Base)</option>
@@ -1717,7 +1758,7 @@ export default function PlatformAnalyticsPanel() {
                 aria-label="Date range"
                 value={timeRange}
                 onChange={e => setTimeRange(e.target.value)}
-                className="h-10 px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 flex-1 sm:flex-initial"
+                className="h-10 min-w-0 max-w-full px-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs text-white/90 focus:outline-none focus:border-primary/60 w-full flex-none sm:w-auto"
               >
                 <option value="all" className="bg-neutral-900">All Time</option>
                 <option value="today" className="bg-neutral-900">Today</option>
@@ -1728,7 +1769,7 @@ export default function PlatformAnalyticsPanel() {
               </select>
 
               {timeRange === "custom" && (
-                <div className="flex items-center gap-1.5 bg-white/[0.04] border border-white/10 px-3 py-1 rounded-xl h-10">
+                <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5 bg-white/[0.04] border border-white/10 px-3 py-1 rounded-xl min-h-10">
                   <input
                     type="date"
                     value={customStartDate}
@@ -1746,7 +1787,7 @@ export default function PlatformAnalyticsPanel() {
               )}
 
               {(timeRange === "weekly" || timeRange === "monthly") && (
-                <div className="flex items-center gap-2 bg-white/[0.04] border border-white/10 px-3 py-1 rounded-xl h-10">
+                <div className="flex min-w-0 max-w-full items-center gap-2 bg-white/[0.04] border border-white/10 px-3 py-1 rounded-xl min-h-10">
                   <button
                     onClick={() => {
                       if (timeRange === "weekly") {
@@ -1974,16 +2015,18 @@ export default function PlatformAnalyticsPanel() {
         <div className="analytics-scope">
           <span>{totalServerMatches.toLocaleString()} matching receipts · {recentReceipts.length.toLocaleString()} loaded</span>
           {queryMetadata?.query && <span>{queryMetadata.query.start ? new Date(queryMetadata.query.start).toLocaleString(undefined, { timeZone: effectiveTimezone }) : "All history"} → {new Date(queryMetadata.query.end).toLocaleString(undefined, { timeZone: effectiveTimezone })}</span>}
-          {selectedBrand !== "all" && <button type="button" onClick={() => setSelectedBrand("all")}>Brand: {selectedBrand} ×</button>}
+          {!isPartner && selectedBrand !== "all" && <button type="button" onClick={() => setSelectedBrand("all")}>Brand: {selectedBrand} ×</button>}
           {statusFilter !== "all" && <button type="button" onClick={() => setStatusFilter("all")}>Status: {statusFilter} ×</button>}
           {kycFilter !== "all" && <button type="button" onClick={() => setKycFilter("all")}>KYC: {kycFilter} ×</button>}
           {selectedErrorCombo && <button type="button" className="max-w-full break-words text-left" onClick={() => setSelectedErrorCombo(null)}>Errors: {Array.from(new Set(selectedErrorCombo)).map(reason => failureCombinations.reasonCounts.find(item => item.id === reason)?.reason || reason).join(" + ")} ×</button>}
           {hasActiveFilters && <button type="button" onClick={resetAnalyticsQuery}>Clear filters</button>}
         </div>
         {queryMetadata && workspace !== "treasury" && <details className="text-xs text-zinc-400"><summary className="cursor-pointer py-1">Data definitions and completeness</summary><div className="mt-2 space-y-2">
+          {isPartner && <p>Only receipts explicitly assigned to {scopedBrandKey} are included. Older records without verified brand attribution are omitted. Client logs also require verified brand and receipt attribution; unavailable telemetry does not establish whether checkout failed or succeeded.</p>}
           <p>Definition {queryMetadata.definitionVersion}. {queryMetadata.consistencyDescription}</p>
           <p>{queryMetadata.intentCohort}. Daily unique intents are assigned to their first observed day within this query; raw receipt volume is assigned by receipt creation.</p>
           <p>Receipt evidence: {recentReceipts.length.toLocaleString()} loaded of {totalServerMatches.toLocaleString()} matches. {queryMetadata.completeness?.detailUnavailableCount || 0} details unavailable in the initial page. Site configuration {queryMetadata.configuration?.available ? "available" : "unavailable"}; configuration and aggregate projections may be cached for up to 60 seconds.</p>
+          {isPartner && <p>Receipt investigations use their recorded fee and split configuration. No live platform administration actions are available in this view.</p>}
         </div></details>}
         {workspace === "treasury" && <p className="text-xs text-zinc-400">Treasury has an independent on-chain history and valuation scope. Receipt filters above apply to analytics reports.</p>}
         {isExportingReport && <div role="status" aria-live="polite" className="flex items-center gap-3 text-sm"><progress max={100} value={exportProgress} aria-label="Report export progress" /><span>Preparing {activeExportFormat?.toUpperCase()} report · {exportProgress}%</span><button type="button" className="underline" onClick={() => exportAbortRef.current?.abort()}>Cancel export</button></div>}
@@ -2136,15 +2179,15 @@ export default function PlatformAnalyticsPanel() {
           </div>
         </div>
         {!isMainChartMinimized && (chartTimeSeries.length === 1 ? <CustomInteractiveBarChart
-          data={chartTimeSeries} brandKeys={allBrandKeys} hoveredKey={hoveredLineKey} setHoveredKey={setHoveredLineKey}
+          data={chartTimeSeries} brandKeys={isPartner ? [] : allBrandKeys} aggregateLabel={isPartner ? "Brand aggregate" : undefined} hoveredKey={hoveredLineKey} setHoveredKey={setHoveredLineKey}
           metricType={chartMetric} scaleType={scaleType} timezone={effectiveTimezone}
           metricLabel={chartMetric === "amountEarned" ? "Gross volume (GMV)" : successRateMode === "true_integration" ? "Unique intent completion" : successRateMode === "process" ? "Resolved unique intent outcome" : "Raw receipt completion"}
         /> : <CustomInteractiveLineChart
-          data={chartTimeSeries} brandKeys={allBrandKeys} hoveredKey={hoveredLineKey} setHoveredKey={setHoveredLineKey}
+          data={chartTimeSeries} brandKeys={isPartner ? [] : allBrandKeys} aggregateLabel={isPartner ? "Brand aggregate" : undefined} hoveredKey={hoveredLineKey} setHoveredKey={setHoveredLineKey}
           metricType={chartMetric} scaleType={scaleType} timezone={effectiveTimezone}
           metricLabel={chartMetric === "amountEarned" ? "Gross volume (GMV)" : successRateMode === "true_integration" ? "Unique intent completion" : successRateMode === "process" ? "Resolved unique intent outcome" : "Raw receipt completion"}
-          gitCommits={gitCommits} showGitCommitsOverlay={showGitCommitsOverlay}
-          setShowGitCommitsOverlay={value => { const next = typeof value === "function" ? value(showGitCommitsOverlay) : value; setShowGitCommitsOverlay(next); try { localStorage.setItem("pp_admin_analytics_git_commits_overlay", String(next)); } catch {} }}
+          gitCommits={isPartner ? [] : gitCommits} showGitCommitsOverlay={!isPartner && showGitCommitsOverlay}
+          setShowGitCommitsOverlay={isPartner ? undefined : value => { const next = typeof value === "function" ? value(showGitCommitsOverlay) : value; setShowGitCommitsOverlay(next); try { localStorage.setItem("pp_admin_analytics_git_commits_overlay", String(next)); } catch {} }}
         />)}
       </section>
 
@@ -2217,7 +2260,7 @@ export default function PlatformAnalyticsPanel() {
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-base font-bold text-white flex items-center gap-2">
                       <BarChart2 className="w-4 h-4 text-primary" />
-                      <span>Brand Performance</span>
+                      <span>{isPartner ? "Merchant" : "Brand"} Performance</span>
                     </h3>
                     
                     {/* Toggle Metric Switch */}
@@ -2274,9 +2317,10 @@ export default function PlatformAnalyticsPanel() {
                   </button>
                 </div>
 
-                <div className="analytics-brand-bars flex flex-col justify-around py-2 flex-1 min-h-0 mt-4 mb-2">
-                  {displayedBrandStats.map((b) => {
-                    const brandIdx = allBrandKeys.indexOf(b.brandKey);
+                {isPartner && <p className="mt-3 text-xs text-zinc-400">{performanceStats.length.toLocaleString()} merchants across all matching receipts, ordered by gross volume.</p>}
+                <div role={isPartner ? "region" : undefined} aria-label={isPartner ? "Merchant performance" : undefined} tabIndex={isPartner ? 0 : undefined} className={`analytics-brand-bars flex flex-col justify-around py-2 flex-1 min-h-0 mt-4 mb-2 ${isPartner ? "max-h-[28rem] overflow-y-auto pr-2" : ""}`}>
+                  {displayedBrandStats.map((b, index) => {
+                    const brandIdx = isPartner ? index : allBrandKeys.indexOf(b.brandKey);
                     const color = getBrandColor(b.brandKey, brandIdx);
                     
                     let widthPct = 0;
@@ -2296,8 +2340,8 @@ export default function PlatformAnalyticsPanel() {
 
                     return (
                       <div key={b.brandKey} className="space-y-2">
-                        <div className="flex justify-between items-center text-xs sm:text-sm">
-                          <span className="font-bold text-white/95">{b.brandKey}</span>
+                        <div className="flex flex-wrap justify-between items-center gap-x-3 gap-y-1 text-xs sm:text-sm">
+                          <span className="min-w-0 break-all font-bold text-white/95" title={b.brandKey}>{isPartner ? b.brandName || b.brandKey : b.brandKey}</span>
                           <span className="text-muted-foreground text-xs font-medium">
                             {brandMetric === "successRate" ? (
                               <>
@@ -2323,8 +2367,8 @@ export default function PlatformAnalyticsPanel() {
                       </div>
                     );
                   })}
-                  {brandStats.length === 0 && (
-                    <div className="text-xs text-muted-foreground text-center py-4">No brand performance data.</div>
+                  {performanceStats.length === 0 && (
+                    <div className="text-xs text-muted-foreground text-center py-4">No {isPartner ? "merchant" : "brand"} performance data.</div>
                   )}
                 </div>
               </div>
@@ -2343,7 +2387,7 @@ export default function PlatformAnalyticsPanel() {
                 <div className="flex items-center justify-between flex-shrink-0">
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
                     <Building2 className="w-4 h-4 text-primary" />
-                    <span>Brand Details</span>
+                    <span>{isPartner ? "Merchant" : "Brand"} Details</span>
                   </h3>
                   <button
                     onClick={() => setBpFlipped(false)}
@@ -2354,16 +2398,16 @@ export default function PlatformAnalyticsPanel() {
                   </button>
                 </div>
 
-                <div className="space-y-3 overflow-y-auto pr-1 flex-1 min-h-0 mt-3">
+                <div role={isPartner ? "region" : undefined} aria-label={isPartner ? "Merchant details" : undefined} tabIndex={isPartner ? 0 : undefined} className={`space-y-3 overflow-y-auto pr-1 flex-1 min-h-0 mt-3 ${isPartner ? "max-h-[28rem]" : ""}`}>
                   {displayedBrandStats.map(b => (
-                    <div key={b.brandKey} className="border-b border-white/5 pb-2.5 last:border-b-0 last:pb-0 flex items-center justify-between text-xs">
-                      <div>
-                        <div className="font-bold text-white">{b.brandKey}</div>
+                    <div key={b.brandKey} className="border-b border-white/5 pb-2.5 last:border-b-0 last:pb-0 flex items-center justify-between gap-3 text-xs">
+                      <div className="min-w-0">
+                        <div className="break-all font-bold text-white" title={b.brandKey}>{isPartner ? b.brandName || b.brandKey : b.brandKey}</div>
                         <div className="text-muted-foreground text-xs mt-0.5">
                           {b.sessionsText}
                         </div>
                       </div>
-                      <div className="text-right">
+                      <div className="shrink-0 text-right">
                         <div className="font-bold text-white">${b.gmv.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
                         <div className={`text-xs font-bold mt-0.5 ${b.successRate >= 80 ? "text-emerald-400" :
                           b.successRate >= 60 ? "text-amber-400" :
@@ -2374,8 +2418,8 @@ export default function PlatformAnalyticsPanel() {
                       </div>
                     </div>
                   ))}
-                  {brandStats.length === 0 && (
-                    <div className="text-xs text-muted-foreground text-center py-4">No brands match the current query.</div>
+                  {performanceStats.length === 0 && (
+                    <div className="text-xs text-muted-foreground text-center py-4">No {isPartner ? "merchants" : "brands"} match the current query.</div>
                   )}
                 </div>
               </div>
@@ -2389,8 +2433,8 @@ export default function PlatformAnalyticsPanel() {
       </section>
       {workspace === "failures" && <FailureExplorer data={failureCombinations} selected={selectedErrorCombo} onSelect={selection => { setSelectedErrorCombo(selection); setCurrentPage(1); }} />}
       {workspace === "overview" && <button type="button" className="flex w-full items-center justify-between rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-left" onClick={() => setWorkspace("failures")}><span><span className="block text-sm font-medium text-rose-200">Failure analysis</span><span className="mt-1 block text-xs text-zinc-400">{failureCombinations.affectedReceiptCount} receipts with recorded errors · reason frequency and co-occurrence</span></span><ArrowRight className="h-4 w-4" /></button>}
-      <div hidden={workspace !== "audit"}><StripeAuditExplorer brands={allBrandKeys} onInspect={receiptId => { resetAnalyticsQuery(); setSearchMode("receiptId"); setSearchQuery(receiptId); setAppliedSearch(receiptId); setTimeRange("all"); setWorkspace("transactions"); }} /></div>
-      <section className="analytics-workspace-stack" hidden={workspace !== "treasury"}>
+      {!isPartner && <div hidden={workspace !== "audit"}><StripeAuditExplorer brands={allBrandKeys} onInspect={receiptId => { resetAnalyticsQuery(); setSearchMode("receiptId"); setSearchQuery(receiptId); setAppliedSearch(receiptId); setTimeRange("all"); setWorkspace("transactions"); }} /></div>}
+      {!isPartner && <section className="analytics-workspace-stack" hidden={workspace !== "treasury"}>
       <div className="mb-4 space-y-2 rounded-lg border border-white/10 p-4 text-xs text-zinc-400" role="status">
         <p>Source: {safeMetadata?.source || "Awaiting data"} · Indexed: {safeMetadata?.lastIndexedAt ? new Date(safeMetadata.lastIndexedAt).toLocaleString(undefined, { timeZone: effectiveTimezone }) : "Unavailable"}</p>
         {safeMetadata?.warning && <p className="text-amber-300">{safeMetadata.warning}</p>}
@@ -2470,7 +2514,7 @@ export default function PlatformAnalyticsPanel() {
         )}
       </div>
 
-      </section>
+      </section>}
       {/* Full-width Searchable and Detailed Diagnostics Investigation Feed */}
       <div hidden={workspace !== "transactions" && workspace !== "failures"} className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-lg font-semibold">Receipt investigation</h3><label className="text-sm text-zinc-400">Density <select aria-label="Ledger density" value={density} onChange={e => setDensity(e.target.value as "comfortable" | "compact")} className="ml-2 rounded border border-white/20 bg-zinc-900 px-2 py-1"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label></div>

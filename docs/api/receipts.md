@@ -158,6 +158,28 @@ Create a receipt payload for a QR-code payment portal. The returned `paymentUrl`
 }
 ```
 
+### Native EUR receipts
+
+```json
+{
+  "id": "EU-ORDER-1001",
+  "currency": "EUR",
+  "lineItems": [
+    { "label": "Items", "amount": 100.00, "qty": 2 },
+    { "label": "Tax", "amount": 20.00 }
+  ],
+  "total": 120.00
+}
+```
+
+Here the items line is **€100 for both units**, and the receipt total is **€120**. All native amounts must be finite numbers with at most two decimal places. One currency applies to the whole receipt. Unsupported currencies, mixed native/USD fields, and mismatched totals return HTTP 400. Missing exchange rates return HTTP 503 without creating a receipt.
+
+The server saves the original native amounts and a `pricing` valuation (`version`, `currency`, `usdPerUnit`, `quotedAt`, `provider`). GET responses include native `total` and `lineItems[].amount`, alongside real USD `totalUsd` and `lineItems[].priceUsd`. Native amounts are derived from current USD accounting after edits; original creation amounts remain in `pricing.originalTotal` and `pricing.originalLineItems`.
+
+The valuation is fixed for this receipt and reused for EU Stripe source conversion and reconciliation. Create a new receipt ID to obtain a new valuation; replacing an unpaid native receipt through POST returns HTTP 409. Existing USD fields retain USD meaning even if an older integration also sends `currency: "EUR"`; currency alone never reinterprets `priceUsd` as euros. Existing shipping configuration, USD edit/refund inputs, and USD reporting keep their current units.
+
+Fee−/fee+ calculations and the inverted credit/debit split routing are unchanged. Receipt currency does not select the customer's region or alter EU verification. Stripe still receives the existing fee-adjusted source amount and settlement uses the USDC actually delivered; the stored FX valuation is not a guarantee of Stripe's final exchange quote.
+
 ### Request
 
 Headers:
@@ -187,8 +209,11 @@ Fields:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | Yes | Unique receipt ID you assign |
-| `lineItems` | array | Yes | Array of `{ label, priceUsd, qty? }` items |
-| `totalUsd` | number | Yes | Order total in USD |
+| `lineItems` | array | Yes | Legacy `{ label, priceUsd, qty? }` or native `{ label, amount, qty? }` items; do not mix formats |
+| `currency` | string | No | Denomination of native `amount`/`total` fields: `USD` (default) or `EUR`, case-insensitive |
+| `lineItems[].amount` | number | Native format | Extended line amount in receipt currency, in whole cents. Includes quantity; `qty` is descriptive and is not multiplied again. Negative discount lines are allowed. |
+| `total` | number | No | Native order total; defaults to the sum of line amounts. If supplied, must equal that sum. |
+| `totalUsd` | number | Legacy format | Order total in USD, paired with `priceUsd` lines. Do not supply alongside native amounts. |
 | `redirect_url` | string | No | HTTPS URL passed through to the Stripe Crypto Onramp session. After the buyer completes the Stripe-hosted flow, Stripe redirects them to this URL. Only applies to Stripe; other onramp providers do not support external redirects. Also accepted as `redirectUrl`. |
 | `returnUrl` | string | No | Optional redirect URL. Customer's browser will be redirected here after successful payment (also accepted as `return_url`) |
 | `webhook_url` | string | No | HTTPS endpoint to receive push notifications when receipt status changes. Webhooks are signed with your API key (same `Ocp-Apim-Subscription-Key` used for authentication). Also accepted as `webhookUrl`. See [Webhooks Guide](./webhooks.md). |
@@ -578,6 +603,8 @@ Response Headers:
 Generate a terminal receipt (single amount + optional tax/fees). Useful for POS-style flows.
 
 (Admin – JWT) This operation is performed by admins via the PortalPay web app and is not callable via a developer APIM key. Client-provided `x-wallet` is ignored; the authenticated wallet is used.
+
+For native pricing, send `amount` with `currency: "EUR"` (or `USD`, the default for `amount`). `amount` is the pre-tax/pre-fee base amount. For example: `{ "amount": 100, "currency": "EUR", "taxRate": 0.20 }`. The server normalizes it before the existing tax/fee calculations and returns native and USD values. The legacy `amountUsd` parameter remains USD; do not send both amount fields.
 
 ### Request
 

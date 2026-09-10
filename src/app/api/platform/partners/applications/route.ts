@@ -23,7 +23,7 @@ function json(obj: any, init?: { status?: number; headers?: Record<string, strin
 
 type PartnerApplicationDoc = {
   id: string;
-  wallet: string; // partition key = brandKey candidate
+  wallet: string; // immutable partition key from the originally submitted brand candidate
   type: "partner_application";
   brandKey: string;
   companyName?: string;
@@ -77,7 +77,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const c = await getContainer();
+    // Refreshes after an admin edit must see the saved key on MongoDB immediately.
+    const c = await getContainer(undefined, undefined, { profile: "critical" });
     // Cross-partition query by type
     const query = {
       query: "SELECT c.id, c.wallet, c.brandKey, c.companyName, c.contactName, c.contactEmail, c.appUrl, c.partnerFeeBps, c.defaultMerchantFeeBps, c.partnerWallet, c.colors, c.logos, c.meta, c.notes, c.status, c.createdAt, c.updatedAt, c.approvedAt, c.approvedBy FROM c WHERE c.type = @type",

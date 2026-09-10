@@ -23,7 +23,7 @@ function json(obj: any, init?: { status?: number; headers?: Record<string, strin
 
 type PartnerApplicationDoc = {
   id: string;
-  wallet: string; // partition key = brandKey candidate
+  wallet: string; // immutable partition key from the originally submitted brand candidate
   type: "partner_application";
   brandKey: string;
   companyName?: string;
@@ -61,8 +61,7 @@ type BrandConfigDoc = {
   updatedAt?: number;
 };
 
-// PATCH /api/platform/partners/applications/[id]
-// Admin-only: approve or reject an application
+// Admin-only: read an application
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   // Admin-only auth
   try {
@@ -96,7 +95,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const { id } = await ctx.params;
 
   try {
-    const c = await getContainer();
+    const c = await getContainer(undefined, undefined, { profile: "critical" });
 
     // Load application by id (cross-partition)
     const { resources } = await c.items
@@ -168,7 +167,8 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   const { id } = await ctx.params;
 
   try {
-    const c = await getContainer();
+    // Read the latest application on MongoDB when approving immediately after an edit.
+    const c = await getContainer(undefined, undefined, { profile: "critical" });
 
     // Load application by id (cross-partition)
     const { resources } = await c.items
@@ -214,8 +214,60 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     if (action === "update") {
       const now = Date.now();
       const updates = (raw?.updates && typeof raw.updates === "object") ? raw.updates : raw;
+      let updatedBrandKey = brandKey;
+      if (Object.prototype.hasOwnProperty.call(updates, "brandKey")) {
+        if (typeof updates.brandKey !== "string") {
+          return json({ error: "invalid_brand_key" }, { status: 400 });
+        }
+        updatedBrandKey = updates.brandKey.trim().toLowerCase();
+        if (!/^[a-z0-9]+(?:-+[a-z0-9]+)*$/.test(updatedBrandKey)) {
+          return json({ error: "invalid_brand_key" }, { status: 400 });
+        }
+        if (updatedBrandKey !== brandKey) {
+          const { resources: candidates } = await c.items
+            .query<PartnerApplicationDoc | BrandConfigDoc>({
+              query: "SELECT * FROM c WHERE (c.type = @brandType OR c.type = @applicationType) AND (LOWER(c.brandKey) = @brandKey OR LOWER(c.wallet) = @brandKey)",
+              parameters: [
+                { name: "@brandType", value: "brand_config" },
+                { name: "@applicationType", value: "partner_application" },
+                { name: "@brandKey", value: updatedBrandKey },
+              ],
+            })
+            .fetchAll();
+
+          const keyInUse = (candidates || []).some((candidate) => {
+            if (candidate.type === "brand_config") return true;
+            // A renamed application's original partition does not reserve its old key.
+            const candidateKey = String(candidate.brandKey || candidate.wallet || "").trim().toLowerCase();
+            return candidate.id !== app.id && candidateKey === updatedBrandKey
+              && (candidate.status !== "rejected" || candidate.approvedAt != null || !!candidate.approvedBy);
+          });
+          if (keyInUse) {
+            return json({ error: "brand_key_in_use" }, { status: 409 });
+          }
+
+          // If the application was already approved, migrate its existing brand_config to the new brand key
+          if (app.status === "approved" || app.approvedAt != null || app.approvedBy) {
+            try {
+              const { resource: existingBrandConfig } = await c.item("brand:config", brandKey).read<BrandConfigDoc>();
+              if (existingBrandConfig) {
+                await c.items.upsert({
+                  ...existingBrandConfig,
+                  wallet: updatedBrandKey,
+                  updatedAt: now,
+                });
+                try {
+                  await c.item("brand:config", brandKey).delete();
+                } catch {}
+              }
+            } catch {}
+          }
+        }
+      }
       const updatedDoc: PartnerApplicationDoc = {
         ...app,
+        // Keep id and wallet unchanged so Cosmos updates the original document in place.
+        brandKey: updatedBrandKey,
         companyName: typeof updates?.companyName === "string" ? updates.companyName : app.companyName,
         contactName: typeof updates?.contactName === "string" ? updates.contactName : app.contactName,
         contactEmail: typeof updates?.contactEmail === "string" ? updates.contactEmail : app.contactEmail,
@@ -246,7 +298,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         updatedAt: now,
       };
       await c.items.upsert(updatedDoc);
-      return json({ ok: true, id, brandKey, status: updatedDoc.status || "submitted" });
+      return json({ ok: true, id, brandKey: updatedBrandKey, status: updatedDoc.status || "submitted" });
     }
 
     // Approve/Sync: ensure brand index + apply config overrides

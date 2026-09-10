@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
+import { requireThirdwebAuth } from "@/lib/auth";
+import { getMerchantBrandScope, readMerchantTeamProfiles } from "@/lib/merchant-team-access";
+
+export const dynamic = "force-dynamic";
 
 // GET: Lookup merchant profiles associated with a connected wallet
 export async function GET(req: NextRequest) {
+    let actorWallet: string;
+    try {
+        actorWallet = String((await requireThirdwebAuth(req)).wallet || "").toLowerCase();
+        if (!/^0x[a-f0-9]{40}$/.test(actorWallet)) throw new Error("unauthorized");
+    } catch {
+        return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    }
     try {
         const { searchParams } = new URL(req.url);
         const wallet = searchParams.get("wallet");
@@ -12,16 +23,13 @@ export async function GET(req: NextRequest) {
         }
 
         const linkedWallet = wallet.toLowerCase();
-        const container = await getContainer();
+        if (linkedWallet !== actorWallet) {
+            return NextResponse.json({ error: "forbidden" }, { status: 403 });
+        }
+        const container = await getContainer(undefined, undefined, { profile: "critical" });
+        const scope = getMerchantBrandScope(req);
 
-        // Query all team members across all partitions where linkedWallet matches
-        // Note: Cross-partition query. This is acceptable as number of merchant sessions for a single user is low.
-        const querySpec = {
-            query: "SELECT c.id, c.merchantWallet, c.role, c.name FROM c WHERE c.type = 'merchant_team_member' AND c.linkedWallet = @w AND (NOT IS_DEFINED(c.active) OR c.active = true)",
-            parameters: [{ name: "@w", value: linkedWallet }]
-        };
-
-        const { resources: profiles } = await container.items.query(querySpec).fetchAll();
+        const profiles = await readMerchantTeamProfiles(req, actorWallet);
 
         // We also need to fetch the Shop Config for each profile to display the Merchant Name
         // We can do this efficiently by querying the configs for the found merchantWallets
@@ -32,8 +40,8 @@ export async function GET(req: NextRequest) {
 
             // Use ARRAY_CONTAINS for parameterized lookup (transpiler-safe)
             const configQuery = {
-                query: `SELECT c.wallet, c.name, c.theme FROM c WHERE c.type = 'shop_config' AND ARRAY_CONTAINS(@wallets, c.wallet)`,
-                parameters: [{ name: "@wallets", value: uniqueMerchants }],
+                query: `SELECT c.wallet, c.name, c.theme FROM c WHERE c.type = 'shop_config' AND ARRAY_CONTAINS(@wallets, c.wallet) AND ${scope.clause}`,
+                parameters: [{ name: "@wallets", value: uniqueMerchants }, ...scope.parameters],
             };
             const { resources: configs } = await container.items.query(configQuery).fetchAll();
 

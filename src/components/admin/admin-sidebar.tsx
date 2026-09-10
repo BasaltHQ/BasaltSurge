@@ -72,9 +72,11 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { cachedFetch } from '@/lib/client-api-cache';
 import { getDefaultBrandSymbol, resolveBrandSymbol, getEffectiveBrandKey, resolveBrandAppLogo } from '@/lib/branding';
 import { useActiveAccount } from 'thirdweb/react';
-import { canAccessPanel, isPlatformSuperAdmin } from '@/lib/authz';
+import { canAccessPanel, isPlatformSuperAdmin, resolveWalletRole } from '@/lib/authz';
+import { canAccessMerchantPanel } from '@/lib/merchant-panel-access';
 
 export type AdminTabKey =
+  | 'dashboard'
   | 'terminal'
   | 'devices'
   | 'kitchen'
@@ -142,6 +144,7 @@ export type AdminTabKey =
   | 'emailConfig'
   | 'sandbox'
   | 'platformAnalytics'
+  | 'partnerAnalytics'
   | 'platformSettings'
   | 'agentUniversity';
 
@@ -167,6 +170,19 @@ interface NavItem {
   items?: { title: string; key?: AdminTabKey; href?: string; icon?: React.ReactNode; badge?: React.ReactNode }[];
 }
 
+function selectNavigationTab(item: NavItem, tab: AdminTabKey, onChangeTab: (tab: AdminTabKey) => void) {
+  if (typeof window !== 'undefined') {
+    if (item.profile) {
+      try { localStorage.setItem('pp_active_merchant_context', JSON.stringify(item.profile)); } catch {}
+      window.dispatchEvent(new CustomEvent('pp:merchantContextChanged', { detail: item.profile }));
+    } else if (item.title === 'Merchant (My Shop)') {
+      try { localStorage.removeItem('pp_active_merchant_context'); } catch {}
+      window.dispatchEvent(new CustomEvent('pp:merchantContextChanged', { detail: null }));
+    }
+  }
+  onChangeTab(tab);
+}
+
 function NavGroup({ item, activeTab, onChangeTab }: { item: NavItem; activeTab: AdminTabKey; onChangeTab: (tab: AdminTabKey) => void }) {
   const [isOpen, setIsOpen] = useState<boolean>(() => {
     // Auto-open if any child is active
@@ -178,18 +194,7 @@ function NavGroup({ item, activeTab, onChangeTab }: { item: NavItem; activeTab: 
 
   const hasChildren = item.items && item.items.length > 0;
 
-  const handleTabClick = (tabKey: AdminTabKey) => {
-    if (typeof window !== 'undefined') {
-      if (item.profile) {
-        localStorage.setItem('pp_active_merchant_context', JSON.stringify(item.profile));
-        window.dispatchEvent(new CustomEvent('pp:merchantContextChanged', { detail: item.profile }));
-      } else if (item.title && item.title.toLowerCase().includes('merchant')) {
-        localStorage.removeItem('pp_active_merchant_context');
-        window.dispatchEvent(new CustomEvent('pp:merchantContextChanged', { detail: null }));
-      }
-    }
-    onChangeTab(tabKey);
-  };
+  const handleTabClick = (tabKey: AdminTabKey) => selectNavigationTab(item, tabKey, onChangeTab);
 
   if (!hasChildren) {
     if (item.href) {
@@ -453,23 +458,38 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
 
 
   const [teamProfiles, setTeamProfiles] = useState<any[]>([]);
+  const [authRevision, setAuthRevision] = useState(0);
   const [authMe, setAuthMe] = useState<{ isTeamMember?: boolean; hasOwnShop?: boolean; shopStatus?: string } | null>(null);
 
   useEffect(() => {
+    const refreshAccess = () => setAuthRevision(value => value + 1);
+    window.addEventListener('pp:auth:logged_in', refreshAccess);
+    window.addEventListener('pp:auth:logged_out', refreshAccess);
+    return () => {
+      window.removeEventListener('pp:auth:logged_in', refreshAccess);
+      window.removeEventListener('pp:auth:logged_out', refreshAccess);
+    };
+  }, []);
+
+  useEffect(() => {
+    setAuthMe(null);
     if (!wallet) return;
+    let cancelled = false;
     fetch(`/api/auth/me`, { headers: { 'x-wallet': wallet } })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d) setAuthMe(d);
+        if (d && !cancelled) setAuthMe(d);
       })
       .catch(() => {});
-  }, [wallet]);
+    return () => { cancelled = true; };
+  }, [wallet, authRevision]);
 
   useEffect(() => {
+    setTeamProfiles([]);
     if (!wallet) return;
     let cancelled = false;
-    fetch(`/api/admin/reports/access?wallet=${encodeURIComponent(wallet)}`)
-      .then((r) => r.json())
+    fetch(`/api/admin/reports/access?wallet=${encodeURIComponent(wallet)}`, { cache: 'no-store' })
+      .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (cancelled) return;
         if (data && Array.isArray(data.profiles)) {
@@ -495,7 +515,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
     return () => {
       cancelled = true;
     };
-  }, [wallet]);
+  }, [wallet, authRevision]);
 
   const getIndustryPackBadge = (pack: string) => {
     switch (pack) {
@@ -509,13 +529,14 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
 
   const teamMerchantGroups: NavItem[] = teamProfiles.map((tp: any) => {
     const roleKey = String(tp.role || "staff").toLowerCase();
-    const roleBadge =
+    const roleBadge = tp.roleName || (
       roleKey === "merchant_owner" ? "Owner" :
       roleKey === "merchant_admin" || roleKey === "manager" ? "Manager" :
       roleKey === "merchant_cashier" || roleKey === "staff" ? "Cashier" :
       roleKey === "merchant_kitchen" ? "Kitchen" :
       roleKey === "merchant_finance" ? "Bookkeeper" :
-      roleKey === "merchant_inventory" ? "Inventory" : tp.role;
+      roleKey === "merchant_inventory" ? "Inventory" :
+      roleKey === "merchant_customer_service" ? "Customer Service" : tp.role);
 
     return {
       title: tp.merchantName ? `${tp.merchantName}` : "Merchant Team",
@@ -523,6 +544,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
       roleBadge,
       profile: tp,
       items: [
+        { title: 'Dashboard', key: 'dashboard' as AdminTabKey, icon: <LayoutDashboard className="w-4 h-4" /> },
         { title: 'Shop Configuration', key: 'shopSetup' as AdminTabKey, icon: <Store className="w-4 h-4" /> },
         { title: 'Analytics', key: 'analytics' as AdminTabKey, icon: <LineChart className="w-4 h-4" /> },
         { title: 'Terminal', key: 'terminal' as AdminTabKey, icon: <Terminal className="w-4 h-4" /> },
@@ -533,12 +555,15 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Reports', key: 'reports' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
         { title: 'Messages', key: 'messages-merchant' as AdminTabKey, icon: <MessageSquare className="w-4 h-4" /> },
         { title: 'Notifications', key: 'notificationsMerchant' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
-      ].filter((item) => !disabledMerchantModules.includes(item.key) && canAccessPanel(item.key as any, wallet)),
+      ].filter((item) => !disabledMerchantModules.includes(item.key) && canAccessMerchantPanel(item.key, tp.permissions)),
     };
   });
 
   const isTeamMemberOnly = teamProfiles.length > 0 && authMe?.hasOwnShop === false && !isSuperadmin;
   const showMyShop = !isTeamMemberOnly;
+  const adminRole = resolveWalletRole(wallet) || '';
+  const isMerchantRole = adminRole.startsWith('merchant_') || adminRole === 'manager' || adminRole === 'staff';
+  const isPartnerOrPlatformAdmin = adminRole.startsWith('platform_') || adminRole.startsWith('partner_') || (!isMerchantRole && !!adminRole);
 
   const groups: NavItem[] = [
     {
@@ -563,6 +588,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
       title: 'Merchant (My Shop)',
       icon: <Building2 className="w-4 h-4" />,
       items: [
+        { title: 'Dashboard', key: 'dashboard' as AdminTabKey, icon: <LayoutDashboard className="w-4 h-4" /> },
         { title: 'Shop Configuration', key: 'shopSetup' as AdminTabKey, icon: <Store className="w-4 h-4" /> },
         { title: 'Analytics', key: 'analytics' as AdminTabKey, icon: <LineChart className="w-4 h-4" /> },
         { title: 'Terminal', key: 'terminal' as AdminTabKey, icon: <Terminal className="w-4 h-4" /> },
@@ -593,12 +619,13 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         ...(industryPack === 'hotel' ? [{ title: 'PMS', key: 'pms' as AdminTabKey, icon: <Hotel className="w-4 h-4" />, badge: getIndustryPackBadge('hotel') }] : []),
         ...(industryPack === 'publishing' ? [{ title: "Writer's Workshop", key: 'writersWorkshop' as AdminTabKey, icon: <PenTool className="w-4 h-4" />, badge: getIndustryPackBadge('publishing') }] : []),
         ...(industryPack === 'cannabis' ? [{ title: 'Compliance', key: 'cannabisCompliance' as AdminTabKey, icon: <ShieldCheck className="w-4 h-4" />, badge: getIndustryPackBadge('cannabis') }] : []),
-      ],
+      ].filter(item => !isTeamMemberOnly || teamProfiles.some(profile => canAccessMerchantPanel(item.key, profile.permissions))),
     },
     {
       title: 'Partner/Admin',
       icon: <Brush className="w-4 h-4" />,
       items: [
+        { title: 'Partner Analytics', key: 'partnerAnalytics' as AdminTabKey, icon: <LineChart className="w-4 h-4" /> },
         { title: 'Devices', key: 'devices' as AdminTabKey, icon: <Smartphone className="w-4 h-4" /> },
         ...(!isRequestMode || isSuperadmin ? [{ title: 'Split Config', key: 'splitConfig' as AdminTabKey, icon: <GitMerge className="w-4 h-4" /> }] : []),
         { title: 'Branding', key: 'branding' as AdminTabKey, icon: <Palette className="w-4 h-4" /> },
@@ -617,7 +644,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Roadmap', key: 'roadmap' as AdminTabKey, icon: <LayoutGrid className="w-4 h-4" /> },
         { title: 'Modules', key: 'modules' as AdminTabKey, icon: <Blocks className="w-4 h-4" /> },
         { title: 'Notifications', key: 'notificationsPartner' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
-      ].filter((item) => canAccessPanel(item.key as any, wallet)),
+      ].filter((item) => isPartnerOrPlatformAdmin && canAccessPanel(item.key as any, wallet)),
     },
     {
       title: 'Platform',
@@ -641,7 +668,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         ...(typeof window !== 'undefined' && window.location.hostname === 'surge-sand.basalthq.com'
           ? [{ title: 'Sandbox', key: 'sandbox' as AdminTabKey, icon: <Sliders className="w-4 h-4" /> }]
           : []),
-      ].filter((item) => canAccessPanel(item.key as any, wallet)),
+      ].filter((item) => adminRole.startsWith('platform_') && canAccessPanel(item.key as any, wallet)),
     },
     {
       title: 'Nodes',
@@ -795,7 +822,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
                             <button
                               key={child.key}
                               type="button"
-                              onClick={() => onChangeTab(child.key!)}
+                              onClick={() => selectNavigationTab(item, child.key!, onChangeTab)}
                               className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-300 relative group/btn ${
                                 isActive
                                   ? 'bg-[var(--pp-secondary)] shadow-[0_0_15px_color-mix(in_srgb,var(--pp-secondary)_40%,transparent)] border border-white/20 z-10'
@@ -948,7 +975,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
                                   key={child.key}
                                   type="button"
                                   onClick={() => {
-                                    onChangeTab(child.key!);
+                                    selectNavigationTab(group, child.key!, onChangeTab);
                                     setIsMobileMenuOpen(false);
                                   }}
                                   className={`p-3 rounded-2xl border text-xs font-semibold flex items-center gap-2 text-left truncate transition-all ${

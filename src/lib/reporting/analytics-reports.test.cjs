@@ -72,3 +72,43 @@ test("all four PDF and Excel reports generate real files and retain complete lon
     fs.rmdirSync(output);
   }
 });
+
+test("partner PDF and Excel exports use the partner's identity and preserve scope", async () => {
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), "partner-analytics-report-tests-"));
+  process.chdir(output);
+  const identity = { brandKey: "audit", brandName: "Audit Partner" };
+  const partnerScope = "Brand scope: audit | Only explicitly attributed brand records";
+  try {
+    await pdf.exportExecutiveSummaryPDF(stats, brandStats, reasons, partnerScope, receipts, identity);
+    await pdf.exportTransactionLedgerPDF(receipts, stats, "Fixture search", partnerScope, "UTC", identity);
+    await pdf.exportBrandFinancialPDF(brandStats, stats, partnerScope, identity);
+    await pdf.exportFailureDiagnosticsPDF(reasons, stats, receipts, partnerScope, "UTC", identity);
+    for (const kind of ["executive", "ledger", "brands", "diagnostics"]) {
+      await exportAnalyticsXLSX(kind, stats, brandStats, reasons, receipts, partnerScope, "UTC", identity);
+    }
+    const files = fs.readdirSync(output);
+    assert.equal(files.length, 8);
+    for (const file of files) {
+      assert.ok(file.startsWith("audit_"), file);
+      const bytes = fs.readFileSync(path.join(output, file));
+      if (file.endsWith(".pdf")) {
+        const content = pdfStreams(bytes);
+        assert.match(content, /AUDIT PARTNER/);
+        assert.match(content, /Brand scope: audit/);
+        assert.doesNotMatch(content, /BASALTSURGE/);
+        assert.match(bytes.toString("latin1"), /Audit Partner Partner Analytics/);
+      } else {
+        const workbook = XLSX.read(bytes, { type: "buffer" });
+        assert.equal(workbook.Props.Author, "Audit Partner Partner Analytics");
+        const cells = workbook.SheetNames.flatMap(name => XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 })).flat().map(String).join("\n");
+        assert.match(cells, /Audit Partner Analytics Summary/);
+        assert.match(cells, /Brand scope: audit/);
+        assert.doesNotMatch(cells, /BasaltSurge/);
+      }
+    }
+  } finally {
+    process.chdir(project);
+    for (const file of fs.readdirSync(output)) fs.unlinkSync(path.join(output, file));
+    fs.rmdirSync(output);
+  }
+});

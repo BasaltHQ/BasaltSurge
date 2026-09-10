@@ -1,3 +1,4 @@
+import { getReceiptPricing, snapshotReceiptPricing } from "@/lib/receipt-currency";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { getReceipts, updateReceiptContent, pushReceipts, ReceiptMem } from "@/lib/receipts-mem";
@@ -168,6 +169,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
                     receiptId: newId,
                     totalUsd: newRecData.total,
                     currency: source.currency || "USD",
+                    ...(source.pricing ? { pricing: snapshotReceiptPricing(getReceiptPricing(source)!, newRecData.lines, newRecData.total) } : {}),
                     lineItems: newRecData.lines,
                     createdAt: ts,
                     brandName: source.brandName,
@@ -320,6 +322,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
             receiptId: newId,
             totalUsd: newReceiptData.total,
             currency: source.currency || "USD",
+            ...(source.pricing ? { pricing: snapshotReceiptPricing(getReceiptPricing(source)!, newReceiptData.lines, newReceiptData.total) } : {}),
             lineItems: newReceiptData.lines,
             createdAt: ts,
             brandName: source.brandName,

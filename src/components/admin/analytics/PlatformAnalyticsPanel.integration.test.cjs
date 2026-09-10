@@ -93,6 +93,128 @@ for (const extension of ['.ts', '.tsx']) Module._extensions[extension] = (module
 const walk = node => !node || typeof node !== 'object' ? [] : Array.isArray(node) ? node.flatMap(walk) : [node, ...walk(node.props?.children)];
 const text = node => node === null || node === undefined || typeof node === 'boolean' ? '' : typeof node === 'string' || typeof node === 'number' ? String(node) : Array.isArray(node) ? node.map(text).join('') : text(node.props?.children);
 
+test('partner view links keep a separate namespace, lock brand, and reject global workspace and action tabs', () => {
+  const { parsePartnerAnalyticsViewState, writePartnerAnalyticsViewState } = require('@/lib/partner-analytics-view-state');
+  const mixed = new URLSearchParams('tab=platformAnalytics&pa_view=audit&pa_brand=foreign&pa_search=foreign-customer&ppa_view=treasury&ppa_brand=brand-a&ppa_receiptTab=reconcile&ppa_reason=declined&ppa_reason=timeout');
+  const partner = parsePartnerAnalyticsViewState(mixed, 'brand-a');
+  assert.equal(partner.brand, 'brand-a');
+  assert.equal(partner.workspace, 'overview');
+  assert.equal(partner.receiptTab, 'overview');
+  assert.equal(partner.search, '');
+  assert.deepEqual(partner.reasons, ['declined', 'timeout']);
+  const changedBrand = parsePartnerAnalyticsViewState(mixed, 'brand-b');
+  assert.equal(changedBrand.brand, 'brand-b');
+  assert.equal(changedBrand.reasons, null, 'A previously viewed brand does not contribute its filters or receipt context');
+  const serialized = writePartnerAnalyticsViewState(mixed, { ...partner, brand: 'foreign', workspace: 'audit', receiptTab: 'reconcile' }, 'brand-a');
+  assert.equal(serialized.get('tab'), 'partnerAnalytics');
+  assert.equal(serialized.get('ppa_brand'), 'brand-a');
+  assert.equal(serialized.get('ppa_view'), 'overview');
+  assert.equal(serialized.get('ppa_receiptTab'), 'overview');
+  assert.equal(serialized.get('pa_brand'), 'foreign', 'Platform view state is kept independent');
+  assert.deepEqual(serialized.getAll('ppa_reason'), ['declined', 'timeout']);
+});
+
+test('partner workspace loads and exports only its brand with merchant metrics and read-only scoped investigations', async () => {
+  global.document = { activeElement: null, addEventListener: () => {}, removeEventListener: () => {}, querySelector: () => null };
+  global.localStorage = { getItem: () => null, setItem: () => {} };
+  global.window = {
+    location: new URL('https://partner.example.invalid/admin?tab=partnerAnalytics&pa_view=audit&pa_brand=foreign&ppa_view=transactions&ppa_brand=brand-a&ppa_range=all&ppa_search=customer%40example.invalid&ppa_searchMode=email&ppa_kyc=L1'),
+    history: { state: null, replaceState: (_state, _title, url) => { window.location = new URL(String(url)); } },
+    matchMedia: () => ({ matches: false }),
+  };
+  const { aggregateAnalyticsReceipts } = require('@/lib/platform-analytics-aggregation');
+  const rows = [0, 1].map(index => ({
+    receiptId: `partner-receipt-${index}`, storageId: `partner-storage-${index}`, brandKey: 'brand-a', brandName: 'Brand A',
+    merchantWallet: `0x${String(index + 2).padStart(40, '0')}`, wallet: `0x${String(index + 2).padStart(40, '0')}`,
+    merchantName: `Merchant ${index + 1}`, status: index ? 'failed' : 'paid', totalUsd: 100 + index,
+    createdAt: `2026-09-06T1${index + 1}:00:00.000Z`, email: 'customer@example.invalid',
+    stripeSessionId: `cos_partner_${index}`, transactionHash: null, cardFunding: 'credit',
+    failureReason: index ? 'Card declined' : null, kycVerifiedLevel: 'L1',
+  }));
+  const aggregates = aggregateAnalyticsReceipts(rows, 'America/Los_Angeles');
+  const merchantStats = aggregateAnalyticsReceipts(rows.map(row => ({ ...row, brandKey: row.merchantWallet, brandName: row.merchantName })), 'America/Los_Angeles').brandStats;
+  const requests = [];
+  const exportStart = exported.length;
+  let responseBrand = 'brand-a';
+  global.fetch = async (input, options) => {
+    const url = new URL(String(input), 'https://partner.example.invalid');
+    requests.push({ url, options });
+    if (url.pathname === '/api/partner/receipt-logs') {
+      assert.equal(url.searchParams.get('merchantWallet'), rows[0].merchantWallet);
+      return { ok: true, json: async () => ({ ok: true, logs: [{ receiptId: rows[0].receiptId, createdAt: rows[0].createdAt, level: 'info', message: 'Scoped evidence' }], logEvidence: { status: 'available', loaded: 1, hasMore: false } }) };
+    }
+    assert.equal(url.pathname, '/api/partner/analytics', 'Partner never invokes a platform, global site config, live Stripe, or mutation endpoint');
+    assert.equal(url.searchParams.get('brandKey'), 'brand-a');
+    const offset = Number(url.searchParams.get('offset') || 0);
+    return { ok: true, json: async () => ({
+      ...aggregates, ok: true, merchantStats, recentReceipts: [rows[offset]],
+      pagination: { totalMatchingCount: rows.length, hasMore: offset === 0, snapshotEnd: '2026-09-07T00:00:00.000Z', continuationToken: offset === 0 ? 'partner-page-two' : undefined },
+      metadata: { generatedAt: '2026-09-07T00:00:00.000Z', accessScope: { type: 'partner', brandKey: responseBrand, attribution: 'explicit-brand-only' }, query: { start: null, end: '2026-09-07T00:00:00.000Z' } },
+    }) };
+  };
+  const Panel = require('../../../app/(web)/admin/panels/PlatformAnalyticsPanel.tsx').default;
+  const Partner = () => Panel({ audience: 'partner', brandKey: 'brand-a', brandName: 'Brand A' });
+  const runner = new HookRunner();
+  try {
+    let tree = await runner.settle(Partner);
+    assert.equal(requests.length, 2, 'Only scoped analytics pages are requested on load');
+    assert.equal(requests[0].url.searchParams.get('search'), 'customer@example.invalid');
+    assert.equal(requests[0].url.searchParams.get('kycFilter'), 'L1');
+    assert.equal(requests[1].url.searchParams.get('continuationToken'), 'partner-page-two');
+    assert.equal(window.location.searchParams.get('tab'), 'partnerAnalytics');
+    assert.equal(window.location.searchParams.get('ppa_brand'), 'brand-a');
+    assert.equal(window.location.searchParams.get('pa_brand'), 'foreign');
+    assert.match(text(tree), /Partner Analytics/);
+    assert.match(text(tree), /Only records explicitly attributed to this brand/);
+    assert.match(text(tree), /Merchant Performance/);
+    assert.match(text(tree), /Merchant 1/);
+    assert.match(text(tree), /Merchant 2/);
+    assert.ok(!walk(tree).some(node => node.type === 'select' && node.props['aria-label'] === 'Partner filter'));
+    const workspaceNav = walk(tree).find(node => node.type === 'nav' && node.props['aria-label'] === 'Analytics workspaces');
+    assert.equal(text(workspaceNav), 'OverviewConversionFailuresTransactions');
+    assert.doesNotMatch(text(tree), /Gnosis Safe Reserves|Audit & Reconcile|Sync Safe Balances/);
+    assert.ok(!walk(tree).some(node => node.props?.setShowGitCommitsOverlay), 'Partner trend has no Git toggle');
+
+    const expand = walk(tree).find(node => node.type === 'button' && node.props['aria-label']?.includes('Expand receipt'));
+    if (expand) expand.props.onClick();
+    else walk(tree).find(node => node.type === 'button' && text(node) === 'Investigate receipt').props.onClick();
+    tree = await runner.settle(Partner);
+    const investigation = walk(tree).find(node => node.props?.receipt?.receiptId === rows[0].receiptId && node.props?.fetchReceiptLogs);
+    assert.ok(investigation);
+    assert.equal(investigation.props.readOnly, true);
+    const beforeBlocked = requests.length;
+    await investigation.props.handleTargetedReconcile(rows[0].receiptId);
+    await investigation.props.handleStripeTelemetryCheck(rows[0].receiptId, rows[0].stripeSessionId);
+    await investigation.props.enrichCustomerLimits(rows[0].receiptId);
+    investigation.props.loadSiteConfigForReceipt(rows[0].receiptId, rows[0].merchantWallet, 'brand-a');
+    assert.equal(requests.length, beforeBlocked, 'Protected callbacks are inert, not merely hidden');
+    await investigation.props.fetchReceiptLogs(rows[0].receiptId, rows[0].merchantWallet);
+    tree = await runner.settle(Partner);
+    assert.equal(requests.at(-1).url.pathname, '/api/partner/receipt-logs');
+
+    walk(tree).find(node => node.type === 'button' && node.props.title === 'Export complete analytics reports').props.onClick();
+    tree = await runner.settle(Partner);
+    await walk(tree).filter(node => node.type === 'button' && text(node).trim() === 'PDF')[1].props.onClick();
+    tree = await runner.settle(Partner);
+    const output = exported.slice(exportStart).find(result => result.name === 'exportTransactionLedgerPDF');
+    assert.ok(output);
+    assert.deepEqual(output.args[0].map(row => row.receiptId), rows.map(row => row.receiptId));
+    assert.match(output.args[3], /Brand scope: brand-a/);
+    assert.match(output.args[3], /Only explicitly attributed brand records/);
+    assert.deepEqual(output.args[5], { brandName: 'Brand A', brandKey: 'brand-a' });
+
+    responseBrand = 'foreign';
+    walk(tree).find(node => node.type === 'button' && text(node) === 'Refresh').props.onClick();
+    tree = await runner.settle(Partner);
+    assert.match(text(tree), /did not match this partner brand/);
+    assert.equal(exported.length, exportStart + 1);
+  } finally {
+    exported.splice(exportStart);
+    runner.dispose();
+    delete global.fetch; delete global.window; delete global.localStorage; delete global.document;
+  }
+});
+
 test('shared URL query flows through live panel filters, bounded batches, and complete PDF/Excel ledger inputs', async () => {
   global.document = { activeElement: null, addEventListener: () => {}, removeEventListener: () => {}, querySelector: () => null };
   const storage = new Map();

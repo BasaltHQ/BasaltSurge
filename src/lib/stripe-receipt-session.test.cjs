@@ -82,6 +82,21 @@ test('upstream HTML lookup is identified without mutating the receipt or exposin
   assert.equal(h.calls.length, 0);
 });
 
+test('worker observations cannot overwrite the native receipt valuation', async () => {
+  const pricing = { version: 1, currency: 'EUR', usdPerUnit: 1.25 };
+  const h = harness({ ...base, pricing });
+  await h.helpers.persistStripeReceiptUpdate(h.container, { ...h.doc, pricing: { ...pricing, usdPerUnit: 99 }, totalUsd: 1 });
+  assert.deepEqual(h.doc.pricing, pricing);
+  assert.equal(h.doc.totalUsd, base.totalUsd);
+});
+
+test('session attachment refuses a different native valuation', async () => {
+  const pricing = { version: 1, currency: 'EUR', usdPerUnit: 1.25 };
+  const h = harness({ ...base, pricing });
+  await assert.rejects(h.helpers.attachCreatedStripeSession(h.container, { ...h.doc, pricing: { ...pricing, usdPerUnit: 99 } }, { id: 'cos_new', created: 300, status: 'initialized' }), /receipt_pricing_changed/);
+  assert.equal(h.calls.length, 0);
+});
+
 for (const reserved of [false, true]) {
   test(`terminal provider restriction blocks session replacement with reserved=${reserved}`, async () => {
     const receipt = { ...base, stripeSessionId: 'cos_old', ...(reserved ? { stripePaymentAttemptSessionId: 'cos_old', stripePaymentAttemptKind: 'headless' } : {}) };

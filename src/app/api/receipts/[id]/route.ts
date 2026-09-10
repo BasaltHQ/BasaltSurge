@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { receiptCurrencyFields, type ReceiptPricing } from "@/lib/receipt-currency";
 import { getContainer } from "@/lib/cosmos";
 import { getReceipts, type ReceiptMem, updateReceiptContent, deleteReceipt } from "@/lib/receipts-mem";
 import { getSiteConfigForWallet } from "@/lib/site-config";
@@ -18,7 +19,9 @@ type ReceiptLineItem = {
 export type Receipt = {
   receiptId: string;
   totalUsd: number;
-  currency: "USD";
+  currency: string;
+  pricing?: ReceiptPricing;
+  total?: number;
   lineItems: ReceiptLineItem[];
   createdAt: number;
   brandName?: string;
@@ -146,7 +149,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     const spec = {
       query:
-        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
+        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
       parameters: [
         { name: "@id", value: id },
         { name: "@wallet", value: wallet }
@@ -161,7 +164,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       try {
         const specCrossPartition = {
           query:
-            "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
+            "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
           parameters: [{ name: "@id", value: id }],
         } as { query: string; parameters: { name: string; value: any }[] };
         const crossRes = await container.items.query(specCrossPartition).fetchAll();
@@ -173,8 +176,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       const rec: Receipt = {
         receiptId: String(row.receiptId || id),
         totalUsd: Number(row.totalUsd || 0),
-        currency: "USD",
-        lineItems: Array.isArray(row.lineItems) ? row.lineItems : [],
+        ...receiptCurrencyFields(row),
         createdAt: Number(row.createdAt || Date.now()),
         recipientWallet: (typeof (row as any)?.wallet === "string" ? String((row as any).wallet).toLowerCase() : wallet),
         brandName: typeof row.brandName === "string" ? row.brandName : undefined,
@@ -290,8 +292,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       const rec: Receipt = {
         receiptId: String(cached.receiptId || id),
         totalUsd: Number(cached.totalUsd || 0),
-        currency: "USD",
-        lineItems: Array.isArray(cached.lineItems) ? cached.lineItems : [],
+        ...receiptCurrencyFields(cached),
         createdAt: Number(cached.createdAt || Date.now()),
         brandName: typeof cached.brandName === "string" ? cached.brandName : undefined,
         recipientWallet: wallet,
@@ -346,8 +347,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       const rec: Receipt = {
         receiptId: String(cached.receiptId || id),
         totalUsd: Number(cached.totalUsd || 0),
-        currency: "USD",
-        lineItems: Array.isArray(cached.lineItems) ? cached.lineItems : [],
+        ...receiptCurrencyFields(cached),
         createdAt: Number(cached.createdAt || Date.now()),
         brandName: typeof cached.brandName === "string" ? cached.brandName : undefined,
         recipientWallet: wallet,
@@ -481,6 +481,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     }
 
     const itemsBody: any[] = Array.isArray(body?.items) ? body.items : [];
+    if (body?.total !== undefined || itemsBody.some(it => it?.amount !== undefined)) {
+      return NextResponse.json({ ok: false, error: "native_receipt_edit_not_supported", message: "Receipt edits use priceUsd fields. Create a new receipt id for a new native valuation." }, { status: 400 });
+    }
     if (!itemsBody.length) {
       return NextResponse.json(
         { ok: false, error: "items_required" },
@@ -499,6 +502,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
 
     // Load existing receipt (for fallback brand/timestamps and previous tax inference)
     let existing: {
+      pricing?: ReceiptPricing;
       createdAt?: number;
       brandName?: string;
       lineItems?: ReceiptLineItem[];
@@ -514,6 +518,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       const { resource } = await container.item(`receipt:${id}`, wallet).read<any>();
       if (resource) {
         existing = {
+          pricing: resource.pricing,
           createdAt: Number(resource.createdAt || Date.now()),
           brandName: typeof resource.brandName === "string" ? resource.brandName : undefined,
           lineItems: Array.isArray(resource.lineItems) ? resource.lineItems : [],
@@ -531,6 +536,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       const cached = Array.isArray(mem) ? mem.find((r) => String(r.receiptId || "") === id) : undefined;
       if (cached) {
         existing = {
+          pricing: cached.pricing,
           createdAt: Number(cached.createdAt || Date.now()),
           brandName: typeof cached.brandName === "string" ? cached.brandName : undefined,
           lineItems: Array.isArray(cached.lineItems) ? cached.lineItems : [],
@@ -715,8 +721,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       const receipt: Receipt = {
         receiptId: id,
         totalUsd,
-        currency: "USD",
-        lineItems: finalLineItems,
+        ...receiptCurrencyFields(next),
         createdAt,
         brandName,
         taxRate: Math.max(0, Math.min(1, taxRate || 0)),
@@ -732,8 +737,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       const receipt: Receipt = {
         receiptId: id,
         totalUsd,
-        currency: "USD",
-        lineItems: finalLineItems,
+        ...receiptCurrencyFields({ pricing: existing?.pricing, totalUsd, lineItems: finalLineItems }),
         createdAt,
         brandName,
         taxRate: Math.max(0, Math.min(1, taxRate || 0)),

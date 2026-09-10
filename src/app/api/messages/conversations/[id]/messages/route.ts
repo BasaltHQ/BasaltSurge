@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth } from "@/lib/auth";
-import { getBrandConfig } from "@/config/brands";
+import { isMerchantMessageBrand, merchantConversationAuthorizer, resolveMerchantMessageContext } from "@/lib/merchant-message-access";
 
 /**
  * Messages API for a conversation
@@ -76,7 +76,8 @@ async function resolveCallerWallet(req: NextRequest): Promise<string> {
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   const correlationId = crypto.randomUUID();
   try {
-    const me = await resolveCallerWallet(req);
+    const merchantContext = await resolveMerchantMessageContext(req);
+    const me = merchantContext?.merchantWallet || await resolveCallerWallet(req);
 
     if (!/^0x[a-f0-9]{40}$/i.test(me)) {
       return NextResponse.json(
@@ -116,12 +117,12 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     // Conversations were stored under the first participant partition key, but we can search cross-partition by id.
     const convoSpec = {
       query:
-        "SELECT c.id, c.wallet, c.participants, c.brandKey FROM c WHERE c.type='conversation' AND c.id=@id",
+        "SELECT * FROM c WHERE c.type='conversation' AND c.id=@id",
       parameters: [{ name: "@id", value: conversationId }],
     } as { query: string; parameters: { name: string; value: any }[] };
 
     const { resources: convos } = await container.items.query(convoSpec).fetchAll();
-    let convo = Array.isArray(convos) ? convos.find((c: any) => String(c?.id || "") === conversationId) : null;
+    let convo = Array.isArray(convos) ? convos.find((c: any) => String(c?.id || "") === conversationId && (!merchantContext || isMerchantMessageBrand(c.brandKey, merchantContext))) : null;
 
     // Fallback: try direct partition read using caller wallet
     if (!convo) {
@@ -150,12 +151,15 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
         { status: 404, headers: { "x-correlation-id": correlationId } }
       );
     }
+    if (merchantContext && !await merchantConversationAuthorizer(container, merchantContext)(convo)) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403, headers: { "x-correlation-id": correlationId } });
+    }
     const participantsLc = Array.isArray(convo.participants)
       ? convo.participants.map((w: any) => String(w || "").toLowerCase().trim())
       : [];
     const convoWallet = String(convo.wallet || "").toLowerCase().trim();
     const meTrim = String(me).toLowerCase().trim();
-    if (participantsLc.length === 0 || (!participantsLc.includes(meTrim) && convoWallet !== meTrim)) {
+    if (!merchantContext && (participantsLc.length === 0 || (!participantsLc.includes(meTrim) && convoWallet !== meTrim))) {
       // Check if conversation subject is a checkout receipt owned by caller
       let isReceiptOwner = false;
       if (convo?.subject?.type === "checkout" && convo?.subject?.id) {
@@ -180,8 +184,8 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
         );
       }
     }
-    // Brand check disabled for simplicity: allow messaging across brands if participants include caller.
-    // This avoids false 404 when host domain brand differs from conversation brand.
+    // Personal/guest conversations retain participant access across hosts. The
+    // merchant inbox above additionally verifies the current brand and subject owner.
 
     // Fetch messages by conversationId (cross-partition)
     const msgSpec = {
@@ -191,18 +195,31 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
     } as { query: string; parameters: { name: string; value: any }[] };
 
     const { resources } = await container.items.query(msgSpec).fetchAll();
-    const rows = Array.isArray(resources) ? resources : [];
+    const rows = (Array.isArray(resources) ? resources : []).filter((message: any) => !merchantContext || (
+      String(message.wallet || "").toLowerCase() === String(convo.wallet || "").toLowerCase()
+      && isMerchantMessageBrand(message.brandKey, merchantContext)
+    ));
 
     const total = rows.length;
     const start = page * limit;
     const end = start + limit;
     const items = rows.slice(start, end).reverse(); // chronological ascending in UI
 
+    // Badge prefetches leave messages unread; only an opened conversation opts in.
+    if (url.searchParams.get("markRead") === "true") {
+      await Promise.all(items.map(async (message: any) => {
+        const readBy = Array.isArray(message.readBy) ? message.readBy.map((wallet: any) => String(wallet || "").toLowerCase()) : [];
+        if (readBy.includes(me)) return;
+        message.readBy = [...readBy, me];
+        await container.items.upsert(message);
+      }));
+    }
+
     return NextResponse.json({ ok: true, items, total, page, pageSize: limit }, { headers: { "x-correlation-id": correlationId } });
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message || "failed" },
-      { status: 500, headers: { "x-correlation-id": crypto.randomUUID() } }
+      { status: e?.status || (e?.message === "unauthorized" ? 401 : 500), headers: { "x-correlation-id": correlationId } }
     );
   }
 }
@@ -210,7 +227,8 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
 export async function POST(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   const correlationId = crypto.randomUUID();
   try {
-    const senderWallet = await resolveCallerWallet(req);
+    const merchantContext = await resolveMerchantMessageContext(req);
+    const senderWallet = merchantContext?.merchantWallet || await resolveCallerWallet(req);
 
     if (!/^0x[a-f0-9]{40}$/i.test(senderWallet)) {
       return NextResponse.json(
@@ -255,12 +273,12 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
     // Read conversation doc
     const convoSpec = {
       query:
-        "SELECT c.id, c.wallet, c.participants, c.brandKey, c.subject FROM c WHERE c.type='conversation' AND c.id=@id",
+        "SELECT * FROM c WHERE c.type='conversation' AND c.id=@id",
       parameters: [{ name: "@id", value: conversationId }],
     } as { query: string; parameters: { name: string; value: any }[] };
 
     const { resources: convos } = await container.items.query(convoSpec).fetchAll();
-    let convo = Array.isArray(convos) ? convos.find((c: any) => String(c?.id || "") === conversationId) : null;
+    let convo = Array.isArray(convos) ? convos.find((c: any) => String(c?.id || "") === conversationId && (!merchantContext || isMerchantMessageBrand(c.brandKey, merchantContext))) : null;
 
     // Fallback: try direct partition read using sender wallet
     if (!convo) {
@@ -289,12 +307,15 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
         { status: 404, headers: { "x-correlation-id": correlationId } }
       );
     }
+    if (merchantContext && !await merchantConversationAuthorizer(container, merchantContext)(convo)) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403, headers: { "x-correlation-id": correlationId } });
+    }
     const participantsLc2 = Array.isArray(convo.participants)
       ? convo.participants.map((w: any) => String(w || "").toLowerCase().trim())
       : [];
     const convoWallet2 = String(convo.wallet || "").toLowerCase().trim();
     const senderTrim = String(senderWallet).toLowerCase().trim();
-    if (participantsLc2.length === 0 || (!participantsLc2.includes(senderTrim) && convoWallet2 !== senderTrim)) {
+    if (!merchantContext && (participantsLc2.length === 0 || (!participantsLc2.includes(senderTrim) && convoWallet2 !== senderTrim))) {
       // Check if conversation subject is a checkout receipt owned by sender
       let isReceiptOwner = false;
       if (convo?.subject?.type === "checkout" && convo?.subject?.id) {
@@ -331,6 +352,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       brandKey,
       conversationId,
       senderWallet,
+      ...(merchantContext ? { agentWallet: merchantContext.actorWallet, merchantWallet: senderWallet } : {}),
       body: textBody,
       attachments,
       createdAt: ts,
@@ -356,7 +378,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
               : "")
       ) || "";
 
-      if (recipientWallet && /^0x[a-f0-9]{40}$/i.test(recipientWallet)) {
+      if (!merchantContext && recipientWallet && /^0x[a-f0-9]{40}$/i.test(recipientWallet)) {
         const { triggerNotification } = await import("@/lib/notifications/dispatcher");
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://surge.basalthq.com";
         triggerNotification("merchant", recipientWallet, "live_client_message", {
@@ -378,7 +400,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message || "failed" },
-      { status: 500, headers: { "x-correlation-id": crypto.randomUUID() } }
+      { status: e?.status || (e?.message === "unauthorized" ? 401 : 500), headers: { "x-correlation-id": correlationId } }
     );
   }
 }

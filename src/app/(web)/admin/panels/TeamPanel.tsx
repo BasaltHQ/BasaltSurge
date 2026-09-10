@@ -22,6 +22,7 @@ import {
     DEFAULT_MERCHANT_ROLES,
     AVAILABLE_MERCHANT_PERMISSIONS
 } from "@/types/merchant-features";
+import { normalizeMerchantRole } from "@/lib/merchant-permissions";
 
 type Session = {
     id: string;
@@ -56,12 +57,15 @@ const COLOR_PALETTE = [
     { key: "cyan", label: "Cyan", bg: "bg-cyan-500/10", text: "text-cyan-400", border: "border-cyan-500/30" }
 ];
 
-export default function TeamPanel({ overrideWallet }: { overrideWallet?: string }) {
+export default function TeamPanel({ overrideWallet, permissions }: { overrideWallet?: string; permissions?: MerchantPermissionKey[] }) {
     const account = useActiveAccount();
     const activeWallet = overrideWallet || account?.address;
+    const canManageTeam = !permissions || permissions.includes("manage:team");
+    const canManageRoles = !permissions || permissions.includes("manage:roles");
+    const canReadRoles = canManageTeam || canManageRoles;
 
     // Navigation & Tab State
-    const [mainTab, setMainTab] = useState<MainTabType>("roster");
+    const [mainTab, setMainTab] = useState<MainTabType>(canManageTeam ? "roster" : "roles");
     const [searchQuery, setSearchQuery] = useState("");
     const [roleFilter, setRoleFilter] = useState<string>("all");
 
@@ -143,6 +147,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
 
     // Data Loaders
     async function loadTeam() {
+        if (!canManageTeam) return;
         try {
             setLoading(true);
             setError("");
@@ -175,6 +180,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
     }
 
     async function loadRoles() {
+        if (!canReadRoles) return;
         try {
             setRolesLoading(true);
             const headers = { "x-wallet": activeWallet || "" };
@@ -193,6 +199,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
     }
 
     async function loadMemberSessions(memberId: string) {
+        if (!canManageTeam) return;
         try {
             setSessionsLoading(true);
             const res = await fetch(`/api/merchant/team/sessions?memberId=${encodeURIComponent(memberId)}`, {
@@ -217,15 +224,15 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
 
     useEffect(() => {
         if (activeWallet) {
-            loadTeam();
-            loadRoles();
+            if (canManageTeam) loadTeam();
+            if (canReadRoles) loadRoles();
         }
-    }, [activeWallet]);
+    }, [activeWallet, canManageTeam, canReadRoles]);
 
     // Role Metadata Resolution Helper
     const getRoleMeta = useMemo(() => {
         return (roleKey: string) => {
-            const k = String(roleKey || "").toLowerCase();
+            const k = normalizeMerchantRole(roleKey);
 
             // Check custom roles first
             const custom = customRoles.find(r => r.key.toLowerCase() === k);
@@ -247,26 +254,6 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                     description: system.description,
                     color: system.color,
                     permissions: roleOverrides[system.key] || system.permissions,
-                    isCustom: false
-                };
-            }
-
-            // Fallback for legacy role string values
-            if (k === "manager") {
-                return {
-                    name: "Manager / General Admin",
-                    description: "Operational management of store catalog and orders",
-                    color: "blue",
-                    permissions: ["manage:team", "manage:inventory", "manage:orders", "view:analytics", "access:terminal", "manage:settings"] as MerchantPermissionKey[],
-                    isCustom: false
-                };
-            }
-            if (k === "staff") {
-                return {
-                    name: "Cashier / FOH Staff",
-                    description: "Terminal checkout and order handling",
-                    color: "emerald",
-                    permissions: ["manage:orders", "access:terminal"] as MerchantPermissionKey[],
                     isCustom: false
                 };
             }
@@ -310,7 +297,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
         setActiveTab("overview");
         setEditName(member.name);
         setEditPin("");
-        setEditRole(member.role);
+        setEditRole(normalizeMerchantRole(member.role));
         setEditLinkedWallet(member.linkedWallet || "");
         setEditMode(false);
         loadMemberSessions(member.id);
@@ -440,6 +427,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
 
     // Save Custom Role Handler
     async function handleSaveCustomRole() {
+        if (!canManageRoles) return;
         if (!roleNameInput.trim()) return;
         try {
             setRoleSaveLoading(true);
@@ -489,9 +477,10 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
     }
 
     async function handleDeleteCustomRole(roleKey: string) {
+        if (!canManageRoles) return;
         setConfirmModal({
             title: "Delete Custom Role",
-            message: `Are you sure you want to delete this custom role? Members assigned to this role will remain on the team but will default to standard cashier permissions.`,
+            message: `Are you sure you want to delete this custom role? Members assigned to this role will remain on the team but will lose this role's permissions until another role is assigned.`,
             variant: "danger",
             confirmLabel: "Delete Role",
             onConfirm: async () => {
@@ -1095,7 +1084,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                                         onChange={e => setEditLinkedWallet(e.target.value)}
                                     />
                                     <p className="text-[11px] text-muted-foreground/80 mt-1">
-                                        Required for team member admin module authentication.
+                                        Required for team member admin module authentication. Customer Service members use this wallet to open Messages and reply to customers.
                                     </p>
                                 </>
                             ) : (
@@ -1143,7 +1132,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
     }
 
     // Single Member Detail View Root
-    if (selectedMember) {
+    if (selectedMember && canManageTeam) {
         const roleMeta = getRoleMeta(selectedMember.role);
         return (
             <>
@@ -1219,7 +1208,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
-                        {mainTab === "roles" && (
+                        {mainTab === "roles" && canManageRoles && (
                             <button
                                 onClick={() => setIsCreateRoleOpen(true)}
                                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-purple-600 text-white text-sm font-medium hover:bg-purple-700 transition-colors shadow-lg shadow-purple-950/20"
@@ -1227,7 +1216,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                                 <Plus size={16} /> Create Custom Role
                             </button>
                         )}
-                        {mainTab === "roster" && (
+                        {mainTab === "roster" && canManageTeam && (
                             <button
                                 onClick={() => setIsAddOpen(true)}
                                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-foreground text-background text-sm font-medium hover:bg-foreground/90 transition-colors"
@@ -1240,7 +1229,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
 
                 {/* Main Tabs Navigation */}
                 <div className="flex items-center border-b border-foreground/10 gap-6">
-                    <button
+                    {canManageTeam && <button
                         onClick={() => setMainTab("roster")}
                         className={`flex items-center gap-2 py-3 text-sm font-medium transition-colors -mb-px border-b-2 ${mainTab === "roster"
                             ? "text-foreground border-purple-500 font-semibold"
@@ -1250,9 +1239,9 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                         <Users size={16} />
                         Team Roster
                         <span className="ml-1 px-2 py-0.5 rounded-full text-[11px] bg-foreground/10 font-mono">{members.length}</span>
-                    </button>
+                    </button>}
 
-                    <button
+                    {canReadRoles && <button
                         onClick={() => setMainTab("roles")}
                         className={`flex items-center gap-2 py-3 text-sm font-medium transition-colors -mb-px border-b-2 ${mainTab === "roles"
                             ? "text-foreground border-purple-500 font-semibold"
@@ -1264,9 +1253,9 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                         <span className="ml-1 px-2 py-0.5 rounded-full text-[11px] bg-purple-500/20 text-purple-300 font-mono">
                             {DEFAULT_MERCHANT_ROLES.length + customRoles.length}
                         </span>
-                    </button>
+                    </button>}
 
-                    <button
+                    {canManageTeam && <button
                         onClick={() => setMainTab("sessions_payouts")}
                         className={`flex items-center gap-2 py-3 text-sm font-medium transition-colors -mb-px border-b-2 ${mainTab === "sessions_payouts"
                             ? "text-foreground border-purple-500 font-semibold"
@@ -1275,7 +1264,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                     >
                         <DollarSign size={16} />
                         Sessions & Payouts
-                    </button>
+                    </button>}
                 </div>
 
                 {/* Error Banner */}
@@ -1287,7 +1276,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                 )}
 
                 {/* TAB 1: TEAM ROSTER */}
-                {mainTab === "roster" && (
+                {mainTab === "roster" && canManageTeam && (
                     <div className="space-y-4">
                         {/* Search & Filter Bar */}
                         <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -1403,23 +1392,23 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                 )}
 
                 {/* TAB 2: ROLES & PERMISSIONS */}
-                {mainTab === "roles" && (
+                {mainTab === "roles" && canReadRoles && (
                     <div className="space-y-6">
                         {/* Custom Roles List */}
                         <div className="space-y-3">
                             <div className="flex items-center justify-between">
                                 <h3 className="text-base font-semibold tracking-tight">Custom Roles ({customRoles.length})</h3>
-                                <button
+                                {canManageRoles && <button
                                     onClick={() => setIsCreateRoleOpen(true)}
                                     className="text-xs bg-purple-500/10 text-purple-300 border border-purple-500/30 px-3 py-1.5 rounded-lg hover:bg-purple-500/20 transition-colors flex items-center gap-1 font-medium"
                                 >
                                     <Plus size={14} /> Add Role
-                                </button>
+                                </button>}
                             </div>
 
                             {customRoles.length === 0 ? (
                                 <div className="glass-pane p-6 rounded-xl border text-center text-sm text-muted-foreground">
-                                    No custom roles generated yet. Click "+ Add Role" to create specialized team roles.
+                                    No custom roles generated yet.{canManageRoles && ' Click "+ Add Role" to create specialized team roles.'}
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1435,12 +1424,12 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                                                         </span>
                                                         <div className="text-xs text-muted-foreground mt-2">{cr.description || "Custom merchant role"}</div>
                                                     </div>
-                                                    <button
+                                                    {canManageRoles && <button
                                                         onClick={() => handleDeleteCustomRole(cr.key)}
                                                         className="text-red-400 p-1 hover:bg-red-500/10 rounded-md transition-colors"
                                                     >
                                                         <Trash2 size={14} />
-                                                    </button>
+                                                    </button>}
                                                 </div>
 
                                                 <div className="flex items-center justify-between text-xs pt-2 border-t border-foreground/5">
@@ -1511,7 +1500,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                 )}
 
                 {/* TAB 3: SESSIONS & PAYOUTS */}
-                {mainTab === "sessions_payouts" && (
+                {mainTab === "sessions_payouts" && canManageTeam && (
                     <div className="space-y-6">
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div className="glass-pane p-5 rounded-xl border border-l-2 border-l-emerald-500/40">
@@ -1593,7 +1582,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
             </div>
 
             {/* Add Team Member Modal */}
-            {isAddOpen && (
+            {isAddOpen && canManageTeam && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
                     <div className="glass-pane rounded-2xl border shadow-2xl w-full max-w-md p-6 space-y-5" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-between">
@@ -1653,7 +1642,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
                                     placeholder="0x..."
                                 />
                                 <p className="text-[11px] text-muted-foreground/80 mt-1.5">
-                                    Required for admin module access. The team member will connect this wallet to authenticate.
+                                    Required for admin module access. Customer Service members connect this wallet to open Messages and reply to customers.
                                 </p>
                             </div>
                         </div>
@@ -1672,7 +1661,7 @@ export default function TeamPanel({ overrideWallet }: { overrideWallet?: string 
             )}
 
             {/* Create Custom Role Modal */}
-            {isCreateRoleOpen && (
+            {isCreateRoleOpen && canManageRoles && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
                     <div className="glass-pane rounded-2xl border shadow-2xl w-full max-w-lg p-6 space-y-5" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-between">

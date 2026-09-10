@@ -1,441 +1,168 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import React from "react";
-import {
-  Volume2,
-  VolumeX,
-  Globe,
-  Zap,
-  ShieldCheck,
-  Code2,
-  Network,
-  Scale,
-  CheckCircle2,
-  Settings,
-  QrCode,
-  Smartphone,
-  PieChart
-} from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUpRight, Check, ChevronDown, Code2, Globe2, Layers3, Pause, Play, ShieldCheck, Wallet, Zap } from "lucide-react";
 import { useBrand } from "@/contexts/BrandContext";
 import { useTheme } from "@/contexts/ThemeContext";
-import GeometricAnimation from "@/components/landing/GeometricAnimation";
+import { isPlatformBrand, normalizeBrandName } from "@/lib/branding";
 import { cachedFetch } from "@/lib/client-api-cache";
-import BrandText from "@/components/brand-text";
+import { SignupButton } from "@/components/landing/SignupButton";
 import ContactFormSection from "@/components/landing/ContactFormSection";
-import { ExitIntentModal } from "@/components/landing/ExitIntentModal";
+import SiteFooter from "@/components/landing/SiteFooter";
+import AccordionCheckoutPreview from "@/components/landing/AccordionCheckoutPreview";
+import styles from "./get-started.module.css";
+
+const overviewVideo = "https://engram1.blob.core.windows.net/portalpay/Videos/PortalPay25LQ.mp4";
+const SignupWizard = dynamic(() => import("@/components/signup-wizard").then(module => module.SignupWizard), { ssr: false });
+const capabilities = [
+  { icon: Wallet, title: "A checkout that feels familiar.", description: "A guided payment experience that helps customers move from contact details to confirmation, one clear step at a time.", label: "DESIGNED FOR YOUR CUSTOMERS" },
+  { icon: Zap, title: "Built on better payment rails.", description: "Accept digital assets and settle on Base. Put blockchain payments to work in the everyday flow of your business.", label: "POWERED BY CRYPTO" },
+  { icon: Layers3, title: "Your brand. Every step.", description: "Bring your logo, colors, and identity into checkout. Keep the experience consistent from your storefront to the receipt.", label: "MADE TO FEEL LIKE YOU" },
+];
 
 export default function GetStartedPage() {
   const brand = useBrand();
-  const { theme: siteTheme } = useTheme();
-  const [isMuted, setIsMuted] = React.useState(true);
-  const [scrollProgress, setScrollProgress] = React.useState(0);
-  const [containerBrandKey, setContainerBrandKey] = React.useState<string>("");
-  const [containerType, setContainerType] = React.useState<string>("");
-  const videoRef = React.useRef<HTMLVideoElement>(null);
-  const heroRef = React.useRef<HTMLDivElement>(null);
-
-  // Fetch container identity to get brandKey for partner containers
+  const { theme } = useTheme();
+  const [identity, setIdentity] = React.useState({ brandKey: brand.key, containerType: "" });
+  const heroVideoRef = React.useRef<HTMLVideoElement>(null);
+  const [videoPaused, setVideoPaused] = React.useState(false);
+  const [localSignupOpen, setLocalSignupOpen] = React.useState(false);
+  React.useEffect(() => {
+    // Some partner hosts hide the global navbar, which normally owns this event.
+    const openWithoutNavbar = () => {
+      if (!document.getElementById("global-hideable-navbar")) setLocalSignupOpen(true);
+    };
+    window.addEventListener("pp:wizard:open", openWithoutNavbar);
+    return () => window.removeEventListener("pp:wizard:open", openWithoutNavbar);
+  }, []);
   React.useEffect(() => {
     let cancelled = false;
+    const root = document.documentElement;
+    setIdentity({ brandKey: root.getAttribute("data-pp-brand-key") || brand.key, containerType: root.getAttribute("data-pp-container-type") || "" });
     cachedFetch("/api/site/container", { cache: "no-store" })
-      .then((ci: any) => {
-        if (cancelled) return;
-        setContainerBrandKey(String(ci?.brandKey || "").trim());
-        setContainerType(String(ci?.containerType || "").trim());
-      })
-      .catch(() => { });
+      .then((value: { brandKey?: string; containerType?: string }) => {
+        if (!cancelled) setIdentity(previous => ({ brandKey: value.brandKey || previous.brandKey, containerType: value.containerType || previous.containerType }));
+      }).catch(() => {});
     return () => { cancelled = true; };
-  }, []);
+  }, [brand.key]);
 
-  // Detect partner container
-  const isPartnerContainer = React.useMemo(() => {
-    const ctFromState = containerType.toLowerCase();
-    const ctFromAttr = typeof document !== "undefined"
-      ? (document.documentElement.getAttribute("data-pp-container-type") || "").toLowerCase()
-      : "";
-    return ctFromState === "partner" || ctFromAttr === "partner";
-  }, [containerType]);
-
-  // Compute display brand name
-  const displayBrandName = React.useMemo(() => {
-    try {
-      const raw = String(siteTheme?.brandName || "").trim();
-      const generic = /^ledger\d*$/i.test(raw) || /^partner\d*$/i.test(raw) || /^default$/i.test(raw);
-      const treatAsGeneric = generic || (isPartnerContainer && /^portalpay$/i.test(raw));
-      const key = containerBrandKey || String((brand as any)?.key || "").trim();
-      const titleizedKey = key ? key.charAt(0).toUpperCase() + key.slice(1) : "PortalPay";
-      return (!raw || treatAsGeneric) ? titleizedKey : raw;
-    } catch {
-      const key = containerBrandKey || String((brand as any)?.key || "").trim();
-      return key ? key.charAt(0).toUpperCase() + key.slice(1) : "PortalPay";
-    }
-  }, [siteTheme?.brandName, containerBrandKey, (brand as any)?.key, isPartnerContainer]);
-
-  const toggleMute = async () => {
-    if (!videoRef.current) return;
-    try {
-      const newMutedState = !isMuted;
-      if (!newMutedState) videoRef.current.volume = 1.0;
-      videoRef.current.muted = newMutedState;
-      setIsMuted(newMutedState);
-      if (videoRef.current.paused) await videoRef.current.play();
-    } catch (error) {
-      console.error('Toggle mute failed:', error);
-    }
-  };
-
-  React.useEffect(() => {
-    const handleScroll = () => {
-      if (!heroRef.current) return;
-      const heroHeight = heroRef.current.offsetHeight;
-      const scrollY = window.scrollY;
-      const progress = Math.min(scrollY / (heroHeight * 0.75), 1);
-      setScrollProgress(progress);
-    };
-    window.addEventListener("scroll", handleScroll);
-    handleScroll();
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  // Animation values
-  const contentOpacity = Math.min(scrollProgress / 0.2, 1);
-  const contentScale = 1 + (Math.min(Math.max(scrollProgress - 0.2, 0) / 0.3, 1) * 0.15);
-  const contentFadeOut = 1 - Math.min(Math.max(scrollProgress - 0.5, 0) / 0.3, 1);
-  const blurAmount = scrollProgress * 20;
-  const overlayOpacity = scrollProgress * 0.7;
-
-  // Dynamic Styles
-  const primaryColor = siteTheme?.primaryColor || '#35ff7c'; // Use theme primary or Basalt Green default
-  const heroGradientStyle = {
-    backgroundImage: `linear-gradient(to right, ${primaryColor}, ${siteTheme?.secondaryColor || '#FF6B35'})`,
-    WebkitBackgroundClip: 'text',
-    backgroundClip: 'text',
-    color: 'transparent'
-  };
+  const brandKey = identity.brandKey || brand.key;
+  const isPartner = identity.containerType.toLowerCase() === "partner" || !isPlatformBrand(brandKey);
+  const rawName = theme.brandName?.trim();
+  const genericName = !rawName || /^(ledger\d*|partner\d*|default)$/i.test(rawName) || (isPartner && /^(portalpay|basaltsurge)$/i.test(rawName));
+  const brandName = normalizeBrandName(genericName ? brand.name : rawName, brandKey);
+  const accent = isPartner ? (theme.primaryColor || brand.colors.primary) : "#ff8157";
+  const pageStyle = { "--landing-accent": accent } as React.CSSProperties;
+  const questions = [
+    { question: "Do my customers need to know how crypto works?", answer: "The checkout guides customers through each step. Supported card and bank payment options can offer a familiar way to pay, while customers with a supported wallet can use crypto. Available methods depend on the checkout configuration, provider, and region." },
+    { question: "Can I use it online and in person?", answer: "Yes. Use a branded checkout for your online store, share a payment link, or let customers scan a QR code at your counter. The platform also includes a terminal experience for in-person payments." },
+    { question: "Can I keep my own branding?", answer: "Yes. Customize your logo, colors, and checkout appearance so the payment experience feels like a natural part of your business." },
+    { question: "How do I connect it to my business?", answer: "Start with merchant onboarding to configure your business and settlement details. Use the available commerce integrations or the developer API to connect payments, orders, and receipts to your workflow." },
+  ];
 
   return (
-    <div className="min-h-screen relative bg-black">
-      {/* Background Layer */}
-      <div className="fixed top-0 left-0 w-full h-screen overflow-hidden z-0">
-        {isPartnerContainer ? (
-          <div
-            className="absolute inset-0 transition-all duration-300"
-            style={{
-              filter: `blur(${blurAmount}px)`,
-              transform: `scale(${1 + scrollProgress * 0.1})`,
-            }}
-          >
-            <GeometricAnimation className="w-full h-full" />
+    <>
+    <main className={styles.page} style={pageStyle}>
+      <section className={styles.hero} aria-labelledby="landing-title">
+        {!isPartner && <>
+          <div className={styles.heroMedia} aria-hidden="true">
+            <video ref={heroVideoRef} autoPlay muted loop playsInline poster="/bsurgebg.png" tabIndex={-1} onPlay={() => setVideoPaused(false)} onPause={() => setVideoPaused(true)}>
+              <source src={overviewVideo} type="video/mp4" />
+              <source src="/SurgeHeader.mp4" type="video/mp4" />
+            </video>
           </div>
-        ) : (
-          <video
-            ref={videoRef}
-            autoPlay
-            loop
-            muted={isMuted}
-            playsInline
-            className="absolute inset-0 w-full h-full object-cover transition-all duration-300"
-            style={{
-              filter: `blur(${blurAmount}px)`,
-              transform: `scale(${1 + scrollProgress * 0.1})`,
-            }}
-          >
-            <source
-              src="https://engram1.blob.core.windows.net/portalpay/Videos/PortalPay25LQ.mp4"
-              type="video/mp4"
-            />
-          </video>
-        )}
-        {/* Dynamic Overlay only - No static dimming at start */}
-        <div
-          className="absolute inset-0 bg-black transition-opacity duration-300"
-          style={{ opacity: overlayOpacity }}
-        />
-      </div>
-
-      {/* Mute Button */}
-      {!isPartnerContainer && (
-        <button
-          onClick={toggleMute}
-          className="fixed bottom-8 right-8 z-50 p-3 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 hover:bg-white/20 transition-colors"
-        >
-          {isMuted ? <VolumeX className="w-6 h-6 text-white" /> : <Volume2 className="w-6 h-6 text-white" />}
-        </button>
-      )}
-
-      {/* HERO */}
-      <section ref={heroRef} className="relative h-[200vh] w-full -mt-20">
-        <div
-          className="fixed top-0 left-0 w-full h-screen flex flex-col items-center justify-center text-center px-4 transition-all duration-300 z-10"
-          style={{
-            opacity: contentOpacity * contentFadeOut,
-            transform: `scale(${contentScale})`,
-          }}
-        >
-          <div className="inline-flex items-center justify-center w-24 h-24 rounded-3xl bg-black/30 backdrop-blur-xl border border-white/10 shadow-2xl mb-10 ring-1 ring-white/5">
-            <img
-              src={(() => {
-                if (!isPartnerContainer) return "/Surge.png";
-                const symbol = String((brand.logos?.symbol || "")).trim();
-                const app = String((brand.logos?.app || "")).trim();
-                if (symbol) return symbol;
-                if (app) return app;
-                return "/Surge.png";
-              })()}
-              alt={`${brand.name} Logo`}
-              className="w-16 h-16 object-contain drop-shadow-lg"
-            />
+          <button type="button" className={styles.videoToggle} aria-label={videoPaused ? "Play background video" : "Pause background video"} onClick={() => {
+            const video = heroVideoRef.current;
+            if (!video) return;
+            if (video.paused) void video.play().catch(() => setVideoPaused(true));
+            else video.pause();
+          }}>{videoPaused ? <Play size={14} /> : <Pause size={14} />}</button>
+        </>}
+        <div className={styles.heroGrid} aria-hidden="true" />
+        <div className={`${styles.container} ${styles.heroLayout}`}>
+          <div className={styles.heroCopy}>
+            <div className={styles.eyebrow}><span className={styles.statusDot} /> THE NEXT CHAPTER OF PAYMENTS</div>
+            <h1 id="landing-title">A better way<br />to <span>get paid.</span></h1>
+            <p className={styles.heroDescription}>Crypto-powered payments.<br /> A remarkably simple checkout.</p>
+            <p className={styles.heroDetail}>{brandName} brings payments, onchain settlement, and your brand into one seamless experience. Built for business. Designed for people.</p>
+            <div className={styles.actions}>
+              <SignupButton className={styles.primaryButton}>Start accepting payments <ArrowUpRight size={18} /></SignupButton>
+              <a className={styles.textButton} href="#how-it-works"><ArrowDown size={16} /> Explore the experience</a>
+            </div>
+            <div className={styles.heroNotes}><span><Check size={14} /> Online & in person</span><span><Check size={14} /> Your brand, built in</span></div>
           </div>
-
-          <h1 className="text-6xl md:text-9xl font-black tracking-tighter mb-8 text-white max-w-6xl leading-[0.9]">
-            SOVEREIGN <br />
-            COMMERCE
-            <span className="block text-4xl md:text-6xl mt-4 font-bold tracking-normal opacity-90" style={heroGradientStyle}>
-              FOR THE DIGITAL AGE
-            </span>
-          </h1>
-
-          <p className="text-xl md:text-2xl text-white/90 mb-12 max-w-3xl leading-relaxed font-light">
-            Powered by the <strong className="text-white">Universal Commerce Protocol (UCP)</strong>.
-            <span className="block mt-2">The internet's missing payment layer is finally here.</span>
-          </p>
-
-          <div className="flex flex-wrap items-center justify-center gap-4">
-            <Link
-              href="/admin"
-              className="px-8 py-4 text-lg rounded-lg text-white hover:scale-105 transition-transform shadow-2xl font-bold"
-              style={{ backgroundColor: primaryColor }}
-            >
-              Start the Revolution
-            </Link>
-            <Link
-              href="#protocol"
-              className="px-8 py-4 text-lg rounded-lg bg-white/10 backdrop-blur-sm border border-white/30 text-white hover:bg-white/20 transition-colors font-semibold"
-            >
-              Explore the Protocol
-            </Link>
+          <div className={styles.productStage}>
+            <div className={styles.stageLabel}><span>THE CHECKOUT EXPERIENCE</span><span className={styles.demoBadge}>INTERACTIVE DEMO</span></div>
+            <AccordionCheckoutPreview brandName={brandName} accentColor={accent} />
+            <div className={styles.stageCaption}><span className={styles.statusDot} /> Familiar on the surface. Powerful underneath.</div>
           </div>
+        </div>
+        <div className={`${styles.container} ${styles.railStrip}`}>
+          <p>Modern payment rails.<br /><strong>Real-world possibilities.</strong></p>
+          <div><span className={styles.baseMark} /> Base <small>SETTLEMENT NETWORK</small></div>
+          <div><Globe2 size={23} /> Borderless <small>DIGITAL COMMERCE</small></div>
+          <div><ShieldCheck size={23} /> Onchain <small>VERIFIABLE PAYMENTS</small></div>
+        </div>
+        <div className={styles.scrollPrompt}>
+          <a href="#platform" className={styles.scrollCue}>
+            <span>Scroll to explore</span>
+            <span className={styles.scrollTrack} aria-hidden="true"><span /></span>
+            <ChevronDown size={16} aria-hidden="true" />
+          </a>
         </div>
       </section>
 
-      {/* CONTENT */}
-      <div className="relative z-10 bg-black text-white">
+      <section className={`${styles.container} ${styles.section}`} id="platform" aria-labelledby="platform-title">
+        <div className={styles.sectionHeading}>
+          <div><div className={styles.eyebrow}>LESS FRICTION. MORE POSSIBILITY.</div><h2 id="platform-title">Great payments should<br />feel effortless.</h2></div>
+          <p>Give customers a clear path to payment.<br />Give your business the tools to move forward.</p>
+        </div>
+        <div className={styles.capabilities}>
+          {capabilities.map(({ icon: Icon, title, description, label }, index) => <article className={styles.capability} key={title}>
+            <div className={styles.capabilityTop}><Icon size={26} strokeWidth={1.5} /><span>0{index + 1}</span></div>
+            <div className={styles.smallLabel}>{label}</div><h3>{title}</h3><p>{description}</p>
+          </article>)}
+        </div>
+      </section>
 
-        {/* LIBERATION / MANIFESTO */}
-        <section className="py-24 md:py-32 px-6 border-b border-white/10 bg-neutral-950">
-          <div className="max-w-6xl mx-auto">
-            <div className="grid md:grid-cols-2 gap-16 items-center">
-              <div>
-                <span className="font-mono text-sm tracking-wider uppercase mb-4 block" style={{ color: primaryColor }}>
-                  /// STATUS: LIBERATED
-                </span>
-                <h2 className="text-4xl md:text-6xl font-black mb-8 leading-tight">
-                  Freedom from <br />
-                  <span className="text-neutral-500">Rent-Seekers.</span>
-                </h2>
-                <p className="text-xl text-neutral-400 mb-6 leading-relaxed">
-                  They own the rails. They own the data. They own your business.
-                  Legacy payment processors are gatekeepers of global prosperity.
-                </p>
-                <p className="text-xl text-white font-medium">
-                  We built new rails. <BrandText /> is not just a payment processor.
-                  It is a declaration of financial independence.
-                </p>
-              </div>
-              <div className="relative">
-                <div className="absolute inset-0 blur-3xl rounded-full opacity-30" style={{ background: primaryColor }} />
-                <div className="relative bg-white/5 border border-white/10 rounded-2xl p-8 backdrop-blur-sm">
-                  <div className="flex items-center gap-4 mb-6 border-b border-white/10 pb-6">
-                    <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center text-red-500">
-                      <ShieldCheck className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <div className="text-sm text-neutral-400">Old System</div>
-                      <div className="text-lg font-bold">Permissioned & Taxed</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: `${primaryColor}40` }}>
-                      <Globe className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <div className="text-sm text-neutral-400">New System (UCP)</div>
-                      <div className="text-lg font-bold text-white">Permissionless & Free</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+      <section className={`${styles.container} ${styles.section}`} id="how-it-works" aria-labelledby="workflow-title">
+        <div className={styles.workflow}>
+          <div className={styles.workflowIntro}><div className={styles.eyebrow}>FROM FIRST CLICK TO CONFIRMATION</div><h2 id="workflow-title">Every step.<br />Considered.</h2><p>A guided checkout keeps the next action clear. Your customers stay in the flow, and you stay focused on your business.</p><a className={styles.textButton} href="#landing-title">Try the checkout above <ArrowUpRight size={17} /></a></div>
+          <ol className={styles.steps}>
+            {[
+              ["Connect with your customer", "A simple contact step brings the details together for checkout and receipts."],
+              ["Guide the details", "Identity information is collected when required by the payment provider and selected payment method."],
+              ["Make payment feel familiar", "Clear payment options help customers choose how they want to pay."],
+              ["Close the loop", "Payment and order confirmation give customers a clear finish to their checkout."],
+            ].map(([title, detail], index) => <li key={title}><span className={styles.stepNumber}>0{index + 1}</span><div><h3>{title}</h3><p>{detail}</p></div></li>)}
+          </ol>
+        </div>
+      </section>
+
+      <section className={styles.businessSection} aria-labelledby="business-title">
+        <div className={styles.container}>
+          <div className={styles.sectionHeading}><div><div className={styles.eyebrow}>ONE PLATFORM. YOUR WAY OF WORKING.</div><h2 id="business-title">Built for your next move.</h2></div><p>At the counter, in your store, or inside your own product. Make better payments part of your business.</p></div>
+          <div className={styles.businessGrid}>
+            <article className={styles.businessCard}><div className={styles.businessVisual} aria-hidden="true"><div className={styles.receiptIllustration}><span>YOUR BUSINESS</span><strong>Ready when<br />they are.</strong><div className={styles.receiptLine} /><span>PAYMENT LINK <ArrowUpRight size={15} /></span></div><span className={styles.visualTag}><Check size={13} /> Online & in person</span></div><div className={styles.businessBody}><h3>Wherever you do business.</h3><p>Payment links, QR checkout, and commerce integrations. Meet customers wherever the sale happens.</p><Link href="/terminal" className={styles.textButton}>Explore the terminal <ArrowUpRight size={17} /></Link></div></article>
+            <article className={styles.businessCard}><div className={`${styles.businessVisual} ${styles.routingVisual}`} aria-hidden="true"><div className={styles.routeNode}><Wallet size={21} /><span>Payment received</span></div><div className={styles.routeConnector} /><div className={styles.routeDestinations}><span>Merchant</span><span>Partner</span></div><span className={styles.visualTag}><Layers3 size={13} /> Programmable revenue</span></div><div className={styles.businessBody}><h3>More control behind the scenes.</h3><p>Configure revenue splits, track activity, and connect your systems with APIs for orders, inventory, and receipts.</p><Link href="/developers" className={styles.textButton}>Explore the developer tools <ArrowUpRight size={17} /></Link></div></article>
           </div>
-        </section>
+          {!isPartner && <div className={styles.partnerBanner}><div className={styles.partnerIcon}><Code2 size={26} /></div><div><span className={styles.smallLabel}>FOR PLATFORMS & PAYMENT PARTNERS</span><h3>Your brand. Our payment infrastructure.</h3><p>Build your own branded payment business with the partner program.</p></div><Link href="/partners" className={styles.secondaryButton}>Become a partner <ArrowUpRight size={17} /></Link></div>}
+        </div>
+      </section>
 
-        {/* UCP & x402 PROTOCOL */}
-        <section id="protocol" className="py-24 md:py-32 px-6 bg-black relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-full bg-[url('/hex-pattern.svg')] opacity-5 pointer-events-none" />
-          <div className="max-w-7xl mx-auto">
-            <div className="text-center mb-20">
-              <span className="inline-block px-4 py-1.5 rounded-full border border-white/10 bg-white/5 font-mono text-sm mb-6 text-[var(--primary)]">
-                HTTP 402: PAYMENT REQUIRED
-              </span>
-              <h2 className="text-4xl md:text-6xl font-black mb-6">
-                The Universal Commerce Protocol
-              </h2>
-              <p className="text-xl text-neutral-400 max-w-3xl mx-auto">
-                Standardizing value transfer like HTTP standardized information.
-              </p>
-            </div>
+      <section className={`${styles.container} ${styles.section} ${styles.faq}`} aria-labelledby="faq-title">
+        <div><div className={styles.eyebrow}>A LITTLE MORE CLARITY</div><h2 id="faq-title">Good questions.<br />Straight answers.</h2><Link href="/faq" className={styles.textButton}>Visit the help center <ArrowUpRight size={17} /></Link></div>
+        <div className={styles.faqList}>{questions.map(({ question, answer }) => <details key={question}><summary>{question}<ChevronDown size={18} /></summary><p>{answer}</p></details>)}</div>
+      </section>
 
-            <div className="grid md:grid-cols-3 gap-8">
-              {[
-                { icon: Code2, title: "x402 Standard", text: "The missing HTTP status code. Programmatic payment requirements for any digital resource." },
-                { icon: Network, title: "Interoperable", text: "Connect once, trade everywhere. Across chains, wallets, and apps." },
-                { icon: Scale, title: "Trustless Settlement", text: "No middlemen. Smart contracts handle settlement instantly. Code is law." }
-              ].map((item, i) => (
-                <div key={i} className="group relative bg-neutral-900/50 border border-white/10 rounded-2xl p-8 hover:border-[var(--primary)]/50 transition-colors">
-                  <div className="absolute top-0 right-0 p-8 opacity-10 font-mono text-6xl font-bold group-hover:text-[var(--primary)] transition-colors">
-                    0{i + 1}
-                  </div>
-                  <item.icon className="w-12 h-12 text-[var(--primary)] mb-6" />
-                  <h3 className="text-2xl font-bold mb-4">{item.title}</h3>
-                  <p className="text-neutral-400 leading-relaxed">{item.text}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* TACTICAL EXECUTION (How it Works - Restored & Styled) */}
-        <section className="py-24 md:py-32 px-6 bg-neutral-950 border-t border-white/10">
-          <div className="max-w-7xl mx-auto">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl md:text-5xl font-black mb-6">Tactical Execution</h2>
-              <p className="text-xl text-neutral-400 max-w-3xl mx-auto">
-                Four simple steps to sovereign wealth generation.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {[
-                { icon: Settings, title: "Configure", text: "Set your brand, colors, logo, and revenue splits in the admin panel." },
-                { icon: QrCode, title: "Generate", text: "Create receipt IDs and print QR codes from your POS system." },
-                { icon: Smartphone, title: "Scan & Pay", text: "Customers scan the QR code and pay with any wallet." },
-                { icon: PieChart, title: "Reconcile", text: "Real-time analytics and instant on-chain settlement." }
-              ].map((step, i) => (
-                <div key={i} className="bg-white/5 border border-white/10 rounded-2xl p-8 hover:bg-white/10 transition-colors">
-                  <div className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg mb-6 text-white" style={{ backgroundColor: primaryColor }}>
-                    {i + 1}
-                  </div>
-                  <h3 className="text-xl font-bold mb-3 text-white flex items-center gap-2">
-                    <step.icon className="w-5 h-5 text-white/70" /> {step.title}
-                  </h3>
-                  <p className="text-neutral-400 text-sm">{step.text}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* SOVEREIGN ARSENAL (Features - Restored & Styled) */}
-        <section className="py-24 md:py-32 px-6 bg-black relative">
-          <div className="max-w-7xl mx-auto">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl md:text-5xl font-black mb-6">The Sovereign Arsenal</h2>
-              <p className="text-xl text-neutral-400 max-w-3xl mx-auto">
-                Everything you need to compete and win in the digital economy.
-              </p>
-            </div>
-
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {[
-                {
-                  title: "QR Code Payments",
-                  desc: "Print QR codes on POS receipts. Customers scan and pay.",
-                  items: ["Works with existing printers", "Mobile-first experience", "No new hardware"]
-                },
-                {
-                  title: "Multi-Token Support",
-                  desc: "Accept stablecoins, ETH, or community tokens on Base.",
-                  items: ["USDC & USDT", "cbBTC & cbXRP", "Low gas fees"]
-                },
-                {
-                  title: "White-Label Branding",
-                  desc: "Your colors, your logo. Customers see you, not us.",
-                  items: ["Custom logo & colors", "Branded checkout", "Custom fonts"]
-                },
-                {
-                  title: "Revenue Splits",
-                  desc: "Programmatic profit sharing on-chain.",
-                  items: ["Automated distribution", "Partnership friendly", "Smart rotation"]
-                },
-                {
-                  title: "Real-Time Analytics",
-                  desc: "Watch your volume and trends instantly.",
-                  items: ["Live dashboard", "USD volume tracking", "Customer insights"]
-                },
-                {
-                  title: "Web3 Security",
-                  desc: "Account abstraction and gas sponsorship.",
-                  items: ["Secure connection", "Gasless for users", "Verified settlement"]
-                }
-              ].map((feature, i) => (
-                <div key={i} className="bg-neutral-900/50 border border-white/10 rounded-2xl p-8 hover:border-[var(--primary)]/30 transition-colors">
-                  <h3 className="text-2xl font-bold mb-4 text-white">{feature.title}</h3>
-                  <p className="text-neutral-400 mb-6">{feature.desc}</p>
-                  <ul className="space-y-3">
-                    {feature.items.map((item, j) => (
-                      <li key={j} className="flex items-start gap-3 text-sm text-neutral-300">
-                        <CheckCircle2 className="w-5 h-5 flex-shrink-0" style={{ color: primaryColor }} />
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Merchant Onboarding Contact Form — Platform Only */}
-        {!isPartnerContainer && (
-          <section className="py-24 md:py-32 px-6 bg-black relative border-t border-white/10">
-            <div className="max-w-7xl mx-auto">
-              <ContactFormSection />
-            </div>
-          </section>
-        )}
-
-        {/* FINAL CTA */}
-        <section className="py-32 px-6 text-center border-t border-white/10 bg-neutral-950">
-          <h2 className="text-5xl md:text-7xl font-black mb-8 leading-tight">
-            Claim Your <br />
-            <span style={{ color: primaryColor }}>Sovereignty.</span>
-          </h2>
-          <p className="text-xl text-neutral-400 max-w-2xl mx-auto mb-12">
-            The tools for financial freedom are now in your hands.
-            Join the network that is rewriting the rules of global commerce.
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-6">
-            <Link
-              href="/admin"
-              className="px-10 py-5 text-xl rounded-xl text-white hover:scale-105 transition-transform shadow-2xl font-bold"
-              style={{ backgroundColor: primaryColor }}
-            >
-              Start Building
-            </Link>
-            <Link
-              href="/terminal"
-              className="px-10 py-5 text-xl rounded-xl border border-white/20 hover:bg-white/10 transition-colors font-semibold"
-            >
-              Enter Terminal
-            </Link>
-          </div>
-        </section>
-
-      </div>
-
-      {/* Exit-Intent Email Capture — Platform Only */}
-      {!isPartnerContainer && <ExitIntentModal accentColor={siteTheme?.secondaryColor} />}
-    </div>
+      <section className={styles.finalSection} aria-labelledby="start-title"><div className={styles.container}><div className={styles.eyebrow}>YOUR NEXT CHAPTER STARTS HERE</div><h2 id="start-title">Better payments.<br /><span>More possibilities.</span></h2><p>Bring the {brandName} experience to your business.</p><div className={styles.actions}><SignupButton className={styles.primaryButton}>Start accepting payments <ArrowUpRight size={18} /></SignupButton><Link href="/pricing" className={styles.textButton}>Explore pricing <ArrowRight size={17} /></Link></div>
+        {!isPartner && <details className={styles.contactDisclosure}><summary>Prefer to talk with our team? <ChevronDown size={16} /></summary><div className={styles.contactForm}><ContactFormSection /></div></details>}
+      </div></section>
+      {localSignupOpen && <SignupWizard isOpen onClose={() => setLocalSignupOpen(false)} onComplete={() => setLocalSignupOpen(false)} />}
+    </main>
+    <div className={styles.fullFooter}><SiteFooter /></div>
+    </>
   );
 }

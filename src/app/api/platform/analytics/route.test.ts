@@ -16,6 +16,7 @@ import * as failures from "../../../../lib/platform-analytics-failures.ts";
 
 const nativeRequire = createRequire(import.meta.url);
 const compiled = ts.transpileModule(readFileSync(new URL("./route.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const compiledService = ts.transpileModule(readFileSync(new URL("../../../../lib/platform-analytics-service.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 
 function project(row: Record<string, any>, projection: Record<string, number>) {
   const result: Record<string, any> = {};
@@ -45,14 +46,17 @@ function routeFor(rows: any[], backend: "mongo" | "cosmos" = "mongo", logGroups?
     "@/lib/cosmos": { getContainer: async (_database?: string, collectionName?: string) => collectionName === "portal_logs"
       ? { getCollection: () => ({ aggregate: () => ({ toArray: async () => logGroups || [] }) }) }
       : container },
-    // Authentication remains unchanged and outside this non-auth regression scope.
-    "@/lib/authz": { resolveWalletRole: () => "platform_admin" },
     "@/lib/platform-analytics-metrics": metrics,
     "@/lib/platform-analytics-query": query,
     "@/lib/platform-analytics-aggregation": aggregation,
     "@/lib/platform-analytics-fees": fees,
     "@/lib/platform-analytics-failures": failures,
+    // Verified session authorization is exercised by partner analytics access tests.
+    "@/lib/partner-analytics-access": { requirePlatformAnalyticsAccess: async () => ({ actorWallet: "platform", role: "platform_admin" }) },
   };
+  const serviceExports: Record<string, any> = {};
+  new Function("require", "module", "exports", compiledService)((id: string) => dependencies[id] || nativeRequire(id), { exports: serviceExports }, serviceExports);
+  dependencies["@/lib/platform-analytics-service"] = serviceExports;
   new Function("require", "module", "exports", compiled)((id: string) => dependencies[id] || nativeRequire(id), { exports }, exports);
   return async (params: URLSearchParams) => {
     if (!logGroups) params.set("includeLogPreview", "false");

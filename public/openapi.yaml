@@ -1631,6 +1631,11 @@ components:
     Receipt:
       type: object
       properties:
+        total:
+          type: number
+          description: Current total in native receipt currency, present for native receipts.
+        pricing:
+          $ref: "#/components/schemas/ReceiptPricing"
         receiptId:
           type: string
         totalUsd:
@@ -1640,6 +1645,7 @@ components:
           type: string
           enum:
             - USD
+            - EUR
         lineItems:
           type: array
           items:
@@ -1678,23 +1684,102 @@ components:
         - currency
         - lineItems
         - createdAt
+    NativeReceiptLineItem:
+      type: object
+      properties:
+        label:
+          type: string
+        amount:
+          type: number
+          multipleOf: 0.01
+          description: Extended line amount in receipt currency; already includes qty. Negative discount lines are allowed.
+        qty:
+          type: integer
+          minimum: 1
+      required: [label, amount]
+      not:
+        required: [priceUsd]
+    ReceiptPricing:
+      type: object
+      description: Server-owned valuation fixed for the receipt and reused during EU Stripe conversion and reconciliation. USD fields always remain USD.
+      properties:
+        version:
+          type: integer
+          enum: [1]
+        currency:
+          type: string
+          enum: [USD, EUR]
+        usdPerUnit:
+          type: number
+        quotedAt:
+          type: integer
+          format: int64
+          description: Valuation timestamp in milliseconds since epoch.
+        provider:
+          type: string
+          enum: [identity, coinbase]
+        originalTotal:
+          type: number
+        originalTotalUsd:
+          type: number
+        originalLineItems:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              amount:
+                type: number
+              priceUsd:
+                type: number
+              qty:
+                type: integer
+      required: [version, currency, usdPerUnit, quotedAt, provider]
     CreateReceiptRequest:
       type: object
       properties:
+        currency:
+          type: string
+          description: Native receipt denomination. Defaults to USD for direct native amounts; Orders infers explicit native catalog currency when omitted.
+          enum: [USD, EUR]
+        total:
+          type: number
+          minimum: 0
+          multipleOf: 0.01
+          description: Native total; if omitted, sums native line amounts. Cannot be combined with totalUsd.
         id:
           type: string
           description: Unique receipt ID
         lineItems:
           type: array
           items:
-            $ref: "#/components/schemas/LineItem"
+            oneOf:
+              - $ref: "#/components/schemas/LineItem"
+              - $ref: "#/components/schemas/NativeReceiptLineItem"
         totalUsd:
           type: number
           format: float
       required:
         - id
         - lineItems
-        - totalUsd
+      oneOf:
+        - required: [totalUsd]
+          properties:
+            lineItems:
+              type: array
+              items:
+                $ref: "#/components/schemas/LineItem"
+          not:
+            required: [total]
+        - not:
+            required: [totalUsd]
+          properties:
+            lineItems:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/NativeReceiptLineItem"
     CreateReceiptResponse:
       type: object
       properties:
@@ -1906,6 +1991,14 @@ components:
     InventoryItem:
       type: object
       properties:
+        nativePrice:
+          type: object
+          properties:
+            amount:
+              type: number
+            currency:
+              type: string
+              enum: [USD, EUR]
         id:
           type: string
         wallet:
@@ -1988,6 +2081,11 @@ components:
     InventoryUpsertRequest:
       type: object
       properties:
+        price:
+          type: number
+          minimum: 0
+          multipleOf: 0.01
+          description: Explicit native unit price in currency (USD or EUR). Mutually exclusive with priceUsd.
         id:
           type: string
           description: Item ID for updates (optional)
@@ -2030,8 +2128,10 @@ components:
       required:
         - sku
         - name
-        - priceUsd
         - stockQty
+      oneOf:
+        - required: [priceUsd]
+        - required: [price]
     InventoryUpsertResponse:
       type: object
       properties:
@@ -2077,6 +2177,10 @@ components:
     OrderCreateRequest:
       type: object
       properties:
+        currency:
+          type: string
+          description: Native receipt denomination. Defaults to USD for direct native amounts; Orders infers explicit native catalog currency when omitted.
+          enum: [USD, EUR]
         items:
           type: array
           items:
@@ -2097,6 +2201,9 @@ components:
     ReceiptLineItem:
       type: object
       properties:
+        amount:
+          type: number
+          description: Current extended line amount in native receipt currency, present for native receipts.
         label:
           type: string
         priceUsd:
@@ -2117,6 +2224,11 @@ components:
     GeneratedReceipt:
       type: object
       properties:
+        total:
+          type: number
+          description: Current total in native receipt currency, present for native receipts.
+        pricing:
+          $ref: "#/components/schemas/ReceiptPricing"
         receiptId:
           type: string
         totalUsd:
@@ -2126,6 +2238,7 @@ components:
           type: string
           enum:
             - USD
+            - EUR
         lineItems:
           type: array
           items:
@@ -2561,6 +2674,11 @@ components:
     ReceiptTerminalCreateRequest:
       type: object
       properties:
+        amount:
+          type: number
+          minimum: 0
+          multipleOf: 0.01
+          description: Native pre-tax/pre-fee amount in currency (USD by default, or EUR); mutually exclusive with amountUsd.
         amountUsd:
           type: number
           format: float
@@ -2582,8 +2700,9 @@ components:
           items:
             type: string
           nullable: true
-      required:
-        - amountUsd
+      oneOf:
+        - required: [amountUsd]
+        - required: [amount]
     ReceiptTerminalCreateResponse:
       type: object
       properties:
