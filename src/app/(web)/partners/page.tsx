@@ -516,7 +516,7 @@ export default function PartnersPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
             {[
               { q: "What is a whitelabel container?", a: "A dedicated runtime for your brand with isolated configuration, branding, and admin access." },
-              { q: "Can we modify the platform fee?", a: "Yes, you can request a reduction to as low as 0.25%. Approval depends on volume commitments." },
+              { q: "Can we modify the platform fee?", a: "Yes, you can request a reduction. Approval depends on volume commitments." },
               { q: "How long does provisioning take?", a: "Typically 1-3 weeks after contract execution and asset delivery." },
               { q: "Is financing available?", a: "Yes! Pay 50% upfront and finance the rest over 3-12 months. 0% APR available for 3-month terms." },
             ].map(({ q, a }) => (

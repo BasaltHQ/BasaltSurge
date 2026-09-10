@@ -23,6 +23,7 @@ import { getAllIndustries } from "@/lib/landing-pages/industries";
 import { getAllComparisons } from "@/lib/landing-pages/comparisons";
 import { getAllLocations } from "@/lib/landing-pages/locations";
 import { useThirdwebClient } from "@/hooks/useThirdwebClient";
+import landingNavStyles from "./landing/landing-navbar.module.css";
 
 type SeoPageCategory = 'industries' | 'comparisons' | 'locations';
 
@@ -33,7 +34,9 @@ import { useTheme } from "@/contexts/ThemeContext";
 
 type NavItem = { href: string; label: string; ownerOnly?: boolean; authOnly?: boolean };
 
-export function Navbar() {
+export function Navbar({ variant = "default" }: { variant?: "default" | "landing" }) {
+    const isLanding = variant === "landing";
+    const navButtonTypography = isLanding ? "!font-sans !tracking-normal !font-medium" : "!font-mono !tracking-wider !font-bold";
     const client = useThirdwebClient();
     const twTheme = usePortalThirdwebTheme();
     const account = useActiveAccount();
@@ -111,19 +114,20 @@ export function Navbar() {
 
     useEffect(() => {
         const handleScroll = () => {
-            setScrolled(window.scrollY > 50);
+            setScrolled(window.scrollY > (isLanding ? 16 : 50));
         };
         const tick = () => {
             setTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
         };
+        handleScroll();
         tick();
         const interval = setInterval(tick, 1000);
-        window.addEventListener('scroll', handleScroll);
+        window.addEventListener('scroll', handleScroll, { passive: true });
         return () => {
             window.removeEventListener('scroll', handleScroll);
             clearInterval(interval);
         };
-    }, []);
+    }, [isLanding]);
 
     // Detect thirdweb modal and lock body scroll to prevent content jump
     useEffect(() => {
@@ -819,19 +823,21 @@ export function Navbar() {
                 }
             `}</style>
             <nav
-                className={`w-full relative ${navZ} transition-all duration-500 ease-in-out ${scrolled
+                aria-label="Main navigation"
+                data-scrolled={scrolled}
+                className={`w-full relative ${navZ} ${isLanding ? landingNavStyles.nav : ""} transition-all duration-500 ease-in-out ${scrolled
                     ? 'bg-black/80 backdrop-blur-2xl py-[22px]'
                     : 'py-[22px] bg-transparent'
                     }`}
             >
-                <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 flex items-center justify-between">
+                <div data-nav-part="content" className="max-w-7xl w-full mx-auto px-4 sm:px-6 flex items-center justify-between">
                     {/* Logo & System Status */}
                     <div className="flex items-center gap-6 shrink-0">
-                        <Link href="/" className="flex items-center gap-3 group relative z-50">
+                        <Link href="/" data-nav-part="brand" className="flex items-center gap-3 group relative z-50">
                             {navbarMode === "logo" ? (
                                 /* Full-width logo mode - Logo behind STATUS.ONLINE */
                                 <div className="flex flex-col min-w-0 relative">
-                                    <span className="hidden md:block text-xs font-mono tracking-widest opacity-80 transition-colors whitespace-nowrap relative z-10" style={{ color: themeColor }}>
+                                    <span data-nav-part="status" className="hidden md:block text-xs font-mono tracking-widest opacity-80 transition-colors whitespace-nowrap relative z-10" style={{ color: themeColor }}>
                                         STATUS.ONLINE
                                     </span>
                                     <div className="relative h-8 min-w-[120px] max-w-[180px] transform group-hover:scale-105 transition-transform duration-300">
@@ -848,7 +854,7 @@ export function Navbar() {
                             ) : (
                                 /* Symbol + Text mode - Square symbol with brand name */
                                 <>
-                                    <div className="relative w-10 h-10 transform group-hover:scale-110 transition-transform duration-300">
+                                    <div data-nav-part="brand-symbol" className="relative w-10 h-10 transform group-hover:scale-110 transition-transform duration-300">
                                         <Image
                                             src={effectiveLogo}
                                             alt={theme.brandName || "Logo"}
@@ -859,6 +865,7 @@ export function Navbar() {
                                         />
                                         <div
                                             className="shield-gleam-container"
+                                            data-nav-part="gleam"
                                             style={{
                                                 maskImage: `url('${maskUrl}')`,
                                                 WebkitMaskImage: `url('${maskUrl}')`,
@@ -872,11 +879,11 @@ export function Navbar() {
                                         />
                                     </div>
                                     <div className="flex flex-col min-w-0">
-                                        <span className="hidden md:block text-xs font-mono tracking-widest opacity-80 transition-colors whitespace-nowrap" style={{ color: themeColor }}>
+                                        <span data-nav-part="status" className="hidden md:block text-xs font-mono tracking-widest opacity-80 transition-colors whitespace-nowrap" style={{ color: themeColor }}>
                                             STATUS.ONLINE
                                         </span>
                                         {displayBrandName === "BasaltSurge" ? (
-                                            <span className="text-lg text-white tracking-widest group-hover:opacity-80 transition-opacity font-vox whitespace-nowrap" style={{ fontFamily: 'vox, sans-serif' }}>
+                                            <span data-nav-part="wordmark" className="text-lg text-white tracking-widest group-hover:opacity-80 transition-opacity font-vox whitespace-nowrap" style={{ fontFamily: 'vox, sans-serif' }}>
                                                 <span style={{ fontWeight: 300 }}>BASALT</span><span style={{ fontWeight: 700 }}>SURGE</span>
                                             </span>
                                         ) : (
@@ -890,7 +897,12 @@ export function Navbar() {
                         </Link>
 
                         {/* Desktop Navigation */}
-                        <div className="hidden lg:flex items-center gap-1">
+                        <div data-nav-part="links" className="hidden lg:flex items-center gap-1">
+                            {isLanding && !account?.address && <>
+                                <Link href="/get-started#platform">Platform</Link>
+                                <Link href="/get-started#how-it-works">How it works</Link>
+                                <Link href="/pricing">Pricing</Link>
+                            </>}
                             {account?.address ? (
                                 <div
                                     className="relative"
@@ -943,15 +955,16 @@ export function Navbar() {
                     </div>
 
                     {/* Right Side */}
-                    <div className="flex items-center gap-4">
+                    <div data-nav-part="actions" className="flex items-center gap-4">
                         {/* Time Display */}
-                        <div className="hidden xl:block text-xs font-mono tracking-wider opacity-80" style={{ color: themeColor }}>
+                        <div data-nav-part="clock" className="hidden xl:block text-xs font-mono tracking-wider opacity-80" style={{ color: themeColor }}>
                             {time}
                         </div>
 
                         {/* Search & Filters */}
-                        <div className="static md:relative flex items-center gap-2" ref={dropdownRef}>
+                        <div data-nav-part="search" className="static md:relative flex items-center gap-2" ref={dropdownRef}>
                             <button
+                                aria-expanded={open}
                                 onClick={() => setOpen(o => !o)}
                                 className="hidden md:flex items-center gap-2 px-3 py-2 rounded-[10px] bg-black/20 hover:bg-white/5 border border-white/10 hover:border-white/20 transition-all group"
                             >
@@ -961,6 +974,8 @@ export function Navbar() {
 
                             {/* Mobile Search Trigger */}
                             <button
+                                aria-label="Search"
+                                aria-expanded={open}
                                 className="md:hidden w-9 h-9 grid place-items-center rounded-[10px] border border-white/10 hover:bg-white/5 text-gray-400"
                                 onClick={() => setOpen(o => !o)}
                             >
@@ -1055,24 +1070,26 @@ export function Navbar() {
                         </div>
 
                         {/* CTA / Login & Signup */}
-                        <div className="hidden md:flex items-center gap-3 mr-4">
+                        <div data-nav-part="account-actions" className="hidden md:flex items-center gap-3 mr-4">
                             {/* Contact Button */}
                             {!account?.address && !isPartnerContainer && (
                                 <button
+                                    data-nav-part="contact"
                                     onClick={() => setShowContactModal(true)}
                                     className="px-5 py-2.5 rounded-[10px] border border-white/20 hover:border-white/40 text-white text-xs font-mono tracking-wider font-bold transition-all hover:bg-white/5"
                                 >
-                                    CONTACT
+                                    {isLanding ? "Contact" : "CONTACT"}
                                 </button>
                             )}
                             {/* Signup Button */}
                             {!account?.address && (
                                 <button
+                                    data-nav-part="signup"
                                     onClick={() => setShowSignupWizard(true)}
                                     className="relative px-5 py-2.5 rounded-[10px] border border-white/20 hover:border-white/40 text-white text-xs font-mono tracking-wider font-bold transition-all hover:bg-white/5"
                                 >
-                                    SIGNUP
-                                    {!isPartnerContainer && <span className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 backdrop-blur-sm">FREE</span>}
+                                    {isLanding ? "Get started" : "SIGNUP"}
+                                    {!isPartnerContainer && !isLanding && <span className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 backdrop-blur-sm">FREE</span>}
                                 </button>
                             )}
                             {/* Login / Account Button */}
@@ -1082,13 +1099,13 @@ export function Navbar() {
                                     chain={chain}
                                     wallets={wallets}
                                     connectButton={{
-                                        label: "LOGIN",
-                                        className: "!text-white !rounded-[10px] !px-5 !py-2.5 !h-auto !min-w-[100px] !font-mono !text-xs !tracking-wider !font-bold !border-none !ring-0 !shadow-none transition-all hover:opacity-80 hover:scale-[1.02] active:scale-95",
+                                        label: isLanding ? "Log in" : "LOGIN",
+                                        className: `!text-white !rounded-[10px] !px-5 !py-2.5 !h-auto !min-w-[100px] !text-xs ${navButtonTypography} !border-none !ring-0 !shadow-none transition-all hover:opacity-80 hover:scale-[1.02] active:scale-95`,
                                         style: { backgroundColor: secondaryColor, color: '#ffffff', borderRadius: '10px' },
                                     }}
                                     signInButton={{
                                         label: "SIGN IN",
-                                        className: "!text-white !rounded-[10px] !px-5 !py-2.5 !h-auto !min-w-[100px] !font-mono !text-xs !tracking-wider !font-bold !border-none transition-all hover:opacity-80 hover:scale-[1.02] active:scale-95",
+                                        className: `!text-white !rounded-[10px] !px-5 !py-2.5 !h-auto !min-w-[100px] !text-xs ${navButtonTypography} !border-none transition-all hover:opacity-80 hover:scale-[1.02] active:scale-95`,
                                         style: { backgroundColor: secondaryColor, color: '#ffffff', borderRadius: '10px' },
                                     }}
                                     detailsButton={{
@@ -1126,6 +1143,9 @@ export function Navbar() {
 
                         {/* Mobile Menu Button */}
                         <button
+                            aria-label={mobileOpen ? "Close navigation menu" : "Open navigation menu"}
+                            aria-expanded={mobileOpen}
+                            aria-controls="navbar-mobile-menu"
                             onClick={() => setMobileOpen(!mobileOpen)}
                             className="lg:hidden p-2 text-white transition-colors hover:text-cyan-500"
                             style={{ color: mobileOpen ? themeColor : 'white' }}
@@ -1151,6 +1171,10 @@ export function Navbar() {
                     />
                 )}
                 <div
+                    id="navbar-mobile-menu"
+                    data-nav-part="mobile-menu"
+                    inert={!mobileOpen}
+                    aria-hidden={!mobileOpen}
                     className={`lg:hidden backdrop-blur-xl absolute top-[calc(100%+1px)] left-4 right-4 rounded-2xl p-4 shadow-2xl max-h-[70vh] overflow-y-auto transition-all duration-300 ease-in-out ${
                         mobileOpen
                             ? "opacity-100 translate-y-0 pointer-events-auto"
@@ -1172,6 +1196,11 @@ export function Navbar() {
                             />
 
                             <div className="flex flex-col gap-2 pt-2">
+                                {isLanding && !account?.address && <div className={landingNavStyles.mobileLinks}>
+                                    <Link href="/get-started#platform" onClick={() => setMobileOpen(false)}>Platform</Link>
+                                    <Link href="/get-started#how-it-works" onClick={() => setMobileOpen(false)}>How it works</Link>
+                                    <Link href="/pricing" onClick={() => setMobileOpen(false)}>Pricing</Link>
+                                </div>}
                                 {/* Explore Section - SEO Pages */}
                                 <div className="mb-2 pb-2" style={{ borderBottom: `1px solid ${themeColor}20` }}>
                                     <button
@@ -1263,6 +1292,7 @@ export function Navbar() {
                                 <div className="mt-4 pt-4 flex flex-col gap-3" style={{ borderTop: `1px solid ${themeColor}20` }}>
                                     {!account?.address && !isPartnerContainer && (
                                         <button
+                                            data-nav-part="contact"
                                             onClick={() => {
                                                 setMobileOpen(false);
                                                 setShowContactModal(true);
@@ -1273,11 +1303,12 @@ export function Navbar() {
                                                 backgroundColor: `${themeColor}10`,
                                             }}
                                         >
-                                            CONTACT US
+                                            {isLanding ? "Contact us" : "CONTACT US"}
                                         </button>
                                     )}
                                     {!account?.address && (
                                         <button
+                                            data-nav-part="signup"
                                             onClick={() => {
                                                 setMobileOpen(false);
                                                 setShowSignupWizard(true);
@@ -1288,8 +1319,8 @@ export function Navbar() {
                                                 backgroundColor: `${themeColor}10`,
                                             }}
                                         >
-                                            SIGNUP
-                                            {!isPartnerContainer && <span className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 backdrop-blur-sm">FREE</span>}
+                                            {isLanding ? "Get started" : "SIGNUP"}
+                                            {!isPartnerContainer && !isLanding && <span className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 backdrop-blur-sm">FREE</span>}
                                         </button>
                                     )}
                                     {wallets.length > 0 ? (
@@ -1298,13 +1329,13 @@ export function Navbar() {
                                             chain={chain}
                                             wallets={wallets}
                                             connectButton={{
-                                                label: "LOGIN",
-                                                className: "!text-white !w-full !justify-center !rounded-lg !py-3 !font-mono !text-xs !tracking-wider !font-bold !border-none !ring-0 !shadow-none transition-all hover:opacity-80",
+                                                label: isLanding ? "Log in" : "LOGIN",
+                                                className: `!text-white !w-full !justify-center !rounded-lg !py-3 !text-xs ${navButtonTypography} !border-none !ring-0 !shadow-none transition-all hover:opacity-80`,
                                                 style: { backgroundColor: secondaryColor, color: '#ffffff', borderRadius: '8px' },
                                             }}
                                             signInButton={{
                                                 label: "SIGN IN",
-                                                className: "!text-white !w-full !justify-center !rounded-lg !py-3 !font-mono !text-xs !tracking-wider !font-bold !border-none transition-all hover:opacity-80",
+                                                className: `!text-white !w-full !justify-center !rounded-lg !py-3 !text-xs ${navButtonTypography} !border-none transition-all hover:opacity-80`,
                                                 style: { backgroundColor: secondaryColor, color: '#ffffff', borderRadius: '8px' },
                                             }}
                                             detailsButton={{
