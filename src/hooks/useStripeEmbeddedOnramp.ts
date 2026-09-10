@@ -4552,7 +4552,7 @@ export function useStripeEmbeddedOnramp({
                   region: latestKycSnapshotRef.current?.region || null,
                   isEuCountry: isEuEeaCountry(activeCountryRef.current),
                 }),
-                wallets: { applePay: "auto", googlePay: "auto" },
+                wallets: { applePay: "always", googlePay: "always" },
               },
               (result: any) => {
                 if (settled || !mountedRef.current || onrampRef.current !== onramp) return;
