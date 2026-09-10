@@ -66,7 +66,6 @@ export default function GetStartedPage() {
     <>
     <main className={styles.page} style={pageStyle}>
       <section className={styles.hero} aria-labelledby="landing-title">
-        {!isPartner && <>
           <div className={styles.heroMedia} aria-hidden="true">
             <video ref={heroVideoRef} autoPlay muted loop playsInline poster="/bsurgebg.png" tabIndex={-1} onPlay={() => setVideoPaused(false)} onPause={() => setVideoPaused(true)}>
               <source src={overviewVideo} type="video/mp4" />
@@ -79,7 +78,6 @@ export default function GetStartedPage() {
             if (video.paused) void video.play().catch(() => setVideoPaused(true));
             else video.pause();
           }}>{videoPaused ? <Play size={14} /> : <Pause size={14} />}</button>
-        </>}
         <div className={styles.heroGrid} aria-hidden="true" />
         <div className={`${styles.container} ${styles.heroLayout}`}>
           <div className={styles.heroCopy}>

@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { useActiveAccount } from "thirdweb/react";
+import { useActiveAccount, useActiveWallet } from "thirdweb/react";
 import dynamic from "next/dynamic";
 const ConnectButton = dynamic(() => import("thirdweb/react").then((m) => m.ConnectButton), { ssr: false });
-import { signLoginPayload } from "thirdweb/auth";
+import { loginWithWallet } from "@/lib/thirdweb/wallet-login";
 import { chain } from "@/lib/thirdweb/client";
 import { getWallets } from "@/lib/thirdweb/wallets";
 import { usePortalThirdwebTheme, getConnectButtonStyle, connectButtonClass } from "@/lib/thirdweb/theme";
@@ -31,6 +31,7 @@ const LEGAL_DOCS: { key: LegalDoc; label: string; path: string }[] = [
 export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin = false }: AuthModalProps) {
   const client = useThirdwebClient();
   const account = useActiveAccount();
+  const activeWallet = useActiveWallet();
   const [signing, setSigning] = useState(false);
   const [error, setError] = useState<string>("");
   const hasAccount = !!account;
@@ -154,31 +155,8 @@ export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin =
         return;
       }
 
-      // For external wallets, use signature-based authentication
-      // Get signing payload from server
-      const payloadResponse = await fetch(`/api/auth/payload?address=${encodeURIComponent(wallet)}`);
-      const payloadData = await payloadResponse.json();
-
-      if (!payloadData?.payload) {
-        throw new Error("Failed to get signing payload");
-      }
-
-      // Sign the payload
-      const { signature, payload } = await signLoginPayload({
-        payload: payloadData.payload,
-        account: account,
-      });
-
-      // Send to backend for verification
-      const loginResponse = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payload, signature }),
-      });
-
-      if (!loginResponse.ok) {
-        throw new Error("Authentication failed");
-      }
+      if (!activeWallet) throw new Error("Please reconnect your wallet to continue.");
+      await loginWithWallet(account, activeWallet);
 
       // Broadcast login event
       try {

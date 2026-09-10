@@ -54,6 +54,7 @@ export async function POST(req: NextRequest) {
 		const auth = getAuth(req);
 		const verification = await auth.verifyPayload({ payload, signature });
 		if (!verification.valid) {
+			console.warn("[auth/login] Payload verification failed", { reason: verification.error, chainId: payload.chain_id });
 			return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
 		}
 		const verifiedPayload = verification.payload;

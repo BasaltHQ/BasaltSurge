@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { createAuth } from "thirdweb/auth";
 import { privateKeyToAccount } from "thirdweb/wallets";
 import type { NextRequest } from "next/server";
-import { serverClient as client, chain } from "@/lib/thirdweb/server";
+import { serverClient as client } from "@/lib/thirdweb/server";
 
 const AUTH_COOKIE = "cb_auth_token";
 
@@ -11,17 +11,12 @@ function getDomainFromRequest(req?: NextRequest): string {
 		// First, get the actual request host (important for partner containers)
 		const forwarded = req?.headers?.get("x-forwarded-host") || "";
 		const firstForwarded = forwarded.split(",")[0].trim();
-		let requestHost = firstForwarded || req?.headers?.get("host") || "";
-
-		// Normalize localhost variations
-		if (requestHost) {
-			requestHost = requestHost.replace(/^127\.0\.0\.1/, "localhost");
-		}
+		const requestHost = firstForwarded || req?.headers?.get("host") || req?.nextUrl?.host || "";
 
 		// For custom domains and partner containers, ALWAYS use the request host if available.
 		// This ensure JWTs are issued/verified with the correct domain for EACH brand site.
 		// Previously restricted to .azurewebsites.net or .azurefd.net, now widened for Plesk/VPS migration.
-		if (requestHost && !/^localhost(:\d+)?$/.test(requestHost) && !/^[\d.]+(:?\d+)?$/.test(requestHost)) {
+		if (requestHost) {
 			return requestHost;
 		}
 
@@ -30,20 +25,32 @@ function getDomainFromRequest(req?: NextRequest): string {
 		if (envUrl) {
 			try {
 				const u = new URL(envUrl);
-				let envHost = (u.host || "").replace(/^127\.0\.0\.1/, "localhost");
+				const envHost = u.host;
 				if (envHost) return envHost;
 			} catch { }
 		}
 
-		// Extreme fallback: use the request host as is
-		if (requestHost) {
-			return requestHost;
-		}
-
-		return requestHost || "localhost:3000";
+		return "localhost:3000";
 	} catch {
 		return "localhost:3000";
 	}
+}
+
+function getLoginUri(domain: string, req?: NextRequest): string {
+	// TLS commonly terminates at the container proxy. Use the public scheme,
+	// while keeping the URI on the same host as the SIWE domain.
+	const forwardedProto = req?.headers.get("x-forwarded-proto")?.split(",")[0].trim();
+	const requestProto = req?.nextUrl?.protocol?.replace(/:$/, "");
+	let protocol = forwardedProto === "http" || forwardedProto === "https"
+		? forwardedProto
+		: requestProto;
+	if (!protocol && process.env.NEXT_PUBLIC_APP_URL) {
+		try { protocol = new URL(process.env.NEXT_PUBLIC_APP_URL).protocol.replace(/:$/, ""); } catch { }
+	}
+	if (protocol !== "http" && protocol !== "https") {
+		protocol = /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(domain) ? "http" : "https";
+	}
+	return `${protocol}://${domain}`;
 }
 
 function getAdminAccount() {
@@ -54,11 +61,13 @@ function getAdminAccount() {
 }
 
 export function getAuth(req?: NextRequest) {
+	const domain = getDomainFromRequest(req);
 	const auth = createAuth({
-		domain: getDomainFromRequest(req),
+		domain,
 		client,
 		adminAccount: getAdminAccount(),
 		login: {
+			uri: getLoginUri(domain, req),
 			statement: "By signing, you agree to use this Web3-native, permissionless payment service. You acknowledge: (1) All transactions are trustless and executed via smart contracts without intermediaries; (2) You maintain full custody and responsibility for your wallet and private keys; (3) Cryptocurrency transactions are irreversible and final; (4) You are at least 18 years old and comply with all applicable laws; (5) This signature authenticates your wallet, costs no gas, and initiates no blockchain transaction; (6) You accept all risks associated with cryptocurrency transactions including price volatility and network fees.",
 			payloadExpirationTimeSeconds: 5 * 60,
 		},
